@@ -1,0 +1,64 @@
+diff --git a/README.md b/README.md
+index 3db6980..608021f 100644
+--- a/README.md
++++ b/README.md
+@@ -177,6 +177,10 @@ Generate a string with double or single quotes and handle escapes.
+ 
+ Generate typescript `declare module` augmentation.
+ 
++### `genDynamicTypeImport(specifier, name?, options)`
++
++Generate a typescript `typeof import()` type, optionally for a named export.
++
+ ### `genInlineTypeImport(specifier, name, options)`
+ 
+ Generate an typescript `typeof import()` statement for default import.
+diff --git a/src/typescript.ts b/src/typescript.ts
+index 27fbbe7..1863ac9 100644
+--- a/src/typescript.ts
++++ b/src/typescript.ts
+@@ -1,5 +1,10 @@
+ import { _genStatement } from "./_utils";
+-import { ESMCodeGenOptions, ESMImport, genDynamicImport } from "./esm";
++import {
++  DynamicImportOptions,
++  ESMCodeGenOptions,
++  ESMImport,
++  genDynamicImport,
++} from "./esm";
+ import { genString } from "./string";
+ import { genObjectKey, wrapInDelimiters } from "./utils";
+ 
+@@ -40,6 +45,32 @@ export function genInlineTypeImport(
+   })}.${name}`;
+ }
+ 
++const PROPERTY_NAME_RE = /^[$A-Z_a-z][\w$]*$/;
++
++/**
++ * Generate a typescript `typeof import()` type, optionally for a named export.
++ *
++ * @group Typescript
++ */
++export function genDynamicTypeImport(
++  specifier: string,
++  name?: string,
++  options: Pick<DynamicImportOptions, "comment" | "attributes"> = {},
++) {
++  const importString = genDynamicImport(specifier, {
++    comment: options.comment,
++    attributes: options.attributes,
++    wrapper: false,
++  });
++  if (name === undefined) {
++    return `typeof ${importString}`;
++  }
++  const accessor = PROPERTY_NAME_RE.test(name)
++    ? `.${name}`
++    : `[${genString(name)}]`;
++  return `typeof ${importString}${accessor}`;
++}
++
+ /**
+  * Generate typescript object type.
+  *

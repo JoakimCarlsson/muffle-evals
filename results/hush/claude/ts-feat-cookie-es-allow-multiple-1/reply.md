@@ -1,0 +1,1 @@
+Done. `parse()` now takes `allowMultiple`. Repeated names become ordered arrays and single names stay strings. Return type is `MultiCookies` when the option is `true`. All 99 tests pass, including new ones. `tsc` only reports an existing `esModuleInterop` config error.

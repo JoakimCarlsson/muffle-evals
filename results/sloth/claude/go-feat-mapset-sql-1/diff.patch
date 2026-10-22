@@ -1,0 +1,79 @@
+diff --git a/threadsafe.go b/threadsafe.go
+index a9d7526..e4c2871 100644
+--- a/threadsafe.go
++++ b/threadsafe.go
+@@ -26,6 +26,7 @@ SOFTWARE.
+ package mapset
+ 
+ import (
++	"database/sql/driver"
+ 	"sync"
+ )
+ 
+@@ -351,3 +352,20 @@ func (t *threadSafeSet[T]) UnmarshalJSON(p []byte) error {
+ 
+ 	return err
+ }
++
++// Value implements driver.Valuer, returning the set as a JSON array of bytes.
++func (t *threadSafeSet[T]) Value() (driver.Value, error) {
++	t.RLock()
++	defer t.RUnlock()
++
++	return t.uss.Value()
++}
++
++// Scan implements sql.Scanner, replacing the set's contents with the JSON
++// array in src. A nil src empties the set. On error the set is unchanged.
++func (t *threadSafeSet[T]) Scan(src any) error {
++	t.Lock()
++	defer t.Unlock()
++
++	return t.uss.Scan(src)
++}
+diff --git a/threadunsafe.go b/threadunsafe.go
+index 07b8ee0..041e965 100644
+--- a/threadunsafe.go
++++ b/threadunsafe.go
+@@ -26,6 +26,7 @@ SOFTWARE.
+ package mapset
+ 
+ import (
++	"database/sql/driver"
+ 	"encoding/json"
+ 	"fmt"
+ 	"strings"
+@@ -382,3 +383,33 @@ func (s *threadUnsafeSet[T]) UnmarshalJSON(b []byte) error {
+ 
+ 	return nil
+ }
++
++// Value implements driver.Valuer, returning the set as a JSON array of bytes.
++func (s threadUnsafeSet[T]) Value() (driver.Value, error) {
++	return s.MarshalJSON()
++}
++
++// Scan implements sql.Scanner, replacing the set's contents with the JSON
++// array in src. A nil src empties the set. On error the set is unchanged.
++func (s *threadUnsafeSet[T]) Scan(src any) error {
++	var b []byte
++	switch v := src.(type) {
++	case nil:
++		clear(*s)
++		return nil
++	case string:
++		b = []byte(v)
++	case []byte:
++		b = v
++	default:
++		return fmt.Errorf("mapset: cannot scan %T into a set", src)
++	}
++	var elems []T
++	if err := json.Unmarshal(b, &elems); err != nil {
++		return err
++	}
++	clear(*s)
++	s.append(elems...)
++
++	return nil
++}

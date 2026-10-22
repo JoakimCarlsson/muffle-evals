@@ -1,0 +1,74 @@
+diff --git a/src/bytes_mut.rs b/src/bytes_mut.rs
+index 68c5f73..4b3b4a5 100644
+--- a/src/bytes_mut.rs
++++ b/src/bytes_mut.rs
+@@ -1,5 +1,5 @@
+ use core::mem::{self, ManuallyDrop, MaybeUninit};
+-use core::ops::{Deref, DerefMut};
++use core::ops::{Deref, DerefMut, RangeBounds};
+ use core::ptr::{self, NonNull};
+ use core::{cmp, fmt, hash, slice};
+ 
+@@ -884,6 +884,62 @@ impl BytesMut {
+         }
+     }
+ 
++    /// Appends a copy of the bytes in `range` to this `BytesMut`.
++    ///
++    /// The buffer is grown as needed.
++    ///
++    /// # Panics
++    ///
++    /// Panics if the range start is greater than its end or the range end is
++    /// greater than the current length.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// use bytes::BytesMut;
++    ///
++    /// let mut buf = BytesMut::new();
++    /// buf.extend_from_slice(b"aaabbb_");
++    /// buf.extend_from_within(3..6);
++    /// assert_eq!(&buf[..], b"aaabbb_bbb");
++    /// ```
++    pub fn extend_from_within(&mut self, range: impl RangeBounds<usize>) {
++        use core::ops::Bound;
++
++        let len = self.len();
++        let begin = match range.start_bound() {
++            Bound::Included(&n) => n,
++            Bound::Excluded(&n) => n.checked_add(1).expect("out of range"),
++            Bound::Unbounded => 0,
++        };
++        let end = match range.end_bound() {
++            Bound::Included(&n) => n.checked_add(1).expect("out of range"),
++            Bound::Excluded(&n) => n,
++            Bound::Unbounded => len,
++        };
++
++        assert!(
++            begin <= end,
++            "range start must not be greater than end: {:?} <= {:?}",
++            begin,
++            end,
++        );
++        assert!(
++            end <= len,
++            "range end out of bounds: {:?} <= {:?}",
++            end,
++            len,
++        );
++
++        let cnt = end - begin;
++        self.reserve(cnt);
++        unsafe {
++            let ptr = self.ptr.as_ptr();
++            ptr::copy_nonoverlapping(ptr.add(begin), ptr.add(len), cnt);
++            self.advance_mut(cnt);
++        }
++    }
++
+     /// Absorbs a `BytesMut` that was previously split off if they are
+     /// contiguous, otherwise appends its bytes to this `BytesMut`.
+     ///

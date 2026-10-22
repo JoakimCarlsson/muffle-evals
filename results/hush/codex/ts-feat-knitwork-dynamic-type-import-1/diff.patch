@@ -1,0 +1,121 @@
+diff --git a/README.md b/README.md
+index 3db6980..508847e 100644
+--- a/README.md
++++ b/README.md
+@@ -66,6 +66,18 @@ import {} from "https://esm.sh/knitwork";
+ 
+ Generate an ESM dynamic `import()` statement.
+ 
++### `genDynamicTypeImport(specifier, name?, options)`
++
++Generate a TypeScript `typeof import()` expression. Export names use dot access
++when valid identifiers and bracket access otherwise. Supports dynamic import
++comments and attributes.
++
++```js
++genDynamicTypeImport("pkg", undefined); // typeof import("pkg")
++genDynamicTypeImport("pkg", "foo"); // typeof import("pkg").foo
++genDynamicTypeImport("pkg", "foo-bar"); // typeof import("pkg")["foo-bar"]
++```
++
+ ### `genExport(specifier, exports?, options)`
+ 
+ Generate an ESM `export` statement.
+diff --git a/src/esm.ts b/src/esm.ts
+index 75242ce..0fac0f7 100644
+--- a/src/esm.ts
++++ b/src/esm.ts
+@@ -115,6 +115,29 @@ export function genDynamicImport(
+   )}${commentString}${optionsString})${ineropString}`;
+ }
+ 
++/**
++ * Generate a TypeScript `typeof import()` expression.
++ *
++ * @group ESM
++ */
++export function genDynamicTypeImport(
++  specifier: string,
++  name?: string,
++  options: Omit<DynamicImportOptions, "wrapper" | "interopDefault"> = {},
++) {
++  const expression = `typeof ${genDynamicImport(specifier, {
++    ...options,
++    wrapper: false,
++    interopDefault: false,
++  })}`;
++  if (name === undefined) {
++    return expression;
++  }
++  return /^[$_\p{ID_Start}][$\u200C\u200D\p{ID_Continue}]*$/u.test(name)
++    ? `${expression}.${name}`
++    : `${expression}[${genString(name, options)}]`;
++}
++
+ // --- internal ---
+ 
+ function _genDynamicImportAttributes(options: DynamicImportOptions = {}) {
+diff --git a/test/esm.test.ts b/test/esm.test.ts
+index dbe9e4f..5b73a79 100644
+--- a/test/esm.test.ts
++++ b/test/esm.test.ts
+@@ -3,6 +3,7 @@ import {
+   genImport,
+   genExport,
+   genDynamicImport,
++  genDynamicTypeImport,
+   genSafeVariableName,
+ } from "../src";
+ import { genTestTitle } from "./_utils";
+@@ -109,6 +110,51 @@ describe("genDynamicImport", () => {
+   }
+ });
+ 
++describe("genDynamicTypeImport", () => {
++  it.each([
++    [undefined, 'typeof import("pkg")'],
++    ["foo", 'typeof import("pkg").foo'],
++    ["default", 'typeof import("pkg").default'],
++    ["$foo_1", 'typeof import("pkg").$foo_1'],
++    ["é", 'typeof import("pkg").é'],
++    ["foo-bar", 'typeof import("pkg")["foo-bar"]'],
++    ["1", 'typeof import("pkg")["1"]'],
++    ["", 'typeof import("pkg")[""]'],
++  ])("handles export name %j", (name, expected) => {
++    expect(genDynamicTypeImport("pkg", name)).to.equal(expected);
++  });
++
++  it("allows an omitted name", () => {
++    expect(genDynamicTypeImport("pkg")).to.equal('typeof import("pkg")');
++  });
++
++  it("preserves dynamic import comments and attributes", () => {
++    for (const t of genDynamicImportTests) {
++      expect(genDynamicTypeImport("pkg", "foo", t.opts)).to.equal(
++        `typeof ${genDynamicImport("pkg", {
++          ...t.opts,
++          wrapper: false,
++          interopDefault: false,
++        })}.foo`,
++      );
++    }
++    expect(
++      genDynamicTypeImport("pkg", "foo", {
++        comment: 'webpackChunkName: "chunks/dynamic"',
++        attributes: { type: "json" },
++      }),
++    ).to.equal(
++      'typeof import("pkg" /* webpackChunkName: "chunks/dynamic" */, { with: { type: "json" } }).foo',
++    );
++  });
++
++  it("quotes export names with the requested string options", () => {
++    expect(
++      genDynamicTypeImport("pkg", "foo-bar", { singleQuotes: true }),
++    ).to.equal("typeof import('pkg')['foo-bar']");
++  });
++});
++
+ const genSafeVariableNameTests = [
+   { key: "valid_import", code: "valid_import" },
+   { key: "for", code: "_for" },

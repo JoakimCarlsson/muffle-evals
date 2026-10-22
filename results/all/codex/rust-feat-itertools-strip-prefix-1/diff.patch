@@ -1,0 +1,105 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index d4b17a6..a8789be 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -140,6 +140,7 @@ pub mod structs {
+     pub use crate::repeatn::RepeatN;
+     #[allow(deprecated)]
+     pub use crate::sources::{Iterate, Unfold};
++    pub use crate::strip_prefix::StripPrefixError;
+     pub use crate::take_while_inclusive::TakeWhileInclusive;
+     #[cfg(feature = "use_alloc")]
+     pub use crate::tee::Tee;
+@@ -235,6 +236,7 @@ mod rciter_impl;
+ mod repeatn;
+ mod size_hint;
+ mod sources;
++mod strip_prefix;
+ mod take_while_inclusive;
+ #[cfg(feature = "use_alloc")]
+ mod tee;
+@@ -1774,6 +1776,67 @@ pub trait Itertools: Iterator {
+         unique_impl::unique_by_with_hasher(self, f, hash_builder)
+     }
+ 
++    /// Remove the items of `prefix` from the start of this iterator.
++    ///
++    /// Return the remaining iterator on success, or a [`StripPrefixError`]
++    /// containing both iterators and the mismatching items on failure.
++    /// An empty prefix leaves this iterator untouched.
++    ///
++    /// ```
++    /// use itertools::Itertools;
++    ///
++    /// let rest = (1..6).strip_prefix([1, 2]).unwrap();
++    /// assert_eq!(rest.collect_vec(), vec![3, 4, 5]);
++    /// ```
++    fn strip_prefix<P>(self, prefix: P) -> Result<Self, StripPrefixError<Self, P::IntoIter>>
++    where
++        Self: Sized,
++        P: IntoIterator,
++        Self::Item: PartialEq<P::Item>,
++    {
++        self.strip_prefix_by(prefix, PartialEq::eq)
++    }
++
++    /// Remove the items of `prefix` from the start of this iterator using `eq`.
++    ///
++    /// The comparison receives the iterator item first and the prefix item second.
++    /// Return the remaining iterator on success. On failure, both iterators are
++    /// advanced past the mismatching items and returned in [`StripPrefixError`].
++    /// If this iterator ends first, the mismatching iterator item is `None`.
++    /// An empty prefix leaves this iterator untouched and never calls `eq`.
++    ///
++    /// ```
++    /// use itertools::Itertools;
++    ///
++    /// let rest = vec!["one", "two", "three"].into_iter()
++    ///     .strip_prefix_by([3, 3], |word, len| word.len() == *len)
++    ///     .unwrap();
++    /// assert_eq!(rest.collect_vec(), vec!["three"]);
++    /// ```
++    fn strip_prefix_by<P, F>(
++        mut self,
++        prefix: P,
++        mut eq: F,
++    ) -> Result<Self, StripPrefixError<Self, P::IntoIter>>
++    where
++        Self: Sized,
++        P: IntoIterator,
++        F: FnMut(&Self::Item, &P::Item) -> bool,
++    {
++        let mut prefix = prefix.into_iter();
++        while let Some(expected) = prefix.next() {
++            let item = self.next();
++            if !item.as_ref().map_or(false, |item| eq(item, &expected)) {
++                return Err(StripPrefixError {
++                    iterator: self,
++                    prefix,
++                    mismatch: (item, expected),
++                });
++            }
++        }
++        Ok(self)
++    }
++
+     /// Return an iterator adaptor that borrows from this iterator and
+     /// takes items while the closure `accept` returns `true`.
+     ///
+diff --git a/src/strip_prefix.rs b/src/strip_prefix.rs
+new file mode 100644
+index 0000000..18224d7
+--- /dev/null
++++ b/src/strip_prefix.rs
+@@ -0,0 +1,11 @@
++/// A mismatch returned by [`Itertools::strip_prefix`](crate::Itertools::strip_prefix)
++/// or [`Itertools::strip_prefix_by`](crate::Itertools::strip_prefix_by).
++#[derive(Debug)]
++pub struct StripPrefixError<I: Iterator, P: Iterator> {
++    /// The original iterator, advanced past the mismatching item, if any.
++    pub iterator: I,
++    /// The prefix iterator, advanced past the mismatching prefix item.
++    pub prefix: P,
++    /// The mismatching items, with `None` if the original iterator ended first.
++    pub mismatch: (Option<I::Item>, P::Item),
++}

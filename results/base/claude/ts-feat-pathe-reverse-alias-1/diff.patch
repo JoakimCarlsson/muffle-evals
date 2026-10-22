@@ -1,0 +1,112 @@
+diff --git a/README.md b/README.md
+index e371656..0575b62 100644
+--- a/README.md
++++ b/README.md
+@@ -46,7 +46,7 @@ Pathe exports some extra utilities that do not exist in standard Node.js [path m
+ In order to use them, you can import from `pathe/utils` subpath:
+ 
+ ```js
+-import { filename, normalizeAliases, resolveAlias } from 'pathe/utils'
++import { filename, normalizeAliases, resolveAlias, reverseResolveAlias } from 'pathe/utils'
+ ```
+ 
+ ## License
+diff --git a/src/utils.ts b/src/utils.ts
+index 6ec11c1..415fdc6 100644
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -74,6 +74,41 @@ export function resolveAlias(path: string, aliases: Record<string, string>) {
+   return _path;
+ }
+ 
++/**
++ * Finds every aliased form of a path, i.e. the reverse of `resolveAlias`.
++ * A target only matches on a path separator boundary or the whole path.
++ *
++ * @param path - The path string to find aliased forms of.
++ * @param aliases - A set of alias mappings to use for the lookup.
++ * @returns the aliased paths, longest first, or an empty array if none match.
++ */
++export function reverseResolveAlias(
++  path: string,
++  aliases: Record<string, string>,
++): string[] {
++  const _path = normalizeWindowsPath(path);
++  aliases = normalizeAliases(aliases);
++  const matches = new Set<string>();
++  for (const [alias, target] of Object.entries(aliases)) {
++    let to = normalizeWindowsPath(target);
++    if (hasTrailingSlash(to)) {
++      to = to.slice(0, -1);
++    }
++
++    if (!_path.startsWith(to)) {
++      continue;
++    }
++
++    const rest = _path.slice(to.length);
++    if (rest === "") {
++      matches.add(alias);
++    } else if (rest[0] === "/") {
++      matches.add(alias + (hasTrailingSlash(alias) ? rest.slice(1) : rest));
++    }
++  }
++  return [...matches].sort((a, b) => b.length - a.length);
++}
++
+ /**
+  * Extracts the filename from a given path, excluding any directory paths and the file extension.
+  *
+diff --git a/test/utils.spec.ts b/test/utils.spec.ts
+index 51ad676..f0d4def 100644
+--- a/test/utils.spec.ts
++++ b/test/utils.spec.ts
+@@ -1,6 +1,11 @@
+ import { describe, expect, it } from "vitest";
+ 
+-import { normalizeAliases, filename, resolveAlias } from "../src/utils";
++import {
++  normalizeAliases,
++  filename,
++  resolveAlias,
++  reverseResolveAlias,
++} from "../src/utils";
+ 
+ describe("alias", () => {
+   const _aliases = {
+@@ -56,6 +61,35 @@ describe("alias", () => {
+       expect(resolveAlias("~win/foo/bar", aliases)).toBe("C:/src/foo/bar");
+     });
+   });
++
++  describe("reverseResolveAlias", () => {
++    it("respects path separators", () => {
++      const aliases = { "~": "/root", "~assets": "/root/some/assets" };
++      expect(
++        reverseResolveAlias("/root/some/assets/smth.jpg", aliases),
++      ).toEqual(["~/some/assets/smth.jpg", "~assets/smth.jpg"]);
++      expect(reverseResolveAlias("/rootless/a.js", aliases)).toEqual([]);
++    });
++    it("matches the whole path", () => {
++      expect(
++        reverseResolveAlias("/root/index.js", { "@": "/root", "~": "/root/index.js" }),
++      ).toEqual(["@/index.js", "~"]);
++    });
++    it("respect ending with /", () => {
++      expect(reverseResolveAlias("/src/foo/bar", { "~/": "/src" })).toEqual([
++        "~/foo/bar",
++      ]);
++      expect(reverseResolveAlias("/src", { "~/": "/src" })).toEqual(["~/"]);
++    });
++    it("normalizes windows paths", () => {
++      expect(
++        reverseResolveAlias("C:\\src\\foo", { "~win/": "C:/src" }),
++      ).toEqual(["~win/foo"]);
++    });
++    it("unchanged", () => {
++      expect(reverseResolveAlias("./bar.js", { "@": "/root" })).toEqual([]);
++    });
++  });
+ });
+ 
+ describe("filename", () => {

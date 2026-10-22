@@ -1,0 +1,1 @@
+Done. `reverseResolveAlias` added in `src/utils.ts` after `resolveAlias`. All five of your examples pass in a throwaway test, which I deleted. The existing tests, eslint and tsc are clean. I added no permanent tests or README entry.

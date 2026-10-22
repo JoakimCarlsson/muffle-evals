@@ -1,0 +1,231 @@
+diff --git a/CHANGELOG.rst b/CHANGELOG.rst
+index e9bb15a..338e6ee 100644
+--- a/CHANGELOG.rst
++++ b/CHANGELOG.rst
+@@ -4,6 +4,12 @@ Changelog
+ *unreleased*
+ ~~~~~~~~~~~~
+ 
++Features:
++
++* Add :meth:`Requirement.__replace__ <packaging.requirements.Requirement.__replace__>`
++  to copy requirements with selected fields changed, including support for
++  :func:`copy.replace` on Python 3.13 and later.
++
+ Removals:
+ 
+ * Drop support for EOL Python 3.9. (:pull:`1263`)
+diff --git a/docs/requirements.rst b/docs/requirements.rst
+index fede671..b39a33c 100644
+--- a/docs/requirements.rst
++++ b/docs/requirements.rst
+@@ -69,9 +69,27 @@ Usage
+     not have such rules, and the check incorrectly disallows valid requirement
+     strings from being parsed.
+ 
++Requirements can be copied with selected fields changed using
++:meth:`Requirement.__replace__`. On Python 3.13 and later, this also supports
++:func:`copy.replace`. Omitted fields are preserved, and the original requirement
++is left untouched. The result is parsed to validate and normalize its fields;
++invalid values or values that would change field boundaries raise
++:class:`InvalidRequirement`. Specifiers are copied independently, including
++their prerelease settings. Subclasses are constructed using their own initializer.
++
++.. doctest::
++
++    >>> req = Requirement('requests[security]>=2.0; python_version >= "3"')
++    >>> req.__replace__(name="flask")
++    <Requirement('flask[security]>=2.0; python_version >= "3"')>
++    >>> from packaging.specifiers import SpecifierSet
++    >>> req.__replace__(specifier=SpecifierSet(">=3.0"), marker=None)
++    <Requirement('requests[security]>=3.0')>
++
+ Reference
+ ---------
+ 
+ .. automodule:: packaging.requirements
+     :members:
+     :exclude-members: __init__, __new__
++    :special-members: __replace__
+diff --git a/src/packaging/requirements.py b/src/packaging/requirements.py
+index 124de66..fe8e0f5 100644
+--- a/src/packaging/requirements.py
++++ b/src/packaging/requirements.py
+@@ -3,6 +3,7 @@
+ # for complete details.
+ from __future__ import annotations
+ 
++from copy import deepcopy
+ from typing import TYPE_CHECKING
+ 
+ from ._parser import parse_requirement as _parse_requirement
+@@ -124,6 +125,57 @@ class Requirement:
+         if self.marker:
+             yield f"; {self.marker}"
+ 
++    def __replace__(self, **changes: object) -> Requirement:
++        """Return a new requirement with the given fields replaced.
++
++        Accepts ``name``, ``url``, ``extras``, ``specifier``, and ``marker``
++        as keyword arguments, using the same types as the corresponding
++        attributes. The result is validated and normalized by parsing it.
++        Invalid or ambiguous field values raise :class:`InvalidRequirement`.
++
++        Supports :func:`copy.replace` on Python 3.13 and later, and can be
++        called directly on earlier Python versions. Specifiers are copied
++        independently, preserving their prerelease overrides.
++        """
++        fields = ("name", "url", "extras", "specifier", "marker")
++        for field in changes:
++            if field not in fields:
++                raise TypeError(f"Unexpected field name: {field!r}")
++
++        # Use a base instance to assemble the string without invoking a
++        # subclass constructor until we have a valid requirement.
++        candidate = Requirement("placeholder")
++        field_types = {
++            "name": (str,),
++            "url": (str, type(None)),
++            "extras": (set,),
++            "specifier": (SpecifierSet,),
++            "marker": (Marker, type(None)),
++        }
++        for field in fields:
++            value = changes.get(field, getattr(self, field))
++            if not isinstance(value, field_types[field]):
++                raise InvalidRequirement(f"Invalid value for {field}: {value!r}")
++            if isinstance(value, set) and not all(isinstance(e, str) for e in value):
++                raise InvalidRequirement(f"Invalid extras: {value!r}")
++            setattr(candidate, field, value)
++
++        parsed = Requirement(str(candidate))
++        # Equality on Requirement canonicalizes names and extras, which would
++        # conceal field boundaries or spelling changed by the round trip.
++        if (
++            parsed.name != candidate.name
++            or parsed.url != candidate.url
++            or parsed.extras != candidate.extras
++            or parsed.specifier != candidate.specifier
++            or parsed.marker != candidate.marker
++        ):
++            raise InvalidRequirement("Requirement fields do not round-trip")
++
++        result = type(self)(str(parsed))
++        result.specifier = deepcopy(candidate.specifier)
++        return result
++
+     def __getstate__(self) -> tuple[str, bool | None]:
+         # Return the requirement string for compactness and stability, paired
+         # with the specifier's explicit prereleases override, which is not
+diff --git a/tests/test_requirements.py b/tests/test_requirements.py
+index ad78c2b..4791b88 100644
+--- a/tests/test_requirements.py
++++ b/tests/test_requirements.py
+@@ -4,6 +4,7 @@
+ 
+ from __future__ import annotations
+ 
++import copy
+ import pickle
+ 
+ import pytest
+@@ -1085,3 +1086,99 @@ def test_pickle_requirement_25_0_format_loads() -> None:
+     assert str(r.specifier) == ">=2.0"
+     assert r.marker is None
+     assert r == Requirement("requests>=2.0")
++
++
++class TestRequirementReplace:
++    @pytest.mark.parametrize(
++        "changes",
++        [
++            {},
++            {"name": "flask"},
++            {"extras": {"tests"}},
++            {"specifier": SpecifierSet(">=3.0")},
++            {"marker": Marker('extra == "Foo_Bar"')},
++            {"marker": None},
++            {"specifier": SpecifierSet(), "url": "https://example.com/pkg"},
++        ],
++    )
++    def test_replace(self, changes: dict[str, object]) -> None:
++        original = Requirement('requests[security]>=2.0; python_version >= "3"')
++        before = str(original)
++        result = original.__replace__(**changes)
++        assert result is not original
++        assert str(original) == before
++        assert result == Requirement(str(result))
++        for field in ("name", "url", "extras", "specifier", "marker"):
++            assert getattr(result, field) == changes.get(
++                field, getattr(original, field)
++            )
++        assert result.extras is not original.extras
++        assert result.marker is not original.marker
++
++    @pytest.mark.parametrize(
++        "changes",
++        [
++            {"name": "not a name!"},
++            {"name": "foo[bar]"},
++            {"name": "foo>=1"},
++            {"extras": {"a,b"}},
++            {"extras": {""}},
++            {"url": ""},
++            {"url": "https://example.com/ ; os_name == 'posix'"},
++            {"url": "https://example.com/", "specifier": SpecifierSet(">=1")},
++            {"name": None},
++        ],
++    )
++    def test_invalid(self, changes: dict[str, object]) -> None:
++        with pytest.raises(InvalidRequirement):
++            Requirement("demo").__replace__(**changes)
++
++    def test_unknown_field(self) -> None:
++        with pytest.raises(TypeError, match="unknown"):
++            Requirement("demo").__replace__(unknown="value")
++
++    def test_positional_argument(self) -> None:
++        with pytest.raises(TypeError):
++            Requirement("demo").__replace__("other")  # type: ignore[call-arg]
++
++    @pytest.mark.parametrize("override", [None, False, True])
++    @pytest.mark.parametrize("replace_specifier", [False, True])
++    def test_specifier_copy(
++        self, override: bool | None, replace_specifier: bool
++    ) -> None:
++        original = Requirement("demo>=1,<3")
++        specifier = SpecifierSet(">=2,<4") if replace_specifier else original.specifier
++        specifier.prereleases = override
++        for index, spec in enumerate(specifier):
++            spec.prereleases = bool(index)
++        expected = {str(spec): spec._prereleases for spec in specifier}
++        result = (
++            original.__replace__(specifier=specifier)
++            if replace_specifier
++            else original.__replace__()
++        )
++        assert result.specifier is not specifier
++        assert result.specifier._prereleases is override
++        assert {str(spec): spec._prereleases for spec in result.specifier} == expected
++        for copied in result.specifier:
++            assert all(copied is not source for source in specifier)
++            copied.prereleases = None
++        result.specifier.prereleases = not override
++        assert specifier._prereleases is override
++        assert {str(spec): spec._prereleases for spec in specifier} == expected
++
++    def test_subclass(self) -> None:
++        class CustomRequirement(Requirement):
++            def __init__(self, requirement_string: str) -> None:
++                super().__init__(requirement_string)
++                self.initial_name = self.name
++
++        result = CustomRequirement("demo").__replace__(name="other")
++        assert isinstance(result, CustomRequirement)
++        assert result.initial_name == "other"
++
++    @pytest.mark.skipif(not hasattr(copy, "replace"), reason="Python 3.13+")
++    def test_copy_replace(self) -> None:
++        original = Requirement("demo>=1")
++        result = copy.replace(original, specifier=SpecifierSet(">=2"))  # type: ignore[attr-defined]
++        assert str(result) == "demo>=2"

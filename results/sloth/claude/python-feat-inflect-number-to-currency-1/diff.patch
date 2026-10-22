@@ -1,0 +1,55 @@
+diff --git a/inflect/__init__.py b/inflect/__init__.py
+index cbe1702..e8d8c36 100644
+--- a/inflect/__init__.py
++++ b/inflect/__init__.py
+@@ -61,7 +61,7 @@ import functools
+ import itertools
+ import re
+ from collections.abc import Callable, Iterable, Iterator, Sequence
+-from decimal import Decimal
++from decimal import ROUND_HALF_UP, Context, Decimal, InvalidOperation
+ from numbers import Number
+ from re import Match
+ from typing import (
+@@ -3930,6 +3930,34 @@ class engine:
+     def _get_sign(num):
+         return {'+': 'plus', '-': 'minus'}.get(num.lstrip()[0], '')
+ 
++    @typechecked
++    def number_to_currency(self, num: Number | str, andword: str = "and") -> str:
++        """
++        Return an amount in words with the cents as a fraction of 100.
++
++        e.g. 100020.56 -> "one hundred thousand and twenty and 56/100"
++
++        The amount is rounded half up to the cent, going by the number as
++        written. The "and" before the cents is always written; andword only
++        affects the whole amount, as in number_to_words.
++
++        Raise BadNumValueError if num is not a finite number.
++        """
++        try:
++            amount = Decimal(str(num))
++            if not amount.is_finite():
++                raise BadNumValueError
++            amount = amount.quantize(
++                Decimal("0.01"),
++                rounding=ROUND_HALF_UP,
++                context=Context(prec=max(28, amount.adjusted() + 4)),
++            )
++        except InvalidOperation as err:
++            raise BadNumValueError from err
++        whole, cents = f"{amount:f}".split(".")
++        words = self.number_to_words(whole, andword=andword)
++        return f"{words} and {cents}/100"
++
+     @typechecked
+     def number_to_words(  # noqa: C901
+         self,
+diff --git a/newsfragments/+number-to-currency.feature.rst b/newsfragments/+number-to-currency.feature.rst
+new file mode 100644
+index 0000000..fe29a89
+--- /dev/null
++++ b/newsfragments/+number-to-currency.feature.rst
+@@ -0,0 +1 @@
++Added ``number_to_currency``, which writes an amount in words with the cents as a fraction of 100 (e.g. ``one hundred thousand and twenty and 56/100``).

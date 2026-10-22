@@ -25,4 +25,5 @@ diffs: a passing run can still be bad code.
 with Sonnet, Codex with gpt-6.1-sol at low effort. Clones, prepared projects and raw agent output live in
 `~/.cache/muffle-evals`.
 
-Results: [BENCHMARK.md](BENCHMARK.md). Adding a task: see [TASKS.md](TASKS.md).
+Results: [BENCHMARK.md](BENCHMARK.md). The code each agent wrote, next to the upstream change, per task:
+[results/tasks/](results/tasks/). Adding a task: see [TASKS.md](TASKS.md).

@@ -1,0 +1,113 @@
+diff --git a/doc/source/index.rst b/doc/source/index.rst
+index 928ddd9..f2da34c 100644
+--- a/doc/source/index.rst
++++ b/doc/source/index.rst
+@@ -198,6 +198,17 @@ increasing jitter helps minimise collisions.
+         raise Exception
+ 
+ 
++The wait time can also depend on the exception raised by the last attempt.
++
++.. testcode::
++
++    def wait_for_error(exception):
++        return 5.0 if isinstance(exception, ConnectionError) else 60.0
++
++    @retry(wait=wait_exception(wait_for_error))
++    def wait_depending_on_exception():
++        raise ConnectionError
++
+ Sometimes it's necessary to build a chain of backoffs.
+ 
+ .. testcode::
+diff --git a/releasenotes/notes/add-wait-exception-3f9a1c7e5b2d4a60.yaml b/releasenotes/notes/add-wait-exception-3f9a1c7e5b2d4a60.yaml
+new file mode 100644
+index 0000000..782f7a9
+--- /dev/null
++++ b/releasenotes/notes/add-wait-exception-3f9a1c7e5b2d4a60.yaml
+@@ -0,0 +1,6 @@
++---
++features:
++  - |
++    Add ``wait_exception``, a wait strategy that calls a function with the
++    exception raised by the last attempt and waits the returned number of
++    seconds. It raises ``RuntimeError`` if the last attempt did not raise.
+diff --git a/tenacity/__init__.py b/tenacity/__init__.py
+index e93793c..b0b4794 100644
+--- a/tenacity/__init__.py
++++ b/tenacity/__init__.py
+@@ -59,6 +59,7 @@ from .stop import stop_when_event_set  # noqa
+ # Import all built-in wait strategies for easier usage.
+ from .wait import wait_chain  # noqa
+ from .wait import wait_combine  # noqa
++from .wait import wait_exception  # noqa
+ from .wait import wait_exponential  # noqa
+ from .wait import wait_fixed  # noqa
+ from .wait import wait_incrementing  # noqa
+@@ -686,6 +687,7 @@ __all__ = [
+     "stop_when_event_set",
+     "wait_chain",
+     "wait_combine",
++    "wait_exception",
+     "wait_exponential",
+     "wait_fixed",
+     "wait_incrementing",
+diff --git a/tenacity/wait.py b/tenacity/wait.py
+index dc3c850..f03cf40 100644
+--- a/tenacity/wait.py
++++ b/tenacity/wait.py
+@@ -56,6 +56,25 @@ class wait_fixed(wait_base):
+         return self.wait_fixed
+ 
+ 
++class wait_exception(wait_base):
++    """Wait strategy that waits the amount of time returned by the predicate.
++
++    The predicate is passed the exception raised by the last attempt and
++    returns the number of seconds to wait.
++    """
++
++    def __init__(self, predicate: typing.Callable[[BaseException], float]) -> None:
++        self.predicate = predicate
++
++    def __call__(self, retry_state: "RetryCallState") -> float:
++        if retry_state.outcome is None:
++            raise RuntimeError("__call__() called before outcome was set")
++        exception = retry_state.outcome.exception()
++        if exception is None:
++            raise RuntimeError("outcome failed but the exception is None")
++        return self.predicate(exception)
++
++
+ class wait_none(wait_fixed):
+     """Wait strategy that doesn't wait at all before retrying."""
+ 
+diff --git a/tests/test_tenacity.py b/tests/test_tenacity.py
+index b76fec2..e9b90ff 100644
+--- a/tests/test_tenacity.py
++++ b/tests/test_tenacity.py
+@@ -1795,3 +1795,24 @@ class TestMockingSleep:
+ 
+ if __name__ == "__main__":
+     unittest.main()
++
++
++class TestWaitException(unittest.TestCase):
++    def test_wait_exception(self):
++        calls = []
++
++        def predicate(exc):
++            calls.append(exc)
++            return 3.5 if isinstance(exc, ValueError) else 60.0
++
++        r = Retrying(wait=tenacity.wait_exception(predicate))
++        for exc, expected in ((ValueError(), 3.5), (KeyError(), 60.0)):
++            rs = make_retry_state(1, 0, last_result=tenacity.Future.construct(1, exc, True))
++            self.assertEqual(expected, r.wait(rs))
++            self.assertIs(exc, calls[-1])
++
++    def test_wait_exception_no_exception(self):
++        r = Retrying(wait=tenacity.wait_exception(lambda e: 1.0))
++        rs = make_retry_state(1, 0, last_result=tenacity.Future.construct(1, "x", False))
++        with self.assertRaises(RuntimeError):
++            r.wait(rs)

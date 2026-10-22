@@ -1,0 +1,62 @@
+diff --git a/src/bytes_mut.rs b/src/bytes_mut.rs
+index 68c5f73..b9461be 100644
+--- a/src/bytes_mut.rs
++++ b/src/bytes_mut.rs
+@@ -1,5 +1,5 @@
+ use core::mem::{self, ManuallyDrop, MaybeUninit};
+-use core::ops::{Deref, DerefMut};
++use core::ops::{Bound, Deref, DerefMut, RangeBounds};
+ use core::ptr::{self, NonNull};
+ use core::{cmp, fmt, hash, slice};
+ 
+@@ -884,6 +884,50 @@ impl BytesMut {
+         }
+     }
+ 
++    /// Appends a copy of the bytes in `range` to this `BytesMut`.
++    ///
++    /// The buffer grows as needed to hold the additional bytes.
++    ///
++    /// # Panics
++    ///
++    /// Panics if the range starts after it ends or is out of bounds for the
++    /// current length.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// use bytes::BytesMut;
++    ///
++    /// let mut buf = BytesMut::from(&b"aaabbb_"[..]);
++    /// buf.extend_from_within(3..6);
++    /// assert_eq!(&buf[..], b"aaabbb_bbb");
++    /// ```
++    pub fn extend_from_within(&mut self, range: impl RangeBounds<usize>) {
++        let len = self.len();
++        let start = match range.start_bound() {
++            Bound::Included(&n) => n,
++            Bound::Excluded(&n) => n.checked_add(1).expect("out of range"),
++            Bound::Unbounded => 0,
++        };
++        let end = match range.end_bound() {
++            Bound::Included(&n) => n.checked_add(1).expect("out of range"),
++            Bound::Excluded(&n) => n,
++            Bound::Unbounded => len,
++        };
++
++        assert!(start <= end, "range start must not be greater than end");
++        assert!(end <= len, "range end out of bounds");
++
++        let count = end - start;
++        self.reserve(count);
++
++        unsafe {
++            let ptr = self.ptr.as_ptr();
++            ptr::copy_nonoverlapping(ptr.add(start), ptr.add(len), count);
++            self.advance_mut(count);
++        }
++    }
++
+     /// Absorbs a `BytesMut` that was previously split off if they are
+     /// contiguous, otherwise appends its bytes to this `BytesMut`.
+     ///

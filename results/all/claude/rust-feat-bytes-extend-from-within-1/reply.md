@@ -1,0 +1,1 @@
+Done. Added `BytesMut::extend_from_within` in `src/bytes_mut.rs`, with the same range and panic checks as `Bytes::slice`. The doc example passes and the build is clean. I didn't run the full test suite, and I didn't add other tests.

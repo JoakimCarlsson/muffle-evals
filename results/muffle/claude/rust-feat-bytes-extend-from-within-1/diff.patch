@@ -1,0 +1,128 @@
+diff --git a/src/bytes_mut.rs b/src/bytes_mut.rs
+index 68c5f73..714e308 100644
+--- a/src/bytes_mut.rs
++++ b/src/bytes_mut.rs
+@@ -1,5 +1,5 @@
+ use core::mem::{self, ManuallyDrop, MaybeUninit};
+-use core::ops::{Deref, DerefMut};
++use core::ops::{Bound, Deref, DerefMut, RangeBounds};
+ use core::ptr::{self, NonNull};
+ use core::{cmp, fmt, hash, slice};
+ 
+@@ -884,6 +884,73 @@ impl BytesMut {
+         }
+     }
+ 
++    /// Appends a copy of the bytes in `range` to the end of this `BytesMut`.
++    ///
++    /// If this `BytesMut` object does not have enough capacity, it is resized
++    /// first.
++    ///
++    /// # Panics
++    ///
++    /// Panics if the range is out of bounds for the current length, or if its
++    /// start is greater than its end.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// use bytes::BytesMut;
++    ///
++    /// let mut buf = BytesMut::new();
++    /// buf.extend_from_slice(b"aaabbb_");
++    /// buf.extend_from_within(3..6);
++    ///
++    /// assert_eq!(b"aaabbb_bbb", &buf[..]);
++    /// ```
++    pub fn extend_from_within(&mut self, range: impl RangeBounds<usize>) {
++        let len = self.len();
++
++        let start = match range.start_bound() {
++            Bound::Included(&n) => n,
++            Bound::Excluded(&n) => n.checked_add(1).expect("out of range"),
++            Bound::Unbounded => 0,
++        };
++        let end = match range.end_bound() {
++            Bound::Included(&n) => n.checked_add(1).expect("out of range"),
++            Bound::Excluded(&n) => n,
++            Bound::Unbounded => len,
++        };
++
++        assert!(
++            start <= end,
++            "range start must not be greater than end: {:?} <= {:?}",
++            start,
++            end,
++        );
++        assert!(
++            end <= len,
++            "range end out of bounds: {:?} <= {:?}",
++            end,
++            len,
++        );
++
++        let cnt = end - start;
++        // May reallocate, so the source pointer is taken afterwards.
++        self.reserve(cnt);
++
++        unsafe {
++            let src = self.as_ptr().add(start);
++            let dst = self.spare_capacity_mut();
++            // Reserved above
++            debug_assert!(dst.len() >= cnt);
++
++            // The destination lies past `len`, so it cannot overlap the source.
++            ptr::copy_nonoverlapping(src, dst.as_mut_ptr().cast(), cnt);
++        }
++
++        unsafe {
++            self.advance_mut(cnt);
++        }
++    }
++
+     /// Absorbs a `BytesMut` that was previously split off if they are
+     /// contiguous, otherwise appends its bytes to this `BytesMut`.
+     ///
+diff --git a/tests/test_bytes.rs b/tests/test_bytes.rs
+index b9bd5e1..8becd09 100644
+--- a/tests/test_bytes.rs
++++ b/tests/test_bytes.rs
+@@ -1720,3 +1720,38 @@ fn bytes_mut_reserve_overflow() {
+     // This call relies on the corrupted cap and may cause UB & HBO
+     b.put_u8(b'h');
+ }
++
++#[test]
++fn extend_from_within_mut() {
++    let mut buf = BytesMut::new();
++    buf.extend_from_slice(b"aaabbb_");
++    buf.extend_from_within(3..6);
++    assert_eq!(&buf[..], b"aaabbb_bbb");
++
++    buf.extend_from_within(..=1);
++    assert_eq!(&buf[..], b"aaabbb_bbbaa");
++    buf.extend_from_within(12..);
++    buf.extend_from_within(5..5);
++    assert_eq!(&buf[..], b"aaabbb_bbbaa");
++
++    // Forces reallocation while the source lives in the old buffer.
++    let mut buf = BytesMut::from(&LONG[..]);
++    buf.extend_from_within(..);
++    assert_eq!(&buf[..LONG.len()], LONG);
++    assert_eq!(&buf[LONG.len()..], LONG);
++}
++
++#[test]
++#[should_panic]
++fn extend_from_within_out_of_bounds() {
++    let mut buf = BytesMut::from(&b"abc"[..]);
++    buf.extend_from_within(1..4);
++}
++
++#[test]
++#[should_panic]
++fn extend_from_within_inverted_range() {
++    let mut buf = BytesMut::from(&b"abc"[..]);
++    #[allow(clippy::reversed_empty_ranges)]
++    buf.extend_from_within(2..1);
++}

@@ -1,0 +1,43 @@
+diff --git a/README.md b/README.md
+index 47b6e26..85493e5 100644
+--- a/README.md
++++ b/README.md
+@@ -126,6 +126,9 @@ b = WithJitter(500*time.Millisecond, b)
+ 
+ // Return the next value, +/- 5% of the result
+ b = WithJitterPercent(5, b)
++
++// Return a random value between 0 and the result ("full jitter")
++b = WithFullJitter(b)
+ ```
+ 
+ ### MaxRetries
+diff --git a/backoff.go b/backoff.go
+index b493869..562c022 100644
+--- a/backoff.go
++++ b/backoff.go
+@@ -67,6 +67,24 @@ func WithJitterPercent(j uint64, next Backoff) Backoff {
+ 	})
+ }
+ 
++// WithFullJitter wraps a backoff function and returns a random duration between
++// 0 (inclusive) and the base value (exclusive). A base value that is zero or
++// negative is returned unchanged.
++func WithFullJitter(next Backoff) Backoff {
++	return BackoffFunc(func() (time.Duration, bool) {
++		val, stop := next.Next()
++		if stop {
++			return 0, true
++		}
++
++		if val <= 0 {
++			return val, false
++		}
++
++		return time.Duration(rand.Int64N(int64(val))), false
++	})
++}
++
+ // WithMaxRetries executes the backoff function up until the maximum attempts.
+ func WithMaxRetries(max uint64, next Backoff) Backoff {
+ 	var l sync.Mutex

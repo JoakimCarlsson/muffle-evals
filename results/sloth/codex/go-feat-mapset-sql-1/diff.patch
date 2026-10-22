@@ -1,0 +1,74 @@
+diff --git a/threadsafe.go b/threadsafe.go
+index a9d7526..bd600be 100644
+--- a/threadsafe.go
++++ b/threadsafe.go
+@@ -26,6 +26,7 @@ SOFTWARE.
+ package mapset
+ 
+ import (
++	"database/sql/driver"
+ 	"sync"
+ )
+ 
+@@ -351,3 +352,16 @@ func (t *threadSafeSet[T]) UnmarshalJSON(p []byte) error {
+ 
+ 	return err
+ }
++
++// Value returns the set as a JSON array for storage in a database column.
++func (t *threadSafeSet[T]) Value() (driver.Value, error) {
++	return t.MarshalJSON()
++}
++
++// Scan replaces the set with a JSON array from a string or byte slice.
++// A nil source empties the set; errors leave its contents unchanged.
++func (t *threadSafeSet[T]) Scan(src any) error {
++	t.Lock()
++	defer t.Unlock()
++	return t.uss.Scan(src)
++}
+diff --git a/threadunsafe.go b/threadunsafe.go
+index 07b8ee0..b03f47f 100644
+--- a/threadunsafe.go
++++ b/threadunsafe.go
+@@ -26,6 +26,7 @@ SOFTWARE.
+ package mapset
+ 
+ import (
++	"database/sql/driver"
+ 	"encoding/json"
+ 	"fmt"
+ 	"strings"
+@@ -382,3 +383,32 @@ func (s *threadUnsafeSet[T]) UnmarshalJSON(b []byte) error {
+ 
+ 	return nil
+ }
++
++// Value returns the set as a JSON array for storage in a database column.
++func (s *threadUnsafeSet[T]) Value() (driver.Value, error) {
++	return s.MarshalJSON()
++}
++
++// Scan replaces the set with a JSON array from a string or byte slice.
++// A nil source empties the set; errors leave its contents unchanged.
++func (s *threadUnsafeSet[T]) Scan(src any) error {
++	var data []byte
++	switch v := src.(type) {
++	case nil:
++		s.Clear()
++		return nil
++	case string:
++		data = []byte(v)
++	case []byte:
++		data = v
++	default:
++		return fmt.Errorf("mapset: cannot scan %T into a set", src)
++	}
++
++	replacement := newThreadUnsafeSet[T]()
++	if err := replacement.UnmarshalJSON(data); err != nil {
++		return err
++	}
++	*s = *replacement
++	return nil
++}

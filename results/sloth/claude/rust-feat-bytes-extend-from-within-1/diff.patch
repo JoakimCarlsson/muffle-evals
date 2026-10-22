@@ -1,0 +1,80 @@
+diff --git a/src/bytes_mut.rs b/src/bytes_mut.rs
+index 68c5f73..19855f1 100644
+--- a/src/bytes_mut.rs
++++ b/src/bytes_mut.rs
+@@ -1,5 +1,5 @@
+ use core::mem::{self, ManuallyDrop, MaybeUninit};
+-use core::ops::{Deref, DerefMut};
++use core::ops::{Bound, Deref, DerefMut, RangeBounds};
+ use core::ptr::{self, NonNull};
+ use core::{cmp, fmt, hash, slice};
+ 
+@@ -884,6 +884,68 @@ impl BytesMut {
+         }
+     }
+ 
++    /// Appends a copy of the bytes in `range` to the end of this `BytesMut`.
++    ///
++    /// If this `BytesMut` does not have enough capacity, it is resized first.
++    ///
++    /// # Panics
++    ///
++    /// Panics if the range is out of bounds for the current length or its
++    /// start is greater than its end.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// use bytes::BytesMut;
++    ///
++    /// let mut buf = BytesMut::new();
++    /// buf.extend_from_slice(b"aaabbb_");
++    /// buf.extend_from_within(3..6);
++    ///
++    /// assert_eq!(&buf[..], b"aaabbb_bbb");
++    /// ```
++    pub fn extend_from_within(&mut self, range: impl RangeBounds<usize>) {
++        let len = self.len();
++
++        let begin = match range.start_bound() {
++            Bound::Included(&n) => n,
++            Bound::Excluded(&n) => n.checked_add(1).expect("out of range"),
++            Bound::Unbounded => 0,
++        };
++
++        let end = match range.end_bound() {
++            Bound::Included(&n) => n.checked_add(1).expect("out of range"),
++            Bound::Excluded(&n) => n,
++            Bound::Unbounded => len,
++        };
++
++        assert!(
++            begin <= end,
++            "range start must not be greater than end: {:?} <= {:?}",
++            begin,
++            end,
++        );
++        assert!(
++            end <= len,
++            "range end out of bounds: {:?} <= {:?}",
++            end,
++            len,
++        );
++
++        let cnt = end - begin;
++        self.reserve(cnt);
++
++        unsafe {
++            // `reserve` may have moved the buffer, so take the source pointer after it.
++            let src = self.as_ptr().add(begin);
++            let dst = self.spare_capacity_mut();
++            debug_assert!(dst.len() >= cnt);
++
++            ptr::copy_nonoverlapping(src, dst.as_mut_ptr().cast(), cnt);
++            self.advance_mut(cnt);
++        }
++    }
++
+     /// Absorbs a `BytesMut` that was previously split off if they are
+     /// contiguous, otherwise appends its bytes to this `BytesMut`.
+     ///

@@ -1,0 +1,44 @@
+diff --git a/tenacity/__init__.py b/tenacity/__init__.py
+index e93793c..d759b98 100644
+--- a/tenacity/__init__.py
++++ b/tenacity/__init__.py
+@@ -59,6 +59,7 @@ from .stop import stop_when_event_set  # noqa
+ # Import all built-in wait strategies for easier usage.
+ from .wait import wait_chain  # noqa
+ from .wait import wait_combine  # noqa
++from .wait import wait_exception  # noqa
+ from .wait import wait_exponential  # noqa
+ from .wait import wait_fixed  # noqa
+ from .wait import wait_incrementing  # noqa
+diff --git a/tenacity/wait.py b/tenacity/wait.py
+index dc3c850..c6be98e 100644
+--- a/tenacity/wait.py
++++ b/tenacity/wait.py
+@@ -56,6 +56,27 @@ class wait_fixed(wait_base):
+         return self.wait_fixed
+ 
+ 
++class wait_exception(wait_base):
++    """Wait for the seconds returned by a predicate given the last exception.
++
++    Raise RuntimeError if the last attempt did not raise an exception.
++    """
++
++    def __init__(self, predicate: typing.Callable[[BaseException], float]) -> None:
++        """Set the function that computes the wait from an exception."""
++        self.predicate = predicate
++
++    def __call__(self, retry_state: "RetryCallState") -> float:
++        """Return the predicate's wait for the failed attempt's exception."""
++        outcome = retry_state.outcome
++        exception = outcome.exception() if outcome is not None else None
++        if exception is None:
++            raise RuntimeError(
++                "wait_exception requires an attempt that raised an exception"
++            )
++        return self.predicate(exception)
++
++
+ class wait_none(wait_fixed):
+     """Wait strategy that doesn't wait at all before retrying."""
+ 

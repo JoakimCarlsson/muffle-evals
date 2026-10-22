@@ -1,0 +1,1 @@
+Done. Both sets now implement `Value()` and `Scan()` in `threadunsafe.go` and `threadsafe.go`. The build and existing tests pass. I added no new tests, since you didn't ask for any, so `Value` and `Scan` haven't been run.

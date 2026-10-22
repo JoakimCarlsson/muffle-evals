@@ -12,12 +12,25 @@ A task is a bug that was fixed upstream in an open-source project, in `tasks/<id
   name the report cannot guess.
 - The project builds offline after `setup`, and `test` takes under 3 minutes once set up.
 
+## Feature tasks
+
+A task with `kind = "feature"` in `task.toml` is a small feature added upstream instead of a bug fix: a new option,
+function or behaviour that an agent could build small or big. They measure how much code each setup writes when it
+picks the scope itself.
+
+- The upstream change adds about 15 to 150 lines of non-test code, with tests for it.
+- `prompt.md` is a feature request as a user would write it. It names every public name, argument and return shape
+  the hidden tests use, since the agent cannot guess them, but never how to build it.
+- Prefer features with room to over-build: where a plain version is enough but a configurable or abstracted one is
+  tempting.
+
 ## Files
 
 `task.toml`:
 
 ```toml
 language = "rust"                         # rust, python, typescript or go
+kind = "bug"                              # bug (the default) or feature
 repo = "https://github.com/owner/name"
 base = "<full sha of the parent of the fix>"
 fix = "<full sha of the fix>"

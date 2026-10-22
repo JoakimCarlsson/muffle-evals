@@ -1,0 +1,129 @@
+diff --git a/comma.go b/comma.go
+index 64ce8c9..4dfa460 100644
+--- a/comma.go
++++ b/comma.go
+@@ -139,3 +139,85 @@ func BigComma(bin *big.Int) string {
+ 	parts[j] = strconv.Itoa(int(b.Int64()))
+ 	return sign + strings.Join(parts[j:], ",")
+ }
++
++// splitComma validates s as an optionally signed decimal number whose
++// integer part is either plain digits or digits grouped by commas in
++// threes, optionally followed by '.' and digits. It returns s with the
++// commas removed.
++func splitComma(s string) (string, bool) {
++	body := s
++	if body != "" && (body[0] == '-' || body[0] == '+') {
++		body = body[1:]
++	}
++	intPart, frac, hasFrac := strings.Cut(body, ".")
++	if hasFrac && !isDigits(frac) {
++		return "", false
++	}
++
++	groups := strings.Split(intPart, ",")
++	if len(groups) > 1 {
++		if len(groups[0]) > 3 {
++			return "", false
++		}
++		for _, g := range groups[1:] {
++			if len(g) != 3 {
++				return "", false
++			}
++		}
++	}
++	for _, g := range groups {
++		if !isDigits(g) {
++			return "", false
++		}
++	}
++	return s[:len(s)-len(body)] + strings.Join(groups, "") + s[len(s)-len(body)+len(intPart):], true
++}
++
++func isDigits(s string) bool {
++	if s == "" {
++		return false
++	}
++	for i := 0; i < len(s); i++ {
++		if s[i] < '0' || s[i] > '9' {
++			return false
++		}
++	}
++	return true
++}
++
++// ParseComma parses a string produced by Comma back into an int64.
++// Plain numbers without commas are accepted too. On error it returns 0.
++//
++// e.g. ParseComma("834,142") -> 834142
++func ParseComma(s string) (int64, error) {
++	clean, ok := splitComma(s)
++	if !ok || strings.Contains(clean, ".") {
++		return 0, &strconv.NumError{Func: "ParseComma", Num: s, Err: strconv.ErrSyntax}
++	}
++	n, err := strconv.ParseInt(clean, 10, 64)
++	if err != nil {
++		return 0, &strconv.NumError{Func: "ParseComma", Num: s, Err: err.(*strconv.NumError).Err}
++	}
++	return n, nil
++}
++
++// ParseCommaf parses a string produced by Commaf back into a float64.
++// Plain numbers without commas, and "NaN", "+Inf" and "-Inf", are
++// accepted too. On error it returns 0.
++//
++// e.g. ParseCommaf("834,142.32") -> 834142.32
++func ParseCommaf(s string) (float64, error) {
++	switch s {
++	case "NaN", "+Inf", "-Inf":
++		return strconv.ParseFloat(s, 64)
++	}
++	clean, ok := splitComma(s)
++	if !ok {
++		return 0, &strconv.NumError{Func: "ParseCommaf", Num: s, Err: strconv.ErrSyntax}
++	}
++	f, err := strconv.ParseFloat(clean, 64)
++	if err != nil {
++		return 0, &strconv.NumError{Func: "ParseCommaf", Num: s, Err: err.(*strconv.NumError).Err}
++	}
++	return f, nil
++}
+diff --git a/comma_test.go b/comma_test.go
+index 7c629eb..4c5a4a5 100644
+--- a/comma_test.go
++++ b/comma_test.go
+@@ -157,3 +157,34 @@ func TestHumanizeBigIntMutation(t *testing.T) {
+ 		t.Fail()
+ 	}
+ }
++
++func TestParseComma(t *testing.T) {
++	for _, n := range []int64{0, 7, 10, 999, 1000, -1000, 834142, 123456789, -834142, math.MinInt64, math.MaxInt64} {
++		got, err := ParseComma(Comma(n))
++		if err != nil || got != n {
++			t.Errorf("ParseComma(%q) = %d, %v; want %d", Comma(n), got, err, n)
++		}
++	}
++	for _, s := range []string{"", "-", "abc", "123a456", "1.5", "1.2.3", "1,23", "1234,567", "1,2345", ",123", "123,", "9,223,372,036,854,775,808"} {
++		if got, err := ParseComma(s); err == nil || got != 0 {
++			t.Errorf("ParseComma(%q) = %d, %v; want 0, error", s, got, err)
++		}
++	}
++}
++
++func TestParseCommaf(t *testing.T) {
++	for _, f := range []float64{0, 10.11, -834142.32, 123456789, 1e21, 1e-7, math.MaxFloat64, math.Inf(1), math.Inf(-1)} {
++		got, err := ParseCommaf(Commaf(f))
++		if err != nil || got != f {
++			t.Errorf("ParseCommaf(%q) = %v, %v; want %v", Commaf(f), got, err, f)
++		}
++	}
++	if got, err := ParseCommaf(Commaf(math.NaN())); err != nil || !math.IsNaN(got) {
++		t.Errorf("ParseCommaf(NaN) = %v, %v", got, err)
++	}
++	for _, s := range []string{"", "abc", "123a456", "1.2.3", "1.", ".5", "1e5", "1,23.4", "1.2,345"} {
++		if got, err := ParseCommaf(s); err == nil || got != 0 {
++			t.Errorf("ParseCommaf(%q) = %v, %v; want 0, error", s, got, err)
++		}
++	}
++}

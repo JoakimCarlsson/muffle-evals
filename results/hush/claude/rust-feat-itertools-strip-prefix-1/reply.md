@@ -1,0 +1,1 @@
+Done. Added `strip_prefix`, `strip_prefix_by` and public `StripPrefixError` (`src/strip_prefix_err.rs`, `src/lib.rs`). Unit and doc tests pass. No CHANGELOG entry. `cargo test --no-default-features` fails on `chunk_by`, `array_combinations` and `join`. I didn't check whether it failed before my change; `cargo build --no-default-features` passes.

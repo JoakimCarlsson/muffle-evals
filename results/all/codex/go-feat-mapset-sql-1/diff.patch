@@ -1,0 +1,80 @@
+diff --git a/threadsafe.go b/threadsafe.go
+index a9d7526..c598bd2 100644
+--- a/threadsafe.go
++++ b/threadsafe.go
+@@ -26,6 +26,7 @@ SOFTWARE.
+ package mapset
+ 
+ import (
++	"database/sql/driver"
+ 	"sync"
+ )
+ 
+@@ -344,6 +345,19 @@ func (t *threadSafeSet[T]) MarshalJSON() ([]byte, error) {
+ 	return b, err
+ }
+ 
++// Value returns the set as a JSON array for a database column.
++func (t *threadSafeSet[T]) Value() (driver.Value, error) {
++	return t.MarshalJSON()
++}
++
++// Scan replaces the set with a JSON array or clears it for SQL NULL.
++// Invalid input leaves the set unchanged.
++func (t *threadSafeSet[T]) Scan(src any) error {
++	t.Lock()
++	defer t.Unlock()
++	return t.uss.Scan(src)
++}
++
+ func (t *threadSafeSet[T]) UnmarshalJSON(p []byte) error {
+ 	t.Lock()
+ 	err := t.uss.UnmarshalJSON(p)
+diff --git a/threadunsafe.go b/threadunsafe.go
+index 07b8ee0..1b06251 100644
+--- a/threadunsafe.go
++++ b/threadunsafe.go
+@@ -26,6 +26,7 @@ SOFTWARE.
+ package mapset
+ 
+ import (
++	"database/sql/driver"
+ 	"encoding/json"
+ 	"fmt"
+ 	"strings"
+@@ -370,6 +371,35 @@ func (s threadUnsafeSet[T]) MarshalJSON() ([]byte, error) {
+ 	return json.Marshal(s.ToSlice())
+ }
+ 
++// Value returns the set as a JSON array for a database column.
++func (s threadUnsafeSet[T]) Value() (driver.Value, error) {
++	return s.MarshalJSON()
++}
++
++// Scan replaces the set with a JSON array or clears it for SQL NULL.
++// Invalid input leaves the set unchanged.
++func (s *threadUnsafeSet[T]) Scan(src any) error {
++	var data []byte
++	switch v := src.(type) {
++	case nil:
++		s.Clear()
++		return nil
++	case string:
++		data = []byte(v)
++	case []byte:
++		data = v
++	default:
++		return fmt.Errorf("mapset: cannot scan %T into a set", src)
++	}
++
++	replacement := newThreadUnsafeSet[T]()
++	if err := replacement.UnmarshalJSON(data); err != nil {
++		return err
++	}
++	*s = *replacement
++	return nil
++}
++
+ // UnmarshalJSON recreates a set from a JSON array, it only decodes
+ // primitive types. Numbers are decoded as json.Number.
+ func (s *threadUnsafeSet[T]) UnmarshalJSON(b []byte) error {

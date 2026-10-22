@@ -1,0 +1,1 @@
+Done. `parse()` now takes `allowMultiple`. Repeated names become arrays in order, single names stay strings, and decoding is unchanged. An overload returns the new `MultiCookies` type (exported) when `allowMultiple: true`. Existing tests pass (97). I didn't add tests or run your examples. `tsc` fails on a tsconfig `esModuleInterop` deprecation, so the types are unchecked.

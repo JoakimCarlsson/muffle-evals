@@ -1,0 +1,70 @@
+diff --git a/inflect/__init__.py b/inflect/__init__.py
+index cbe1702..1f07610 100644
+--- a/inflect/__init__.py
++++ b/inflect/__init__.py
+@@ -14,7 +14,7 @@ methods:
+     compare compare_nouns compare_verbs compare_adjs
+     present_participle
+     ordinal
+-    number_to_words
++    number_to_words number_to_currency
+     join
+     defnoun defverb defadj defa defan
+ 
+@@ -36,7 +36,7 @@ ARTICLES:
+     classical inflect num a an
+ 
+ NUMERICAL:
+-    ordinal number_to_words
++    ordinal number_to_words number_to_currency
+ 
+ USER_DEFINED:
+     defnoun defverb defadj defa defan
+@@ -61,7 +61,7 @@ import functools
+ import itertools
+ import re
+ from collections.abc import Callable, Iterable, Iterator, Sequence
+-from decimal import Decimal
++from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
+ from numbers import Number
+ from re import Match
+ from typing import (
+@@ -4050,6 +4050,31 @@ class engine:
+         )
+         return signout + valout
+ 
++    @typechecked
++    def number_to_currency(self, num: Number | str, andword: str = "and") -> str:
++        """
++        Return an amount in words with the cents as a fraction of 100.
++
++        The amount is rounded half up to the cent, going by the number as written.
++        Raise BadNumValueError if num is not a finite number.
++
++        >>> engine().number_to_currency(100_020.56)
++        'one hundred thousand and twenty and 56/100'
++        """
++        try:
++            amount = Decimal(str(num).strip())
++        except InvalidOperation as err:
++            raise BadNumValueError from err
++        if not amount.is_finite():
++            raise BadNumValueError
++        with localcontext() as ctx:
++            ctx.prec = len(amount.as_tuple().digits) + max(amount.adjusted(), 0) + 4
++            total_cents = int((amount * 100).to_integral_value(ROUND_HALF_UP))
++        whole, cents = divmod(abs(total_cents), 100)
++        words = self.number_to_words(whole, andword=andword)
++        sign = "minus " * (total_cents < 0)
++        return f"{sign}{words} and {cents:02d}/100"
++
+     @staticmethod
+     def _render(chunks, decimal, comma):
+         first_item = chunks.pop(0)
+diff --git a/newsfragments/+number-to-currency.feature.rst b/newsfragments/+number-to-currency.feature.rst
+new file mode 100644
+index 0000000..6b694ab
+--- /dev/null
++++ b/newsfragments/+number-to-currency.feature.rst
+@@ -0,0 +1 @@
++New ``engine.number_to_currency`` writes an amount in words with the cents as a fraction of 100, as on a check (``one hundred thousand and twenty and 56/100``).

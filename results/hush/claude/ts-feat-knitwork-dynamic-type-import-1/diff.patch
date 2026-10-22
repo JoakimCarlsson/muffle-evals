@@ -1,0 +1,93 @@
+diff --git a/README.md b/README.md
+index 3db6980..d514555 100644
+--- a/README.md
++++ b/README.md
+@@ -177,6 +177,10 @@ Generate a string with double or single quotes and handle escapes.
+ 
+ Generate typescript `declare module` augmentation.
+ 
++### `genDynamicTypeImport(specifier, name?, options)`
++
++Generate a typescript `typeof import()` statement for an optional export name.
++
+ ### `genInlineTypeImport(specifier, name, options)`
+ 
+ Generate an typescript `typeof import()` statement for default import.
+diff --git a/src/typescript.ts b/src/typescript.ts
+index 27fbbe7..f6a8bef 100644
+--- a/src/typescript.ts
++++ b/src/typescript.ts
+@@ -3,6 +3,8 @@ import { ESMCodeGenOptions, ESMImport, genDynamicImport } from "./esm";
+ import { genString } from "./string";
+ import { genObjectKey, wrapInDelimiters } from "./utils";
+ 
++const VALID_PROPERTY_RE = /^[$A-Z_a-z][\w$]*$/;
++
+ export type TypeObject = {
+   [key: string]: string | TypeObject;
+ };
+@@ -40,6 +42,28 @@ export function genInlineTypeImport(
+   })}.${name}`;
+ }
+ 
++/**
++ * Generate a typescript `typeof import()` statement for an optional export name.
++ *
++ * @group Typescript
++ */
++export function genDynamicTypeImport(
++  specifier: string,
++  name?: string,
++  options: ESMCodeGenOptions & { comment?: string } = {},
++) {
++  const importType = `typeof ${genDynamicImport(specifier, {
++    ...options,
++    wrapper: false,
++  })}`;
++  if (name === undefined) {
++    return importType;
++  }
++  return VALID_PROPERTY_RE.test(name)
++    ? `${importType}.${name}`
++    : `${importType}[${genString(name)}]`;
++}
++
+ /**
+  * Generate typescript object type.
+  *
+diff --git a/test/typescript.test.ts b/test/typescript.test.ts
+index 1f32db2..b3cad0f 100644
+--- a/test/typescript.test.ts
++++ b/test/typescript.test.ts
+@@ -3,6 +3,7 @@ import {
+   genInterface,
+   genAugmentation,
+   genInlineTypeImport,
++  genDynamicTypeImport,
+   genTypeImport,
+   genTypeExport,
+ } from "../src";
+@@ -170,3 +171,23 @@ describe("genTypeExport", () => {
+     });
+   }
+ });
++
++describe("genDynamicTypeImport", () => {
++  it("generates type imports", () => {
++    expect(genDynamicTypeImport("pkg", undefined)).toBe('typeof import("pkg")');
++    expect(genDynamicTypeImport("pkg", "foo")).toBe('typeof import("pkg").foo');
++    expect(genDynamicTypeImport("pkg", "foo-bar")).toBe(
++      'typeof import("pkg")["foo-bar"]',
++    );
++    expect(
++      genDynamicTypeImport("pkg", "foo", {
++        comment: 'webpackChunkName: "chunks/dynamic"',
++      }),
++    ).toBe(
++      'typeof import("pkg" /* webpackChunkName: "chunks/dynamic" */).foo',
++    );
++    expect(
++      genDynamicTypeImport("pkg", "foo", { attributes: { type: "json" } }),
++    ).toBe('typeof import("pkg", { with: { type: "json" } }).foo');
++  });
++});

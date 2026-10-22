@@ -1,0 +1,244 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index d8d1da9..03b7050 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -7,6 +7,7 @@
+ - Canonicalize `all_equal_value`'s error type (#1032)
+ 
+ ### Added
++- Add `Itertools::strip_prefix`, `strip_prefix_by`, and `StripPrefixError`
+ - Add `*_with_hasher` adaptors (#1007)
+ 
+ ### Changed
+diff --git a/src/lib.rs b/src/lib.rs
+index d4b17a6..1ef9964 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -140,6 +140,7 @@ pub mod structs {
+     pub use crate::repeatn::RepeatN;
+     #[allow(deprecated)]
+     pub use crate::sources::{Iterate, Unfold};
++    pub use crate::strip_prefix_error::StripPrefixError;
+     pub use crate::take_while_inclusive::TakeWhileInclusive;
+     #[cfg(feature = "use_alloc")]
+     pub use crate::tee::Tee;
+@@ -235,6 +236,7 @@ mod rciter_impl;
+ mod repeatn;
+ mod size_hint;
+ mod sources;
++mod strip_prefix_error;
+ mod take_while_inclusive;
+ #[cfg(feature = "use_alloc")]
+ mod tee;
+@@ -2504,6 +2506,78 @@ pub trait Itertools: Iterator {
+         self.any(|x| x.borrow() == query)
+     }
+ 
++    /// Remove a matching prefix and return the remaining iterator.
++    ///
++    /// An empty prefix always matches and consumes no items from `self`.
++    /// On failure, returns the mismatched items and both remaining iterators
++    /// in a [`StripPrefixError`]. Matched items are consumed and discarded.
++    ///
++    /// ```
++    /// use itertools::Itertools;
++    ///
++    /// assert!((1..6).strip_prefix([1, 2]).unwrap().eq(3..6));
++    /// let err = (1..6).strip_prefix([1, 2, 9, 4]).unwrap_err();
++    /// assert_eq!(err.mismatch, (Some(3), 9));
++    /// assert!(err.prefix.eq([4]));
++    /// assert!(err.iterator.eq(4..6));
++    ///
++    /// let rest: String = "hello".chars().strip_prefix("he".chars()).unwrap().collect();
++    /// assert_eq!(Some(rest.as_str()), "hello".strip_prefix("he"));
++    /// ```
++    fn strip_prefix<P>(self, prefix: P) -> Result<Self, StripPrefixError<Self, P::IntoIter>>
++    where
++        Self: Sized,
++        P: IntoIterator,
++        Self::Item: PartialEq<P::Item>,
++    {
++        self.strip_prefix_by(prefix, PartialEq::eq)
++    }
++
++    /// Remove a prefix using `eq` to compare each iterator item with a prefix item.
++    ///
++    /// Returns the remaining iterator on success. On failure, returns the first
++    /// mismatched pair and both iterators positioned after that pair. If `self`
++    /// runs out first, the iterator item in the mismatch is `None` and `eq` is
++    /// not called for that pair. No further items are requested after failure.
++    /// Matched items are consumed and discarded. An empty prefix consumes no
++    /// items from `self` and does not call `eq`.
++    ///
++    /// ```
++    /// use itertools::Itertools;
++    ///
++    /// let mut comparisons = 0;
++    /// let rest = ["one", "two", "three"].iter().copied()
++    ///     .strip_prefix_by([3, 3], |word, length| {
++    ///         comparisons += 1;
++    ///         word.len() == *length
++    ///     }).unwrap();
++    /// assert_eq!(comparisons, 2);
++    /// assert!(rest.eq(["three"]));
++    /// ```
++    fn strip_prefix_by<P, F>(
++        mut self,
++        prefix: P,
++        mut eq: F,
++    ) -> Result<Self, StripPrefixError<Self, P::IntoIter>>
++    where
++        Self: Sized,
++        P: IntoIterator,
++        F: FnMut(&Self::Item, &P::Item) -> bool,
++    {
++        let mut prefix = prefix.into_iter();
++        while let Some(expected) = prefix.next() {
++            let actual = self.next();
++            if !actual.as_ref().map_or(false, |item| eq(item, &expected)) {
++                return Err(StripPrefixError {
++                    iterator: self,
++                    prefix,
++                    mismatch: (actual, expected),
++                });
++            }
++        }
++        Ok(self)
++    }
++
+     /// Check whether all elements compare equal.
+     ///
+     /// Empty iterators are considered to have equal elements:
+diff --git a/src/strip_prefix_error.rs b/src/strip_prefix_error.rs
+new file mode 100644
+index 0000000..40dc263
+--- /dev/null
++++ b/src/strip_prefix_error.rs
+@@ -0,0 +1,17 @@
++/// A failed prefix match from [`Itertools::strip_prefix`](crate::Itertools::strip_prefix)
++/// or [`Itertools::strip_prefix_by`](crate::Itertools::strip_prefix_by).
++///
++/// Successfully matched items have been consumed and discarded. The mismatched
++/// items are retained in `mismatch`, and both iterators can be used to continue
++/// after the failed comparison. No allocation or cloning is required.
++#[derive(Debug)]
++pub struct StripPrefixError<I: Iterator, P: Iterator> {
++    /// The original iterator, positioned after the mismatched item (or the
++    /// first `None` if it ran out before the prefix).
++    pub iterator: I,
++    /// The prefix iterator, positioned after the mismatched prefix item.
++    pub prefix: P,
++    /// The mismatched iterator item and prefix item. The first element is
++    /// `None` if the original iterator ran out first.
++    pub mismatch: (Option<I::Item>, P::Item),
++}
+diff --git a/tests/quick.rs b/tests/quick.rs
+index 538346b..082690d 100644
+--- a/tests/quick.rs
++++ b/tests/quick.rs
+@@ -2099,3 +2099,15 @@ quickcheck! {
+             && itertools::equal(v.iter().filter(|_| true).tail(n), result)
+     }
+ }
++
++#[test]
++fn strip_prefix_matches_str() {
++    fn property(input: String, prefix: String) -> bool {
++        let expected = input.strip_prefix(prefix.as_str());
++        match input.chars().strip_prefix(prefix.chars()) {
++            Ok(rest) => expected == Some(rest.collect::<String>().as_str()),
++            Err(_) => expected.is_none(),
++        }
++    }
++    qc::quickcheck(property as fn(String, String) -> bool);
++}
+diff --git a/tests/test_core.rs b/tests/test_core.rs
+index adaa06e..9c41ba9 100644
+--- a/tests/test_core.rs
++++ b/tests/test_core.rs
+@@ -398,3 +398,85 @@ fn collect_array() {
+     let iter = v.iter().cloned();
+     assert_eq!(iter.collect_array::<2>(), None);
+ }
++
++#[test]
++fn strip_prefix() {
++    assert!((1..6).strip_prefix([1, 2]).unwrap().eq(3..6));
++    assert!((1..3).strip_prefix([1, 2]).unwrap().eq(iter::empty()));
++    assert!((1..3).strip_prefix([]).unwrap().eq(1..3));
++    assert!(iter::empty::<i32>()
++        .strip_prefix([])
++        .unwrap()
++        .next()
++        .is_none());
++
++    let err: it::StripPrefixError<_, _> = (1..6).strip_prefix([1, 2, 9, 4]).unwrap_err();
++    assert_eq!(err.mismatch, (Some(3), 9));
++    assert!(err.prefix.eq([4]));
++    assert!(err.iterator.eq(4..6));
++
++    let err = (1..3).strip_prefix([1, 2, 3, 4]).unwrap_err();
++    assert_eq!(err.mismatch, (None, 3));
++    assert!(err.prefix.eq([4]));
++    assert!(err.iterator.eq(iter::empty()));
++
++    let err = (1..3).strip_prefix([9, 8]).unwrap_err();
++    assert_eq!(err.mismatch, (Some(1), 9));
++    assert!(err.prefix.eq([8]));
++    assert!(err.iterator.eq([2]));
++}
++
++#[test]
++fn strip_prefix_by() {
++    let mut calls = 0;
++    let err = ["one", "two", "three", "four"]
++        .iter()
++        .copied()
++        .strip_prefix_by([3, 3, 9, 4], |word, length| {
++            calls += 1;
++            word.len() == *length
++        })
++        .unwrap_err();
++    assert_eq!(calls, 3);
++    assert_eq!(err.mismatch, (Some("three"), 9));
++    assert!(err.prefix.eq([4]));
++    assert!(err.iterator.eq(["four"]));
++
++    let mut iterator = (0..3).inspect(|_| panic!("empty prefix polled input"));
++    assert!(iterator
++        .by_ref()
++        .strip_prefix_by([], |_: &i32, _: &i32| {
++            panic!("empty prefix called comparator")
++        })
++        .is_ok());
++
++    let err = iter::empty::<i32>()
++        .strip_prefix_by([1], |_, _| panic!("exhausted input called comparator"))
++        .unwrap_err();
++    assert_eq!(err.mismatch, (None, 1));
++}
++
++#[test]
++fn strip_prefix_non_fused() {
++    let iterator = IntoIterator::into_iter([Some(1), None, Some(3)]).flatten();
++    assert!(iterator.strip_prefix([1]).unwrap().eq([3]));
++    let mut items = IntoIterator::into_iter([Some(1), None, Some(3)]);
++    let iterator = iter::from_fn(move || items.next().flatten());
++    let err = iterator.strip_prefix([1, 2, 3]).err().unwrap();
++    assert_eq!(err.mismatch, (None, 2));
++    assert!(err.iterator.eq([3]));
++    assert!(err.prefix.eq([3]));
++}
++
++#[test]
++fn strip_prefix_different_item_types() {
++    struct Item(i32);
++    impl PartialEq<i32> for Item {
++        fn eq(&self, other: &i32) -> bool {
++            self.0 == *other
++        }
++    }
++    // Neither iterator items nor prefix matching require Clone or Debug.
++    let mut rest = (1..4).map(Item).strip_prefix([1, 2]).ok().unwrap();
++    assert_eq!(rest.next().unwrap().0, 3);
++}

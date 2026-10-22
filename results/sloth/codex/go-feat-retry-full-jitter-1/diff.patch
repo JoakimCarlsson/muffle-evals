@@ -1,0 +1,48 @@
+diff --git a/README.md b/README.md
+index 47b6e26..b73cf40 100644
+--- a/README.md
++++ b/README.md
+@@ -128,6 +128,14 @@ b = WithJitter(500*time.Millisecond, b)
+ b = WithJitterPercent(5, b)
+ ```
+ 
++For full jitter, use a random duration from zero up to (but excluding) the
++wrapped backoff's value:
++
++```golang
++b := NewFibonacci(1 * time.Second)
++b = WithFullJitter(b)
++```
++
+ ### MaxRetries
+ 
+ To terminate a retry, specify the maximum number of _retries_. Note this
+diff --git a/backoff.go b/backoff.go
+index b493869..f1038f9 100644
+--- a/backoff.go
++++ b/backoff.go
+@@ -43,6 +43,24 @@ func WithJitter(j time.Duration, next Backoff) Backoff {
+ 	})
+ }
+ 
++// WithFullJitter wraps a backoff function and returns a random duration in
++// [0, base), where base is the wrapped duration. Nonpositive durations are
++// returned unchanged.
++func WithFullJitter(next Backoff) Backoff {
++	return BackoffFunc(func() (time.Duration, bool) {
++		val, stop := next.Next()
++		if stop {
++			return 0, true
++		}
++
++		if val <= 0 {
++			return val, false
++		}
++
++		return time.Duration(rand.Int64N(int64(val))), false
++	})
++}
++
+ // WithJitterPercent wraps a backoff function and adds the specified jitter
+ // percentage. j can be interpreted as "+/- j%". For example, if j were 5 and
+ // the backoff returned 20s, the value could be between 19 and 21 seconds. The

@@ -1,0 +1,1 @@
+Done. `reverseResolveAlias` added in `src/utils.ts`, with tests and a README import update. Vitest passes. `tsc` printed an npx notice instead of type-check output, so types are unchecked. Nothing committed.

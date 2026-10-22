@@ -1,0 +1,97 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 9e0c186..e237215 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -9,7 +9,7 @@ name = "slab"
+ version = "0.4.9"
+ authors = ["Carl Lerche <me@carllerche.com>"]
+ edition = "2018"
+-rust-version = "1.46"
++rust-version = "1.51"
+ license = "MIT"
+ description = "Pre-allocated storage for a uniform data type"
+ repository = "https://github.com/tokio-rs/slab"
+diff --git a/src/lib.rs b/src/lib.rs
+index cd5fe0e..70691ad 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -144,6 +144,17 @@ pub struct Slab<T> {
+     next: usize,
+ }
+ 
++/// An error returned by [`Slab::get_disjoint_mut`].
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum GetDisjointMutError {
++    /// The same key occurs more than once.
++    OverlappingIndices,
++    /// A key is past the end of the slab's slots.
++    IndexOutOfBounds,
++    /// A key refers to a vacant slot.
++    IndexVacant,
++}
++
+ impl<T> Clone for Slab<T>
+ where
+     T: Clone,
+@@ -725,6 +736,61 @@ impl<T> Slab<T> {
+         }
+     }
+ 
++    /// Return mutable references to the values associated with the given keys,
++    /// in the same order as `keys`.
++    ///
++    /// An empty array returns `Ok([])`. Checking for duplicate keys takes
++    /// O(N²) time and requires no allocation.
++    ///
++    /// # Errors
++    ///
++    /// Duplicate keys return [`GetDisjointMutError::OverlappingIndices`], before
++    /// checking any slots. Otherwise, keys are checked in order: a key past the
++    /// end of the slots returns [`GetDisjointMutError::IndexOutOfBounds`], and
++    /// a vacant slot returns [`GetDisjointMutError::IndexVacant`].
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// use slab::Slab;
++    ///
++    /// let mut slab = Slab::new();
++    /// let a = slab.insert(1);
++    /// let b = slab.insert(2);
++    /// let [x, y] = slab.get_disjoint_mut([a, b]).unwrap();
++    /// std::mem::swap(x, y);
++    /// assert_eq!((slab[a], slab[b]), (2, 1));
++    /// ```
++    pub fn get_disjoint_mut<const N: usize>(
++        &mut self,
++        keys: [usize; N],
++    ) -> Result<[&mut T; N], GetDisjointMutError> {
++        for (i, key) in keys.iter().enumerate() {
++            if keys[..i].contains(key) {
++                return Err(GetDisjointMutError::OverlappingIndices);
++            }
++        }
++        for &key in &keys {
++            match self.entries.get(key) {
++                Some(Entry::Occupied(_)) => {}
++                Some(Entry::Vacant(_)) => return Err(GetDisjointMutError::IndexVacant),
++                None => return Err(GetDisjointMutError::IndexOutOfBounds),
++            }
++        }
++
++        let entries = self.entries.as_mut_ptr();
++        let mut result = mem::MaybeUninit::<[&mut T; N]>::uninit();
++        let output = result.as_mut_ptr() as *mut &mut T;
++        unsafe {
++            for (i, &key) in keys.iter().enumerate() {
++                if let Entry::Occupied(value) = &mut *entries.add(key) {
++                    output.add(i).write(value);
++                }
++            }
++            Ok(result.assume_init())
++        }
++    }
++
+     /// Return two mutable references to the values associated with the two
+     /// given keys simultaneously.
+     ///

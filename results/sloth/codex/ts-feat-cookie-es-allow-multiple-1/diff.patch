@@ -1,0 +1,96 @@
+diff --git a/README.md b/README.md
+index 0644a07..6c85620 100644
+--- a/README.md
++++ b/README.md
+@@ -35,6 +35,14 @@ import { parse, serialize, parseSetCookie, splitSetCookieString } from "cookie-e
+ import { parse, serialize, parseSetCookie, splitSetCookieString } from "https://esm.sh/cookie-es";
+ ```
+ 
++Pass `allowMultiple: true` to collect duplicate cookie values in order. Names that
++appear once remain strings. By default, the first value wins.
++
++```js
++parse("foo=a;bar=bar;foo=b;foo=c", { allowMultiple: true });
++// { foo: ["a", "b", "c"], bar: "bar" }
++```
++
+ ## License
+ 
+ [MIT](./LICENSE)
+diff --git a/src/cookie/parse.ts b/src/cookie/parse.ts
+index c80c0f9..28475c7 100644
+--- a/src/cookie/parse.ts
++++ b/src/cookie/parse.ts
+@@ -22,8 +22,22 @@ const NullObject = /* @__PURE__ */ (() => {
+  * Parse the given cookie header string into an object
+  * The object has the various cookies as keys(names) => values
+  */
+-export function parse(str: string, options?: CookieParseOptions): Cookies {
+-  const obj: Cookies = new NullObject();
++export function parse(
++  str: string,
++  options?: CookieParseOptions & { allowMultiple?: false },
++): Cookies;
++/**
++ * Parse a `Cookie` header, optionally collecting duplicate values in arrays.
++ */
++export function parse(str: string, options?: CookieParseOptions): Cookies<true>;
++/**
++ * Parse a `Cookie` header using the given decoding and duplicate handling options.
++ */
++export function parse(
++  str: string,
++  options?: CookieParseOptions,
++): Record<string, string | undefined | (string | undefined)[]> {
++  const obj: Cookies<true> = new NullObject();
+   const len = str.length;
+   // RFC 6265 sec 4.1.1, RFC 2616 2.2 defines a cookie name consists of one char minimum, plus '='.
+   if (len < 2) return obj;
+@@ -50,8 +64,15 @@ export function parse(str: string, options?: CookieParseOptions): Cookies {
+       continue;
+     }
+ 
+-    // only assign once
+-    if (obj[key] === undefined) {
++    if (options?.allowMultiple && Object.hasOwn(obj, key)) {
++      const value = dec(valueSlice(str, eqIdx + 1, endIdx));
++      const previous = obj[key];
++      if (Array.isArray(previous)) {
++        previous.push(value);
++      } else {
++        obj[key] = [previous, value];
++      }
++    } else if (obj[key] === undefined) {
+       obj[key] = dec(valueSlice(str, eqIdx + 1, endIdx));
+     }
+ 
+diff --git a/src/cookie/types.ts b/src/cookie/types.ts
+index 51b39f5..78dc52f 100644
+--- a/src/cookie/types.ts
++++ b/src/cookie/types.ts
+@@ -6,6 +6,13 @@
+  * Parse options.
+  */
+ export interface CookieParseOptions {
++  /**
++   * Collect duplicate cookie values in order. Single values remain strings.
++   *
++   * @default false
++   */
++  allowMultiple?: boolean;
++
+   /**
+    * Specifies a function that will be used to decode a [cookie-value](https://datatracker.ietf.org/doc/html/rfc6265#section-4.1.1).
+    * Since the value of a cookie has a limited character set (and must be a simple string), this function can be used to decode
+@@ -28,7 +35,10 @@ export interface CookieParseOptions {
+ /**
+  * Cookies object.
+  */
+-export type Cookies = Record<string, string | undefined>;
++export type Cookies<AllowMultiple extends boolean = false> = Record<
++  string,
++  string | undefined | (AllowMultiple extends true ? (string | undefined)[] : never)
++>;
+ 
+ /**
+  * Stringify options.

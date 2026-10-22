@@ -1,0 +1,91 @@
+diff --git a/CHANGELOG.rst b/CHANGELOG.rst
+index e9bb15a..fb268ee 100644
+--- a/CHANGELOG.rst
++++ b/CHANGELOG.rst
+@@ -4,6 +4,11 @@ Changelog
+ *unreleased*
+ ~~~~~~~~~~~~
+ 
++Features:
++
++* Add :meth:`Requirement.__replace__() <packaging.requirements.Requirement.__replace__>`,
++  supporting :func:`copy.replace` on Python 3.13+.
++
+ Removals:
+ 
+ * Drop support for EOL Python 3.9. (:pull:`1263`)
+diff --git a/src/packaging/requirements.py b/src/packaging/requirements.py
+index 124de66..b2677e2 100644
+--- a/src/packaging/requirements.py
++++ b/src/packaging/requirements.py
+@@ -3,12 +3,12 @@
+ # for complete details.
+ from __future__ import annotations
+ 
+-from typing import TYPE_CHECKING
++from typing import TYPE_CHECKING, Any
+ 
+ from ._parser import parse_requirement as _parse_requirement
+ from ._tokenizer import ParserSyntaxError
+ from .markers import Marker, _normalize_extra_values
+-from .specifiers import InvalidSpecifier, SpecifierSet
++from .specifiers import InvalidSpecifier, Specifier, SpecifierSet
+ from .utils import canonicalize_name
+ 
+ if TYPE_CHECKING:
+@@ -71,6 +71,11 @@ class Requirement:
+         equivalent specifiers. The string representation still preserves the
+         parsed name and extras spelling.
+ 
++    .. versionchanged:: 26.4
++
++        Added :meth:`__replace__`, so :func:`copy.replace` works on
++        Python 3.13+.
++
+     :param str requirement_string: The string representation of a requirement.
+     :raises InvalidRequirement: If the given ``requirement_string`` is not
+         parseable, then this exception will be raised.
+@@ -124,6 +129,43 @@ class Requirement:
+         if self.marker:
+             yield f"; {self.marker}"
+ 
++    def __replace__(self, /, **changes: Any) -> Requirement:
++        """Return a copy with the given fields replaced.
++
++        Accepts the keyword arguments ``name``, ``url``, ``extras``,
++        ``specifier`` and ``marker``. The result is validated and normalized as
++        if its string form had been parsed. The specifier is copied, keeping the
++        ``prereleases`` settings of the set and of each of its specifiers.
++
++        :raises TypeError: On an unknown keyword argument.
++        :raises InvalidRequirement: If the resulting requirement is invalid, or
++            a value would be read back as something different.
++        """
++        unknown = changes.keys() - set(self.__slots__)
++        if unknown:
++            raise TypeError(f"Unexpected replace arguments: {sorted(unknown)}")
++        fields = {key: changes.get(key, getattr(self, key)) for key in self.__slots__}
++
++        draft = Requirement.__new__(Requirement)
++        for key, value in fields.items():
++            setattr(draft, key, value)
++        result = type(self)(str(draft))
++
++        if (
++            result.name != fields["name"]
++            or result.url != (fields["url"] or None)
++            or result.extras != set(fields["extras"])
++            or result.specifier != fields["specifier"]
++        ):
++            raise InvalidRequirement(f"Replacement values are inconsistent: {draft}")
++
++        source: SpecifierSet = fields["specifier"]
++        result.specifier = SpecifierSet(
++            [Specifier(str(spec), spec._prereleases) for spec in source._specs],
++            source._prereleases,
++        )
++        return result
++
+     def __getstate__(self) -> tuple[str, bool | None]:
+         # Return the requirement string for compactness and stability, paired
+         # with the specifier's explicit prereleases override, which is not

@@ -11,6 +11,8 @@ usage:
   evals.py verify <task>...                        check that the hidden tests fail before the fix and pass after
   evals.py run <setup> <agent> <task> <n>          one run: the agent works, then it is scored
   evals.py matrix <setups> <agents> <runs> [tasks] every missing run, 4 at a time; lists are comma separated
+  evals.py files                                   write the changed files of older runs and each task's upstream files
+  evals.py files                                   write the changed files of older runs and each task's upstream files
   evals.py report                                  write results/README.md from every scored run
 
 Setups are in setups.toml. Bulky files (clones, prepared copies, raw agent output) live in ~/.cache/muffle-evals;
@@ -176,6 +178,28 @@ def drop_agent_tests(work, start_tree, end_tree):
             (work / path).write_bytes(content)
 
 
+def save_changed_files(source, start_tree, end_tree, target):
+    """Copy every file that differs between ``start_tree`` and ``end_tree`` of the repository ``source``, as it is in
+    ``end_tree``, to the same path under ``target``."""
+    changed = git("diff", "--name-only", "--no-renames", "--diff-filter=d", start_tree, end_tree, cwd=source)
+    for path in changed.splitlines():
+        content = subprocess.run(["git", "cat-file", "blob", f"{end_tree}:{path}"], cwd=source, capture_output=True,
+                                 check=True).stdout
+        (target / path).parent.mkdir(parents=True, exist_ok=True)
+        (target / path).write_bytes(content)
+
+
+def save_changed_files(source, start_tree, end_tree, target):
+    """Copy every file that differs between ``start_tree`` and ``end_tree`` of the repository ``source``, as it is in
+    ``end_tree``, to the same path under ``target``."""
+    changed = git("diff", "--name-only", "--no-renames", "--diff-filter=d", start_tree, end_tree, cwd=source)
+    for path in changed.splitlines():
+        content = subprocess.run(["git", "cat-file", "blob", f"{end_tree}:{path}"], cwd=source, capture_output=True,
+                                 check=True).stdout
+        (target / path).parent.mkdir(parents=True, exist_ok=True)
+        (target / path).write_bytes(content)
+
+
 def reference_patch(task):
     """Return the fix's diff without its test files."""
     excludes = [f":(exclude){path}" for path in task["tests"]]
@@ -221,9 +245,11 @@ def snapshot(work):
     return tree
 
 
-def run_agent(setup_flags, agent, task, work, raw, config, env):
-    """Run ``agent`` on the task in ``work`` with muffle set up by ``setup_flags`` (none: no muffle) and return its
-    exit code."""
+def run_agent(setup, agent, task, work, raw, config, env):
+    """Run ``agent`` on the task in ``work`` as the setup ``setup`` of setups.toml says and return its exit code.
+
+    The setup's ``init`` flags go to ``muffle init`` (no ``init``: no muffle) and its ``claude_args`` to Claude Code.
+    """
     config.mkdir(parents=True)
     if agent == "claude":
         credentials = max(Path.home().glob(".local/share/pandemonium-nightly/accounts/claude-code/*/.credentials.json"),
@@ -231,7 +257,8 @@ def run_agent(setup_flags, agent, task, work, raw, config, env):
         shutil.copy(credentials, config / ".credentials.json")
         env["CLAUDE_CONFIG_DIR"] = str(config)
         command = [str(CLAUDE), "-p", task["prompt"], "--model", CLAUDE_MODEL, "--permission-mode",
-                   "bypassPermissions", "--output-format", "stream-json", "--verbose", "--strict-mcp-config"]
+                   "bypassPermissions", "--output-format", "stream-json", "--verbose", "--strict-mcp-config",
+                   *(os.path.expandvars(os.path.expanduser(arg)) for arg in setup.get("claude_args", []))]
         secret = config / ".credentials.json"
     else:
         shutil.copy(Path.home() / ".codex" / "auth.json", config / "auth.json")
@@ -241,8 +268,8 @@ def run_agent(setup_flags, agent, task, work, raw, config, env):
         command = [str(CODEX), "exec", "--json", "--skip-git-repo-check",
                    "--dangerously-bypass-approvals-and-sandbox", task["prompt"]]
         secret = config / "auth.json"
-    if setup_flags is not None:
-        subprocess.run([str(MUFFLE), "init", "--agent", agent, *setup_flags], env=env, check=True,
+    if "init" in setup:
+        subprocess.run([str(MUFFLE), "init", "--agent", agent, *setup["init"]], env=env, check=True,
                        capture_output=True)
     try:
         with open(raw / "out.jsonl", "w") as out, open(raw / "err", "w") as err:
@@ -254,10 +281,13 @@ def run_agent(setup_flags, agent, task, work, raw, config, env):
         secret.unlink(missing_ok=True)
 
 
+def load_setups():
+    """Return the setups of setups.toml by name."""
+    return tomllib.loads((ROOT / "setups.toml").read_text())
+
+
 def run(setup, agent, task, n):
     """Run ``agent`` once on ``task`` in ``setup`` and write its diff, reply and score to results/."""
-    setups = tomllib.loads((ROOT / "setups.toml").read_text())
-    flags = setups[setup]["init"] if "init" in setups[setup] else None
     name = f"{task['id']}-{n}"
     raw = CACHE / "runs" / setup / agent / name
     result = ROOT / "results" / setup / agent / name
@@ -270,7 +300,7 @@ def run(setup, agent, task, n):
                           "GOTMPDIR": str(tmp)})
     start_tree = snapshot(work)
     started = time.time()
-    exit_code = run_agent(flags, agent, task, work, raw, raw / "config", env)
+    exit_code = run_agent(load_setups()[setup], agent, task, work, raw, raw / "config", env)
     seconds = round(time.time() - started)
     end_tree = snapshot(work)
     diff = git("diff", start_tree, end_tree, cwd=work)
@@ -293,7 +323,7 @@ def run(setup, agent, task, n):
         return None
     reference = reference_patch(task)
     score = {
-        "task": task["id"], "setup": setup, "agent": agent, "run": n,
+        "task": task["id"], "kind": task.get("kind", "bug"), "setup": setup, "agent": agent, "run": n,
         "passed": test_exit == 0, "test_exit": test_exit, "agent_exit": exit_code, "seconds": seconds,
         "lines_added": added, "lines_removed": removed, "test_lines_added": test_added,
         "reference_added": sum(1 for line in reference.splitlines() if line.startswith("+") and not line.startswith("+++")),
@@ -304,6 +334,8 @@ def run(setup, agent, task, n):
     }
     result.mkdir(parents=True)
     (result / "diff.patch").write_text(diff)
+    save_changed_files(work, start_tree, end_tree, result / "files")
+    save_changed_files(work, start_tree, end_tree, result / "files")
     (result / "reply.md").write_text(reply + "\n")
     (result / "score.json").write_text(json.dumps(score, indent=2) + "\n")
     shutil.copy(raw / "test.log", result / "test.log")
@@ -378,8 +410,10 @@ def parse(agent, path):
 
 def matrix(setups, agents, runs, tasks):
     """Run every combination that has no score yet, four at a time."""
+    known = load_setups()
     jobs = [(s, a, t, n) for n in range(1, runs + 1) for t in tasks for s in setups for a in agents
-            if not (ROOT / "results" / s / a / f"{t}-{n}" / "score.json").exists()]
+            if a in known[s].get("agents", ("claude", "codex"))
+            and not (ROOT / "results" / s / a / f"{t}-{n}" / "score.json").exists()]
     print(f"{len(jobs)} runs to do", flush=True)
     with concurrent.futures.ThreadPoolExecutor(4) as pool:
         futures = [pool.submit(run, s, a, load_task(t), n) for s, a, t, n in jobs]
@@ -396,11 +430,12 @@ def report():
               "lines_removed", "lint_new", "seconds")
     lines = ["# Results", "", "Means per run over the tasks every setup of the agent ran. Runs the agent's API failed "
              "are left out.", ""]
-    for agent in sorted({s["agent"] for s in scores}):
-        mine = [s for s in scores if s["agent"] == agent]
+    sections = sorted({(s.get("kind", "bug"), s["agent"]) for s in scores})
+    for kind, agent in sections:
+        mine = [s for s in scores if s["agent"] == agent and s.get("kind", "bug") == kind]
         setups = sorted({s["setup"] for s in mine}, key=lambda name: (name != "base", name))
         shared = set.intersection(*({s["task"] for s in mine if s["setup"] == setup} for setup in setups))
-        lines += [f"## {agent}", "", "| setup | passed | " + " | ".join(fields) + " |",
+        lines += [f"## {agent}, {kind} tasks", "", "| setup | passed | " + " | ".join(fields) + " |",
                   "|---|---:|" + "---:|" * len(fields)]
         base = None
         for setup in setups:
@@ -418,8 +453,127 @@ def report():
                    f"{sum(1 for s in mine if s['task'] == task and s['setup'] == setup)}" for setup in setups]
             lines.append(f"| {task} | " + " | ".join(row) + " |")
         lines.append("")
-    (ROOT / "results" / "README.md").write_text("\n".join(lines))
+    lines += ["## Per task", "", "Each page shows the bug report, the upstream change and every agent's diff:", ""]
+    for task_id in sorted({s["task"] for s in scores}):
+        write_task_page(task_id, [s for s in scores if s["task"] == task_id])
+        lines.append(f"- [{task_id}](tasks/{task_id}.md)")
+    (ROOT / "results" / "README.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
+
+
+def write_task_page(task_id, scores):
+    """Write results/tasks/<task_id>.md: the prompt, the upstream change, then each run's diff with its score."""
+    task = load_task(task_id)
+    order = ("base", "muffle", "hush", "sloth", "all")
+    scores = sorted(scores, key=lambda s: (s["agent"], order.index(s["setup"]) if s["setup"] in order else 99, s["run"]))
+    lines = [f"# {task_id}", "", f"Source: {task['source']}", "", "## Prompt", "", *(f"> {line}" for line in
+             task["prompt"].splitlines()), "", "## Upstream change (tests left out)", "",
+             "Files: " + ", ".join(f"[{path}](../../tasks/{task_id}/upstream/{path})" for path in
+                                   sorted(p.relative_to(ROOT / "tasks" / task_id / "upstream") for p in
+                                          (ROOT / "tasks" / task_id / "upstream").rglob("*") if p.is_file())), "",
+             "```diff",
+             reference_patch(task).rstrip(), "```", "", "## Runs", "",
+             "| agent | setup | hidden tests | lines +/- (code) | test lines | output tokens | cost |",
+             "|---|---|---|---:|---:|---:|---:|"]
+    for s in scores:
+        lines.append(f"| {s['agent']} | {s['setup']} | {'pass' if s['passed'] else '**FAIL**'} | "
+                     f"+{s['lines_added']}/-{s['lines_removed']} | {s.get('test_lines_added', 0)} | "
+                     f"{s.get('output', 0):,} | {'$%.3f' % s['cost_usd'] if s.get('cost_usd') else '-'} |")
+    for s in scores:
+        run_dir = ROOT / "results" / s["setup"] / s["agent"] / f"{task_id}-{s['run']}"
+        diff = (run_dir / "diff.patch").read_text().rstrip()
+        files = sorted(path.relative_to(run_dir / "files") for path in (run_dir / "files").rglob("*") if path.is_file())
+        lines += ["", f"### {s['agent']}, {s['setup']}: {'pass' if s['passed'] else 'FAIL'}", "",
+                  "Files: " + (", ".join(f"[{path}](../{s['setup']}/{s['agent']}/{task_id}-{s['run']}/files/{path})"
+                                         for path in files) or "none"), "",
+                  "<details><summary>diff</summary>", "", "```diff", diff or "(no changes)", "```", "", "</details>",
+                  "", "<details><summary>reply</summary>", "", (run_dir / "reply.md").read_text().strip(), "",
+                  "</details>"]
+    page = ROOT / "results" / "tasks" / f"{task_id}.md"
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text("\n".join(lines) + "\n")
+
+
+def backfill_files():
+    """Write the changed files of every scored run that has none yet, and each task's upstream files, from the diffs.
+
+    Each run's diff is applied to a fresh copy of the prepared project in a scratch repository, whose start and end
+    trees then give the files the same way a run does.
+    """
+    scratch = CACHE / "files-scratch"
+    for task_dir in sorted((ROOT / "tasks").iterdir()):
+        task = load_task(task_dir.name)
+        upstream = task_dir / "upstream"
+        if not upstream.exists():
+            save_changed_files(mirror(task), task["base"], task["fix"], upstream)
+        for run_dir in sorted(glob.glob(str(ROOT / "results" / "*" / "*" / f"{task['id']}-*"))):
+            run_dir = Path(run_dir)
+            if (run_dir / "files").exists() or not (run_dir / "score.json").exists():
+                continue
+            diff = (run_dir / "diff.patch").read_text()
+            if not diff.strip():
+                continue
+            shutil.rmtree(scratch, ignore_errors=True)
+            scratch.mkdir(parents=True)
+            git("init", "-q", cwd=scratch)
+            archive = subprocess.run(["git", "archive", "HEAD"], cwd=prepared(task), check=True,
+                                     capture_output=True).stdout
+            subprocess.run(["tar", "x"], cwd=scratch, input=archive, check=True)
+            start_tree = snapshot_fresh(scratch)
+            applied = subprocess.run(["git", "apply", "--binary", "-"], cwd=scratch, input=diff, text=True,
+                                     capture_output=True)
+            if applied.returncode:
+                print(f"{run_dir}: diff does not apply: {applied.stderr.strip()}")
+                continue
+            save_changed_files(scratch, start_tree, snapshot_fresh(scratch), run_dir / "files")
+    shutil.rmtree(scratch, ignore_errors=True)
+
+
+def snapshot_fresh(work):
+    """Return the tree id of everything in the repository ``work``, staging it all."""
+    git("add", "-A", "-f", cwd=work)
+    return git("write-tree", cwd=work).strip()
+
+
+def backfill_files():
+    """Write the changed files of every scored run that has none yet, and each task's upstream files, from the diffs.
+
+    Each run's diff is applied to a fresh copy of the prepared project in a scratch repository, whose start and end
+    trees then give the files the same way a run does.
+    """
+    scratch = CACHE / "files-scratch"
+    for task_dir in sorted((ROOT / "tasks").iterdir()):
+        task = load_task(task_dir.name)
+        upstream = task_dir / "upstream"
+        if not upstream.exists():
+            save_changed_files(mirror(task), task["base"], task["fix"], upstream)
+        for run_dir in sorted(glob.glob(str(ROOT / "results" / "*" / "*" / f"{task['id']}-*"))):
+            run_dir = Path(run_dir)
+            if (run_dir / "files").exists() or not (run_dir / "score.json").exists():
+                continue
+            diff = (run_dir / "diff.patch").read_text()
+            if not diff.strip():
+                continue
+            shutil.rmtree(scratch, ignore_errors=True)
+            scratch.mkdir(parents=True)
+            git("init", "-q", cwd=scratch)
+            archive = subprocess.run(["git", "archive", "HEAD"], cwd=prepared(task), check=True,
+                                     capture_output=True).stdout
+            subprocess.run(["tar", "x"], cwd=scratch, input=archive, check=True)
+            start_tree = snapshot_fresh(scratch)
+            applied = subprocess.run(["git", "apply", "--binary", "-"], cwd=scratch, input=diff, text=True,
+                                     capture_output=True)
+            if applied.returncode:
+                print(f"{run_dir}: diff does not apply: {applied.stderr.strip()}")
+                continue
+            save_changed_files(scratch, start_tree, snapshot_fresh(scratch), run_dir / "files")
+    shutil.rmtree(scratch, ignore_errors=True)
+
+
+def snapshot_fresh(work):
+    """Return the tree id of everything in the repository ``work``, staging it all."""
+    git("add", "-A", "-f", cwd=work)
+    return git("write-tree", cwd=work).strip()
 
 
 def main():
@@ -438,6 +592,10 @@ def main():
     elif command == "matrix" and len(rest) in (3, 4):
         tasks = rest[3].split(",") if len(rest) == 4 else sorted(p.name for p in (ROOT / "tasks").iterdir())
         matrix(rest[0].split(","), rest[1].split(","), int(rest[2]), tasks)
+    elif command == "files":
+        backfill_files()
+    elif command == "files":
+        backfill_files()
     elif command == "report":
         report()
     else:

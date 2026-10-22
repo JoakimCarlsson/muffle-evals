@@ -1,0 +1,149 @@
+diff --git a/CHANGELOG.rst b/CHANGELOG.rst
+index e9bb15a..338e6ee 100644
+--- a/CHANGELOG.rst
++++ b/CHANGELOG.rst
+@@ -4,6 +4,12 @@ Changelog
+ *unreleased*
+ ~~~~~~~~~~~~
+ 
++Features:
++
++* Add :meth:`Requirement.__replace__ <packaging.requirements.Requirement.__replace__>`
++  to copy requirements with selected fields changed, including support for
++  :func:`copy.replace` on Python 3.13 and later.
++
+ Removals:
+ 
+ * Drop support for EOL Python 3.9. (:pull:`1263`)
+diff --git a/docs/requirements.rst b/docs/requirements.rst
+index fede671..3dfb969 100644
+--- a/docs/requirements.rst
++++ b/docs/requirements.rst
+@@ -69,9 +69,37 @@ Usage
+     not have such rules, and the check incorrectly disallows valid requirement
+     strings from being parsed.
+ 
++Replacing fields
++----------------
++
++Use :meth:`Requirement.__replace__` to create a new requirement with selected
++fields changed. It accepts only keyword arguments: ``name``, ``url``, ``extras``,
++``specifier``, and ``marker``. Omitted fields are kept, and the original is
++unchanged. With no arguments, it returns an equal but distinct requirement.
++
++.. doctest::
++
++    >>> req = Requirement('requests[security]>=2.0; python_version >= "3"')
++    >>> req.__replace__(name="flask")
++    <Requirement('flask[security]>=2.0; python_version >= "3"')>
++    >>> from packaging.specifiers import SpecifierSet
++    >>> req.__replace__(specifier=SpecifierSet(">=3.0"), marker=None)
++    <Requirement('requests[security]>=3.0')>
++
++On Python 3.13 and later, :func:`copy.replace` also calls this method.
++Replacement fields must form a valid requirement without changing meaning when
++parsed, otherwise :exc:`InvalidRequirement` is raised. For example,
++``name="foo[bar]"`` cannot be used to introduce an extra. To switch from a
++version specifier to a URL, also pass ``specifier=SpecifierSet()``.
++
++Mutable fields are copied, including individual specifiers. Prerelease overrides
++on the specifier set and its members are preserved. Subclasses receive an
++instance of their own class, initialized with the resulting requirement string.
++
+ Reference
+ ---------
+ 
+ .. automodule:: packaging.requirements
+     :members:
++    :special-members: __replace__
+     :exclude-members: __init__, __new__
+diff --git a/src/packaging/requirements.py b/src/packaging/requirements.py
+index 124de66..da4a3ea 100644
+--- a/src/packaging/requirements.py
++++ b/src/packaging/requirements.py
+@@ -3,23 +3,28 @@
+ # for complete details.
+ from __future__ import annotations
+ 
+-from typing import TYPE_CHECKING
++from typing import TYPE_CHECKING, Any
+ 
+ from ._parser import parse_requirement as _parse_requirement
+ from ._tokenizer import ParserSyntaxError
+ from .markers import Marker, _normalize_extra_values
+-from .specifiers import InvalidSpecifier, SpecifierSet
++from .specifiers import InvalidSpecifier, Specifier, SpecifierSet
+ from .utils import canonicalize_name
+ 
+ if TYPE_CHECKING:
+     from collections.abc import Iterator
+ 
++    from typing_extensions import Self
++
+ __all__ = [
+     "InvalidRequirement",
+     "Requirement",
+ ]
+ 
+ 
++_UNSET: Any = object()
++
++
+ def __dir__() -> list[str]:
+     return __all__
+ 
+@@ -106,6 +111,54 @@ class Requirement:
+             self.marker = Marker.__new__(Marker)
+             self.marker._markers = _normalize_extra_values(parsed.marker)
+ 
++    def __replace__(
++        self,
++        *,
++        name: str = _UNSET,
++        url: str | None = _UNSET,
++        extras: set[str] = _UNSET,
++        specifier: SpecifierSet = _UNSET,
++        marker: Marker | None = _UNSET,
++    ) -> Self:
++        """Return a new requirement with the specified fields replaced.
++
++        Omitted fields are retained. The result is validated and normalized
++        by parsing, and mutable fields are copied. Specifier prerelease
++        overrides are preserved on both the set and its individual specifiers.
++
++        Supports :func:`copy.replace` on Python 3.13 and later, and can be
++        called directly on earlier Python versions.
++
++        :raises InvalidRequirement: If the fields do not form a valid
++            requirement or parsing would change the requested fields.
++
++        .. versionadded:: 26.4
++        """
++        candidate = Requirement.__new__(Requirement)
++        candidate.name = self.name if name is _UNSET else name
++        candidate.url = self.url if url is _UNSET else url
++        candidate.extras = self.extras if extras is _UNSET else extras
++        source_specifier = self.specifier if specifier is _UNSET else specifier
++        candidate.specifier = SpecifierSet(
++            (Specifier(str(s), prereleases=s._prereleases) for s in source_specifier),
++            prereleases=source_specifier._prereleases,
++        )
++        source_marker = self.marker if marker is _UNSET else marker
++        candidate.marker = (
++            Marker(str(source_marker)) if source_marker is not None else None
++        )
++        result = self.__class__(str(candidate))
++        if (
++            result.name != candidate.name
++            or result.url != candidate.url
++            or result.extras != candidate.extras
++            or result.specifier != candidate.specifier
++            or result.marker != candidate.marker
++        ):
++            raise InvalidRequirement("Replacement fields change meaning when parsed")
++        result.specifier = candidate.specifier
++        return result
++
+     def _iter_parts(self, name: str) -> Iterator[str]:
+         yield name
+ 
