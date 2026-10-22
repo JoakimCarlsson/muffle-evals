@@ -81,6 +81,14 @@ Input tokens count cached and uncached input together. Lines added leave out tes
 - Run times are not comparable: Claude Code hit its session limit during the muffle and sloth runs, which stalled some
   of them for over ten minutes.
 
+## Since these runs
+
+`--sloth` now has the agent add one focused test for each fix or feature, keep the behaviour of cases the request does
+not mention, and check the request's examples against the types. The runs above used the earlier version, which wrote
+no tests. In a smaller check of the new version, 5 tasks with 2 runs each with Claude Code in one batch, it passed
+10/10 at $0.090 a run against $0.104 for `base`; a second batch on all 32 tasks had it 6 to 11% above `base`, so its
+effect on cost is within the noise between batches. Its effect on code is not: it writes 15 to 25% fewer lines.
+
 ## Reproducing
 
 ```sh
