@@ -1,0 +1,60 @@
+diff --git a/CHANGELOG.rst b/CHANGELOG.rst
+index 8b90369..9a36bd4 100644
+--- a/CHANGELOG.rst
++++ b/CHANGELOG.rst
+@@ -6,6 +6,8 @@ Changelog
+ 
+ Bug fixes:
+ 
++- Fix `marshmallow.fields.Constant` raising ``ValueError`` when ``required=True``.
++  A required ``Constant`` always loads as the constant, even if missing from the input.
+ - Make `marshmallow.fields.Number` and `marshmallow.fields.Mapping` abstract base classes to
+   prevent using them within Schemas (:issue:`2924`). Thanks :user:`MartingaleCoda` for reporting.
+ 
+diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
+index 5b8a072..4cd6be7 100644
+--- a/src/marshmallow/fields.py
++++ b/src/marshmallow/fields.py
+@@ -2074,11 +2074,21 @@ class Constant(Field[_ContantT]):
+     _CHECK_ATTRIBUTE = False
+ 
+     def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
++        # ``required`` is applied after init, since the base class forbids it
++        # together with ``load_default``. A required Constant is still always
++        # loaded as the constant, whether the input is missing or not.
++        required = kwargs.pop("required", False)
+         kwargs["load_default"] = constant
+         kwargs["dump_default"] = constant
+         super().__init__(**kwargs)
++        self.required = required
+         self.constant = constant
+ 
++    def _validate_missing(self, value) -> None:
++        if value is missing_:
++            return
++        super()._validate_missing(value)
++
+     def _serialize(self, value, *args, **kwargs) -> _ContantT:
+         return self.constant
+ 
+diff --git a/tests/test_deserialization.py b/tests/test_deserialization.py
+index 7cbe28e..fcd54ad 100644
+--- a/tests/test_deserialization.py
++++ b/tests/test_deserialization.py
+@@ -1413,6 +1413,16 @@ class TestFieldDeserialization:
+         assert sch.load({})["foo"] == 42
+         assert sch.load({"foo": 24})["foo"] == 42
+ 
++    def test_required_constant_is_always_included_in_deserialized_data(self):
++        class MySchema(Schema):
++            foo = fields.Constant(42, required=True)
++            bar = fields.Constant(None, required=True)
++
++        sch = MySchema()
++        assert sch.fields["foo"].required is True
++        assert sch.load({}) == {"foo": 42, "bar": None}
++        assert sch.load({"foo": 99}) == {"foo": 42, "bar": None}
++
+     def test_constant_none_allows_none_value(self):
+         class MySchema(Schema):
+             foo = fields.Constant(None)

@@ -1,0 +1,64 @@
+diff --git a/src/attr/_make.py b/src/attr/_make.py
+index e84d979..31213aa 100644
+--- a/src/attr/_make.py
++++ b/src/attr/_make.py
+@@ -2321,8 +2321,9 @@ def _attrs_to_init_script(
+ 
+         lines.append(f"BaseException.__init__(self, {vals})")
+ 
++    # Forward parameter values, without the defaults used in the signature.
++    pre_init_args = ", ".join(arg.split("=")[0] for arg in args)
+     args = ", ".join(args)
+-    pre_init_args = args
+     if kw_only_args:
+         # leading comma & kw_only args
+         args += f"{', ' if args else ''}*, {', '.join(kw_only_args)}"
+diff --git a/tests/test_make.py b/tests/test_make.py
+index 80c0066..fd89123 100644
+--- a/tests/test_make.py
++++ b/tests/test_make.py
+@@ -696,6 +696,44 @@ class TestAttributes:
+ 
+         assert 12 == getattr(c, "z", None)
+ 
++    @pytest.mark.parametrize("call_style", ["positional", "keyword", "defaults"])
++    def test_pre_init_defaults(self, call_style):
++        """
++        Pre-init receives argument values for defaults and factories.
++        """
++        received = []
++
++        @attr.define
++        class C:
++            required: int
++            _value: int = attr.field(default=100, alias="value")
++            factory: dict = attr.field(factory=dict)
++            kw_required: int = attr.field(kw_only=True)
++            kw_default: int = attr.field(default=100, kw_only=True)
++            kw_factory: dict = attr.field(factory=dict, kw_only=True)
++            ignored: int = attr.field(default=42, init=False)
++
++            def __attrs_pre_init__(self, *args, **kwargs):
++                received.append((args, kwargs))
++
++        value = {"blah": "blah"}
++        kwargs = {"kw_required": 200}
++        if call_style == "defaults":
++            inst = C(200, **kwargs)
++            expected = (200, 100, attr.NOTHING)
++            kwargs.update(kw_default=100, kw_factory=attr.NOTHING)
++            assert inst.factory == inst.kw_factory == {}
++        else:
++            kwargs.update(kw_default=200, kw_factory=value)
++            if call_style == "positional":
++                inst = C(200, 200, value, **kwargs)
++            else:
++                inst = C(required=200, value=200, factory=value, **kwargs)
++            expected = (200, 200, value)
++            assert inst.factory is inst.kw_factory is value
++
++        assert received == [(expected, kwargs)]
++
+     @pytest.mark.usefixtures("with_and_without_validation")
+     def test_pre_init_kw_only_work_with_defaults(self):
+         """

@@ -1,0 +1,68 @@
+diff --git a/src/header/map.rs b/src/header/map.rs
+index 08a1b8b..c61d814 100644
+--- a/src/header/map.rs
++++ b/src/header/map.rs
+@@ -2368,7 +2368,8 @@ impl<'a, T> Iterator for Iter<'a, T> {
+         let map = self.map;
+         debug_assert!(map.entries.len() >= self.entry);
+ 
+-        let lower = map.entries.len() - self.entry;
++        let lower =
++            (map.entries.len() - self.entry).saturating_sub(usize::from(self.cursor.is_none()));
+         // We could pessimistically guess at the upper bound, saying
+         // that its lower + map.extra_values.len(). That could be
+         // way over though, such as if we're near the end, and have
+@@ -2453,7 +2454,8 @@ impl<'a, T> Iterator for IterMut<'a, T> {
+     fn size_hint(&self) -> (usize, Option<usize>) {
+         debug_assert!(self.entries_len >= self.entry);
+ 
+-        let lower = self.entries_len - self.entry;
++        let lower =
++            (self.entries_len - self.entry).saturating_sub(usize::from(self.cursor.is_none()));
+         // We could pessimistically guess at the upper bound, saying
+         // that its lower + map.extra_values.len(). That could be
+         // way over though, such as if we're near the end, and have
+diff --git a/tests/header_map.rs b/tests/header_map.rs
+index f621013..5c279ef 100644
+--- a/tests/header_map.rs
++++ b/tests/header_map.rs
+@@ -1,6 +1,39 @@
+ use http::header::*;
+ use http::*;
+ 
++#[test]
++fn iterator_size_hint_bounds() {
++    fn check(mut iter: impl Iterator, len: usize) {
++        for remaining in (0..=len).rev() {
++            let (lower, upper) = iter.size_hint();
++            assert!(lower <= remaining);
++            if let Some(upper) = upper {
++                assert!(upper >= remaining);
++            }
++            assert_eq!(iter.next().is_some(), remaining > 0);
++        }
++        assert_eq!(iter.size_hint().0, 0);
++        assert!(iter.next().is_none());
++    }
++
++    let mut map = HeaderMap::<usize>::default();
++    for names in 0..=3 {
++        if names > 0 {
++            map.append([HOST, ACCEPT, CONTENT_TYPE][names - 1].clone(), 0);
++        }
++        for extras in 0..=2 {
++            if names > 0 && extras > 0 {
++                map.append(HOST, extras);
++            }
++            let len = map.len();
++            check(map.iter(), len);
++            check(map.iter_mut(), len);
++            check(map.values(), len);
++            check(map.values_mut(), len);
++        }
++    }
++}
++
+ #[test]
+ fn smoke() {
+     let mut headers = HeaderMap::new();

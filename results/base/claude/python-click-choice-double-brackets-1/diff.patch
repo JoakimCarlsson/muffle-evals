@@ -1,0 +1,55 @@
+diff --git a/CHANGES.md b/CHANGES.md
+index 8991e82..92f61c6 100644
+--- a/CHANGES.md
++++ b/CHANGES.md
+@@ -11,6 +11,9 @@ Unreleased
+ - A {class}`Group` with `invoke_without_command=True` marks its subcommand as
+   optional in the usage help, showing `[COMMAND]` instead of `COMMAND`.
+   {issue}`3059` {pr}`3507`
++- Optional arguments of type {class}`Choice` or {class}`DateTime` no longer
++  show doubled square brackets in the usage help, e.g. `[foo|bar]` instead of
++  `[[foo|bar]]`.
+ - `echo_via_pager` flushes after each write, so passing a generator streams
+   output to the pager incrementally instead of staying hidden until the pipe
+   buffer fills. {issue}`3242` {issue}`2542` {pr}`3534`
+diff --git a/src/click/core.py b/src/click/core.py
+index d2db291..2cec824 100644
+--- a/src/click/core.py
++++ b/src/click/core.py
+@@ -3571,9 +3571,11 @@ class Argument(Parameter):
+         var = self.type.get_metavar(param=self, ctx=ctx)
+         if not var:
+             var = self.name.upper()
++        # Types like Choice and DateTime already bracket their metavar.
++        bracketed = var.startswith("[") and var.endswith("]")
+         if self.deprecated:
+             var += "!"
+-        if not self.required:
++        if not self.required and not bracketed:
+             var = f"[{var}]"
+         if self.nargs != 1:
+             var += "..."
+diff --git a/tests/test_arguments.py b/tests/test_arguments.py
+index 6015282..9b8c7b3 100644
+--- a/tests/test_arguments.py
++++ b/tests/test_arguments.py
+@@ -653,3 +653,19 @@ def test_argument_custom_class_can_override_type_cast_value_and_never_sees_unset
+     result = runner.invoke(cmd, pass_argv)
+     assert not result.exception
+     assert result.exit_code == 0
++
++
++@pytest.mark.parametrize(
++    "type",
++    [click.Choice(["foo", "bar", "baz"]), click.DateTime(formats=["%Y-%m-%d"])],
++)
++@pytest.mark.parametrize("kwargs", [{"nargs": -1}, {"required": False}])
++def test_optional_bracketed_metavar_not_doubled(runner, type, kwargs):
++    @click.command()
++    @click.argument("method", type=type, **kwargs)
++    def cli(method):
++        pass
++
++    usage = runner.invoke(cli, ["--help"]).output.splitlines()[0]
++    assert "[[" not in usage
++    assert "]]" not in usage

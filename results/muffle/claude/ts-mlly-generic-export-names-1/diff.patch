@@ -1,0 +1,138 @@
+diff --git a/src/analyze.ts b/src/analyze.ts
+index 52caecb..fba97a5 100644
+--- a/src/analyze.ts
++++ b/src/analyze.ts
+@@ -386,6 +386,30 @@ export function parseTypeImport(
+   } as ParsedStaticImport;
+ }
+ 
++/**
++ * Returns the index of the `>` closing the generic argument list opened at `start`
++ * if it is followed by `(` and contains only type-like characters, otherwise -1.
++ */
++function _findGenericEnd(str: string, start: number): number {
++  let level = 0;
++  for (let i = start; i < str.length; i++) {
++    const char = str[i];
++    if (char === "<") {
++      level++;
++    } else if (char === ">") {
++      if (str[i - 1] === "=") {
++        continue;
++      }
++      if (--level === 0) {
++        return /^\s*\(/.test(str.slice(i + 1)) ? i : -1;
++      }
++    } else if (!/[\w$\s,.[\]|&?:{}()='";*-]/.test(char)) {
++      return -1;
++    }
++  }
++  return -1;
++}
++
+ /**
+  * Extracts extra variable names from a comma-separated declaration list,
+  * ignoring commas nested inside parentheses, brackets, braces, generics, or strings.
+@@ -440,11 +464,32 @@ function _extractExtraNames(extraNamesStr: string): string[] {
+       angleDepth++;
+       continue;
+     }
+-    if (inTypeAnnotation && char === ">" && angleDepth > 0) {
++    if (
++      inTypeAnnotation &&
++      char === ">" &&
++      extraNamesStr[i - 1] !== "=" &&
++      angleDepth > 0
++    ) {
+       angleDepth--;
+       continue;
+     }
+ 
++    // Generic call/instantiation in an expression, e.g. `new Map<string, A>()` or `fn<A, B>(x)`.
++    // Only treated as generics when the matching `>` is directly followed by `(`;
++    // otherwise (e.g. `1<2, b = 3`) it is a comparison.
++    if (
++      !inTypeAnnotation &&
++      char === "<" &&
++      depth >= 0 &&
++      /[A-Za-z_$]/.test(extraNamesStr[i - 1] || "")
++    ) {
++      const end = _findGenericEnd(extraNamesStr, i);
++      if (end > 0) {
++        i = end;
++        continue;
++      }
++    }
++
+     // Track bracket nesting
+     if (char === "(" || char === "[" || char === "{") {
+       depth++;
+@@ -452,6 +497,11 @@ function _extractExtraNames(extraNamesStr: string): string[] {
+       depth--;
+     }
+ 
++    // A statement terminator ends the declaration list
++    if (char === ";" && depth === 0 && angleDepth === 0) {
++      break;
++    }
++
+     // A comma at depth 0 (outside generics) is a real declaration separator
+     if (char === "," && depth === 0 && angleDepth === 0) {
+       // Extract the identifier that follows this comma
+@@ -488,7 +538,19 @@ export function findExports(code: string): ESMExport[] {
+       | string
+       | undefined;
+     if (extraNamesStr) {
+-      const extraNames = _extractExtraNames(extraNamesStr);
++      // The regex capture ends at the last identifier after a comma, which cuts
++      // generic calls like `new Map<A, B>()` short, so scan the rest of the line.
++      const nameEnd =
++        declaredExport.start +
++        declaredExport.code.indexOf(
++          declaredExport.name,
++          "export".length + declaredExport.declaration.length,
++        ) +
++        declaredExport.name.length;
++      const lineEnd = code.indexOf("\n", nameEnd);
++      const extraNames = _extractExtraNames(
++        code.slice(nameEnd, lineEnd === -1 ? undefined : lineEnd),
++      );
+       if (extraNames.length > 0) {
+         declaredExport.names = [declaredExport.name, ...extraNames];
+       }
+diff --git a/test/exports.test.ts b/test/exports.test.ts
+index baf98d7..e349ba3 100644
+--- a/test/exports.test.ts
++++ b/test/exports.test.ts
+@@ -319,6 +319,31 @@ export { type AType, type B as BType, foo } from 'foo'
+   });
+ });
+ 
++describe("findExports generics", () => {
++  const names = (code: string) => findExports(code).map((e) => e.names);
++  it("ignores commas in generic type arguments", () => {
++    expect(
++      names("export const APP_MODE_MAP = new Map<string, IAppMode>()"),
++    ).toEqual([["APP_MODE_MAP"]]);
++    expect(names("export const result = foo<Bar, Baz>(arg1, arg2)")).toEqual([
++      ["result"],
++    ]);
++    expect(
++      names(
++        "export const a = new Set<string>(), b = new Map<string, number>()",
++      ),
++    ).toEqual([["a", "b"]]);
++  });
++  it("still handles comparisons and arrow types", () => {
++    expect(names("export const a = 1<2, b = 3")).toEqual([["a", "b"]]);
++    expect(
++      names(
++        "export const a: Map<string, (x: string) => void> = new Map(), b = 1",
++      ),
++    ).toEqual([["a", "b"]]);
++  });
++});
++
+ describe("findExportNames", () => {
+   it("findExportNames", () => {
+     expect(

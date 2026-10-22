@@ -1,0 +1,55 @@
+diff --git a/unmarshaler.go b/unmarshaler.go
+index d497669..c74dd09 100644
+--- a/unmarshaler.go
++++ b/unmarshaler.go
+@@ -2257,14 +2257,15 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
+ 				// Embedded non-struct fields are not decoded into.
+ 				continue
+ 			}
+-			if !tagged {
+-				// Untagged embedded structs are flattened, even when their
+-				// type is unexported: only their own exported fields are
+-				// reachable.
++			if !tagged || tagName(tag) == "" {
++				// Embedded structs without a tagged name (including ones
++				// carrying only options such as ",inline") are flattened,
++				// even when their type is unexported: only their own
++				// exported fields are reachable.
+ 				embedded = append(embedded, f)
+ 				continue
+ 			}
+-			// A tagged embedded struct acts as a regular named field.
++			// An embedded struct with a tagged name acts as a regular named field.
+ 		} else if f.PkgPath != "" {
+ 			// unexported
+ 			continue
+diff --git a/unmarshaler_test.go b/unmarshaler_test.go
+index fbefca8..1ece3f6 100644
+--- a/unmarshaler_test.go
++++ b/unmarshaler_test.go
+@@ -5603,3 +5603,25 @@ e = 1
+ 	assert.NoError(t, toml.Unmarshal([]byte(doc), &m))
+ 	assert.Equal(t, 1, len(m["a"].([]interface{}))-1)
+ }
++
++func TestUnmarshalEmbeddedStructInlineTag(t *testing.T) {
++	type Base struct {
++		Region string
++		Name   string
++		BsPort int
++	}
++	type Config struct {
++		Base  `toml:",inline"`
++		PID   uint32
++		index int `toml:"-"`
++	}
++	var c Config
++	err := toml.Unmarshal([]byte("Region = \"us\"\nName = \"srv1\"\nBsPort = 100\nPID = 42\n"), &c)
++	if err != nil {
++		t.Fatal(err)
++	}
++	want := Config{Base: Base{Region: "us", Name: "srv1", BsPort: 100}, PID: 42}
++	if c != want {
++		t.Fatalf("got %+v, want %+v", c, want)
++	}
++}

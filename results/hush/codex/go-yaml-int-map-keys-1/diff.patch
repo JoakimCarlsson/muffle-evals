@@ -1,0 +1,48 @@
+diff --git a/decode.go b/decode.go
+index 43c317f..5dbb67b 100644
+--- a/decode.go
++++ b/decode.go
+@@ -1755,8 +1755,11 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
+ 				return err
+ 			}
+ 			k = reflect.ValueOf(keyVal)
+-			if k.IsValid() && k.Type().ConvertibleTo(keyType) {
+-				k = k.Convert(keyType)
++			if k.IsValid() && (keyType.Kind() == reflect.String || k.Type().ConvertibleTo(keyType)) {
++				k, err = d.convertValue(k, keyType, key)
++				if err != nil {
++					return err
++				}
+ 			}
+ 		}
+ 
+diff --git a/decode_test.go b/decode_test.go
+index 2d56942..a278942 100644
+--- a/decode_test.go
++++ b/decode_test.go
+@@ -3853,3 +3853,25 @@ func TestSetNullValue(t *testing.T) {
+ 		})
+ 	}
+ }
++
++func TestUnmarshalIntegerStringMapKeys(t *testing.T) {
++	for _, key := range []string{"42", "-42", "0", "9223372036854775807", "18446744073709551615"} {
++		t.Run(key, func(t *testing.T) {
++			source := []byte(key + ": 100\n")
++			var got map[string]any
++			if err := yaml.Unmarshal(source, &got); err != nil {
++				t.Fatal(err)
++			}
++			if len(got) != 1 || got[key] != uint64(100) {
++				t.Fatalf("unexpected map: %#v", got)
++			}
++			var named map[TestString]any
++			if err := yaml.Unmarshal(source, &named); err != nil {
++				t.Fatal(err)
++			}
++			if len(named) != 1 || named[TestString(key)] != uint64(100) {
++				t.Fatalf("unexpected named-key map: %#v", named)
++			}
++		})
++	}
++}

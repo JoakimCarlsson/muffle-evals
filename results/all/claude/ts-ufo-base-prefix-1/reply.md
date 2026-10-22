@@ -1,0 +1,1 @@
+Done. Added `isUnderBase` in `src/utils.ts`. `withBase` and `withoutBase` now match only at a `/`, `?`, `#` or end boundary. Existing 477 tests pass. I added no new tests and didn't run your two repro calls.

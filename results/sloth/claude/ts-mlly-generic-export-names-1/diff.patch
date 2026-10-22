@@ -1,0 +1,51 @@
+diff --git a/src/analyze.ts b/src/analyze.ts
+index 52caecb..0a32f43 100644
+--- a/src/analyze.ts
++++ b/src/analyze.ts
+@@ -259,7 +259,7 @@ const IMPORT_NAMED_TYPE_RE =
+  * @example `export const num = 1, str = 'hello'; export class Example {}`
+  */
+ export const EXPORT_DECAL_RE =
+-  /\bexport\s+(?<declaration>(?:async function\s*\*?|function\s*\*?|let|const enum|const|enum|var|class))\s+\*?(?<name>[\w$]+)(?<extraNames>.*,\s*[\s\w:[\]{}]*[\w$\]}]+)*/g;
++  /\bexport\s+(?<declaration>(?:async function\s*\*?|function\s*\*?|let|const enum|const|enum|var|class))\s+\*?(?<name>[\w$]+)(?<extraNames>.*,\s*[\s\w:[\]{}]*[\w$\]}]+)*(?=(?<extraTail>.*))/g;
+ /**
+  * Regular expression to match export declarations specifically for types, interfaces, and type aliases in TypeScript.
+  * @example `export type Result = { success: boolean; }; export interface User { name: string; age: number; };`
+@@ -445,6 +445,17 @@ function _extractExtraNames(extraNamesStr: string): string[] {
+       continue;
+     }
+ 
++    // Skip generic type arguments of calls like `new Map<string, X>()`
++    if (char === "<" && !inTypeAnnotation) {
++      const generic = extraNamesStr
++        .slice(i)
++        .match(/^<[\w$\s,.[\]|&<>?:'"{}]*?>(?=\s*\()/);
++      if (generic) {
++        i += generic[0].length - 1;
++        continue;
++      }
++    }
++
+     // Track bracket nesting
+     if (char === "(" || char === "[" || char === "{") {
+       depth++;
+@@ -484,16 +495,15 @@ export function findExports(code: string): ESMExport[] {
+     if (/^export\s+(?:async\s+)?function/.test(declaredExport.code)) {
+       continue;
+     }
+-    const extraNamesStr = (declaredExport as any).extraNames as
+-      | string
+-      | undefined;
++    const { extraNames: extraNamesStr, extraTail } = declaredExport as any;
+     if (extraNamesStr) {
+-      const extraNames = _extractExtraNames(extraNamesStr);
++      const extraNames = _extractExtraNames(extraNamesStr + extraTail);
+       if (extraNames.length > 0) {
+         declaredExport.names = [declaredExport.name, ...extraNames];
+       }
+     }
+     delete (declaredExport as any).extraNames;
++    delete (declaredExport as any).extraTail;
+   }
+ 
+   // Find named exports

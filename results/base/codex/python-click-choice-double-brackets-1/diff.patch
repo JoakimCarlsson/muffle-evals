@@ -1,0 +1,74 @@
+diff --git a/CHANGES.md b/CHANGES.md
+index 8991e82..3640fde 100644
+--- a/CHANGES.md
++++ b/CHANGES.md
+@@ -2,6 +2,8 @@
+ 
+ Unreleased
+ 
++- Optional arguments with a `Choice` or `DateTime` type no longer show
++  duplicate square brackets in usage help.
+ - Fix Fish shell completion broken in `8.4.0` by {pr}`3126`. Newlines and
+   tabs in option help text are now escaped, keeping the original completion
+   format while still supporting multi-line help. {issue}`3502`
+diff --git a/src/click/core.py b/src/click/core.py
+index d2db291..06b402e 100644
+--- a/src/click/core.py
++++ b/src/click/core.py
+@@ -3571,6 +3571,9 @@ class Argument(Parameter):
+         var = self.type.get_metavar(param=self, ctx=ctx)
+         if not var:
+             var = self.name.upper()
++        if not self.required and var.startswith("[") and var.endswith("]"):
++            # The type already indicates that the argument is optional.
++            var = var[1:-1]
+         if self.deprecated:
+             var += "!"
+         if not self.required:
+diff --git a/tests/test_arguments.py b/tests/test_arguments.py
+index 6015282..d619450 100644
+--- a/tests/test_arguments.py
++++ b/tests/test_arguments.py
+@@ -332,6 +332,42 @@ def test_argument_metavar_marks_optional(runner, kwargs, expected):
+     assert result.output.splitlines()[0] == f"Usage: cli [OPTIONS] {expected}"
+ 
+ 
++@pytest.mark.parametrize(
++    ("type", "optional", "required"),
++    [
++        (click.Choice(["foo", "bar", "baz"]), "[foo|bar|baz]", "{foo|bar|baz}"),
++        (click.DateTime(formats=["%Y-%m-%d"]), "[%Y-%m-%d]", "[%Y-%m-%d]"),
++    ],
++)
++@pytest.mark.parametrize(
++    ("kwargs", "deprecated"),
++    [
++        ({"required": False}, False),
++        ({"nargs": -1}, False),
++        ({"required": True}, False),
++        ({"required": False}, True),
++        ({"nargs": -1}, True),
++    ],
++)
++def test_argument_type_metavar_brackets(
++    runner, type, optional, required, kwargs, deprecated
++):
++    @click.command()
++    @click.argument("value", type=type, deprecated=deprecated, **kwargs)
++    def cli(value):
++        pass
++
++    expected = required if kwargs.get("required") else optional
++    if deprecated:
++        expected = expected[:-1] + "!]"
++    if kwargs.get("nargs") == -1:
++        expected += "..."
++
++    result = runner.invoke(cli, ["--help"])
++    assert result.exit_code == 0
++    assert result.output.splitlines()[0] == f"Usage: cli [OPTIONS] {expected}"
++
++
+ @pytest.mark.parametrize("deprecated", [True, "USE B INSTEAD"])
+ def test_deprecated_warning(runner, deprecated):
+     @click.command()

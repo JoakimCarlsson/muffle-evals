@@ -1,0 +1,1 @@
+Done. `isDeepEqual` now treats null-prototype objects as plain objects, in both argument orders and when nested. Class instances still don't equal them. The fix is in `src/isDeepEqual.ts`, and I added tests for it. The `isDeepEqual` tests and the type check pass. I didn't run lint or the full suite.

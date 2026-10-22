@@ -1,0 +1,1 @@
+Done. `src/analyze.ts` now skips generic type args in expressions and handles `=>` inside annotations. All 5 cases from your report pass, along with the existing 185 tests. I ran the 5 cases as a throwaway test and deleted it, so no regression test is committed. Not committed.

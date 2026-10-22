@@ -1,0 +1,105 @@
+diff --git a/src/analyze.ts b/src/analyze.ts
+index 52caecb..561c36a 100644
+--- a/src/analyze.ts
++++ b/src/analyze.ts
+@@ -259,7 +259,7 @@ const IMPORT_NAMED_TYPE_RE =
+  * @example `export const num = 1, str = 'hello'; export class Example {}`
+  */
+ export const EXPORT_DECAL_RE =
+-  /\bexport\s+(?<declaration>(?:async function\s*\*?|function\s*\*?|let|const enum|const|enum|var|class))\s+\*?(?<name>[\w$]+)(?<extraNames>.*,\s*[\s\w:[\]{}]*[\w$\]}]+)*/g;
++  /\bexport\s+(?<declaration>(?:async function\s*\*?|function\s*\*?|let|const enum|const|enum|var|class))\s+\*?(?<name>[\w$]+)(?<extraNames>.*,.*)?/g;
+ /**
+  * Regular expression to match export declarations specifically for types, interfaces, and type aliases in TypeScript.
+  * @example `export type Result = { success: boolean; }; export interface User { name: string; age: number; };`
+@@ -386,6 +386,31 @@ export function parseTypeImport(
+   } as ParsedStaticImport;
+ }
+ 
++/**
++ * If the `<` at `start` opens generic type arguments of a call (`foo<A, B>(`),
++ * returns the index of the matching `>`, otherwise -1 (e.g. a comparison `1<2`).
++ */
++function _findGenericCallEnd(str: string, start: number): number {
++  if (!/[\w$]/.test(str[start - 1] || "")) {
++    return -1;
++  }
++  let depth = 0;
++  for (let i = start; i < str.length; i++) {
++    const char = str[i];
++    if (char === "<") {
++      depth++;
++    } else if (char === ">" && str[i - 1] !== "=") {
++      depth--;
++      if (depth === 0) {
++        return /^\s*\(/.test(str.slice(i + 1)) ? i : -1;
++      }
++    } else if (!/[\w$\s,.[\]{}()|&:?'"`=;*-]/.test(char)) {
++      return -1;
++    }
++  }
++  return -1;
++}
++
+ /**
+  * Extracts extra variable names from a comma-separated declaration list,
+  * ignoring commas nested inside parentheses, brackets, braces, generics, or strings.
+@@ -440,11 +465,25 @@ function _extractExtraNames(extraNamesStr: string): string[] {
+       angleDepth++;
+       continue;
+     }
+-    if (inTypeAnnotation && char === ">" && angleDepth > 0) {
++    if (
++      inTypeAnnotation &&
++      char === ">" &&
++      angleDepth > 0 &&
++      extraNamesStr[i - 1] !== "="
++    ) {
+       angleDepth--;
+       continue;
+     }
+ 
++    // Skip generic type arguments of calls/constructors, e.g. `new Map<string, T>()`
++    if (char === "<" && depth === 0 && angleDepth === 0) {
++      const end = _findGenericCallEnd(extraNamesStr, i);
++      if (end > i) {
++        i = end;
++        continue;
++      }
++    }
++
+     // Track bracket nesting
+     if (char === "(" || char === "[" || char === "{") {
+       depth++;
+diff --git a/test/exports.test.ts b/test/exports.test.ts
+index baf98d7..14bacd1 100644
+--- a/test/exports.test.ts
++++ b/test/exports.test.ts
+@@ -597,3 +597,28 @@ describe("findTypeExports", () => {
+     `);
+   });
+ });
++
++describe("findExports generics", () => {
++  const names = (code: string) => findExports(code).flatMap((e) => e.names);
++
++  it("ignores generic type arguments", () => {
++    expect(
++      names("export const APP_MODE_MAP = new Map<string, IAppMode>()"),
++    ).toEqual(["APP_MODE_MAP"]);
++    expect(names("export const result = foo<Bar, Baz>(arg1, arg2)")).toEqual([
++      "result",
++    ]);
++    expect(
++      names("export const a = new Set<string>(), b = new Map<string, number>()"),
++    ).toEqual(["a", "b"]);
++  });
++
++  it("keeps comparisons and arrow types working", () => {
++    expect(names("export const a = 1<2, b = 3")).toEqual(["a", "b"]);
++    expect(
++      names(
++        "export const a: Map<string, (x: string) => void> = new Map(), b = 1",
++      ),
++    ).toEqual(["a", "b"]);
++  });
++});

@@ -1,0 +1,64 @@
+diff --git a/src/utils.ts b/src/utils.ts
+index db7c2c2..bfa1d35 100644
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -292,7 +292,7 @@ export function withBase(input: string, base: string) {
+     return input;
+   }
+   const _base = withoutTrailingSlash(base);
+-  if (input.startsWith(_base)) {
++  if (hasBase(input, _base)) {
+     return input;
+   }
+   return joinURL(_base, input);
+@@ -316,13 +316,21 @@ export function withoutBase(input: string, base: string) {
+     return input;
+   }
+   const _base = withoutTrailingSlash(base);
+-  if (!input.startsWith(_base)) {
++  if (!hasBase(input, _base)) {
+     return input;
+   }
+   const trimmed = input.slice(_base.length);
+   return trimmed[0] === "/" ? trimmed : "/" + trimmed;
+ }
+ 
++function hasBase(input: string, base: string): boolean {
++  if (!input.startsWith(base)) {
++    return false;
++  }
++  const next = input[base.length];
++  return next === undefined || next === "/" || next === "?" || next === "#";
++}
++
+ /**
+  * Add/Replace the query section of the URL.
+  *
+diff --git a/test/base.test.ts b/test/base.test.ts
+index ed684d1..77de687 100644
+--- a/test/base.test.ts
++++ b/test/base.test.ts
+@@ -1,6 +1,23 @@
+ import { describe, expect, test } from "vitest";
+ import { withBase, withoutBase } from "../src";
+ 
++describe.each(["/admin", "/admin/"])("base boundaries (%s)", (base) => {
++  test.each([
++    ["/admin-dashboard", "/admin/admin-dashboard", "/admin-dashboard"],
++    ["/administrator", "/admin/administrator", "/administrator"],
++    ["/admin.json", "/admin/admin.json", "/admin.json"],
++    ["/admin", "/admin", "/"],
++    ["/admin/", "/admin/", "/"],
++    ["/admin/dashboard", "/admin/dashboard", "/dashboard"],
++    ["/admin?x", "/admin?x", "/?x"],
++    ["/admin#section", "/admin#section", "/#section"],
++    ["/admin?x#section", "/admin?x#section", "/?x#section"],
++  ])("%s", (input, added, removed) => {
++    expect(withBase(input, base)).toBe(added);
++    expect(withoutBase(input, base)).toBe(removed);
++  });
++});
++
+ describe("withBase", () => {
+   const tests = [
+     { base: "/", input: "/", out: "/" },

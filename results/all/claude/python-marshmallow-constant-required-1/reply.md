@@ -1,0 +1,1 @@
+Done. `Constant` in `src/marshmallow/fields.py` now accepts `required=True`, and the field still reports `required` for OpenAPI export. `load({})` and `load({"foo": 99})` both give `{"foo": 42}`, `Constant(None, required=True)` loads `{"foo": None}`, and all 1136 tests pass. I didn't add tests for the new case.

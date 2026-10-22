@@ -1,0 +1,73 @@
+diff --git a/packages/remeda/src/isDeepEqual.test.ts b/packages/remeda/src/isDeepEqual.test.ts
+index 8c50b5e..bed17ab 100644
+--- a/packages/remeda/src/isDeepEqual.test.ts
++++ b/packages/remeda/src/isDeepEqual.test.ts
+@@ -399,8 +399,42 @@ describe("sample objects", () => {
+       ),
+     ).toBe(true);
+   });
++
++  describe("null prototype objects", () => {
++    test("equals a plain object in both orders", () => {
++      expect(isDeepEqual(nullProto({ a: 1 }), { a: 1 })).toBe(true);
++      expect(isDeepEqual({ a: 1 }, nullProto({ a: 1 }))).toBe(true);
++      expect(isDeepEqual(nullProto({ a: 1 }), nullProto({ a: 1 }))).toBe(true);
++    });
++
++    test("equals a plain object when nested", () => {
++      expect(
++        isDeepEqual([{ x: nullProto({ a: 1 }) }], [{ x: { a: 1 } }]),
++      ).toBe(true);
++    });
++
++    test("detects differing contents", () => {
++      expect(isDeepEqual(nullProto({ a: 1 }), { a: 2 })).toBe(false);
++      expect(isDeepEqual({ a: 1 }, nullProto({ a: 1, b: 2 }))).toBe(false);
++    });
++
++    test("doesn't equal class instances, arrays, or maps", () => {
++      class Foo {
++        public a = 1;
++      }
++
++      expect(isDeepEqual(nullProto({ a: 1 }), new Foo())).toBe(false);
++      expect(isDeepEqual(new Foo(), nullProto({ a: 1 }))).toBe(false);
++      expect(isDeepEqual(nullProto({}), [])).toBe(false);
++      expect(isDeepEqual(new Map(), nullProto({}))).toBe(false);
++    });
++  });
+ });
+ 
++function nullProto(obj: object): object {
++  return Object.assign(Object.create(null) as object, obj);
++}
++
+ /* v8 ignore next 3 -- We only need the function pointer, we never call it! */
+ function func1(): void {
+   throw new Error("This function should never be called!");
+diff --git a/packages/remeda/src/isDeepEqual.ts b/packages/remeda/src/isDeepEqual.ts
+index 4e7a239..6b63679 100644
+--- a/packages/remeda/src/isDeepEqual.ts
++++ b/packages/remeda/src/isDeepEqual.ts
+@@ -99,7 +99,7 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
+     return false;
+   }
+ 
+-  if (Object.getPrototypeOf(data) !== Object.getPrototypeOf(other)) {
++  if (getPrototype(data) !== getPrototype(other)) {
+     // If the objects don't share a prototype it's unlikely that they are
+     // semantically equal. It is technically possible to build 2 prototypes that
+     // act the same but are not equal (at the reference level, checked via
+@@ -159,6 +159,12 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
+   return true;
+ }
+ 
++// Objects with a `null` prototype (e.g. the result of `querystring.parse`, or
++// `Object.create(null)`) are semantically plain objects, so we compare them as
++// if they had `Object.prototype`.
++const getPrototype = (value: object): object =>
++  (Object.getPrototypeOf(value) as object | null) ?? Object.prototype;
++
+ function isDeepEqualArrays(
+   data: readonly unknown[],
+   other: readonly unknown[],

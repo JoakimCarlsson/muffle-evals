@@ -1,0 +1,1 @@
+Done. `Iter` and `IterMut` `size_hint` in `src/header/map.rs` now return 0 once the cursor is spent on the last entry. I added a regression test in `tests/header_map.rs`. `cargo test` passes. I didn't run your repro snippet directly, and nothing is committed.

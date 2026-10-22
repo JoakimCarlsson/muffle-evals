@@ -1,0 +1,30 @@
+diff --git a/time/src/format_description/parse/strftime.rs b/time/src/format_description/parse/strftime.rs
+index b98df69..a47167e 100644
+--- a/time/src/format_description/parse/strftime.rs
++++ b/time/src/format_description/parse/strftime.rs
+@@ -75,11 +75,20 @@ impl<'input> Iterator for Tokenizer<'input> {
+             return Some(Ok(BorrowedFormatItem::StringLiteral(value)));
+         }
+ 
+-        let (padding, component, advance) = match self.input.get(1) {
+-            Some(&b'_') => (Some(Padding::Space), self.input[2], 3),
+-            Some(&b'-') => (Some(Padding::None), self.input[2], 3),
+-            Some(&b'0') => (Some(Padding::Zero), self.input[2], 3),
+-            Some(_) => (None, self.input[1], 2),
++        let padding = match self.input.get(1) {
++            Some(&b'_') => Some(Padding::Space),
++            Some(&b'-') => Some(Padding::None),
++            Some(&b'0') => Some(Padding::Zero),
++            _ => None,
++        };
++        let (component, advance) = match (padding, self.input.get(1), self.input.get(2)) {
++            (Some(_), _, Some(&component)) => (component, 3),
++            (Some(_), _, None) => {
++                return Some(Err(error_expected_end(Location {
++                    byte: self.byte_pos + 2,
++                })));
++            }
++            (None, Some(&component), _) => (component, 2),
+             _ => {
+                 return Some(Err(error_expected_end(Location {
+                     byte: self.byte_pos,

@@ -1,0 +1,121 @@
+diff --git a/crates/toml/src/table.rs b/crates/toml/src/table.rs
+index 214bc8f..ea571ec 100644
+--- a/crates/toml/src/table.rs
++++ b/crates/toml/src/table.rs
+@@ -157,9 +157,21 @@ impl<'de> de::Deserializer<'de> for Table {
+         Value::Table(self).deserialize_newtype_struct(name, visitor)
+     }
+ 
++    fn deserialize_struct<V>(
++        self,
++        name: &'static str,
++        fields: &'static [&'static str],
++        visitor: V,
++    ) -> Result<V::Value, crate::de::Error>
++    where
++        V: de::Visitor<'de>,
++    {
++        Value::Table(self).deserialize_struct(name, fields, visitor)
++    }
++
+     serde_core::forward_to_deserialize_any! {
+         bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit seq
+-        bytes byte_buf map unit_struct tuple_struct struct
++        bytes byte_buf map unit_struct tuple_struct
+         tuple ignored_any identifier
+     }
+ }
+diff --git a/crates/toml/src/value.rs b/crates/toml/src/value.rs
+index 892d2d8..eaa3e13 100644
+--- a/crates/toml/src/value.rs
++++ b/crates/toml/src/value.rs
+@@ -608,9 +608,27 @@ impl<'de> de::Deserializer<'de> for Value {
+         visitor.visit_newtype_struct(self)
+     }
+ 
++    fn deserialize_struct<V>(
++        self,
++        name: &'static str,
++        _fields: &'static [&'static str],
++        visitor: V,
++    ) -> Result<V::Value, crate::de::Error>
++    where
++        V: de::Visitor<'de>,
++    {
++        if toml_datetime::de::is_datetime(name) {
++            if let Self::Datetime(datetime) = self {
++                return visitor.visit_map(toml_datetime::de::DatetimeDeserializer::new(datetime));
++            }
++        }
++
++        self.deserialize_any(visitor)
++    }
++
+     serde_core::forward_to_deserialize_any! {
+         bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit seq
+-        bytes byte_buf map unit_struct tuple_struct struct
++        bytes byte_buf map unit_struct tuple_struct
+         tuple ignored_any identifier
+     }
+ }
+diff --git a/crates/toml/tests/testsuite/value.rs b/crates/toml/tests/testsuite/value.rs
+index 46513da..858f49a 100644
+--- a/crates/toml/tests/testsuite/value.rs
++++ b/crates/toml/tests/testsuite/value.rs
+@@ -25,3 +25,56 @@ fn display() {
+         str!["{ test = 2, test2 = 3 }"].raw()
+     );
+ }
++
++#[test]
++fn deserialize_datetime() {
++    use serde::Deserialize;
++
++    #[derive(Debug, Deserialize, PartialEq)]
++    struct Settings {
++        last_updated: toml::value::Datetime,
++        minimum_interval: i64,
++    }
++
++    #[derive(Deserialize)]
++    struct Document {
++        settings: Settings,
++    }
++
++    for datetime in [
++        "2023-01-15T11:42:14-06:00",
++        "2023-01-15T11:42:14Z",
++        "2023-01-15T11:42:14.123",
++        "2023-01-15",
++        "11:42:14.123",
++    ] {
++        let input = format!("[settings]\nlast_updated = {datetime}\nminimum_interval = 3600\n");
++        let direct: Document = toml::from_str(&input).unwrap();
++        let table: toml::Table = toml::from_str(&input).unwrap();
++        let value = table.get("settings").unwrap().clone();
++        let settings = Settings::deserialize(value.clone()).unwrap();
++        assert_eq!(settings, direct.settings);
++        assert_eq!(value.clone().try_into::<Settings>().unwrap(), settings);
++        assert_eq!(
++            Settings::deserialize(value.as_table().unwrap().clone()).unwrap(),
++            settings
++        );
++
++        let value = value.get("last_updated").unwrap().clone();
++        assert_eq!(
++            value.clone().try_into::<toml::value::Datetime>().unwrap(),
++            settings.last_updated
++        );
++        assert_eq!(
++            serde_json::Value::deserialize(value.clone()).unwrap(),
++            serde_json::Value::String(datetime.to_owned())
++        );
++        assert_eq!(value.try_into::<std::string::String>().unwrap(), datetime);
++    }
++
++    assert!(
++        String("2023-01-15T11:42:14-06:00".to_owned())
++            .try_into::<toml::value::Datetime>()
++            .is_err()
++    );
++}

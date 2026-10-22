@@ -1,0 +1,61 @@
+diff --git a/src/utils.ts b/src/utils.ts
+index db7c2c2..ebfb55e 100644
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -272,6 +272,14 @@ export function cleanDoubleSlashes(input = ""): string {
+     .join("://");
+ }
+ 
++function _isUnderBase(input: string, base: string) {
++  if (!input.startsWith(base)) {
++    return false;
++  }
++  const next = input[base.length];
++  return next === undefined || next === "/" || next === "?" || next === "#";
++}
++
+ /**
+  * Ensures the URL or pathname starts with base.
+  *
+@@ -292,7 +300,7 @@ export function withBase(input: string, base: string) {
+     return input;
+   }
+   const _base = withoutTrailingSlash(base);
+-  if (input.startsWith(_base)) {
++  if (_isUnderBase(input, _base)) {
+     return input;
+   }
+   return joinURL(_base, input);
+@@ -316,7 +324,7 @@ export function withoutBase(input: string, base: string) {
+     return input;
+   }
+   const _base = withoutTrailingSlash(base);
+-  if (!input.startsWith(_base)) {
++  if (!_isUnderBase(input, _base)) {
+     return input;
+   }
+   const trimmed = input.slice(_base.length);
+diff --git a/test/base.test.ts b/test/base.test.ts
+index ed684d1..ac67a09 100644
+--- a/test/base.test.ts
++++ b/test/base.test.ts
+@@ -11,6 +11,8 @@ describe("withBase", () => {
+     { base: "/base", input: "/base/", out: "/base/" },
+     { base: "/base", input: "/base/a", out: "/base/a" },
+     { base: "/base/", input: "/base/a", out: "/base/a" },
++    { base: "/admin/", input: "/admin-dashboard", out: "/admin/admin-dashboard" },
++    { base: "/admin/", input: "/admin/dashboard", out: "/admin/dashboard" },
+     { base: "/base/", input: "https://test.com", out: "https://test.com" },
+     { base: "/", input: "https://test.com", out: "https://test.com" },
+   ];
+@@ -36,6 +38,10 @@ describe("withoutBase", () => {
+     { base: "/", input: "/test/", out: "/test/" },
+     { base: "/", input: "/?test", out: "/?test" },
+     { base: "/api", input: "/api?test", out: "/?test" },
++    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
++    { base: "/admin/", input: "/admin", out: "/" },
++    { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
++    { base: "/admin/", input: "/admin?x", out: "/?x" },
+     { base: "/base/", input: "https://test.com", out: "https://test.com" },
+     { base: "/", input: "https://test.com", out: "https://test.com" },
+   ];

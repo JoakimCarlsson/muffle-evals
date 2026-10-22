@@ -1,0 +1,70 @@
+diff --git a/src/analyze.ts b/src/analyze.ts
+index 52caecb..e979e2c 100644
+--- a/src/analyze.ts
++++ b/src/analyze.ts
+@@ -395,7 +395,10 @@ export function parseTypeImport(
+  * @param {string} extraNamesStr - The string containing the extra variable declarations to parse.
+  * @returns {string[]} An array of variable names extracted from the declaration list.
+  */
+-function _extractExtraNames(extraNamesStr: string): string[] {
++function _extractExtraNames(
++  extraNamesStr: string,
++  trailingCode: string,
++): string[] {
+   const names: string[] = [];
+   let depth = 0;
+   let angleDepth = 0;
+@@ -436,11 +439,14 @@ function _extractExtraNames(extraNamesStr: string): string[] {
+     ) {
+       inTypeAnnotation = false;
+     }
+-    if (inTypeAnnotation && char === "<") {
++    if (
++      char === "<" &&
++      (inTypeAnnotation || _hasTypeArguments(extraNamesStr + trailingCode, i))
++    ) {
+       angleDepth++;
+       continue;
+     }
+-    if (inTypeAnnotation && char === ">" && angleDepth > 0) {
++    if (char === ">" && extraNamesStr[i - 1] !== "=" && angleDepth > 0) {
+       angleDepth--;
+       continue;
+     }
+@@ -466,6 +472,24 @@ function _extractExtraNames(extraNamesStr: string): string[] {
+   return names;
+ }
+ 
++/** Checks whether an opening angle bracket starts type arguments for a call. */
++function _hasTypeArguments(code: string, start: number): boolean {
++  let depth = 1;
++  for (let i = start + 1; i < code.length; i++) {
++    const char = code[i];
++    if (char === "<") {
++      depth++;
++    } else if (char === ">" && code[i - 1] !== "=") {
++      if (--depth === 0) {
++        return /^\s*\(/.test(code.slice(i + 1));
++      }
++    } else if (char === "=" && code[i + 1] !== ">") {
++      return false;
++    }
++  }
++  return false;
++}
++
+ /**
+  * Identifies all export statements in the supplied source code and categorises them into different types such as declarations, named, default and star exports.
+  * This function processes the code to capture different forms of export statements and normalise their representation for further processing.
+@@ -488,7 +512,10 @@ export function findExports(code: string): ESMExport[] {
+       | string
+       | undefined;
+     if (extraNamesStr) {
+-      const extraNames = _extractExtraNames(extraNamesStr);
++      const extraNames = _extractExtraNames(
++        extraNamesStr,
++        code.slice(declaredExport.end),
++      );
+       if (extraNames.length > 0) {
+         declaredExport.names = [declaredExport.name, ...extraNames];
+       }

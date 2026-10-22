@@ -1,0 +1,72 @@
+diff --git a/context.go b/context.go
+index 8222073..41d2850 100644
+--- a/context.go
++++ b/context.go
+@@ -164,3 +164,14 @@ type contextKey struct {
+ func (k *contextKey) String() string {
+ 	return "chi context value " + k.name
+ }
++
++// addMethodAllowed records m as an allowed method for a 405 response,
++// skipping methods that were already recorded.
++func (x *Context) addMethodAllowed(m methodTyp) {
++	for _, existing := range x.methodsAllowed {
++		if existing == m {
++			return
++		}
++	}
++	x.methodsAllowed = append(x.methodsAllowed, m)
++}
+diff --git a/dup_test.go b/dup_test.go
+new file mode 100644
+index 0000000..fdb71b2
+--- /dev/null
++++ b/dup_test.go
+@@ -0,0 +1,25 @@
++package chi
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"testing"
++)
++
++func TestMethodNotAllowedNoDuplicateAllow(t *testing.T) {
++	r := NewRouter()
++	h := func(w http.ResponseWriter, r *http.Request) {}
++	r.Post("/article/1-2-3", h)
++	r.Post("/article/{a}", h)
++	r.Post("/article/{b}-{c}", h)
++	r.Post("/article/{b}-{c}-{d}", h)
++
++	w := httptest.NewRecorder()
++	r.ServeHTTP(w, httptest.NewRequest("GET", "/article/1-2-3", nil))
++	if w.Code != 405 {
++		t.Fatalf("code %d", w.Code)
++	}
++	if got := w.Header().Values("Allow"); len(got) != 1 || got[0] != "POST" {
++		t.Fatalf("Allow = %v", got)
++	}
++}
+diff --git a/tree.go b/tree.go
+index 9f56549..1370e12 100644
+--- a/tree.go
++++ b/tree.go
+@@ -479,7 +479,7 @@ func (n *node) findRoute(rctx *Context, method methodTyp, path string) *node {
+ 							if endpoints == mALL || endpoints == mSTUB {
+ 								continue
+ 							}
+-							rctx.methodsAllowed = append(rctx.methodsAllowed, endpoints)
++							rctx.addMethodAllowed(endpoints)
+ 						}
+ 
+ 						// flag that the routing context found a route, but not a corresponding
+@@ -525,7 +525,7 @@ func (n *node) findRoute(rctx *Context, method methodTyp, path string) *node {
+ 					if endpoints == mALL || endpoints == mSTUB {
+ 						continue
+ 					}
+-					rctx.methodsAllowed = append(rctx.methodsAllowed, endpoints)
++					rctx.addMethodAllowed(endpoints)
+ 				}
+ 
+ 				// flag that the routing context found a route, but not a corresponding

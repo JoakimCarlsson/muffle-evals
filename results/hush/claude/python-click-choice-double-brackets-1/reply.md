@@ -1,0 +1,1 @@
+Done. `Argument.make_metavar` in `src/click/core.py` now skips its own brackets when the type's metavar already has them. `--help` shows `[foo|bar]...` and `[%Y]`, and the test suite passes. I added no regression test.

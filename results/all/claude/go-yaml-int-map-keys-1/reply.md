@@ -1,0 +1,1 @@
+Done. `decodeMap` in `decode.go` now turns non-string keys into strings with `fmt.Sprint` when the map key type is a string. Before, reflect converted the integer 42 to the rune `*`. Your example now prints `map[42:100]`, and the existing tests pass. I added no test, and I deleted my scratch repro.

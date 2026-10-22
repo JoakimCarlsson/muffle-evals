@@ -1,0 +1,71 @@
+diff --git a/unmarshaler.go b/unmarshaler.go
+index d497669..bb276a5 100644
+--- a/unmarshaler.go
++++ b/unmarshaler.go
+@@ -2257,14 +2257,14 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
+ 				// Embedded non-struct fields are not decoded into.
+ 				continue
+ 			}
+-			if !tagged {
+-				// Untagged embedded structs are flattened, even when their
++			if !tagged || tagName(tag) == "" {
++				// Embedded structs without an explicit name are flattened, even when their
+ 				// type is unexported: only their own exported fields are
+ 				// reachable.
+ 				embedded = append(embedded, f)
+ 				continue
+ 			}
+-			// A tagged embedded struct acts as a regular named field.
++			// An explicitly named embedded struct acts as a regular named field.
+ 		} else if f.PkgPath != "" {
+ 			// unexported
+ 			continue
+diff --git a/unmarshaler_test.go b/unmarshaler_test.go
+index fbefca8..59c0633 100644
+--- a/unmarshaler_test.go
++++ b/unmarshaler_test.go
+@@ -3942,6 +3942,44 @@ func TestOmitEmpty(t *testing.T) {
+ 	assert.Equal(t, "X = [{Foo = 'test', Inner = {V = 'alue'}}]\n", string(b))
+ }
+ 
++func TestUnmarshalEmbeddedInline(t *testing.T) {
++	type Base struct {
++		Region string
++		Name   string
++		BsPort int
++	}
++	type Config struct {
++		Base  `toml:",inline"`
++		PID   uint32
++		index int `toml:"-"`
++	}
++	type PointerConfig struct {
++		*Base `toml:",inline"`
++		PID   uint32
++	}
++	const doc = "Region = \"us\"\nName = \"srv1\"\nBsPort = 100\nPID = 42\n"
++	want := Base{Region: "us", Name: "srv1", BsPort: 100}
++	t.Run("value", func(t *testing.T) {
++		var got Config
++		err := toml.NewDecoder(strings.NewReader(doc)).DisallowUnknownFields().Decode(&got)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if got.Base != want || got.PID != 42 || got.index != 0 {
++			t.Fatalf("unexpected config: %+v", got)
++		}
++	})
++	t.Run("pointer", func(t *testing.T) {
++		var got PointerConfig
++		if err := toml.Unmarshal([]byte(doc), &got); err != nil {
++			t.Fatal(err)
++		}
++		if got.Base == nil || *got.Base != want || got.PID != 42 {
++			t.Fatalf("unexpected config: %+v", got)
++		}
++	})
++}
++
+ func TestUnmarshalTags(t *testing.T) {
+ 	type doc struct {
+ 		Dash   string `toml:"-,"`

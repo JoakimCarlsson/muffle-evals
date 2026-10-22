@@ -1,0 +1,55 @@
+diff --git a/compiler/compiler.go b/compiler/compiler.go
+index f66cf9e..6851753 100644
+--- a/compiler/compiler.go
++++ b/compiler/compiler.go
+@@ -1213,12 +1213,14 @@ func (c *compiler) emitLoopBackwards(body func()) {
+ 	c.emit(OpInt, 0)
+ 	c.emit(OpMoreOrEqual)
+ 	end := c.emit(OpJumpIfFalse, placeholder)
++	c.emit(OpPop)
+ 
+ 	body()
+ 
+ 	c.emit(OpDecrementIndex)
+ 	c.emit(OpJumpBackward, c.calcBackwardJump(begin))
+ 	c.patchJump(end)
++	c.emit(OpPop)
+ }
+ 
+ func (c *compiler) PredicateNode(node *ast.PredicateNode) {
+diff --git a/expr_test.go b/expr_test.go
+index 1bce3c8..abd841a 100644
+--- a/expr_test.go
++++ b/expr_test.go
+@@ -1464,6 +1464,31 @@ func TestExpr(t *testing.T) {
+ 	}
+ }
+ 
++func TestExpr_findLast_map_value(t *testing.T) {
++	for _, optimize := range []bool{false, true} {
++		for _, builtin := range []string{"findLast", "findLastIndex"} {
++			for _, tt := range []struct {
++				array string
++				want  any
++			}{
++				{"[1.0, 2.0, 3.0, 4.0, 5.0]", map[string]any{"findLast": 5.0, "findLastIndex": 4}[builtin]},
++				{"[5.0, 4.0, 3.0, 2.0, 1.0]", map[string]any{"findLast": 4.0, "findLastIndex": 1}[builtin]},
++				{"[1.0, 2.0, 3.0]", nil},
++				{"[]", nil},
++			} {
++				expression := fmt.Sprintf(`{"r": %s(%s, # > 3)}`, builtin, tt.array)
++				t.Run(fmt.Sprintf("%s/optimize=%t", expression, optimize), func(t *testing.T) {
++					program, err := expr.Compile(expression, expr.Optimize(optimize))
++					require.NoError(t, err)
++					result, err := expr.Run(program, nil)
++					require.NoError(t, err)
++					assert.Equal(t, map[string]any{"r": tt.want}, result)
++				})
++			}
++		}
++	}
++}
++
+ func TestExpr_error(t *testing.T) {
+ 	env := mock.Env{
+ 		ArrayOfAny: []any{1, "2", 3, true},

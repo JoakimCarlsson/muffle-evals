@@ -1,0 +1,1 @@
+Done. `^` added to `PATH` set in `url/src/parser.rs`. I removed the now-redundant `^` from `USERINFO`, which inherits it from `PATH`. I also removed 3 newly passing entries from `tests/expected_failures.txt`. Tests pass; nothing committed.

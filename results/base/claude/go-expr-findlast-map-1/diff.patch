@@ -1,0 +1,42 @@
+diff --git a/compiler/compiler.go b/compiler/compiler.go
+index f66cf9e..9818976 100644
+--- a/compiler/compiler.go
++++ b/compiler/compiler.go
+@@ -1213,12 +1213,14 @@ func (c *compiler) emitLoopBackwards(body func()) {
+ 	c.emit(OpInt, 0)
+ 	c.emit(OpMoreOrEqual)
+ 	end := c.emit(OpJumpIfFalse, placeholder)
++	c.emit(OpPop)
+ 
+ 	body()
+ 
+ 	c.emit(OpDecrementIndex)
+ 	c.emit(OpJumpBackward, c.calcBackwardJump(begin))
+ 	c.patchJump(end)
++	c.emit(OpPop) // discard the failed bounds check left by OpJumpIfFalse
+ }
+ 
+ func (c *compiler) PredicateNode(node *ast.PredicateNode) {
+diff --git a/expr_test.go b/expr_test.go
+index 1bce3c8..d281eb4 100644
+--- a/expr_test.go
++++ b/expr_test.go
+@@ -3005,3 +3005,18 @@ func TestBytesLiteral_errors(t *testing.T) {
+ 		})
+ 	}
+ }
++
++func TestExpr_findLast_in_map_literal(t *testing.T) {
++	tests := map[string]any{
++		`{"r": findLast([1.0, 2.0, 3.0, 4.0, 5.0], # > 3)}`:      map[string]any{"r": 5.0},
++		`{"r": findLastIndex([1.0, 2.0, 3.0, 4.0, 5.0], # > 3)}`: map[string]any{"r": 4},
++		`{"r": findLast([1, 2], # > 3)}`:                         map[string]any{"r": nil},
++	}
++	for code, want := range tests {
++		program, err := expr.Compile(code)
++		require.NoError(t, err, code)
++		got, err := expr.Run(program, nil)
++		require.NoError(t, err, code)
++		assert.Equal(t, want, got, code)
++	}
++}

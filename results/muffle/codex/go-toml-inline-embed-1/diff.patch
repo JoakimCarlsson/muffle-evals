@@ -1,0 +1,89 @@
+diff --git a/unmarshaler.go b/unmarshaler.go
+index d497669..94098a3 100644
+--- a/unmarshaler.go
++++ b/unmarshaler.go
+@@ -2257,14 +2257,14 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
+ 				// Embedded non-struct fields are not decoded into.
+ 				continue
+ 			}
+-			if !tagged {
+-				// Untagged embedded structs are flattened, even when their
+-				// type is unexported: only their own exported fields are
+-				// reachable.
++			if !tagged || tagName(tag) == "" {
++				// Embedded structs without an explicit name are flattened,
++				// even when their type is unexported: only their own
++				// exported fields are reachable.
+ 				embedded = append(embedded, f)
+ 				continue
+ 			}
+-			// A tagged embedded struct acts as a regular named field.
++			// An explicitly named embedded struct acts as a regular field.
+ 		} else if f.PkgPath != "" {
+ 			// unexported
+ 			continue
+diff --git a/unmarshaler_test.go b/unmarshaler_test.go
+index fbefca8..64b3402 100644
+--- a/unmarshaler_test.go
++++ b/unmarshaler_test.go
+@@ -16,6 +16,60 @@ import (
+ 	"github.com/pelletier/go-toml/v2/unstable"
+ )
+ 
++func TestUnmarshalEmbeddedStructWithoutTagName(t *testing.T) {
++	type Base struct {
++		Region string
++		Name   string
++		BsPort int
++	}
++	base := Base{Region: "us", Name: "srv1", BsPort: 100}
++	const document = "Region = 'us'\nName = 'srv1'\nBsPort = 100\nPID = 42\n"
++	for _, tt := range []struct {
++		name string
++		new  func() any
++		want any
++	}{
++		{"inline", func() any {
++			return &struct {
++				Base  `toml:",inline"`
++				PID   uint32
++				index int `toml:"-"`
++			}{}
++		}, &struct {
++			Base  `toml:",inline"`
++			PID   uint32
++			index int `toml:"-"`
++		}{Base: base, PID: 42}},
++		{"pointer", func() any {
++			return &struct {
++				*Base `toml:",inline"`
++				PID   uint32
++			}{}
++		}, &struct {
++			*Base `toml:",inline"`
++			PID   uint32
++		}{Base: &base, PID: 42}},
++		{"empty tag", func() any {
++			return &struct {
++				Base `toml:""`
++				PID  uint32
++			}{}
++		}, &struct {
++			Base `toml:""`
++			PID  uint32
++		}{Base: base, PID: 42}},
++	} {
++		t.Run(tt.name, func(t *testing.T) {
++			got := tt.new()
++			assert.NoError(t, toml.Unmarshal([]byte(document), got))
++			assert.Equal(t, tt.want, got)
++			got = tt.new()
++			assert.NoError(t, toml.NewDecoder(strings.NewReader(document)).DisallowUnknownFields().Decode(got))
++			assert.Equal(t, tt.want, got)
++		})
++	}
++}
++
+ type unmarshalTextKey struct {
+ 	A string
+ 	B string

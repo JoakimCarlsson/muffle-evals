@@ -1,0 +1,1 @@
+Done. Fixed `size_hint` lower bound in `Iter` and `IterMut` (`src/header/map.rs`). It now skips the current entry once its cursor is exhausted. Existing tests pass. I didn't run your repro and added no new test.

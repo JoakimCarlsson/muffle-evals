@@ -1,0 +1,69 @@
+diff --git a/src/utils.ts b/src/utils.ts
+index db7c2c2..bfa1d35 100644
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -292,7 +292,7 @@ export function withBase(input: string, base: string) {
+     return input;
+   }
+   const _base = withoutTrailingSlash(base);
+-  if (input.startsWith(_base)) {
++  if (hasBase(input, _base)) {
+     return input;
+   }
+   return joinURL(_base, input);
+@@ -316,13 +316,21 @@ export function withoutBase(input: string, base: string) {
+     return input;
+   }
+   const _base = withoutTrailingSlash(base);
+-  if (!input.startsWith(_base)) {
++  if (!hasBase(input, _base)) {
+     return input;
+   }
+   const trimmed = input.slice(_base.length);
+   return trimmed[0] === "/" ? trimmed : "/" + trimmed;
+ }
+ 
++function hasBase(input: string, base: string): boolean {
++  if (!input.startsWith(base)) {
++    return false;
++  }
++  const next = input[base.length];
++  return next === undefined || next === "/" || next === "?" || next === "#";
++}
++
+ /**
+  * Add/Replace the query section of the URL.
+  *
+diff --git a/test/base.test.ts b/test/base.test.ts
+index ed684d1..c44ee75 100644
+--- a/test/base.test.ts
++++ b/test/base.test.ts
+@@ -1,6 +1,28 @@
+ import { describe, expect, test } from "vitest";
+ import { withBase, withoutBase } from "../src";
+ 
++describe("base path boundaries", () => {
++  for (const base of ["/admin", "/admin/"]) {
++    for (const suffix of ["-dashboard", "istrator", "%2Fdashboard"]) {
++      const input = `/admin${suffix}`;
++      test(`${base} does not contain ${input}`, () => {
++        expect(withoutBase(input, base)).toBe(input);
++        expect(withBase(input, base)).toBe(`/admin${input}`);
++      });
++    }
++
++    for (const suffix of ["", "/dashboard", "?x", "#section"]) {
++      const input = `/admin${suffix}`;
++      test(`${base} contains ${input}`, () => {
++        expect(withoutBase(input, base)).toBe(
++          suffix.startsWith("/") ? suffix : `/${suffix}`,
++        );
++        expect(withBase(input, base)).toBe(input);
++      });
++    }
++  }
++});
++
+ describe("withBase", () => {
+   const tests = [
+     { base: "/", input: "/", out: "/" },

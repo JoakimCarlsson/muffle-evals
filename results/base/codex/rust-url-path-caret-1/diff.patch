@@ -1,0 +1,78 @@
+diff --git a/url/src/parser.rs b/url/src/parser.rs
+index 27d7cb7..5ff6305 100644
+--- a/url/src/parser.rs
++++ b/url/src/parser.rs
+@@ -20,7 +20,7 @@ use percent_encoding::{percent_encode, utf8_percent_encode, AsciiSet, CONTROLS};
+ const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
+ 
+ /// https://url.spec.whatwg.org/#path-percent-encode-set
+-const PATH: &AsciiSet = &FRAGMENT.add(b'#').add(b'?').add(b'{').add(b'}');
++const PATH: &AsciiSet = &FRAGMENT.add(b'#').add(b'?').add(b'^').add(b'{').add(b'}');
+ 
+ /// https://url.spec.whatwg.org/#userinfo-percent-encode-set
+ pub(crate) const USERINFO: &AsciiSet = &PATH
+@@ -32,7 +32,6 @@ pub(crate) const USERINFO: &AsciiSet = &PATH
+     .add(b'[')
+     .add(b'\\')
+     .add(b']')
+-    .add(b'^')
+     .add(b'|');
+ 
+ pub(crate) const PATH_SEGMENT: &AsciiSet = &PATH.add(b'/').add(b'%');
+diff --git a/url/tests/expected_failures.txt b/url/tests/expected_failures.txt
+index 8d4407c..2332b2a 100644
+--- a/url/tests/expected_failures.txt
++++ b/url/tests/expected_failures.txt
+@@ -51,8 +51,6 @@
+ <non-special:opaque \t\t  \t#hi>
+ <non-special:opaque \t\t  #hi>
+ <non-special:opaque\t\t  \r #hi>
+-<foo://host/ !\"$%&\'()*+,-./:;<=>@[\\]^_`{|}~>
+-<wss://host/ !\"$%&\'()*+,-./:;<=>@[\\]^_`{|}~>
+ <///test> against <http://example.org/>
+ <///\\//\\//test> against <http://example.org/>
+ <///example.org/path> against <http://example.org/>
+@@ -61,7 +59,6 @@
+ <///example.org/../path/../../> against <http://example.org/>
+ <///example.org/../path/../../path> against <http://example.org/>
+ </\\//\\/a/../> against <file:///>
+-<a:/> set pathname to <\u{0}\u{1}\t\n\r\u{1f} !\"#$%&\'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~\u{7f}\u{80}\u{81}\u{c9}\u{e9}>
+ <data:space                                                                                                                                  #fragment> set hash to <>
+ <sc:space    #fragment> set hash to <>
+ <data:space  ?query#fragment> set hash to <>
+diff --git a/url/tests/unit.rs b/url/tests/unit.rs
+index 828f797..9a7df12 100644
+--- a/url/tests/unit.rs
++++ b/url/tests/unit.rs
+@@ -53,6 +53,31 @@ fn size() {
+     assert_eq!(size_of::<Url>(), size_of::<Option<Url>>());
+ }
+ 
++#[test]
++fn test_caret_in_path() {
++    for base in &["http://localhost/", "file:///", "foo://localhost/"] {
++        let base = Url::parse(base).unwrap();
++        let expected = format!("{}a%5Eb", base);
++        assert_eq!(
++            Url::parse(&format!("{}a^b", base)).unwrap().as_str(),
++            expected
++        );
++        assert_eq!(base.join("a^b").unwrap().as_str(), expected);
++
++        let mut url = base.clone();
++        url.set_path("a^b");
++        assert_eq!(url.as_str(), expected);
++
++        let mut url = base.clone();
++        url.path_segments_mut().unwrap().push("a^b");
++        assert_eq!(url.as_str(), expected);
++    }
++
++    let url = Url::parse("http://localhost/a%5Eb?q=^#^").unwrap();
++    assert_eq!(url.as_str(), "http://localhost/a%5Eb?q=^#^");
++    assert_eq!(Url::parse("data:a^b").unwrap().as_str(), "data:a^b");
++}
++
+ #[test]
+ fn test_relative() {
+     let base: Url = "sc://%C3%B1".parse().unwrap();
