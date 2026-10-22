@@ -1,0 +1,149 @@
+$ cat src/parse/parser.ts
+src/parse/parser.ts (968 lines)
+1	import type {
+2	  SourceToken,
+3	  Token,
+4	  FlowScalar,
+5	  FlowCollection,
+6	  Document,
+7	  BlockMap,
+8	  BlockScalar,
+9	  BlockSequence,
+10	  DocumentEnd,
+11	  TokenType
+12	} from './cst.ts'
+13	import { prettyToken, tokenType } from './cst.ts'
+14	import { lex } from './lexer.ts'
+15	
+16	function includesToken(list: SourceToken[], type: SourceToken['type']) { … }
+20	
+21	const logToken =
+22	  typeof process !== 'undefined' && process.env?.LOG_TOKENS
+23	    ? (token: string) => console.log('|', prettyToken(token))
+24	    : () => {}
+25	
+26	function findNonEmptyIndex(list: SourceToken[]) { … }
+39	
+40	function isFlowToken(
+41	  token: Token | null | undefined
+42	): token is FlowScalar | FlowCollection { … }
+54	
+55	function getPrevProps(parent: Token) { … }
+70	
+71	/** Note: May modify input array */
+72	function getFirstKeyStartProps(prev: SourceToken[]) { … }
+91	
+92	function fixFlowSeqItems(fc: FlowCollection) { … }
+112	
+113	/**
+114	 * A YAML concrete syntax tree (CST) parser
+115	 *
+116	 * ```ts
+117	 * const src: string = ...
+118	 * for (const token of new Parser().parse(src)) {
+119	 *   // token: Token
+120	 * }
+121	 * ```
+122	 *
+123	 * To use the parser with a user-provided lexer:
+124	 *
+125	 * ```ts
+126	 * function parse(source: string, lexTokens: string[]) {
+127	 *   const parser = new Parser()
+128	 *   for (const lexeme of lexTokens) parser.next(lexeme)
+129	 *   return parser.end()
+130	 * }
+131	 *
+132	 * const src: string = ...
+133	 * for (const token of parse(src, lex(src))) {
+134	 *   // token: Token
+135	 * }
+136	 * ```
+137	 */
+138	export class Parser {
+139	  private onNewLine?: (offset: number) => void
+140	
+141	  /** If true, space and sequence indicators count as indentation */
+142	  private atNewLine = true
+143	
+144	  /** If true, next token is a scalar value */
+145	  private atScalar = false
+146	
+147	  /** Current indentation level */
+148	  private indent = 0
+149	
+150	  /** Current offset since the start of parsing */
+151	  offset = 0
+152	
+153	  /** On the same line with a block map key */
+154	  private onKeyLine = false
+155	
+156	  /** Top indicates the node that's currently being built */
+157	  stack: Token[] = []
+158	
+159	  /** The source of the current token, set in parse() */
+160	  private source = ''
+161	
+162	  /** The type of the current token, set in parse() */
+163	  private type = '' as TokenType
+164	
+165	  tokens: Token[] = []
+166	
+167	  /**
+168	   * @param onNewLine - If defined, called separately with the start position of
+169	   *   each new line (in `parse()`, including the start of input).
+170	   */
+171	  constructor(onNewLine?: (offset: number) => void) { … }
+174	
+175	  /**
+176	   * Parse `source` as a YAML stream.
+177	   *
+178	   * Errors are not thrown, but included in the result as `{ type: 'error', message }` tokens.
+179	   *
+180	   * @returns Tokens representing each directive, document, and other structure.
+181	   */
+182	  parse(source: string): Token[] { … }
+187	
+188	  /**
+189	   * Advance the parser by the `source` of one lexical token.
+190	   */
+191	  next(source: string): void { … }
+237	
+238	  /** Call at end of input to account for any remaining constructions */
+239	  end(): Token[] { … }
+243	
+244	  private get sourceToken() { … }
+253	
+254	  private step(): void { … }
+292	
+293	  private peek(n: number) { … }
+296	
+297	  private pop(error?: Token): void { … }
+387	
+388	  private stream(): Token | null { … }
+416	
+417	  private document(doc: Document) { … }
+448	
+449	  private scalar(scalar: FlowScalar) { … }
+471	
+472	  private blockScalar(scalar: BlockScalar) { … }
+499	
+500	  private blockMap(map: BlockMap) { … }
+713	
+714	  private blockSequence(seq: BlockSequence) { … }
+764	
+765	  private flowCollection(fc: FlowCollection) { … }
+853	
+854	  private flowScalar(
+855	    type: 'alias' | 'scalar' | 'single-quoted-scalar' | 'double-quoted-scalar'
+856	  ): FlowScalar { … }
+871	
+872	  private startBlockValue(parent: Token) { … }
+930	
+931	  private atIndentedComment(start: SourceToken[], indent: number) { … }
+936	
+937	  private documentEnd(docEnd: DocumentEnd) { … }
+944	
+945	  private lineEnd(token: Document | FlowCollection | FlowScalar) { … }
+968	}
+[function bodies left out: sed -n 'A,Bp' src/parse/parser.ts prints lines A to B]

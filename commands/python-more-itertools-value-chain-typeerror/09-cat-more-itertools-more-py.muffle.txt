@@ -1,0 +1,1409 @@
+$ cat more_itertools/more.py
+more_itertools/more.py (5590 lines)
+1	__lazy_modules__ = frozenset({'queue', 'threading'})
+2	
+3	import math
+4	import types
+5	
+6	from collections import Counter, defaultdict, deque
+7	from collections.abc import Sequence
+8	from contextlib import suppress
+9	from functools import cached_property, partial, wraps
+10	from heapq import heapify, heapreplace
+11	from itertools import (
+12	    chain,
+13	    combinations,
+14	    compress,
+15	    count,
+16	    cycle,
+17	    dropwhile,
+18	    groupby,
+19	    islice,
+20	    permutations,
+21	    repeat,
+22	    starmap,
+23	    takewhile,
+24	    tee,
+25	    zip_longest,
+26	    product,
+27	)
+28	from math import comb, e, exp, floor, fsum, log, log1p, perm, tau
+29	from math import ceil, prod
+30	from queue import Empty, Queue
+31	from random import random, randrange, shuffle, uniform
+32	from operator import (
+33	    attrgetter,
+34	    getitem,
+35	    is_not,
+36	    itemgetter,
+37	    lt,
+38	    neg,
+39	    sub,
+40	    gt,
+41	)
+42	from sys import maxsize
+43	from time import monotonic
+44	from threading import Lock
+45	
+46	from .recipes import (
+47	    _marker,
+48	    consume,
+49	    first_true,
+50	    flatten,
+51	    is_prime,
+52	    nth,
+53	    powerset,
+54	    sieve,
+55	    take,
+56	    unique_everseen,
+57	    all_equal,
+58	    batched,
+59	)
+60	
+61	__all__ = [
+62	    'AbortThread',
+63	    'SequenceView',
+64	    'adjacent',
+65	    'all_unique',
+66	    'always_iterable',
+67	    'always_reversible',
+68	    'argmax',
+69	    'argmin',
+70	    'bucket',
+71	    'callback_iter',
+72	    'chunked',
+73	    'chunked_even',
+74	    'circular_shifts',
+75	    'classify_unique',
+76	    'collapse',
+77	    'combination_index',
+78	    'combination_with_replacement_index',
+79	    'concurrent_tee',
+80	    'consecutive_groups',
+81	    'constrained_batches',
+82	    'consumer',
+83	    'count_cycle',
+84	    'countable',
+85	    'derangements',
+86	    'dft',
+87	    'difference',
+88	    'distinct_combinations',
+89	    'distinct_permutations',
+90	    'distribute',
+91	    'divide',
+92	    'doublestarmap',
+93	    'duplicates_everseen',
+94	    'duplicates_justseen',
+95	    'exactly_n',
+96	    'extract',
+97	    'filter_except',
+98	    'filter_map',
+99	    'first',
+100	    'gray_product',
+101	    'groupby_transform',
+102	    'ichunked',
+103	    'idft',
+104	    'iequals',
+105	    'ilen',
+106	    'interleave',
+107	    'interleave_evenly',
+108	    'interleave_longest',
+109	    'interleave_randomly',
+110	    'intersperse',
+111	    'is_sorted',
+112	    'islice_extended',
+113	    'iter_suppress',
+114	    'iterate',
+115	    'join_mappings',
+116	    'last',
+117	    'locate',
+118	    'longest_common_prefix',
+119	    'lstrip',
+120	    'make_decorator',
+121	    'map_except',
+122	    'map_if',
+123	    'map_reduce',
+124	    'mark_ends',
+125	    'minmax',
+126	    'nth_combination_with_replacement',
+127	    'nth_or_last',
+128	    'nth_permutation',
+129	    'nth_prime',
+130	    'nth_product',
+131	    'numeric_range',
+132	    'one',
+133	    'only',
+134	    'outer_product',
+135	    'padded',
+136	    'partial_product',
+137	    'partitions',
+138	    'peekable',
+139	    'permutation_index',
+140	    'powerset_of_sets',
+141	    'product_index',
+142	    'raise_',
+143	    'repeat_each',
+144	    'repeat_last',
+145	    'replace',
+146	    'rlocate',
+147	    'rstrip',
+148	    'run_length',
+149	    'sample',
+150	    'seekable',
+151	    'serialize',
+152	    'set_partitions',
+153	    'side_effect',
+154	    'sized_iterator',
+155	    'sliced',
+156	    'sort_together',
+157	    'split_after',
+158	    'split_at',
+159	    'split_before',
+160	    'split_into',
+161	    'split_when',
+162	    'spy',
+163	    'stagger',
+164	    'strictly_n',
+165	    'strip',
+166	    'subfactorial',
+167	    'substrings',
+168	    'substrings_indexes',
+169	    'synchronized',
+170	    'takewhile_inclusive',
+171	    'time_limited',
+172	    'unique_in_window',
+173	    'unique_to_each',
+174	    'unzip',
+175	    'value_chain',
+176	    'windowed',
+177	    'windowed_complete',
+178	    'with_iter',
+179	    'zip_broadcast',
+180	    'zip_offset',
+181	]
+182	
+183	# math.sumprod is available for Python 3.12+
+184	try:
+185	    from math import sumprod as _fsumprod
+186	
+187	except ImportError:  # pragma: no cover
+188	    # Extended precision algorithms from T. J. Dekker,
+189	    # "A Floating-Point Technique for Extending the Available Precision"
+190	    # https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
+191	    # Formulas: (5.5) (5.6) and (5.8).  Code: mul12()
+192	
+193	    def dl_split(x: float):
+194	        …
+199	
+200	    def dl_mul(x, y):
+201	        …
+209	
+210	    def _fsumprod(p, q):
+211	        return fsum(chain.from_iterable(map(dl_mul, p, q)))
+212	
+213	
+214	def chunked(iterable, n, strict=False):
+215	    …
+250	
+251	
+252	def first(iterable, default=_marker):
+253	    …
+277	
+278	
+279	def last(iterable, default=_marker):
+280	    …
+302	
+303	
+304	def nth_or_last(iterable, n, default=_marker):
+305	    …
+319	
+320	
+321	class peekable:
+322	    """Wrap an iterator to allow lookahead and prepending elements.
+323	
+324	    Call :meth:`peek` on the result to get the value that will be returned
+325	    by :func:`next`. This won't advance the iterator:
+326	
+327	        >>> p = peekable(['a', 'b'])
+328	        >>> p.peek()
+329	        'a'
+330	        >>> next(p)
+331	        'a'
+332	
+333	    Pass :meth:`peek` a default value to return that instead of raising
+334	    ``StopIteration`` when the iterator is exhausted.
+335	
+336	        >>> p = peekable([])
+337	        >>> p.peek('hi')
+338	        'hi'
+339	
+340	    peekables also offer a :meth:`prepend` method, which "inserts" items
+341	    at the head of the iterable:
+342	
+343	        >>> p = peekable([1, 2, 3])
+344	        >>> p.prepend(10, 11, 12)
+345	        >>> next(p)
+346	        10
+347	        >>> p.peek()
+348	        11
+349	        >>> list(p)
+350	        [11, 12, 1, 2, 3]
+351	
+352	    peekables can be indexed. Index 0 is the item that will be returned by
+353	    :func:`next`, index 1 is the item after that, and so on:
+354	    The values up to the given index will be cached.
+355	
+356	        >>> p = peekable(['a', 'b', 'c', 'd'])
+357	        >>> p[0]
+358	        'a'
+359	        >>> p[1]
+360	        'b'
+361	        >>> next(p)
+362	        'a'
+363	
+364	    Negative indexes are supported, but be aware that they will cache the
+365	    remaining items in the source iterator, which may require significant
+366	    storage.
+367	
+368	    To check whether a peekable is exhausted, check its truth value:
+369	
+370	        >>> p = peekable(['a', 'b'])
+371	        >>> if p:  # peekable has items
+372	        ...     list(p)
+373	        ['a', 'b']
+374	        >>> if not p:  # peekable is exhausted
+375	        ...     list(p)
+376	        []
+377	
+378	    """
+379	
+380	    def __init__(self, iterable):
+381	        …
+383	
+384	    def __iter__(self):
+385	        return self
+386	
+387	    def __bool__(self):
+388	        …
+393	
+394	    def peek(self, default=_marker):
+395	        …
+409	
+410	    def prepend(self, *items):
+411	        …
+440	
+441	    __class_getitem__ = classmethod(types.GenericAlias)
+442	
+443	    def __next__(self):
+444	        …
+448	
+449	    def _get_slice(self, index):
+450	        # Normalize the slice's arguments
+451	        …
+474	
+475	    def __getitem__(self, index):
+476	        …
+486	
+487	
+488	def consumer(func):
+489	    …
+518	
+519	
+520	def ilen(iterable):
+521	    …
+543	
+544	
+545	def iterate(func, start):
+546	    …
+563	
+564	
+565	def with_iter(context_manager):
+566	    …
+580	
+581	
+582	class sized_iterator:
+583	    """Wrapper for *iterable* that implements ``__len__``.
+584	
+585	    >>> it = map(str, range(5))
+586	    >>> sized_it = sized_iterator(it, 5)
+587	    >>> len(sized_it)
+588	    5
+589	    >>> list(sized_it)
+590	    ['0', '1', '2', '3', '4']
+591	
+592	    This is useful for tools that use :func:`len`, like
+593	    `tqdm <https://pypi.org/project/tqdm/>`__ .
+594	
+595	    The wrapper doesn't validate the provided *length*, so be sure to choose
+596	    a value that reflects reality.
+597	    """
+598	
+599	    def __init__(self, iterable, length):
+600	        …
+602	
+603	    def __next__(self):
+604	        return next(self._iterator)
+605	
+606	    def __iter__(self):
+607	        return self
+608	
+609	    def __len__(self):
+610	        return self._length
+611	
+612	
+613	def one(iterable, too_short=None, too_long=None):
+614	    …
+667	
+668	
+669	def raise_(exception, *args):
+670	    raise exception(*args)
+671	
+672	
+673	def strictly_n(iterable, n, too_short=None, too_long=None):
+674	    …
+746	
+747	
+748	def distinct_permutations(iterable, r=None):
+749	    …
+899	
+900	
+901	def derangements(iterable, r=None):
+902	    …
+962	
+963	
+964	def intersperse(e, iterable, n=1):
+965	    …
+988	
+989	
+990	def unique_to_each(*iterables):
+991	    …
+1021	
+1022	
+1023	def windowed(seq, n, fillvalue=None, step=1):
+1024	    …
+1076	
+1077	
+1078	def substrings(iterable):
+1079	    …
+1098	
+1099	
+1100	def substrings_indexes(seq, reverse=False):
+1101	    …
+1132	
+1133	
+1134	class bucket:
+1135	    """Wrap *iterable* and return an object that buckets the iterable into
+1136	    child iterables based on a *key* function.
+1137	
+1138	        >>> iterable = ['a1', 'b1', 'c1', 'a2', 'b2', 'c2', 'b3']
+1139	        >>> s = bucket(iterable, key=lambda x: x[0])  # Bucket by 1st character
+1140	        >>> sorted(list(s))  # Get the keys
+1141	        ['a', 'b', 'c']
+1142	        >>> a_iterable = s['a']
+1143	        >>> next(a_iterable)
+1144	        'a1'
+1145	        >>> next(a_iterable)
+1146	        'a2'
+1147	        >>> list(s['b'])
+1148	        ['b1', 'b2', 'b3']
+1149	
+1150	    The original iterable will be advanced and its items will be cached until
+1151	    they are used by the child iterables. This may require significant storage.
+1152	
+1153	    By default, attempting to select a bucket to which no items belong  will
+1154	    exhaust the iterable and cache all values.
+1155	    If you specify a *validator* function, selected buckets will instead be
+1156	    checked against it.
+1157	
+1158	        >>> from itertools import count
+1159	        >>> it = count(1, 2)  # Infinite sequence of odd numbers
+1160	        >>> key = lambda x: x % 10  # Bucket by last digit
+1161	        >>> validator = lambda x: x in {1, 3, 5, 7, 9}  # Odd digits only
+1162	        >>> s = bucket(it, key=key, validator=validator)
+1163	        >>> 2 in s
+1164	        False
+1165	        >>> list(s[2])
+1166	        []
+1167	
+1168	    .. seealso:: :func:`map_reduce`, :func:`groupby_transform`
+1169	
+1170	    If storage is not a concern, :func:`map_reduce` returns a Python
+1171	    dictionary, which is generally easier to work with. If the elements
+1172	    with the same key are already adjacent, :func:`groupby_transform`
+1173	    or :func:`itertools.groupby` can be used without any caching overhead.
+1174	
+1175	    """
+1176	
+1177	    def __init__(self, iterable, key, validator=None):
+1178	        …
+1182	
+1183	    def __contains__(self, value):
+1184	        …
+1195	
+1196	    def _get_values(self, value):
+1197	        …
+1221	
+1222	    def __iter__(self):
+1223	        …
+1229	
+1230	    def __getitem__(self, value):
+1231	        …
+1235	
+1236	
+1237	def spy(iterable, n=1):
+1238	    …
+1276	
+1277	
+1278	def interleave(*iterables):
+1279	    …
+1290	
+1291	
+1292	def interleave_longest(*iterables):
+1293	    …
+1308	
+1309	
+1310	def interleave_evenly(iterables, lengths=None):
+1311	    …
+1377	
+1378	
+1379	def interleave_randomly(*iterables):
+1380	    …
+1400	
+1401	
+1402	def collapse(iterable, base_type=None, levels=None):
+1403	    …
+1460	
+1461	
+1462	def side_effect(func, iterable, chunk_size=None, before=None, after=None):
+1463	    …
+1521	
+1522	
+1523	def sliced(seq, n, strict=False):
+1524	    …
+1558	
+1559	
+1560	def split_at(iterable, pred, maxsplit=-1, keep_separator=False):
+1561	    …
+1602	
+1603	
+1604	def split_before(iterable, pred, maxsplit=-1):
+1605	    …
+1637	
+1638	
+1639	def split_after(iterable, pred, maxsplit=-1):
+1640	    …
+1675	
+1676	
+1677	def split_when(iterable, pred, maxsplit=-1):
+1678	    …
+1720	
+1721	
+1722	def split_into(iterable, sizes):
+1723	    …
+1765	
+1766	
+1767	def padded(iterable, fillvalue=None, n=None, next_multiple=False):
+1768	    …
+1810	
+1811	
+1812	def repeat_each(iterable, n=2):
+1813	    …
+1819	
+1820	
+1821	def repeat_last(iterable, default=None):
+1822	    …
+1838	
+1839	
+1840	def distribute(n, iterable):
+1841	    …
+1875	
+1876	
+1877	def stagger(iterable, offsets=(-1, 0, 1), longest=False, fillvalue=None):
+1878	    …
+1903	
+1904	
+1905	def zip_offset(*iterables, offsets, longest=False, fillvalue=None):
+1906	    …
+1942	
+1943	
+1944	def sort_together(
+1945	    iterables, key_list=(0,), key=None, reverse=False, strict=False
+1946	):
+1947	    …
+2015	
+2016	
+2017	def unzip(iterable):
+2018	    …
+2056	
+2057	
+2058	def divide(n, iterable):
+2059	    …
+2107	
+2108	
+2109	def always_iterable(obj, base_type=(str, bytes)):
+2110	    …
+2160	
+2161	
+2162	def adjacent(predicate, iterable, distance=1):
+2163	    …
+2199	
+2200	
+2201	def groupby_transform(iterable, keyfunc=None, valuefunc=None, reducefunc=None):
+2202	    …
+2249	
+2250	
+2251	class numeric_range(Sequence):
+2252	    """An extension of the built-in ``range()`` function whose arguments can
+2253	    be any orderable numeric type.
+2254	
+2255	    With only *stop* specified, *start* defaults to ``0`` and *step*
+2256	    defaults to ``1``. The output items will match the type of *stop*:
+2257	
+2258	        >>> list(numeric_range(3.5))
+2259	        [0.0, 1.0, 2.0, 3.0]
+2260	
+2261	    With only *start* and *stop* specified, *step* defaults to ``1``. The
+2262	    output items will match the type of *start*:
+2263	
+2264	        >>> from decimal import Decimal
+2265	        >>> start = Decimal('2.1')
+2266	        >>> stop = Decimal('5.1')
+2267	        >>> list(numeric_range(start, stop))
+2268	        [Decimal('2.1'), Decimal('3.1'), Decimal('4.1')]
+2269	
+2270	    With *start*, *stop*, and *step*  specified the output items will match
+2271	    the type of ``start + step``:
+2272	
+2273	        >>> from fractions import Fraction
+2274	        >>> start = Fraction(1, 2)  # Start at 1/2
+2275	        >>> stop = Fraction(5, 2)  # End at 5/2
+2276	        >>> step = Fraction(1, 2)  # Count by 1/2
+2277	        >>> list(numeric_range(start, stop, step))
+2278	        [Fraction(1, 2), Fraction(1, 1), Fraction(3, 2), Fraction(2, 1)]
+2279	
+2280	    If *step* is zero, ``ValueError`` is raised. Negative steps are supported:
+2281	
+2282	        >>> list(numeric_range(3, -1, -1.0))
+2283	        [3.0, 2.0, 1.0, 0.0]
+2284	
+2285	    Be aware of the limitations of floating-point numbers; the representation
+2286	    of the yielded numbers may be surprising.
+2287	
+2288	    ``datetime.datetime`` objects can be used for *start* and *stop*, if *step*
+2289	    is a ``datetime.timedelta`` object:
+2290	
+2291	        >>> import datetime
+2292	        >>> start = datetime.datetime(2019, 1, 1)
+2293	        >>> stop = datetime.datetime(2019, 1, 3)
+2294	        >>> step = datetime.timedelta(days=1)
+2295	        >>> items = iter(numeric_range(start, stop, step))
+2296	        >>> next(items)
+2297	        datetime.datetime(2019, 1, 1, 0, 0)
+2298	        >>> next(items)
+2299	        datetime.datetime(2019, 1, 2, 0, 0)
+2300	
+2301	    """
+2302	
+2303	    _EMPTY_HASH = hash(range(0, 0))
+2304	
+2305	    def __init__(self, *args):
+2306	        …
+2329	
+2330	    def __bool__(self):
+2331	        …
+2335	
+2336	    def __contains__(self, elem):
+2337	        …
+2342	
+2343	    def __eq__(self, other):
+2344	        # numeric_range object equality is intended to mirror the built-in range
+2345	        # object's equality.
+2346	        # https://github.com/python/cpython/blob/f5c4880151b609e0a0a0b05c292d36b18038c061/Objects/rangeobject.c#L499
+2347	        …
+2367	
+2368	    def __getitem__(self, key):
+2369	        …
+2383	
+2384	    def __hash__(self):
+2385	        # numeric_range hashing is intended to mirror the built-in range object's
+2386	        # hashing.
+2387	        # https://github.com/python/cpython/blob/f5c4880151b609e0a0a0b05c292d36b18038c061/Objects/rangeobject.c#L570
+2388	        …
+2394	
+2395	    def __iter__(self):
+2396	        …
+2401	
+2402	    def __len__(self):
+2403	        return self._len
+2404	
+2405	    @cached_property
+2406	    def _len(self):
+2407	        …
+2430	
+2431	    def _before_stop(self, i):
+2432	        …
+2434	
+2435	    def __reduce__(self):
+2436	        return numeric_range, (self._start, self._stop, self._step)
+2437	
+2438	    def __repr__(self):
+2439	        …
+2444	
+2445	    def __reversed__(self):
+2446	        # Empty iterator
+2447	        …
+2455	
+2456	    def count(self, value):
+2457	        return int(value in self)
+2458	
+2459	    def index(self, value):
+2460	        …
+2470	
+2471	    def _index_near(self, i, value):
+2472	        # `i` is the quotient of the division of `value` by the step, which
+2473	        # locates the value on the grid of items this range produces. For
+2474	        # exact types that quotient is the index. For inexact ones (floats)
+2475	        # it can land one short, and the remainder of the division is not a
+2476	        # reliable membership test either: `numeric_range(0.0, 1.0, 0.1)`
+2477	        # yields 0.30000000000000004, which leaves a non-zero remainder.
+2478	        # So compare against the item the range actually produces there.
+2479	        …
+2485	
+2486	    def _get_by_index(self, i):
+2487	        …
+2492	
+2493	
+2494	def count_cycle(iterable, n=None):
+2495	    …
+2509	
+2510	
+2511	def mark_ends(iterable):
+2512	    …
+2539	
+2540	
+2541	def locate(iterable, pred=bool, window_size=None):
+2542	    …
+2592	
+2593	
+2594	def longest_common_prefix(iterables):
+2595	    …
+2602	
+2603	
+2604	def lstrip(iterable, pred):
+2605	    …
+2620	
+2621	
+2622	def rstrip(iterable, pred):
+2623	    …
+2646	
+2647	
+2648	def strip(iterable, pred):
+2649	    …
+2663	
+2664	
+2665	class islice_extended:
+2666	    """An extension of :func:`itertools.islice` that supports negative values
+2667	    for *stop*, *start*, and *step*.
+2668	
+2669	        >>> iterator = iter('abcdefgh')
+2670	        >>> list(islice_extended(iterator, -4, -1))
+2671	        ['e', 'f', 'g']
+2672	
+2673	    Slices with negative values require some caching of *iterable*, but this
+2674	    function takes care to minimize the amount of memory required.
+2675	
+2676	    For example, you can use a negative step with an infinite iterator:
+2677	
+2678	        >>> from itertools import count
+2679	        >>> list(islice_extended(count(), 110, 99, -2))
+2680	        [110, 108, 106, 104, 102, 100]
+2681	
+2682	    You can also use slice notation directly:
+2683	
+2684	        >>> iterator = map(str, count())
+2685	        >>> it = islice_extended(iterator)[10:20:2]
+2686	        >>> list(it)
+2687	        ['10', '12', '14', '16', '18']
+2688	
+2689	    """
+2690	
+2691	    def __init__(self, iterable, *args):
+2692	        …
+2697	
+2698	    def __iter__(self):
+2699	        return self
+2700	
+2701	    def __next__(self):
+2702	        return next(self._iterator)
+2703	
+2704	    def __getitem__(self, key):
+2705	        …
+2709	
+2710	
+2711	def _islice_helper(it, s):
+2712	    …
+2820	
+2821	
+2822	def always_reversible(iterable):
+2823	    …
+2838	
+2839	
+2840	def consecutive_groups(iterable, ordering=None):
+2841	    …
+2888	
+2889	
+2890	def difference(iterable, func=sub, *, initial=None):
+2891	    …
+2930	
+2931	
+2932	class SequenceView(Sequence):
+2933	    """Return a read-only view of the sequence object *target*.
+2934	
+2935	    :class:`SequenceView` objects are analogous to Python's built-in
+2936	    "dictionary view" types. They provide a dynamic view of a sequence's items,
+2937	    meaning that when the sequence updates, so does the view.
+2938	
+2939	        >>> seq = ['0', '1', '2']
+2940	        >>> view = SequenceView(seq)
+2941	        >>> view
+2942	        SequenceView(['0', '1', '2'])
+2943	        >>> seq.append('3')
+2944	        >>> view
+2945	        SequenceView(['0', '1', '2', '3'])
+2946	
+2947	    Sequence views support indexing, slicing, and length queries. They act
+2948	    like the underlying sequence, except they don't allow assignment:
+2949	
+2950	        >>> view[1]
+2951	        '1'
+2952	        >>> view[1:-1]
+2953	        ['1', '2']
+2954	        >>> len(view)
+2955	        4
+2956	
+2957	    Sequence views are useful as an alternative to copying, as they don't
+2958	    require (much) extra storage.
+2959	
+2960	    """
+2961	
+2962	    def __init__(self, target):
+2963	        …
+2966	
+2967	    def __getitem__(self, index):
+2968	        return self._target[index]
+2969	
+2970	    def __len__(self):
+2971	        return len(self._target)
+2972	
+2973	    def __repr__(self):
+2974	        return f'{self.__class__.__name__}({self._target!r})'
+2975	
+2976	
+2977	class seekable:
+2978	    """Wrap an iterator to allow for seeking backward and forward. This
+2979	    progressively caches the items in the source iterable so they can be
+2980	    re-visited.
+2981	
+2982	    Call :meth:`seek` with an index to seek to that position in the source
+2983	    iterable.
+2984	
+2985	    To "reset" an iterator, seek to ``0``:
+2986	
+2987	        >>> from itertools import count
+2988	        >>> it = seekable((str(n) for n in count()))
+2989	        >>> next(it), next(it), next(it)
+2990	        ('0', '1', '2')
+2991	        >>> it.seek(0)
+2992	        >>> next(it), next(it), next(it)
+2993	        ('0', '1', '2')
+2994	
+2995	    You can also seek forward:
+2996	
+2997	        >>> it = seekable((str(n) for n in range(20)))
+2998	        >>> it.seek(10)
+2999	        >>> next(it)
+3000	        '10'
+3001	        >>> it.seek(20)  # Seeking past the end of the source isn't a problem
+3002	        >>> list(it)
+3003	        []
+3004	        >>> it.seek(0)  # Resetting works even after hitting the end
+3005	        >>> next(it)
+3006	        '0'
+3007	
+3008	    Call :meth:`relative_seek` to seek relative to the source iterator's
+3009	    current position.
+3010	
+3011	        >>> it = seekable((str(n) for n in range(20)))
+3012	        >>> next(it), next(it), next(it)
+3013	        ('0', '1', '2')
+3014	        >>> it.relative_seek(2)
+3015	        >>> next(it)
+3016	        '5'
+3017	        >>> it.relative_seek(-3)  # Source is at '6', we move back to '3'
+3018	        >>> next(it)
+3019	        '3'
+3020	        >>> it.relative_seek(-3)  # Source is at '4', we move back to '1'
+3021	        >>> next(it)
+3022	        '1'
+3023	
+3024	
+3025	    Call :meth:`peek` to look ahead one item without advancing the iterator:
+3026	
+3027	        >>> it = seekable('1234')
+3028	        >>> it.peek()
+3029	        '1'
+3030	        >>> list(it)
+3031	        ['1', '2', '3', '4']
+3032	        >>> it.peek(default='empty')
+3033	        'empty'
+3034	
+3035	    Before the iterator is at its end, calling :func:`bool` on it will return
+3036	    ``True``. After it will return ``False``:
+3037	
+3038	        >>> it = seekable('5678')
+3039	        >>> bool(it)
+3040	        True
+3041	        >>> list(it)
+3042	        ['5', '6', '7', '8']
+3043	        >>> bool(it)
+3044	        False
+3045	
+3046	    You may view the contents of the cache with the :meth:`elements` method.
+3047	    That returns a :class:`SequenceView`, a view that updates automatically:
+3048	
+3049	        >>> it = seekable((str(n) for n in range(10)))
+3050	        >>> next(it), next(it), next(it)
+3051	        ('0', '1', '2')
+3052	        >>> elements = it.elements()
+3053	        >>> elements
+3054	        SequenceView(['0', '1', '2'])
+3055	        >>> next(it)
+3056	        '3'
+3057	        >>> elements
+3058	        SequenceView(['0', '1', '2', '3'])
+3059	
+3060	    Indexing the :class:`seekable` directly returns items from the cache:
+3061	
+3062	        >>> it = seekable((str(n) for n in range(10)))
+3063	        >>> next(it), next(it), next(it)
+3064	        ('0', '1', '2')
+3065	        >>> it[-1]
+3066	        '2'
+3067	        >>> it[0]
+3068	        '0'
+3069	
+3070	    By default, the cache grows as the source iterable progresses, so beware of
+3071	    wrapping very large or infinite iterables. Supply *maxlen* to limit the
+3072	    size of the cache (this of course limits how far back you can seek).
+3073	
+3074	        >>> from itertools import count
+3075	        >>> it = seekable((str(n) for n in count()), maxlen=2)
+3076	        >>> next(it), next(it), next(it), next(it)
+3077	        ('0', '1', '2', '3')
+3078	        >>> list(it.elements())
+3079	        ['2', '3']
+3080	        >>> it.seek(0)
+3081	        >>> next(it), next(it), next(it), next(it)
+3082	        ('2', '3', '4', '5')
+3083	        >>> next(it)
+3084	        '6'
+3085	
+3086	    """
+3087	
+3088	    def __init__(self, iterable, maxlen=None):
+3089	        …
+3095	
+3096	    def __iter__(self):
+3097	        return self
+3098	
+3099	    def __next__(self):
+3100	        …
+3112	
+3113	    def __bool__(self):
+3114	        …
+3119	
+3120	    def peek(self, default=_marker):
+3121	        …
+3131	
+3132	    def elements(self):
+3133	        return SequenceView(self._cache)
+3134	
+3135	    def seek(self, index):
+3136	        …
+3140	
+3141	    def relative_seek(self, count):
+3142	        …
+3146	
+3147	    def __getitem__(self, index):
+3148	        return self._cache[index]
+3149	
+3150	
+3151	class run_length:
+3152	    """
+3153	    :func:`run_length.encode` compresses an iterable with run-length encoding.
+3154	    It yields groups of repeated items with the count of how many times they
+3155	    were repeated:
+3156	
+3157	        >>> uncompressed = 'abbcccdddd'
+3158	        >>> list(run_length.encode(uncompressed))
+3159	        [('a', 1), ('b', 2), ('c', 3), ('d', 4)]
+3160	
+3161	    :func:`run_length.decode` decompresses an iterable that was previously
+3162	    compressed with run-length encoding. It yields the items of the
+3163	    decompressed iterable:
+3164	
+3165	        >>> compressed = [('a', 1), ('b', 2), ('c', 3), ('d', 4)]
+3166	        >>> list(run_length.decode(compressed))
+3167	        ['a', 'b', 'b', 'c', 'c', 'c', 'd', 'd', 'd', 'd']
+3168	
+3169	    """
+3170	
+3171	    @staticmethod
+3172	    def encode(iterable):
+3173	        return ((k, ilen(g)) for k, g in groupby(iterable))
+3174	
+3175	    @staticmethod
+3176	    def decode(iterable):
+3177	        return chain.from_iterable(starmap(repeat, iterable))
+3178	
+3179	
+3180	def exactly_n(iterable, n, predicate=bool):
+3181	    …
+3209	
+3210	
+3211	def circular_shifts(iterable, steps=1):
+3212	    …
+3239	
+3240	
+3241	def make_decorator(wrapping_func, result_index=0):
+3242	    …
+3305	
+3306	
+3307	def map_reduce(iterable, keyfunc, valuefunc=None, reducefunc=None):
+3308	    …
+3385	
+3386	
+3387	def rlocate(iterable, pred=bool, window_size=None):
+3388	    …
+3428	
+3429	
+3430	def replace(iterable, pred, substitutes, count=None, window_size=1):
+3431	    …
+3496	
+3497	
+3498	def partitions(iterable):
+3499	    …
+3516	
+3517	
+3518	def set_partitions(iterable, k=None, min_size=None, max_size=None):
+3519	    …
+3597	
+3598	
+3599	class time_limited:
+3600	    """
+3601	    Yield items from *iterable* until *limit_seconds* have passed.
+3602	    If the time limit expires before all items have been yielded, the
+3603	    ``timed_out`` parameter will be set to ``True``.
+3604	
+3605	    >>> from time import sleep
+3606	    >>> def generator():
+3607	    ...     yield 1
+3608	    ...     yield 2
+3609	    ...     sleep(0.2)
+3610	    ...     yield 3
+3611	    >>> iterable = time_limited(0.1, generator())
+3612	    >>> list(iterable)
+3613	    [1, 2]
+3614	    >>> iterable.timed_out
+3615	    True
+3616	
+3617	    Note that the time is checked before each item is yielded, and iteration
+3618	    stops if  the time elapsed is greater than *limit_seconds*. If your time
+3619	    limit is 1 second, but it takes 2 seconds to generate the first item from
+3620	    the iterable, the function will run for 2 seconds and not yield anything.
+3621	    As a special case, when *limit_seconds* is zero, the iterator never
+3622	    returns anything.
+3623	
+3624	    """
+3625	
+3626	    def __init__(self, limit_seconds, iterable):
+3627	        …
+3633	
+3634	    def __iter__(self):
+3635	        return self
+3636	
+3637	    def __next__(self):
+3638	        …
+3647	
+3648	
+3649	def only(iterable, default=None, too_long=None):
+3650	    …
+3684	
+3685	
+3686	def ichunked(iterable, n):
+3687	    …
+3713	
+3714	
+3715	def iequals(*iterables):
+3716	    …
+3736	
+3737	
+3738	def distinct_combinations(iterable, r):
+3739	    …
+3776	
+3777	
+3778	def filter_except(validator, iterable, *exceptions):
+3779	    …
+3800	
+3801	
+3802	def map_except(function, iterable, *exceptions):
+3803	    …
+3821	
+3822	
+3823	def map_if(iterable, pred, func, func_else=None):
+3824	    …
+3849	
+3850	
+3851	def _sample_unweighted(iterator, k, strict):
+3852	    # Algorithm L in the 1994 paper by Kim-Hung Li:
+3853	    # "Reservoir-Sampling Algorithms of Time Complexity O(n(1+log(N/n)))".
+3854	
+3855	    …
+3869	
+3870	
+3871	def _sample_weighted(iterator, k, weights, strict):
+3872	    # Implementation of "A-ExpJ" from the 2006 paper by Efraimidis et al. :
+3873	    # "Weighted random sampling with a reservoir".
+3874	
+3875	    # Log-transform for numerical stability for weights that are small/large
+3876	    …
+3908	
+3909	
+3910	def _sample_counted(population, k, counts, strict):
+3911	    …
+3943	
+3944	
+3945	def sample(iterable, k, weights=None, *, counts=None, strict=False):
+3946	    …
+4026	
+4027	
+4028	def is_sorted(iterable, key=None, reverse=False, strict=False):
+4029	    …
+4058	
+4059	
+4060	class AbortThread(BaseException):
+4061	    pass
+4062	
+4063	
+4064	class callback_iter:
+4065	    """Convert a function that uses callbacks to an iterator.
+4066	
+4067	    .. deprecated:: 11.0.0
+4068	       Will be removed in a future major release.
+4069	
+4070	    Let *func* be a function that takes a `callback` keyword argument.
+4071	    For example:
+4072	
+4073	    >>> def func(callback=None):
+4074	    ...     for i, c in [(1, 'a'), (2, 'b'), (3, 'c')]:
+4075	    ...         if callback:
+4076	    ...             callback(i, c)
+4077	    ...     return 4
+4078	
+4079	
+4080	    Use ``with callback_iter(func)`` to get an iterator over the parameters
+4081	    that are delivered to the callback.
+4082	
+4083	    >>> with callback_iter(func) as it:
+4084	    ...     for args, kwargs in it:
+4085	    ...         print(args)
+4086	    (1, 'a')
+4087	    (2, 'b')
+4088	    (3, 'c')
+4089	
+4090	    The function will be called in a background thread. The ``done`` property
+4091	    indicates whether it has completed execution.
+4092	
+4093	    >>> it.done
+4094	    True
+4095	
+4096	    If it completes successfully, its return value will be available
+4097	    in the ``result`` property.
+4098	
+4099	    >>> it.result
+4100	    4
+4101	
+4102	    Notes:
+4103	
+4104	    * If the function uses some keyword argument besides ``callback``, supply
+4105	      *callback_kwd*.
+4106	    * If it finished executing, but raised an exception, accessing the
+4107	      ``result`` property will raise the same exception.
+4108	    * If it hasn't finished executing, accessing the ``result``
+4109	      property from within the ``with`` block will raise ``RuntimeError``.
+4110	    * If it hasn't finished executing, accessing the ``result`` property from
+4111	      outside the ``with`` block will raise a
+4112	      ``more_itertools.AbortThread`` exception.
+4113	    * Provide *wait_seconds* to adjust how frequently the it is polled for
+4114	      output.
+4115	
+4116	    """
+4117	
+4118	    def __init__(self, func, callback_kwd='callback', wait_seconds=0.1):
+4119	        …
+4129	
+4130	    def __enter__(self):
+4131	        return self
+4132	
+4133	    def __exit__(self, exc_type, exc_value, traceback):
+4134	        …
+4136	
+4137	    def __iter__(self):
+4138	        return self
+4139	
+4140	    def __next__(self):
+4141	        return next(self._iterator)
+4142	
+4143	    @property
+4144	    def done(self):
+4145	        …
+4148	
+4149	    @property
+4150	    def result(self):
+4151	        …
+4158	
+4159	    def _reader(self):
+4160	        …
+4195	
+4196	
+4197	def windowed_complete(iterable, n):
+4198	    …
+4235	
+4236	
+4237	def all_unique(iterable, key=None):
+4238	    …
+4270	
+4271	
+4272	def nth_product(index, *iterables, repeat=1):
+4273	    …
+4306	
+4307	
+4308	def nth_permutation(iterable, r, index):
+4309	    …
+4342	
+4343	
+4344	def nth_combination_with_replacement(iterable, r, index):
+4345	    …
+4385	
+4386	
+4387	def value_chain(*args):
+4388	    …
+4420	
+4421	
+4422	def product_index(element, *iterables, repeat=1):
+4423	    …
+4450	
+4451	
+4452	def combination_index(element, iterable):
+4453	    …
+4492	
+4493	
+4494	def combination_with_replacement_index(element, iterable):
+4495	    …
+4549	
+4550	
+4551	def permutation_index(element, iterable):
+4552	    …
+4573	
+4574	
+4575	class countable:
+4576	    """Wrap *iterable* and keep a count of how many items have been consumed.
+4577	
+4578	    The ``items_seen`` attribute starts at ``0`` and increments as the iterable
+4579	    is consumed:
+4580	
+4581	        >>> iterable = map(str, range(10))
+4582	        >>> it = countable(iterable)
+4583	        >>> it.items_seen
+4584	        0
+4585	        >>> next(it), next(it)
+4586	        ('0', '1')
+4587	        >>> list(it)
+4588	        ['2', '3', '4', '5', '6', '7', '8', '9']
+4589	        >>> it.items_seen
+4590	        10
+4591	    """
+4592	
+4593	    def __init__(self, iterable):
+4594	        …
+4596	
+4597	    def __iter__(self):
+4598	        return self
+4599	
+4600	    def __next__(self):
+4601	        …
+4605	
+4606	
+4607	def chunked_even(iterable, n):
+4608	    …
+4655	
+4656	
+4657	def zip_broadcast(*objects, scalar_types=(str, bytes), strict=False):
+4658	    …
+4710	
+4711	
+4712	def unique_in_window(iterable, n, key=None):
+4713	    …
+4757	
+4758	
+4759	def duplicates_everseen(iterable, key=None):
+4760	    …
+4792	
+4793	
+4794	def duplicates_justseen(iterable, key=None):
+4795	    …
+4806	
+4807	
+4808	def classify_unique(iterable, key=None):
+4809	    …
+4848	
+4849	
+4850	def minmax(iterable_or_value, *others, key=None, default=_marker):
+4851	    …
+4933	
+4934	
+4935	def constrained_batches(
+4936	    iterable, max_size, max_count=None, get_len=len, strict=True
+4937	):
+4938	    …
+4983	
+4984	
+4985	def gray_product(*iterables, repeat=1):
+4986	    …
+5029	
+5030	
+5031	def partial_product(*iterables, repeat=1):
+5032	    …
+5059	
+5060	
+5061	def takewhile_inclusive(predicate, iterable):
+5062	    …
+5073	
+5074	
+5075	def outer_product(func, xs, ys, *args, **kwargs):
+5076	    …
+5107	
+5108	
+5109	def iter_suppress(iterable, *exceptions):
+5110	    …
+5130	
+5131	
+5132	def filter_map(func, iterable):
+5133	    …
+5144	
+5145	
+5146	def powerset_of_sets(iterable, *, baseset=set):
+5147	    …
+5165	
+5166	
+5167	def join_mappings(**field_to_map):
+5168	    …
+5183	
+5184	
+5185	def _complex_sumprod(v1, v2):
+5186	    …
+5197	
+5198	
+5199	def dft(xarr):
+5200	    …
+5221	
+5222	
+5223	def idft(Xarr):
+5224	    …
+5245	
+5246	
+5247	def doublestarmap(func, iterable):
+5248	    …
+5263	
+5264	
+5265	def _nth_prime_bounds(n):
+5266	    …
+5282	
+5283	
+5284	def nth_prime(n, *, approximate=False):
+5285	    …
+5308	
+5309	
+5310	def argmin(iterable, *, key=None):
+5311	    …
+5341	
+5342	
+5343	def argmax(iterable, *, key=None):
+5344	    …
+5369	
+5370	
+5371	def _extract_monotonic(iterator, indices):
+5372	    …
+5386	
+5387	
+5388	def _extract_buffered(iterator, index_and_position):
+5389	    …
+5408	
+5409	
+5410	def extract(iterable, indices, *, monotonic=False):
+5411	    …
+5440	
+5441	
+5442	class serialize:
+5443	    """Wrap a non-concurrent iterator with a lock to enforce sequential access.
+5444	
+5445	    Applies a non-reentrant lock around calls to ``__next__``, allowing
+5446	    iterator and generator instances to be shared by multiple consumer
+5447	    threads.
+5448	    """
+5449	
+5450	    __slots__ = ('_iterator', '_lock')
+5451	
+5452	    def __init__(self, iterable):
+5453	        …
+5455	
+5456	    def __iter__(self):
+5457	        return self
+5458	
+5459	    def __next__(self):
+5460	        …
+5462	
+5463	    def send(self, value, /):
+5464	        …
+5470	
+5471	    def throw(self, *args):
+5472	        …
+5478	
+5479	    def close(self):
+5480	        …
+5486	
+5487	
+5488	def synchronized(func):
+5489	    …
+5515	
+5516	
+5517	def concurrent_tee(iterable, n=2):
+5518	    …
+5538	
+5539	
+5540	class _concurrent_tee:
+5541	    __slots__ = ('iterator', 'link', 'lock')
+5542	
+5543	    def __init__(self, iterable):
+5544	        …
+5552	
+5553	    def __iter__(self):
+5554	        return self
+5555	
+5556	    def __next__(self):
+5557	        …
+5565	
+5566	
+5567	def subfactorial(n):
+5568	    …
+[function bodies left out: sed -n 'A,Bp' more_itertools/more.py prints lines A to B]

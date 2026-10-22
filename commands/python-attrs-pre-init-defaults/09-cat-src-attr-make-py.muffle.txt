@@ -1,0 +1,867 @@
+$ cat src/attr/_make.py
+src/attr/_make.py (3123 lines)
+1	# SPDX-License-Identifier: MIT
+2	
+3	from __future__ import annotations
+4	
+5	import abc
+6	import contextlib
+7	import copy
+8	import enum
+9	import inspect
+10	import itertools
+11	import linecache
+12	import sys
+13	import types
+14	import unicodedata
+15	
+16	from collections.abc import Callable, Mapping
+17	from functools import cached_property
+18	from typing import Any, NamedTuple, TypeVar
+19	
+20	# We need to import _compat itself in addition to the _compat members to avoid
+21	# having the thread-local in the globals here.
+22	from . import _compat, _config, setters
+23	from ._compat import (
+24	    PY_3_10_PLUS,
+25	    PY_3_11_PLUS,
+26	    PY_3_13_PLUS,
+27	    _AnnotationExtractor,
+28	    _get_annotations,
+29	    get_generic_base,
+30	)
+31	from .exceptions import (
+32	    DefaultAlreadySetError,
+33	    FrozenInstanceError,
+34	    NotAnAttrsClassError,
+35	    UnannotatedAttributeError,
+36	)
+37	
+38	
+39	# This is used at least twice, so cache it here.
+40	_OBJ_SETATTR = object.__setattr__
+41	_INIT_FACTORY_PAT = "__attr_factory_%s"
+42	_CLASSVAR_PREFIXES = (
+43	    "typing.ClassVar",
+44	    "t.ClassVar",
+45	    "ClassVar",
+46	    "typing_extensions.ClassVar",
+47	)
+48	# we don't use a double-underscore prefix because that triggers
+49	# name mangling when trying to create a slot for the field
+50	# (when slots=True)
+51	_HASH_CACHE_FIELD = "_attrs_cached_hash"
+52	
+53	_EMPTY_METADATA_SINGLETON = types.MappingProxyType({})
+54	
+55	# Unique object for unequivocal getattr() defaults.
+56	_SENTINEL = object()
+57	
+58	_DEFAULT_ON_SETATTR = setters.pipe(setters.convert, setters.validate)
+59	
+60	
+61	class _Nothing(enum.Enum):
+62	    """
+63	    Sentinel to indicate the lack of a value when `None` is ambiguous.
+64	
+65	    If extending attrs, you can use ``typing.Literal[NOTHING]`` to show
+66	    that a value may be ``NOTHING``.
+67	
+68	    .. versionchanged:: 21.1.0 ``bool(NOTHING)`` is now False.
+69	    .. versionchanged:: 22.2.0 ``NOTHING`` is now an ``enum.Enum`` variant.
+70	    """
+71	
+72	    NOTHING = enum.auto()
+73	
+74	    def __repr__(self):
+75	        return "NOTHING"
+76	
+77	    def __bool__(self):
+78	        return False
+79	
+80	
+81	NOTHING = _Nothing.NOTHING
+82	"""
+83	Sentinel to indicate the lack of a value when `None` is ambiguous.
+84	
+85	When using in 3rd party code, use `attrs.NothingType` for type annotations.
+86	"""
+87	
+88	
+89	class _CacheHashWrapper(int):
+90	    """
+91	    An integer subclass that pickles / copies as None
+92	
+93	    This is used for non-slots classes with ``cache_hash=True``, to avoid
+94	    serializing a potentially (even likely) invalid hash value. Since `None`
+95	    is the default value for uncalculated hashes, whenever this is copied,
+96	    the copy's value for the hash should automatically reset.
+97	
+98	    See GH #613 for more details.
+99	    """
+100	
+101	    def __reduce__(self, _none_constructor=type(None), _args=()):  # noqa: B008
+102	        return _none_constructor, _args
+103	
+104	
+105	def attrib(
+106	    default=NOTHING,
+107	    validator=None,
+108	    repr=True,
+109	    cmp=None,
+110	    hash=None,
+111	    init=True,
+112	    metadata=None,
+113	    type=None,
+114	    converter=None,
+115	    factory=None,
+116	    kw_only=False,
+117	    eq=None,
+118	    order=None,
+119	    on_setattr=None,
+120	    alias=None,
+121	):
+122	    …
+210	
+211	
+212	def _compile_and_eval(
+213	    script: str,
+214	    globs: dict[str, Any] | None,
+215	    locs: Mapping[str, object] | None = None,
+216	    filename: str = "",
+217	) -> None:
+218	    …
+224	
+225	
+226	def _linecache_and_compile(
+227	    script: str,
+228	    filename: str,
+229	    globs: dict[str, Any] | None,
+230	    locals: Mapping[str, object] | None = None,
+231	) -> dict[str, Any]:
+232	    …
+259	
+260	
+261	def _make_attr_tuple_class(cls_name: str, attr_names: list[str]) -> type:
+262	    …
+280	
+281	
+282	# Tuple class for extracted attributes from a class definition.
+283	# `base_attrs` is a subset of `attrs`.
+284	class _Attributes(NamedTuple):
+285	    attrs: type
+286	    base_attrs: list[Attribute]
+287	    base_attrs_map: dict[str, type]
+288	
+289	
+290	def _is_class_var(annot):
+291	    …
+305	
+306	
+307	def _has_own_attribute(cls, attrib_name):
+308	    …
+312	
+313	
+314	def _collect_base_attrs(
+315	    cls, taken_attr_names
+316	) -> tuple[list[Attribute], dict[str, type]]:
+317	    …
+345	
+346	
+347	def _collect_base_attrs_broken(cls, taken_attr_names):
+348	    …
+373	
+374	
+375	def _transform_attrs(
+376	    cls, these, auto_attribs, kw_only, collect_by_mro, field_transformer
+377	) -> _Attributes:
+378	    …
+481	
+482	
+483	def _make_cached_property_getattr(cached_properties, original_getattr, cls):
+484	    …
+533	
+534	
+535	def _frozen_setattrs(self, name, value):
+536	    …
+550	
+551	
+552	def _frozen_delattrs(self, name):
+553	    …
+561	
+562	
+563	def evolve(*args, **changes):
+564	    …
+619	
+620	
+621	class _ClassBuilder:
+622	    """
+623	    Iteratively build *one* class.
+624	    """
+625	
+626	    __slots__ = (
+627	        "_add_method_dunders",
+628	        "_attr_names",
+629	        "_attrs",
+630	        "_base_attr_map",
+631	        "_base_names",
+632	        "_cache_hash",
+633	        "_cls",
+634	        "_cls_dict",
+635	        "_delete_attribs",
+636	        "_frozen",
+637	        "_has_custom_setattr",
+638	        "_has_post_init",
+639	        "_has_pre_init",
+640	        "_is_exc",
+641	        "_on_setattr",
+642	        "_pre_init_has_args",
+643	        "_repr_added",
+644	        "_script_snippets",
+645	        "_slots",
+646	        "_weakref_slot",
+647	        "_wrote_own_setattr",
+648	    )
+649	
+650	    def __init__(
+651	        self,
+652	        cls: type,
+653	        these,
+654	        slots,
+655	        frozen,
+656	        weakref_slot,
+657	        getstate_setstate,
+658	        auto_attribs,
+659	        kw_only,
+660	        cache_hash,
+661	        is_exc,
+662	        collect_by_mro,
+663	        on_setattr,
+664	        has_custom_setattr,
+665	        field_transformer,
+666	    ):
+667	        …
+756	
+757	    def __repr__(self):
+758	        return f"<_ClassBuilder(cls={self._cls.__name__})>"
+759	
+760	    def _eval_snippets(self) -> None:
+761	        …
+777	
+778	    def build_class(self):
+779	        …
+801	
+802	    def _patch_original_class(self):
+803	        …
+837	
+838	    def _create_slots_class(self):
+839	        …
+976	
+977	    def add_repr(self, ns):
+978	        …
+986	
+987	    def add_str(self):
+988	        …
+997	
+998	    def _make_getstate_setstate(self):
+999	        …
+1038	
+1039	    def make_unhashable(self):
+1040	        …
+1042	
+1043	    def add_hash(self):
+1044	        …
+1057	
+1058	    def add_init(self):
+1059	        …
+1082	
+1083	    def add_replace(self):
+1084	        …
+1088	
+1089	    def add_match_args(self):
+1090	        …
+1095	
+1096	    def add_attrs_init(self):
+1097	        …
+1120	
+1121	    def add_eq(self):
+1122	        …
+1134	
+1135	    def add_order(self):
+1136	        …
+1144	
+1145	    def add_setattr(self):
+1146	        …
+1176	
+1177	    def _add_method_dunders_unsafe(self, method: Callable) -> Callable:
+1178	        …
+1190	
+1191	    def _add_method_dunders_safe(self, method: Callable) -> Callable:
+1192	        …
+1205	
+1206	
+1207	def _determine_attrs_eq_order(cmp, eq, order, default_eq):
+1208	    …
+1233	
+1234	
+1235	def _determine_attrib_eq_order(cmp, eq, order, default_eq):
+1236	    …
+1276	
+1277	
+1278	def _determine_whether_to_implement(
+1279	    cls, flag, auto_detect, dunders, default=True
+1280	):
+1281	    …
+1302	
+1303	
+1304	def attrs(
+1305	    maybe_cls=None,
+1306	    these=None,
+1307	    repr_ns=None,
+1308	    repr=None,
+1309	    cmp=None,
+1310	    hash=None,
+1311	    init=None,
+1312	    slots=False,
+1313	    frozen=False,
+1314	    weakref_slot=True,
+1315	    str=False,
+1316	    auto_attribs=False,
+1317	    kw_only=False,
+1318	    cache_hash=False,
+1319	    auto_exc=False,
+1320	    eq=None,
+1321	    order=None,
+1322	    auto_detect=False,
+1323	    collect_by_mro=False,
+1324	    getstate_setstate=None,
+1325	    on_setattr=None,
+1326	    field_transformer=None,
+1327	    match_args=True,
+1328	    unsafe_hash=None,
+1329	):
+1330	    …
+1529	
+1530	
+1531	_attrs = attrs
+1532	"""
+1533	Internal alias so we can use it in functions that take an argument called
+1534	*attrs*.
+1535	"""
+1536	
+1537	
+1538	def _has_frozen_base_class(cls):
+1539	    …
+1544	
+1545	
+1546	def _generate_unique_filename(cls: type, func_name: str) -> str:
+1547	    …
+1554	
+1555	
+1556	def _make_hash_script(
+1557	    cls: type, attrs: list[Attribute], frozen: bool, cache_hash: bool
+1558	) -> tuple[str, dict]:
+1559	    …
+1626	
+1627	
+1628	def _add_hash(cls: type, attrs: list[Attribute]):
+1629	    …
+1640	
+1641	
+1642	def __ne__(self, other):
+1643	    …
+1652	
+1653	
+1654	def _make_eq_script(attrs: list) -> tuple[str, dict]:
+1655	    …
+1689	
+1690	
+1691	def _make_order(cls, attrs):
+1692	    …
+1745	
+1746	
+1747	def _add_eq(cls, attrs=None):
+1748	    …
+1762	
+1763	
+1764	def _make_repr_script(attrs, ns) -> tuple[str, dict]:
+1765	    …
+1819	
+1820	
+1821	def _add_repr(cls, ns=None, attrs=None):
+1822	    …
+1834	
+1835	
+1836	def fields(cls):
+1837	    …
+1880	
+1881	
+1882	def fields_dict(cls):
+1883	    …
+1909	
+1910	
+1911	def validate(inst):
+1912	    …
+1927	
+1928	
+1929	def _is_slot_attr(a_name, base_attr_map):
+1930	    …
+1935	
+1936	
+1937	def _make_init_script(
+1938	    cls,
+1939	    attrs,
+1940	    pre_init,
+1941	    pre_init_has_args,
+1942	    post_init,
+1943	    frozen,
+1944	    slots,
+1945	    cache_hash,
+1946	    base_attr_map,
+1947	    is_exc,
+1948	    cls_on_setattr,
+1949	    attrs_init,
+1950	) -> tuple[str, dict, dict]:
+1951	    …
+2004	
+2005	
+2006	def _setattr(attr_name: str, value_var: str, has_on_setattr: bool) -> str:
+2007	    …
+2011	
+2012	
+2013	def _setattr_with_converter(
+2014	    attr_name: str, value_var: str, has_on_setattr: bool, converter: Converter
+2015	) -> str:
+2016	    …
+2021	
+2022	
+2023	def _assign(attr_name: str, value: str, has_on_setattr: bool) -> str:
+2024	    …
+2032	
+2033	
+2034	def _assign_with_converter(
+2035	    attr_name: str, value_var: str, has_on_setattr: bool, converter: Converter
+2036	) -> str:
+2037	    …
+2045	
+2046	
+2047	def _determine_setters(
+2048	    frozen: bool, slots: bool, base_attr_map: dict[str, type]
+2049	):
+2050	    …
+2092	
+2093	
+2094	def _attrs_to_init_script(
+2095	    attrs: list[Attribute],
+2096	    is_frozen: bool,
+2097	    is_slotted: bool,
+2098	    call_pre_init: bool,
+2099	    pre_init_has_args: bool,
+2100	    call_post_init: bool,
+2101	    does_cache_hash: bool,
+2102	    base_attr_map: dict[str, type],
+2103	    is_exc: bool,
+2104	    needs_cached_setattr: bool,
+2105	    has_cls_on_setattr: bool,
+2106	    method_name: str,
+2107	) -> tuple[str, dict, dict]:
+2108	    …
+2352	
+2353	
+2354	def _default_init_alias_for(name: str) -> str:
+2355	    …
+2363	
+2364	
+2365	class Attribute:
+2366	    """
+2367	    *Read-only* representation of an attribute.
+2368	
+2369	    .. warning::
+2370	
+2371	       You should never instantiate this class yourself.
+2372	
+2373	    The class has *all* arguments of `attr.ib` (except for ``factory`` which is
+2374	    only syntactic sugar for ``default=Factory(...)`` plus the following:
+2375	
+2376	    - ``name`` (`str`): The name of the attribute.
+2377	    - ``alias`` (`str`): The __init__ parameter name of the attribute, after
+2378	      any explicit overrides and default private-attribute-name handling.
+2379	    - ``inherited`` (`bool`): Whether or not that attribute has been inherited
+2380	      from a base class.
+2381	    - ``eq_key`` and ``order_key`` (`typing.Callable` or `None`): The
+2382	      callables that are used for comparing and ordering objects by this
+2383	      attribute, respectively. These are set by passing a callable to
+2384	      `attr.ib`'s ``eq``, ``order``, or ``cmp`` arguments. See also
+2385	      :ref:`comparison customization <custom-comparison>`.
+2386	
+2387	    Instances of this class are frequently used for introspection purposes
+2388	    like:
+2389	
+2390	    - `fields` returns a tuple of them.
+2391	    - Validators get them passed as the first argument.
+2392	    - The :ref:`field transformer <transform-fields>` hook receives a list of
+2393	      them.
+2394	    - The ``alias`` property exposes the __init__ parameter name of the field,
+2395	      with any overrides and default private-attribute handling applied.
+2396	
+2397	
+2398	    .. versionadded:: 20.1.0 *inherited*
+2399	    .. versionadded:: 20.1.0 *on_setattr*
+2400	    .. versionchanged:: 20.2.0 *inherited* is not taken into account for
+2401	        equality checks and hashing anymore.
+2402	    .. versionadded:: 21.1.0 *eq_key* and *order_key*
+2403	    .. versionadded:: 22.2.0 *alias*
+2404	
+2405	    For the full version history of the fields, see `attr.ib`.
+2406	    """
+2407	
+2408	    # These slots must NOT be reordered because we use them later for
+2409	    # instantiation.
+2410	    __slots__ = (  # noqa: RUF023
+2411	        "name",
+2412	        "default",
+2413	        "validator",
+2414	        "repr",
+2415	        "eq",
+2416	        "eq_key",
+2417	        "order",
+2418	        "order_key",
+2419	        "hash",
+2420	        "init",
+2421	        "metadata",
+2422	        "type",
+2423	        "converter",
+2424	        "kw_only",
+2425	        "inherited",
+2426	        "on_setattr",
+2427	        "alias",
+2428	    )
+2429	
+2430	    def __init__(
+2431	        self,
+2432	        name,
+2433	        default,
+2434	        validator,
+2435	        repr,
+2436	        cmp,  # XXX: unused, remove along with other cmp code.
+2437	        hash,
+2438	        init,
+2439	        inherited,
+2440	        metadata=None,
+2441	        type=None,
+2442	        converter=None,
+2443	        kw_only=False,
+2444	        eq=None,
+2445	        eq_key=None,
+2446	        order=None,
+2447	        order_key=None,
+2448	        on_setattr=None,
+2449	        alias=None,
+2450	    ):
+2451	        …
+2484	
+2485	    def __setattr__(self, name, value):
+2486	        raise FrozenInstanceError
+2487	
+2488	    @classmethod
+2489	    def from_counting_attr(cls, name: str, ca: _CountingAttr, type=None):
+2490	        # type holds the annotated value. deal with conflicts:
+2491	        …
+2516	
+2517	    # Don't use attrs.evolve since fields(Attribute) doesn't work
+2518	    def evolve(self, **changes):
+2519	        …
+2534	
+2535	    # Don't use _add_pickle since fields(Attribute) doesn't work
+2536	    def __getstate__(self):
+2537	        …
+2544	
+2545	    def __setstate__(self, state):
+2546	        …
+2550	
+2551	    def _setattrs(self, name_values_pairs):
+2552	        …
+2565	
+2566	
+2567	_a = [
+2568	    Attribute(
+2569	        name=name,
+2570	        default=NOTHING,
+2571	        validator=None,
+2572	        repr=True,
+2573	        cmp=None,
+2574	        eq=True,
+2575	        order=False,
+2576	        hash=(name != "metadata"),
+2577	        init=True,
+2578	        inherited=False,
+2579	        alias=_default_init_alias_for(name),
+2580	    )
+2581	    for name in Attribute.__slots__
+2582	]
+2583	
+2584	Attribute = _add_hash(
+2585	    _add_eq(
+2586	        _add_repr(Attribute, attrs=_a),
+2587	        attrs=[a for a in _a if a.name != "inherited"],
+2588	    ),
+2589	    attrs=[a for a in _a if a.hash and a.name != "inherited"],
+2590	)
+2591	
+2592	
+2593	class _CountingAttr:
+2594	    """
+2595	    Intermediate representation of attributes that uses a counter to preserve
+2596	    the order in which the attributes have been defined.
+2597	
+2598	    *Internal* data structure of the attrs library.  Running into is most
+2599	    likely the result of a bug like a forgotten `@attr.s` decorator.
+2600	    """
+2601	
+2602	    __slots__ = (
+2603	        "_default",
+2604	        "_validator",
+2605	        "alias",
+2606	        "converter",
+2607	        "counter",
+2608	        "eq",
+2609	        "eq_key",
+2610	        "hash",
+2611	        "init",
+2612	        "kw_only",
+2613	        "metadata",
+2614	        "on_setattr",
+2615	        "order",
+2616	        "order_key",
+2617	        "repr",
+2618	        "type",
+2619	    )
+2620	    __attrs_attrs__ = (
+2621	        *tuple(
+2622	            Attribute(
+2623	                name=name,
+2624	                alias=_default_init_alias_for(name),
+2625	                default=NOTHING,
+2626	                validator=None,
+2627	                repr=True,
+2628	                cmp=None,
+2629	                hash=True,
+2630	                init=True,
+2631	                kw_only=False,
+2632	                eq=True,
+2633	                eq_key=None,
+2634	                order=False,
+2635	                order_key=None,
+2636	                inherited=False,
+2637	                on_setattr=None,
+2638	            )
+2639	            for name in (
+2640	                "counter",
+2641	                "_default",
+2642	                "repr",
+2643	                "eq",
+2644	                "order",
+2645	                "hash",
+2646	                "init",
+2647	                "on_setattr",
+2648	                "alias",
+2649	            )
+2650	        ),
+2651	        Attribute(
+2652	            name="metadata",
+2653	            alias="metadata",
+2654	            default=None,
+2655	            validator=None,
+2656	            repr=True,
+2657	            cmp=None,
+2658	            hash=False,
+2659	            init=True,
+2660	            kw_only=False,
+2661	            eq=True,
+2662	            eq_key=None,
+2663	            order=False,
+2664	            order_key=None,
+2665	            inherited=False,
+2666	            on_setattr=None,
+2667	        ),
+2668	    )
+2669	    cls_counter = 0
+2670	
+2671	    def __init__(
+2672	        self,
+2673	        default,
+2674	        validator,
+2675	        repr,
+2676	        cmp,
+2677	        hash,
+2678	        init,
+2679	        converter,
+2680	        metadata,
+2681	        type,
+2682	        kw_only,
+2683	        eq,
+2684	        eq_key,
+2685	        order,
+2686	        order_key,
+2687	        on_setattr,
+2688	        alias,
+2689	    ):
+2690	        …
+2707	
+2708	    def validator(self, meth):
+2709	        …
+2721	
+2722	    def default(self, meth):
+2723	        …
+2739	
+2740	
+2741	_CountingAttr = _add_eq(_add_repr(_CountingAttr))
+2742	
+2743	
+2744	class Factory:
+2745	    """
+2746	    Stores a factory callable.
+2747	
+2748	    If passed as the default value to `attrs.field`, the factory is used to
+2749	    generate a new value.
+2750	
+2751	    Args:
+2752	        factory (typing.Callable):
+2753	            A callable that takes either none or exactly one mandatory
+2754	            positional argument depending on *takes_self*.
+2755	
+2756	        takes_self (bool):
+2757	            Pass the partially initialized instance that is being initialized
+2758	            as a positional argument.
+2759	
+2760	    .. versionadded:: 17.1.0  *takes_self*
+2761	    """
+2762	
+2763	    __slots__ = ("factory", "takes_self")
+2764	
+2765	    def __init__(self, factory, takes_self=False):
+2766	        …
+2768	
+2769	    def __getstate__(self):
+2770	        …
+2774	
+2775	    def __setstate__(self, state):
+2776	        …
+2781	
+2782	
+2783	_f = [
+2784	    Attribute(
+2785	        name=name,
+2786	        default=NOTHING,
+2787	        validator=None,
+2788	        repr=True,
+2789	        cmp=None,
+2790	        eq=True,
+2791	        order=False,
+2792	        hash=True,
+2793	        init=True,
+2794	        inherited=False,
+2795	    )
+2796	    for name in Factory.__slots__
+2797	]
+2798	
+2799	Factory = _add_hash(_add_eq(_add_repr(Factory, attrs=_f), attrs=_f), attrs=_f)
+2800	
+2801	
+2802	class Converter:
+2803	    """
+2804	    Stores a converter callable.
+2805	
+2806	    Allows for the wrapped converter to take additional arguments. The
+2807	    arguments are passed in the order they are documented.
+2808	
+2809	    Args:
+2810	        converter (Callable): A callable that converts the passed value.
+2811	
+2812	        takes_self (bool):
+2813	            Pass the partially initialized instance that is being initialized
+2814	            as a positional argument. (default: `False`)
+2815	
+2816	        takes_field (bool):
+2817	            Pass the field definition (an :class:`Attribute`) into the
+2818	            converter as a positional argument. (default: `False`)
+2819	
+2820	    .. versionadded:: 24.1.0
+2821	    """
+2822	
+2823	    __slots__ = (
+2824	        "__call__",
+2825	        "_first_param_type",
+2826	        "_global_name",
+2827	        "converter",
+2828	        "takes_field",
+2829	        "takes_self",
+2830	    )
+2831	
+2832	    def __init__(self, converter, *, takes_self=False, takes_field=False):
+2833	        …
+2858	
+2859	    @staticmethod
+2860	    def _get_global_name(attr_name: str) -> str:
+2861	        …
+2866	
+2867	    def _fmt_converter_call(self, attr_name: str, value_var: str) -> str:
+2868	        …
+2883	
+2884	    def __getstate__(self):
+2885	        …
+2894	
+2895	    def __setstate__(self, state):
+2896	        …
+2900	
+2901	
+2902	_f = [
+2903	    Attribute(
+2904	        name=name,
+2905	        default=NOTHING,
+2906	        validator=None,
+2907	        repr=True,
+2908	        cmp=None,
+2909	        eq=True,
+2910	        order=False,
+2911	        hash=True,
+2912	        init=True,
+2913	        inherited=False,
+2914	    )
+2915	    for name in ("converter", "takes_self", "takes_field")
+2916	]
+2917	
+2918	Converter = _add_hash(
+2919	    _add_eq(_add_repr(Converter, attrs=_f), attrs=_f), attrs=_f
+2920	)
+2921	
+2922	
+2923	def make_class(
+2924	    name, attrs, bases=(object,), class_body=None, **attributes_arguments
+2925	):
+2926	    …
+3024	
+3025	
+3026	# These are required by within this module so we define them here and merely
+3027	# import into .validators / .converters.
+3028	
+3029	
+3030	@attrs(slots=True, unsafe_hash=True)
+3031	class _AndValidator:
+3032	    """
+3033	    Compose many validators to a single one.
+3034	    """
+3035	
+3036	    _validators = attrib()
+3037	
+3038	    def __call__(self, inst, attr, value):
+3039	        …
+3041	
+3042	
+3043	def and_(*validators):
+3044	    …
+3064	
+3065	
+3066	def pipe(*converters):
+3067	    …
+[function bodies left out: sed -n 'A,Bp' src/attr/_make.py prints lines A to B]

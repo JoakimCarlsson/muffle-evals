@@ -1,0 +1,261 @@
+$ cat tomlkit/container.py
+tomlkit/container.py (1261 lines)
+1	from __future__ import annotations
+2	
+3	import copy
+4	import math
+5	
+6	from collections.abc import Iterator
+7	from typing import TYPE_CHECKING
+8	from typing import Any
+9	
+10	
+11	if TYPE_CHECKING:
+12	    from typing import Self
+13	
+14	from tomlkit._compat import decode
+15	from tomlkit._types import _CustomDict
+16	from tomlkit._utils import merge_dicts
+17	from tomlkit.exceptions import KeyAlreadyPresent
+18	from tomlkit.exceptions import NonExistentKey
+19	from tomlkit.exceptions import TOMLKitError
+20	from tomlkit.items import AoT
+21	from tomlkit.items import Comment
+22	from tomlkit.items import Item
+23	from tomlkit.items import Key
+24	from tomlkit.items import Null
+25	from tomlkit.items import SingleKey
+26	from tomlkit.items import Table
+27	from tomlkit.items import Trivia
+28	from tomlkit.items import Whitespace
+29	from tomlkit.items import item as _item
+30	
+31	
+32	_NOT_SET = object()
+33	
+34	
+35	class Container(_CustomDict):  # type: ignore[type-arg]
+36	    """
+37	    A container for items within a TOMLDocument.
+38	
+39	    This class implements the `dict` interface with copy/deepcopy protocol.
+40	    """
+41	
+42	    def __init__(self, parsed: bool = False) -> None:
+43	        …
+56	
+57	    @property
+58	    def body(self) -> list[tuple[Key | None, Item]]:
+59	        return self._body
+60	
+61	    def unwrap(self) -> dict[str, Any]:
+62	        …
+80	
+81	    @property
+82	    def value(self) -> dict[str, Any]:
+83	        …
+101	
+102	    def parsing(self, parsing: bool) -> None:
+103	        …
+112	
+113	    def add(self, key: Key | Item | str, item: Any = None) -> Container:
+114	        …
+134	
+135	    def _handle_dotted_key(self, key: Key, value: Item) -> None:
+136	        …
+152	
+153	    def _get_last_index_before_table(self) -> int:
+154	        …
+166	
+167	    def _validate_out_of_order_table(self, key: Key | None = None) -> None:
+168	        …
+200	
+201	    def append(
+202	        self, key: Key | str | None, item: Any, validate: bool = True
+203	    ) -> Container:
+204	        …
+395	
+396	    def _validate_table_candidate(self, current: Table, candidate: Table) -> None:
+397	        …
+429	
+430	    def _raw_append(self, key: Key | None, item: Item) -> None:
+431	        …
+451	
+452	    def _remove_at(self, idx: int) -> None:
+453	        …
+471	
+472	    def remove(self, key: Key | str) -> Container:
+473	        …
+491	
+492	    def _insert_after(
+493	        self, key: Key | str, other_key: Key | str, item: Any
+494	    ) -> Container:
+495	        …
+538	
+539	    def _insert_at(self, idx: int, key: Key | str, item: Any) -> Container:
+540	        …
+585	
+586	    def item(self, key: Key | str) -> Item | OutOfOrderTableProxy:
+587	        …
+602	
+603	    def last_item(self) -> Item | None:
+604	        …
+608	
+609	    def as_string(self) -> str:
+610	        …
+636	
+637	    def _render_table(self, key: Key, table: Table, prefix: str | None = None) -> str:
+638	        …
+718	
+719	    def _render_aot(self, key: Key, aot: AoT, prefix: str | None = None) -> str:
+720	        …
+730	
+731	    def _render_aot_table(self, table: Table, prefix: str | None = None) -> str:
+732	        …
+764	
+765	    def _render_simple_item(
+766	        self, key: Key | None, item: Item, prefix: str | None = None
+767	    ) -> str:
+768	        …
+784	
+785	    def __len__(self) -> int:
+786	        return dict.__len__(self)
+787	
+788	    def __iter__(self) -> Iterator[str]:
+789	        return iter(dict.keys(self))
+790	
+791	    # Dictionary methods
+792	    def __getitem__(self, key: Key | str) -> Any:
+793	        …
+798	
+799	    def __contains__(self, key: object) -> bool:
+800	        # Native membership test. The inherited ``MutableMapping.__contains__``
+801	        # resolves the value via ``__getitem__``/``item()`` (and builds a
+802	        # ``NonExistentKey`` on every absent key) only to discard it. Resolve the
+803	        # key the same way ``item()`` does -- ``str`` becomes a ``SingleKey``
+804	        # (a non-str/non-``Key`` argument still raises ``TypeError``) -- then
+805	        # probe ``_map`` directly. For an out-of-order table the proxy is still
+806	        # built so its validation runs exactly as before.
+807	        …
+821	
+822	    def __setitem__(self, key: Key | str, value: Any) -> None:
+823	        …
+828	
+829	    def __delitem__(self, key: Key | str) -> None:
+830	        self.remove(key)
+831	
+832	    def setdefault(self, key: Key | str, default: Any = None) -> Any:
+833	        …
+836	
+837	    def _replace(self, key: Key | str, new_key: Key | str, value: Item) -> None:
+838	        …
+846	
+847	    def _replace_at(
+848	        self, idx: int | tuple[int, ...], new_key: Key | str, value: Item
+849	    ) -> None:
+850	        …
+955	
+956	    def __str__(self) -> str:
+957	        return str(self.value)
+958	
+959	    def __repr__(self) -> str:
+960	        return repr(self.value)
+961	
+962	    def __eq__(self, other: object) -> bool:
+963	        …
+967	
+968	    def _getstate(self, protocol: int) -> tuple[bool]:
+969	        return (self._parsed,)
+970	
+971	    def __reduce__(self) -> tuple[type, tuple[bool], tuple[Any, ...]]:
+972	        return self.__reduce_ex__(2)
+973	
+974	    def __reduce_ex__(self, protocol: int) -> tuple[type, tuple[bool], tuple[Any, ...]]:  # type: ignore[override]
+975	        …
+980	
+981	    def __setstate__(self, state: tuple[Any, ...]) -> None:
+982	        …
+993	
+994	    def copy(self) -> Self:
+995	        return copy.copy(self)
+996	
+997	    def __copy__(self) -> Self:
+998	        …
+1007	
+1008	    def _previous_item_with_index(
+1009	        self, idx: int | None = None, ignore: tuple[type, ...] = (Null,)
+1010	    ) -> tuple[int, Item] | None:
+1011	        …
+1019	
+1020	    def _previous_item(
+1021	        self, idx: int | None = None, ignore: tuple[type, ...] = (Null,)
+1022	    ) -> Item | None:
+1023	        …
+1028	
+1029	
+1030	class OutOfOrderTableProxy(_CustomDict):  # type: ignore[type-arg]
+1031	    @staticmethod
+1032	    def validate(
+1033	        container: Container,
+1034	        indices: tuple[int, ...],
+1035	        temp_container: Container | None = None,
+1036	    ) -> Container:
+1037	        …
+1059	
+1060	    def __init__(self, container: Container, indices: tuple[int, ...]) -> None:
+1061	        …
+1085	
+1086	    def _merge_aot_fragment(self, key: Key | None, item: Item) -> AoT | None:
+1087	        …
+1118	
+1119	    def unwrap(self) -> dict[str, Any]:
+1120	        return self._internal_container.unwrap()
+1121	
+1122	    @property
+1123	    def value(self) -> dict[str, Any]:
+1124	        return self._internal_container.value
+1125	
+1126	    def __str__(self) -> str:
+1127	        return str(self.value)
+1128	
+1129	    def __repr__(self) -> str:
+1130	        return repr(self.value)
+1131	
+1132	    def __contains__(self, key: object) -> bool:
+1133	        # Native membership test. The inherited ``MutableMapping.__contains__``
+1134	        # resolves the value via ``__getitem__`` (and builds a ``NonExistentKey``
+1135	        # on every absent key) only to discard it. Probe the internal container
+1136	        # directly -- the same predicate ``__getitem__`` already uses -- which is
+1137	        # itself a native ``_map`` lookup that still rebuilds the proxy for an
+1138	        # out-of-order key so its validation runs exactly as before.
+1139	        return key in self._internal_container
+1140	
+1141	    def __getitem__(self, key: Key | str) -> Any:
+1142	        …
+1146	
+1147	    def __setitem__(self, key: Key | str, value: Any) -> None:
+1148	        …
+1197	
+1198	    def _remove_table(self, table: Table) -> None:
+1199	        …
+1205	
+1206	    def __delitem__(self, key: Key | str) -> None:
+1207	        …
+1221	
+1222	    def __iter__(self) -> Iterator[str]:
+1223	        return iter(dict.keys(self))
+1224	
+1225	    def __len__(self) -> int:
+1226	        return dict.__len__(self)
+1227	
+1228	    def setdefault(self, key: Key | str, default: Any = None) -> Any:
+1229	        …
+1232	
+1233	
+1234	def ends_with_whitespace(it: Any) -> bool:
+1235	    …
+1244	
+1245	
+1246	def _equal_with_nan(left: Any, right: Any) -> bool:
+1247	    …
+[function bodies left out: sed -n 'A,Bp' tomlkit/container.py prints lines A to B]

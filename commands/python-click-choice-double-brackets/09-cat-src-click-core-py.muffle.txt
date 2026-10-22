@@ -1,0 +1,1235 @@
+$ cat src/click/core.py
+src/click/core.py (3634 lines)
+1	from __future__ import annotations
+2	
+3	import collections.abc as cabc
+4	import enum
+5	import errno
+6	import inspect
+7	import os
+8	import sys
+9	import typing as t
+10	from abc import ABC
+11	from abc import abstractmethod
+12	from collections import abc
+13	from collections import Counter
+14	from contextlib import AbstractContextManager
+15	from contextlib import contextmanager
+16	from contextlib import ExitStack
+17	from functools import update_wrapper
+18	from gettext import gettext as _
+19	from gettext import ngettext
+20	from itertools import repeat
+21	from types import TracebackType
+22	
+23	from . import types
+24	from ._utils import FLAG_NEEDS_VALUE
+25	from ._utils import UNSET
+26	from .exceptions import Abort
+27	from .exceptions import BadParameter
+28	from .exceptions import ClickException
+29	from .exceptions import Exit
+30	from .exceptions import MissingParameter
+31	from .exceptions import NoArgsIsHelpError
+32	from .exceptions import NoSuchCommand
+33	from .exceptions import UsageError
+34	from .formatting import HelpFormatter
+35	from .formatting import join_options
+36	from .globals import pop_context
+37	from .globals import push_context
+38	from .parser import _OptionParser
+39	from .parser import _split_opt
+40	from .termui import confirm
+41	from .termui import prompt
+42	from .termui import style
+43	from .utils import _detect_program_name
+44	from .utils import _expand_args
+45	from .utils import echo
+46	from .utils import make_default_short_help
+47	from .utils import make_str
+48	from .utils import PacifyFlushWrapper
+49	
+50	if t.TYPE_CHECKING:
+51	    from typing_extensions import Self
+52	
+53	    from .shell_completion import CompletionItem
+54	
+55	F = t.TypeVar("F", bound="t.Callable[..., t.Any]")
+56	V = t.TypeVar("V")
+57	
+58	
+59	def _complete_visible_commands(
+60	    ctx: Context, incomplete: str
+61	) -> cabc.Iterator[tuple[str, Command]]:
+62	    …
+76	
+77	
+78	def _check_nested_chain(
+79	    base_command: Group, cmd_name: str, cmd: Command, register: bool = False
+80	) -> None:
+81	    …
+96	
+97	
+98	def _format_deprecated_label(deprecated: bool | str) -> str:
+99	    …
+104	
+105	
+106	def _format_deprecated_suffix(deprecated: bool | str) -> str:
+107	    …
+113	
+114	
+115	def batch(iterable: cabc.Iterable[V], batch_size: int) -> list[tuple[V, ...]]:
+116	    return list(zip(*repeat(iter(iterable), batch_size), strict=False))
+117	
+118	
+119	@contextmanager
+120	def augment_usage_errors(
+121	    ctx: Context, param: Parameter | None = None
+122	) -> cabc.Generator[None]:
+123	    …
+136	
+137	
+138	def iter_params_for_processing(
+139	    invocation_order: cabc.Sequence[Parameter],
+140	    declaration_order: cabc.Sequence[Parameter],
+141	) -> list[Parameter]:
+142	    …
+163	
+164	
+165	class ParameterSource(enum.IntEnum):
+166	    """This is an :class:`~enum.IntEnum` that indicates the source of a
+167	    parameter's value.
+168	
+169	    Use :meth:`click.Context.get_parameter_source` to get the
+170	    source for a parameter by name.
+171	
+172	    Members are ordered from most explicit to least explicit source.
+173	    This allows comparison to check if a value was explicitly provided:
+174	
+175	    .. code-block:: python
+176	
+177	        source = ctx.get_parameter_source("port")
+178	        if source < click.ParameterSource.DEFAULT_MAP:
+179	            ...  # value was explicitly set
+180	
+181	    .. versionchanged:: 8.3.3
+182	        Use :class:`~enum.IntEnum` and reorder members from most to
+183	        least explicit. Supports comparison operators.
+184	
+185	    .. versionchanged:: 8.0
+186	        Use :class:`~enum.Enum` and drop the ``validate`` method.
+187	
+188	    .. versionchanged:: 8.0
+189	        Added the ``PROMPT`` value.
+190	    """
+191	
+192	    PROMPT = enum.auto()
+193	    """Used a prompt to confirm a default or provide a value."""
+194	    COMMANDLINE = enum.auto()
+195	    """The value was provided by the command line args."""
+196	    ENVIRONMENT = enum.auto()
+197	    """The value was provided with an environment variable."""
+198	    DEFAULT_MAP = enum.auto()
+199	    """Used a default provided by :attr:`Context.default_map`."""
+200	    DEFAULT = enum.auto()
+201	    """Used the default specified by the parameter."""
+202	
+203	
+204	class Context:
+205	    """The context is a special internal object that holds state relevant
+206	    for the script execution at every single level.  It's normally invisible
+207	    to commands unless they opt-in to getting access to it.
+208	
+209	    The context is useful as it can pass internal objects around and can
+210	    control special execution features such as reading data from
+211	    environment variables.
+212	
+213	    A context can be used as context manager in which case it will call
+214	    :meth:`close` on teardown.
+215	
+216	    :param command: the command class for this context.
+217	    :param parent: the parent context.
+218	    :param info_name: the info name for this invocation.  Generally this
+219	                      is the most descriptive name for the script or
+220	                      command.  For the toplevel script it is usually
+221	                      the name of the script, for commands below that it's
+222	                      the name of the script.
+223	    :param obj: an arbitrary object of user data.
+224	    :param auto_envvar_prefix: the prefix to use for automatic environment
+225	                               variables.  If this is `None` then reading
+226	                               from environment variables is disabled.  This
+227	                               does not affect manually set environment
+228	                               variables which are always read.
+229	    :param default_map: a dictionary (like object) with default values
+230	                        for parameters.
+231	    :param terminal_width: the width of the terminal.  The default is
+232	                           inherit from parent context.  If no context
+233	                           defines the terminal width then auto
+234	                           detection will be applied.
+235	    :param max_content_width: the maximum width for content rendered by
+236	                              Click (this currently only affects help
+237	                              pages).  This defaults to 80 characters if
+238	                              not overridden.  In other words: even if the
+239	                              terminal is larger than that, Click will not
+240	                              format things wider than 80 characters by
+241	                              default.  In addition to that, formatters might
+242	                              add some safety mapping on the right.
+243	    :param resilient_parsing: if this flag is enabled then Click will
+244	                              parse without any interactivity or callback
+245	                              invocation.  Default values will also be
+246	                              ignored.  This is useful for implementing
+247	                              things such as completion support.
+248	    :param allow_extra_args: if this is set to `True` then extra arguments
+249	                             at the end will not raise an error and will be
+250	                             kept on the context.  The default is to inherit
+251	                             from the command.
+252	    :param allow_interspersed_args: if this is set to `False` then options
+253	                                    and arguments cannot be mixed.  The
+254	                                    default is to inherit from the command.
+255	    :param ignore_unknown_options: instructs click to ignore options it does
+256	                                   not know and keeps them for later
+257	                                   processing.
+258	    :param help_option_names: optionally a list of strings that define how
+259	                              the default help parameter is named.  The
+260	                              default is ``['--help']``.
+261	    :param token_normalize_func: an optional function that is used to
+262	                                 normalize tokens (options, choices,
+263	                                 etc.).  This for instance can be used to
+264	                                 implement case insensitive behavior.
+265	    :param color: controls if the terminal supports ANSI colors or not.  The
+266	                  default is autodetection.  This is only needed if ANSI
+267	                  codes are used in texts that Click prints which is by
+268	                  default not the case.  This for instance would affect
+269	                  help output.
+270	    :param show_default: Show the default value for commands. If this
+271	        value is not set, it defaults to the value from the parent
+272	        context. ``Command.show_default`` overrides this default for the
+273	        specific command.
+274	
+275	    .. versionchanged:: 8.2
+276	        The ``protected_args`` attribute is deprecated and will be removed in
+277	        Click 9.0. ``args`` will contain remaining unparsed tokens.
+278	
+279	    .. versionchanged:: 8.1
+280	        The ``show_default`` parameter is overridden by
+281	        ``Command.show_default``, instead of the other way around.
+282	
+283	    .. versionchanged:: 8.0
+284	        The ``show_default`` parameter defaults to the value from the
+285	        parent context.
+286	
+287	    .. versionchanged:: 7.1
+288	       Added the ``show_default`` parameter.
+289	
+290	    .. versionchanged:: 4.0
+291	        Added the ``color``, ``ignore_unknown_options``, and
+292	        ``max_content_width`` parameters.
+293	
+294	    .. versionchanged:: 3.0
+295	        Added the ``allow_extra_args`` and ``allow_interspersed_args``
+296	        parameters.
+297	
+298	    .. versionchanged:: 2.0
+299	        Added the ``resilient_parsing``, ``help_option_names``, and
+300	        ``token_normalize_func`` parameters.
+301	    """
+302	
+303	    #: The formatter class to create with :meth:`make_formatter`.
+304	    #:
+305	    #: .. versionadded:: 8.0
+306	    formatter_class: type[HelpFormatter] = HelpFormatter
+307	
+308	    parent: Context | None
+309	    command: Command
+310	    info_name: str | None
+311	    params: dict[str, t.Any]
+312	    args: list[str]
+313	    _protected_args: list[str]
+314	    _opt_prefixes: set[str]
+315	    obj: t.Any
+316	    _meta: dict[str, t.Any]
+317	    default_map: cabc.MutableMapping[str, t.Any] | None
+318	    invoked_subcommand: str | None
+319	    terminal_width: int | None
+320	    max_content_width: int | None
+321	    allow_extra_args: bool
+322	    allow_interspersed_args: bool
+323	    ignore_unknown_options: bool
+324	    help_option_names: list[str]
+325	    token_normalize_func: t.Callable[[str], str] | None
+326	    resilient_parsing: bool
+327	    auto_envvar_prefix: str | None
+328	    color: bool | None
+329	    show_default: bool | None
+330	    _close_callbacks: list[t.Callable[[], t.Any]]
+331	    _depth: int
+332	    _parameter_source: dict[str, ParameterSource]
+333	    _param_default_explicit: dict[str, bool]
+334	    _exit_stack: ExitStack
+335	
+336	    def __init__(
+337	        self,
+338	        command: Command,
+339	        parent: Context | None = None,
+340	        info_name: str | None = None,
+341	        obj: t.Any | None = None,
+342	        auto_envvar_prefix: str | None = None,
+343	        default_map: cabc.MutableMapping[str, t.Any] | None = None,
+344	        terminal_width: int | None = None,
+345	        max_content_width: int | None = None,
+346	        resilient_parsing: bool = False,
+347	        allow_extra_args: bool | None = None,
+348	        allow_interspersed_args: bool | None = None,
+349	        ignore_unknown_options: bool | None = None,
+350	        help_option_names: list[str] | None = None,
+351	        token_normalize_func: t.Callable[[str], str] | None = None,
+352	        color: bool | None = None,
+353	        show_default: bool | None = None,
+354	    ) -> None:
+355	        #: the parent context or `None` if none exists.
+356	        …
+511	
+512	    @property
+513	    def protected_args(self) -> list[str]:
+514	        …
+523	
+524	    def to_info_dict(self) -> dict[str, t.Any]:
+525	        …
+544	
+545	    def __enter__(self) -> Self:
+546	        …
+549	
+550	    def __exit__(
+551	        self,
+552	        exc_type: type[BaseException] | None,
+553	        exc_value: BaseException | None,
+554	        tb: TracebackType | None,
+555	    ) -> bool | None:
+556	        …
+563	
+564	    @contextmanager
+565	    def scope(self, cleanup: bool = True) -> cabc.Generator[Context]:
+566	        …
+601	
+602	    @property
+603	    def meta(self) -> dict[str, t.Any]:
+604	        …
+629	
+630	    def make_formatter(self) -> HelpFormatter:
+631	        …
+643	
+644	    def with_resource(self, context_manager: AbstractContextManager[V]) -> V:
+645	        …
+672	
+673	    def call_on_close(self, f: t.Callable[..., t.Any]) -> t.Callable[..., t.Any]:
+674	        …
+684	
+685	    def close(self) -> None:
+686	        …
+691	
+692	    def _close_with_exception_info(
+693	        self,
+694	        exc_type: type[BaseException] | None,
+695	        exc_value: BaseException | None,
+696	        tb: TracebackType | None,
+697	    ) -> bool | None:
+698	        …
+709	
+710	    @property
+711	    def command_path(self) -> str:
+712	        …
+728	
+729	    def find_root(self) -> Context:
+730	        …
+735	
+736	    def find_object(self, object_type: type[V]) -> V | None:
+737	        …
+747	
+748	    def ensure_object(self, object_type: type[V]) -> V:
+749	        …
+756	
+757	    def _default_map_has(self, name: str | None) -> bool:
+758	        …
+770	
+771	    @t.overload
+772	    def lookup_default(
+773	        self, name: str, call: t.Literal[True] = True
+774	    ) -> t.Any | None: ...
+775	
+776	    @t.overload
+777	    def lookup_default(
+778	        self, name: str, call: t.Literal[False] = ...
+779	    ) -> t.Any | t.Callable[[], t.Any] | None: ...
+780	
+781	    def lookup_default(self, name: str, call: bool = True) -> t.Any | None:
+782	        …
+802	
+803	    def fail(self, message: str) -> t.NoReturn:
+804	        …
+810	
+811	    def abort(self) -> t.NoReturn:
+812	        …
+814	
+815	    def exit(self, code: int = 0) -> t.NoReturn:
+816	        …
+824	
+825	    def get_usage(self) -> str:
+826	        …
+830	
+831	    def get_help(self) -> str:
+832	        …
+836	
+837	    def _make_sub_context(self, command: Command) -> Context:
+838	        …
+844	
+845	    @t.overload
+846	    def invoke(
+847	        self, callback: t.Callable[..., V], /, *args: t.Any, **kwargs: t.Any
+848	    ) -> V: ...
+849	
+850	    @t.overload
+851	    def invoke(self, callback: Command, /, *args: t.Any, **kwargs: t.Any) -> t.Any: ...
+852	
+853	    def invoke(
+854	        self, callback: Command | t.Callable[..., V], /, *args: t.Any, **kwargs: t.Any
+855	    ) -> t.Any | V:
+856	        …
+908	
+909	    def forward(self, cmd: Command, /, *args: t.Any, **kwargs: t.Any) -> t.Any:
+910	        …
+927	
+928	    def set_parameter_source(self, name: str, source: ParameterSource) -> None:
+929	        …
+936	
+937	    def get_parameter_source(self, name: str) -> ParameterSource | None:
+938	        …
+954	
+955	
+956	class Command:
+957	    """Commands are the basic building block of command line interfaces in
+958	    Click.  A basic command handles command line parsing and might dispatch
+959	    more parsing to commands nested below it.
+960	
+961	    :param name: the name of the command to use unless a group overrides it.
+962	    :param context_settings: an optional dictionary with defaults that are
+963	                             passed to the context object.
+964	    :param callback: the callback to invoke.  This is optional.
+965	    :param params: the parameters to register with this command.  This can
+966	                   be either :class:`Option` or :class:`Argument` objects.
+967	    :param help: the help string to use for this command.
+968	    :param epilog: like the help string but it's printed at the end of the
+969	                   help page after everything else.
+970	    :param short_help: the short help to use for this command.  This is
+971	                       shown on the command listing of the parent command.
+972	    :param add_help_option: by default each command registers a ``--help``
+973	                            option.  This can be disabled by this parameter.
+974	    :param no_args_is_help: this controls what happens if no arguments are
+975	                            provided.  This option is disabled by default.
+976	                            If enabled this will add ``--help`` as argument
+977	                            if no arguments are passed
+978	    :param hidden: hide this command from help outputs.
+979	    :param deprecated: If ``True`` or non-empty string, issues a message
+980	                        indicating that the command is deprecated and highlights
+981	                        its deprecation in --help. The message can be customized
+982	                        by using a string as the value.
+983	
+984	    .. versionchanged:: 8.2
+985	        This is the base class for all commands, not ``BaseCommand``.
+986	        ``deprecated`` can be set to a string as well to customize the
+987	        deprecation message.
+988	
+989	    .. versionchanged:: 8.1
+990	        ``help``, ``epilog``, and ``short_help`` are stored unprocessed,
+991	        all formatting is done when outputting help text, not at init,
+992	        and is done even if not using the ``@command`` decorator.
+993	
+994	    .. versionchanged:: 8.0
+995	        Added a ``repr`` showing the command name.
+996	
+997	    .. versionchanged:: 7.1
+998	        Added the ``no_args_is_help`` parameter.
+999	
+1000	    .. versionchanged:: 2.0
+1001	        Added the ``context_settings`` parameter.
+1002	    """
+1003	
+1004	    #: The context class to create with :meth:`make_context`.
+1005	    #:
+1006	    #: .. versionadded:: 8.0
+1007	    context_class: type[Context] = Context
+1008	
+1009	    #: the default for the :attr:`Context.allow_extra_args` flag.
+1010	    allow_extra_args = False
+1011	
+1012	    #: the default for the :attr:`Context.allow_interspersed_args` flag.
+1013	    allow_interspersed_args = True
+1014	
+1015	    #: the default for the :attr:`Context.ignore_unknown_options` flag.
+1016	    ignore_unknown_options = False
+1017	
+1018	    name: str | None
+1019	    context_settings: cabc.MutableMapping[str, t.Any]
+1020	    callback: t.Callable[..., t.Any] | None
+1021	    params: list[Parameter]
+1022	    help: str | None
+1023	    epilog: str | None
+1024	    options_metavar: str | None
+1025	    short_help: str | None
+1026	    add_help_option: bool
+1027	    _help_option: Option | None
+1028	    no_args_is_help: bool
+1029	    hidden: bool
+1030	    deprecated: bool | str
+1031	
+1032	    def __init__(
+1033	        self,
+1034	        name: str | None,
+1035	        context_settings: cabc.MutableMapping[str, t.Any] | None = None,
+1036	        callback: t.Callable[..., t.Any] | None = None,
+1037	        params: list[Parameter] | None = None,
+1038	        help: str | None = None,
+1039	        epilog: str | None = None,
+1040	        short_help: str | None = None,
+1041	        options_metavar: str | None = "[OPTIONS]",
+1042	        add_help_option: bool = True,
+1043	        no_args_is_help: bool = False,
+1044	        hidden: bool = False,
+1045	        deprecated: bool | str = False,
+1046	    ) -> None:
+1047	        #: the name the command thinks it has.  Upon registering a command
+1048	        #: on a :class:`Group` the group will default the command name
+1049	        #: with this information.  You should instead use the
+1050	        #: :class:`Context`\'s :attr:`~Context.info_name` attribute.
+1051	        …
+1075	
+1076	    def to_info_dict(self, ctx: Context) -> dict[str, t.Any]:
+1077	        …
+1086	
+1087	    def __repr__(self) -> str:
+1088	        return f"<{self.__class__.__name__} {self.name}>"
+1089	
+1090	    def get_usage(self, ctx: Context) -> str:
+1091	        …
+1098	
+1099	    def get_params(self, ctx: Context) -> list[Parameter]:
+1100	        …
+1123	
+1124	    def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
+1125	        …
+1131	
+1132	    def collect_usage_pieces(self, ctx: Context) -> list[str]:
+1133	        …
+1142	
+1143	    def get_help_option_names(self, ctx: Context) -> list[str]:
+1144	        …
+1150	
+1151	    def get_help_option(self, ctx: Context) -> Option | None:
+1152	        …
+1177	
+1178	    def make_parser(self, ctx: Context) -> _OptionParser:
+1179	        …
+1184	
+1185	    def get_help(self, ctx: Context) -> str:
+1186	        …
+1193	
+1194	    def get_short_help_str(self, limit: int = 45) -> str:
+1195	        …
+1209	
+1210	    def format_help(self, ctx: Context, formatter: HelpFormatter) -> None:
+1211	        …
+1226	
+1227	    def format_help_text(self, ctx: Context, formatter: HelpFormatter) -> None:
+1228	        …
+1244	
+1245	    def format_options(self, ctx: Context, formatter: HelpFormatter) -> None:
+1246	        …
+1256	
+1257	    def format_epilog(self, ctx: Context, formatter: HelpFormatter) -> None:
+1258	        …
+1265	
+1266	    def make_context(
+1267	        self,
+1268	        info_name: str | None,
+1269	        args: list[str],
+1270	        parent: Context | None = None,
+1271	        **extra: t.Any,
+1272	    ) -> Context:
+1273	        …
+1302	
+1303	    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
+1304	        …
+1338	
+1339	    def invoke(self, ctx: Context) -> t.Any:
+1340	        …
+1354	
+1355	    def shell_complete(self, ctx: Context, incomplete: str) -> list[CompletionItem]:
+1356	        …
+1401	
+1402	    @t.overload
+1403	    def main(
+1404	        self,
+1405	        args: cabc.Sequence[str] | None = None,
+1406	        prog_name: str | None = None,
+1407	        complete_var: str | None = None,
+1408	        standalone_mode: t.Literal[True] = True,
+1409	        **extra: t.Any,
+1410	    ) -> t.NoReturn: ...
+1411	
+1412	    @t.overload
+1413	    def main(
+1414	        self,
+1415	        args: cabc.Sequence[str] | None = None,
+1416	        prog_name: str | None = None,
+1417	        complete_var: str | None = None,
+1418	        standalone_mode: bool = ...,
+1419	        **extra: t.Any,
+1420	    ) -> t.Any: ...
+1421	
+1422	    def main(
+1423	        self,
+1424	        args: cabc.Sequence[str] | None = None,
+1425	        prog_name: str | None = None,
+1426	        complete_var: str | None = None,
+1427	        standalone_mode: bool = True,
+1428	        windows_expand_args: bool = True,
+1429	        **extra: t.Any,
+1430	    ) -> t.Any:
+1431	        …
+1534	
+1535	    def _main_shell_completion(
+1536	        self,
+1537	        ctx_args: cabc.MutableMapping[str, t.Any],
+1538	        prog_name: str,
+1539	        complete_var: str | None = None,
+1540	    ) -> None:
+1541	        …
+1566	
+1567	    def __call__(self, *args: t.Any, **kwargs: t.Any) -> t.Any:
+1568	        …
+1570	
+1571	
+1572	class _FakeSubclassCheck(type):
+1573	    def __subclasscheck__(cls, subclass: type) -> bool:
+1574	        return issubclass(subclass, cls.__bases__[0])
+1575	
+1576	    def __instancecheck__(cls, instance: t.Any) -> bool:
+1577	        return isinstance(instance, cls.__bases__[0])
+1578	
+1579	
+1580	class _BaseCommand(Command, metaclass=_FakeSubclassCheck):
+1581	    """
+1582	    .. deprecated:: 8.2
+1583	        Will be removed in Click 9.0. Use ``Command`` instead.
+1584	    """
+1585	
+1586	
+1587	class Group(Command):
+1588	    """A group is a command that nests other commands (or more groups).
+1589	
+1590	    :param name: The name of the group command.
+1591	    :param commands: Map names to :class:`Command` objects. Can be a list, which
+1592	        will use :attr:`Command.name` as the keys.
+1593	    :param invoke_without_command: Invoke the group's callback even if a
+1594	        subcommand is not given.
+1595	    :param no_args_is_help: If no arguments are given, show the group's help and
+1596	        exit. Defaults to the opposite of ``invoke_without_command``.
+1597	    :param subcommand_metavar: How to represent the subcommand argument in help.
+1598	        The default will represent whether ``chain`` is set or not.
+1599	    :param chain: Allow passing more than one subcommand argument. After parsing
+1600	        a command's arguments, if any arguments remain another command will be
+1601	        matched, and so on.
+1602	    :param result_callback: A function to call after the group's and
+1603	        subcommand's callbacks. The value returned by the subcommand is passed.
+1604	        If ``chain`` is enabled, the value will be a list of values returned by
+1605	        all the commands. If ``invoke_without_command`` is enabled, the value
+1606	        will be the value returned by the group's callback, or an empty list if
+1607	        ``chain`` is enabled.
+1608	    :param kwargs: Other arguments passed to :class:`Command`.
+1609	
+1610	    .. versionchanged:: 8.0
+1611	        The ``commands`` argument can be a list of command objects.
+1612	
+1613	    .. versionchanged:: 8.2
+1614	        Merged with and replaces the ``MultiCommand`` base class.
+1615	    """
+1616	
+1617	    allow_extra_args = True
+1618	    allow_interspersed_args = False
+1619	
+1620	    #: If set, this is used by the group's :meth:`command` decorator
+1621	    #: as the default :class:`Command` class. This is useful to make all
+1622	    #: subcommands use a custom command class.
+1623	    #:
+1624	    #: .. versionadded:: 8.0
+1625	    command_class: type[Command] | None = None
+1626	
+1627	    #: If set, this is used by the group's :meth:`group` decorator
+1628	    #: as the default :class:`Group` class. This is useful to make all
+1629	    #: subgroups use a custom group class.
+1630	    #:
+1631	    #: If set to the special value :class:`type` (literally
+1632	    #: ``group_class = type``), this group's class will be used as the
+1633	    #: default class. This makes a custom group class continue to make
+1634	    #: custom groups.
+1635	    #:
+1636	    #: .. versionadded:: 8.0
+1637	    group_class: type[Group] | type[type] | None = None
+1638	    # Literal[type] isn't valid, so use Type[type]
+1639	
+1640	    commands: cabc.MutableMapping[str, Command]
+1641	    invoke_without_command: bool
+1642	    subcommand_metavar: str
+1643	    chain: bool
+1644	    _result_callback: t.Callable[..., t.Any] | None
+1645	
+1646	    def __init__(
+1647	        self,
+1648	        name: str | None = None,
+1649	        commands: cabc.MutableMapping[str, Command]
+1650	        | cabc.Sequence[Command]
+1651	        | None = None,
+1652	        invoke_without_command: bool = False,
+1653	        no_args_is_help: bool | None = None,
+1654	        subcommand_metavar: str | None = None,
+1655	        chain: bool = False,
+1656	        result_callback: t.Callable[..., t.Any] | None = None,
+1657	        **kwargs: t.Any,
+1658	    ) -> None:
+1659	        …
+1700	
+1701	    def to_info_dict(self, ctx: Context) -> dict[str, t.Any]:
+1702	        …
+1718	
+1719	    def add_command(self, cmd: Command, name: str | None = None) -> None:
+1720	        …
+1728	
+1729	    @t.overload
+1730	    def command(self, __func: t.Callable[..., t.Any]) -> Command: ...
+1731	
+1732	    @t.overload
+1733	    def command(
+1734	        self, *args: t.Any, **kwargs: t.Any
+1735	    ) -> t.Callable[[t.Callable[..., t.Any]], Command]: ...
+1736	
+1737	    def command(
+1738	        self, *args: t.Any, **kwargs: t.Any
+1739	    ) -> t.Callable[[t.Callable[..., t.Any]], Command] | Command:
+1740	        …
+1777	
+1778	    @t.overload
+1779	    def group(self, __func: t.Callable[..., t.Any]) -> Group: ...
+1780	
+1781	    @t.overload
+1782	    def group(
+1783	        self, *args: t.Any, **kwargs: t.Any
+1784	    ) -> t.Callable[[t.Callable[..., t.Any]], Group]: ...
+1785	
+1786	    def group(
+1787	        self, *args: t.Any, **kwargs: t.Any
+1788	    ) -> t.Callable[[t.Callable[..., t.Any]], Group] | Group:
+1789	        …
+1829	
+1830	    def result_callback(self, replace: bool = False) -> t.Callable[[F], F]:
+1831	        …
+1874	
+1875	    def get_command(self, ctx: Context, cmd_name: str) -> Command | None:
+1876	        …
+1880	
+1881	    def list_commands(self, ctx: Context) -> list[str]:
+1882	        …
+1884	
+1885	    def collect_usage_pieces(self, ctx: Context) -> list[str]:
+1886	        …
+1889	
+1890	    def format_options(self, ctx: Context, formatter: HelpFormatter) -> None:
+1891	        …
+1893	
+1894	    def format_commands(self, ctx: Context, formatter: HelpFormatter) -> None:
+1895	        …
+1921	
+1922	    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
+1923	        …
+1935	
+1936	    def invoke(self, ctx: Context) -> t.Any:
+1937	        …
+2003	
+2004	    def resolve_command(
+2005	        self, ctx: Context, args: list[str]
+2006	    ) -> tuple[str | None, Command | None, list[str]]:
+2007	        …
+2029	
+2030	    def shell_complete(self, ctx: Context, incomplete: str) -> list[CompletionItem]:
+2031	        …
+2048	
+2049	
+2050	class _MultiCommand(Group, metaclass=_FakeSubclassCheck):
+2051	    """
+2052	    .. deprecated:: 8.2
+2053	        Will be removed in Click 9.0. Use ``Group`` instead.
+2054	    """
+2055	
+2056	
+2057	class CommandCollection(Group):
+2058	    """A :class:`Group` that looks up subcommands on other groups. If a command
+2059	    is not found on this group, each registered source is checked in order.
+2060	    Parameters on a source are not added to this group, and a source's callback
+2061	    is not invoked when invoking its commands. In other words, this "flattens"
+2062	    commands in many groups into this one group.
+2063	
+2064	    :param name: The name of the group command.
+2065	    :param sources: A list of :class:`Group` objects to look up commands from.
+2066	    :param kwargs: Other arguments passed to :class:`Group`.
+2067	
+2068	    .. versionchanged:: 8.2
+2069	        This is a subclass of ``Group``. Commands are looked up first on this
+2070	        group, then each of its sources.
+2071	    """
+2072	
+2073	    sources: list[Group]
+2074	
+2075	    def __init__(
+2076	        self,
+2077	        name: str | None = None,
+2078	        sources: list[Group] | None = None,
+2079	        **kwargs: t.Any,
+2080	    ) -> None:
+2081	        …
+2084	
+2085	    def add_source(self, group: Group) -> None:
+2086	        …
+2088	
+2089	    def get_command(self, ctx: Context, cmd_name: str) -> Command | None:
+2090	        …
+2105	
+2106	    def list_commands(self, ctx: Context) -> list[str]:
+2107	        …
+2113	
+2114	
+2115	def _check_iter(value: cabc.Iterable[V]) -> cabc.Iterator[V]:
+2116	    …
+2123	
+2124	
+2125	class Parameter(ABC):
+2126	    r"""A parameter to a command comes in two versions: they are either
+2127	    :class:`Option`\s or :class:`Argument`\s.  Other subclasses are currently
+2128	    not supported by design as some of the internals for parsing are
+2129	    intentionally not finalized.
+2130	
+2131	    Some settings are supported by both options and arguments.
+2132	
+2133	    :param param_decls: the parameter declarations for this option or
+2134	                        argument.  This is a list of flags or argument
+2135	                        names.
+2136	    :param type: the type that should be used.  Either a :class:`ParamType`
+2137	                 or a Python type.  The latter is converted into the former
+2138	                 automatically if supported.
+2139	    :param required: controls if this is optional or not.
+2140	    :param default: the default value if omitted.  This can also be a callable,
+2141	                    in which case it's invoked when the default is needed
+2142	                    without any arguments.
+2143	    :param callback: A function to further process or validate the value
+2144	        after type conversion. It is called as ``f(ctx, param, value)``
+2145	        and must return the value. It is called for all sources,
+2146	        including prompts.
+2147	    :param nargs: the number of arguments to match.  If not ``1`` the return
+2148	                  value is a tuple instead of single value.  The default for
+2149	                  nargs is ``1`` (except if the type is a tuple, then it's
+2150	                  the arity of the tuple). If ``nargs=-1``, all remaining
+2151	                  parameters are collected.
+2152	    :param metavar: how the value is represented in the help page.
+2153	    :param expose_value: if this is `True` then the value is passed onwards
+2154	                         to the command callback and stored on the context,
+2155	                         otherwise it's skipped.
+2156	    :param is_eager: eager values are processed before non eager ones.  This
+2157	                     should not be set for arguments or it will inverse the
+2158	                     order of processing.
+2159	    :param envvar: environment variable(s) that are used to provide a default value for
+2160	        this parameter. This can be a string or a sequence of strings. If a sequence is
+2161	        given, only the first non-empty environment variable is used for the parameter.
+2162	    :param shell_complete: A function that returns custom shell
+2163	        completions. Used instead of the param's type completion if
+2164	        given. Takes ``ctx, param, incomplete`` and must return a list
+2165	        of :class:`~click.shell_completion.CompletionItem` or a list of
+2166	        strings.
+2167	    :param deprecated: If ``True`` or non-empty string, issues a message
+2168	                        indicating that the argument is deprecated and highlights
+2169	                        its deprecation in --help. The message can be customized
+2170	                        by using a string as the value. A deprecated parameter
+2171	                        cannot be required, a ValueError will be raised otherwise.
+2172	
+2173	    .. versionchanged:: 8.2.0
+2174	        Introduction of ``deprecated``.
+2175	
+2176	    .. versionchanged:: 8.2
+2177	        Adding duplicate parameter names to a :class:`~click.core.Command` will
+2178	        result in a ``UserWarning`` being shown.
+2179	
+2180	    .. versionchanged:: 8.2
+2181	        Adding duplicate parameter names to a :class:`~click.core.Command` will
+2182	        result in a ``UserWarning`` being shown.
+2183	
+2184	    .. versionchanged:: 8.0
+2185	        ``process_value`` validates required parameters and bounded
+2186	        ``nargs``, and invokes the parameter callback before returning
+2187	        the value. This allows the callback to validate prompts.
+2188	        ``full_process_value`` is removed.
+2189	
+2190	    .. versionchanged:: 8.0
+2191	        ``autocompletion`` is renamed to ``shell_complete`` and has new
+2192	        semantics described above. The old name is deprecated and will
+2193	        be removed in 8.1, until then it will be wrapped to match the
+2194	        new requirements.
+2195	
+2196	    .. versionchanged:: 8.0
+2197	        For ``multiple=True, nargs>1``, the default must be a list of
+2198	        tuples.
+2199	
+2200	    .. versionchanged:: 8.0
+2201	        Setting a default is no longer required for ``nargs>1``, it will
+2202	        default to ``None``. ``multiple=True`` or ``nargs=-1`` will
+2203	        default to ``()``.
+2204	
+2205	    .. versionchanged:: 7.1
+2206	        Empty environment variables are ignored rather than taking the
+2207	        empty string value. This makes it possible for scripts to clear
+2208	        variables if they can't unset them.
+2209	
+2210	    .. versionchanged:: 2.0
+2211	        Changed signature for parameter callback to also be passed the
+2212	        parameter. The old callback format will still work, but it will
+2213	        raise a warning to give you a chance to migrate the code easier.
+2214	    """
+2215	
+2216	    param_type_name = "parameter"
+2217	
+2218	    name: str
+2219	    opts: list[str]
+2220	    secondary_opts: list[str]
+2221	    # `Parameter.type` is annotated in `__init__` to avoid confusing mypy
+2222	    required: bool
+2223	    callback: t.Callable[[Context, Parameter, t.Any], t.Any] | None
+2224	    nargs: int
+2225	    multiple: bool
+2226	    expose_value: bool
+2227	    default: t.Any | t.Callable[[], t.Any] | None
+2228	    _default_explicit: bool
+2229	    is_eager: bool
+2230	    metavar: str | None
+2231	    envvar: str | cabc.Sequence[str] | None
+2232	    _custom_shell_complete: (
+2233	        t.Callable[[Context, Parameter, str], list[CompletionItem] | list[str]] | None
+2234	    )
+2235	    deprecated: bool | str
+2236	
+2237	    def __init__(
+2238	        self,
+2239	        param_decls: cabc.Sequence[str] | None = None,
+2240	        type: types.ParamType[t.Any] | t.Any | None = None,
+2241	        required: bool = False,
+2242	        # XXX The default historically embed two concepts:
+2243	        # - the declaration of a Parameter object carrying the default (handy to
+2244	        #   arbitrage the default value of coupled Parameters sharing the same
+2245	        #   self.name, like flag options),
+2246	        # - and the actual value of the default.
+2247	        # It is confusing and is the source of many issues discussed in:
+2248	        # https://github.com/pallets/click/pull/3030
+2249	        # In the future, we might think of splitting it in two, not unlike
+2250	        # Option.is_flag and Option.flag_value: we could have something like
+2251	        # Parameter.is_default and Parameter.default_value.
+2252	        default: t.Any | t.Callable[[], t.Any] | None = UNSET,
+2253	        callback: t.Callable[[Context, Parameter, t.Any], t.Any] | None = None,
+2254	        nargs: int | None = None,
+2255	        multiple: bool = False,
+2256	        metavar: str | None = None,
+2257	        expose_value: bool = True,
+2258	        is_eager: bool = False,
+2259	        envvar: str | cabc.Sequence[str] | None = None,
+2260	        shell_complete: t.Callable[
+2261	            [Context, Parameter, str], list[CompletionItem] | list[str]
+2262	        ]
+2263	        | None = None,
+2264	        deprecated: bool | str = False,
+2265	    ) -> None:
+2266	        …
+2310	
+2311	    def to_info_dict(self) -> dict[str, t.Any]:
+2312	        …
+2338	
+2339	    def __repr__(self) -> str:
+2340	        return f"<{self.__class__.__name__} {self.name}>"
+2341	
+2342	    @abstractmethod
+2343	    def _parse_decls(
+2344	        self, decls: cabc.Sequence[str], expose_value: bool
+2345	    ) -> tuple[str, list[str], list[str]]: ...
+2346	
+2347	    @property
+2348	    def human_readable_name(self) -> str:
+2349	        …
+2353	
+2354	    def make_metavar(self, ctx: Context) -> str:
+2355	        …
+2367	
+2368	    @t.overload
+2369	    def get_default(
+2370	        self, ctx: Context, call: t.Literal[True] = True
+2371	    ) -> t.Any | None: ...
+2372	
+2373	    @t.overload
+2374	    def get_default(
+2375	        self, ctx: Context, call: bool = ...
+2376	    ) -> t.Any | t.Callable[[], t.Any] | None: ...
+2377	
+2378	    def get_default(
+2379	        self, ctx: Context, call: bool = True
+2380	    ) -> t.Any | t.Callable[[], t.Any] | None:
+2381	        …
+2410	
+2411	    @abstractmethod
+2412	    def add_to_parser(self, parser: _OptionParser, ctx: Context) -> None: ...
+2413	
+2414	    def consume_value(
+2415	        self, ctx: Context, opts: cabc.Mapping[str, t.Any]
+2416	    ) -> tuple[t.Any, ParameterSource]:
+2417	        …
+2461	
+2462	    def type_cast_value(self, ctx: Context, value: t.Any) -> t.Any:
+2463	        …
+2517	
+2518	    def value_is_missing(self, value: t.Any) -> bool:
+2519	        …
+2535	
+2536	    def process_value(self, ctx: Context, value: t.Any) -> t.Any:
+2537	        …
+2601	
+2602	    def resolve_envvar_value(self, ctx: Context) -> str | None:
+2603	        …
+2646	
+2647	    def value_from_envvar(self, ctx: Context) -> str | cabc.Sequence[str] | None:
+2648	        …
+2662	
+2663	    def handle_parse_result(
+2664	        self, ctx: Context, opts: cabc.Mapping[str, t.Any], args: list[str]
+2665	    ) -> tuple[t.Any, list[str]]:
+2666	        …
+2750	
+2751	    def get_help_record(self, ctx: Context) -> tuple[str, str] | None:
+2752	        return None
+2753	
+2754	    def get_usage_pieces(self, ctx: Context) -> list[str]:
+2755	        return []
+2756	
+2757	    def get_error_hint(self, ctx: Context | None) -> str:
+2758	        …
+2766	
+2767	    def shell_complete(self, ctx: Context, incomplete: str) -> list[CompletionItem]:
+2768	        …
+2789	
+2790	
+2791	class Option(Parameter):
+2792	    """Options are usually optional values on the command line and
+2793	    have some extra features that arguments don't have.
+2794	
+2795	    All other parameters are passed onwards to the parameter constructor.
+2796	
+2797	    :param show_default: Show the default value for this option in its
+2798	        help text. Values are not shown by default, unless
+2799	        :attr:`Context.show_default` is ``True``. If this value is a
+2800	        string, it shows that string in parentheses instead of the
+2801	        actual value. This is particularly useful for dynamic options.
+2802	        For single option boolean flags, the default remains hidden if
+2803	        its value is ``False``.
+2804	    :param show_envvar: Controls if an environment variable should be
+2805	        shown on the help page and error messages.
+2806	        Normally, environment variables are not shown.
+2807	    :param prompt: If set to ``True`` or a non empty string then the
+2808	        user will be prompted for input. If set to ``True`` the prompt
+2809	        will be the option name capitalized. A deprecated option cannot be
+2810	        prompted.
+2811	    :param confirmation_prompt: Prompt a second time to confirm the
+2812	        value if it was prompted for. Can be set to a string instead of
+2813	        ``True`` to customize the message.
+2814	    :param prompt_required: If set to ``False``, the user will be
+2815	        prompted for input only when the option was specified as a flag
+2816	        without a value.
+2817	    :param hide_input: If this is ``True`` then the input on the prompt
+2818	        will be hidden from the user. This is useful for password input.
+2819	    :param is_flag: forces this option to act as a flag.  The default is
+2820	                    auto detection.
+2821	    :param flag_value: which value should be used for this flag if it's
+2822	                       enabled.  This is set to a boolean automatically if
+2823	                       the option string contains a slash to mark two options.
+2824	    :param multiple: if this is set to `True` then the argument is accepted
+2825	                     multiple times and recorded.  This is similar to ``nargs``
+2826	                     in how it works but supports arbitrary number of
+2827	                     arguments.
+2828	    :param count: this flag makes an option increment an integer.
+2829	    :param allow_from_autoenv: if this is enabled then the value of this
+2830	                               parameter will be pulled from an environment
+2831	                               variable in case a prefix is defined on the
+2832	                               context.
+2833	    :param help: the help string.
+2834	    :param hidden: hide this option from help outputs.
+2835	    :param attrs: Other command arguments described in :class:`Parameter`.
+2836	
+2837	    .. versionchanged:: 8.4.0
+2838	        Non-basic ``flag_value`` types (not ``str``, ``int``, ``float``, or
+2839	        ``bool``) are passed through unchanged instead of being stringified.
+2840	        Previously, ``type=click.UNPROCESSED`` was required to preserve them.
+2841	
+2842	    .. versionchanged:: 8.2
+2843	        ``envvar`` used with ``flag_value`` will always use the ``flag_value``,
+2844	        previously it would use the value of the environment variable.
+2845	
+2846	    .. versionchanged:: 8.1
+2847	        Help text indentation is cleaned here instead of only in the
+2848	        ``@option`` decorator.
+2849	
+2850	    .. versionchanged:: 8.1
+2851	        The ``show_default`` parameter overrides
+2852	        ``Context.show_default``.
+2853	
+2854	    .. versionchanged:: 8.1
+2855	        The default of a single option boolean flag is not shown if the
+2856	        default value is ``False``.
+2857	
+2858	    .. versionchanged:: 8.0.1
+2859	        ``type`` is detected from ``flag_value`` if given, for basic Python
+2860	        types (``str``, ``int``, ``float``, ``bool``).
+2861	    """
+2862	
+2863	    param_type_name = "option"
+2864	
+2865	    prompt: str | None
+2866	    confirmation_prompt: bool | str
+2867	    prompt_required: bool
+2868	    hide_input: bool
+2869	    hidden: bool
+2870	
+2871	    _flag_needs_value: bool
+2872	    is_flag: bool
+2873	    is_bool_flag: bool
+2874	    flag_value: t.Any
+2875	
+2876	    count: bool
+2877	    allow_from_autoenv: bool
+2878	    help: str | None
+2879	    show_default: bool | str | None
+2880	    show_choices: bool
+2881	    show_envvar: bool
+2882	
+2883	    def __init__(
+2884	        self,
+2885	        param_decls: cabc.Sequence[str] | None = None,
+2886	        show_default: bool | str | None = None,
+2887	        prompt: bool | str = False,
+2888	        confirmation_prompt: bool | str = False,
+2889	        prompt_required: bool = True,
+2890	        hide_input: bool = False,
+2891	        is_flag: bool | None = None,
+2892	        flag_value: t.Any = UNSET,
+2893	        multiple: bool = False,
+2894	        count: bool = False,
+2895	        allow_from_autoenv: bool = True,
+2896	        type: types.ParamType[t.Any] | t.Any | None = None,
+2897	        help: str | None = None,
+2898	        hidden: bool = False,
+2899	        show_choices: bool = True,
+2900	        show_envvar: bool = False,
+2901	        deprecated: bool | str = False,
+2902	        **attrs: t.Any,
+2903	    ) -> None:
+2904	        …
+3047	
+3048	    def to_info_dict(self) -> dict[str, t.Any]:
+3049	        …
+3066	
+3067	    def get_default(
+3068	        self, ctx: Context, call: bool = True
+3069	    ) -> t.Any | t.Callable[[], t.Any] | None:
+3070	        …
+3099	
+3100	    def get_error_hint(self, ctx: Context | None) -> str:
+3101	        …
+3105	
+3106	    def _parse_decls(
+3107	        self, decls: cabc.Sequence[str], expose_value: bool
+3108	    ) -> tuple[str, list[str], list[str]]:
+3109	        …
+3166	
+3167	    def add_to_parser(self, parser: _OptionParser, ctx: Context) -> None:
+3168	        …
+3205	
+3206	    def get_help_record(self, ctx: Context) -> tuple[str, str] | None:
+3207	        …
+3250	
+3251	    def get_help_extra(self, ctx: Context) -> types.OptionHelpExtra:
+3252	        …
+3334	
+3335	    def prompt_for_value(self, ctx: Context) -> t.Any:
+3336	        …
+3384	
+3385	    def resolve_envvar_value(self, ctx: Context) -> str | None:
+3386	        …
+3408	
+3409	    def value_from_envvar(self, ctx: Context) -> t.Any:
+3410	        …
+3450	
+3451	    def consume_value(
+3452	        self, ctx: Context, opts: cabc.Mapping[str, Parameter]
+3453	    ) -> tuple[t.Any, ParameterSource]:
+3454	        …
+3512	
+3513	    def process_value(self, ctx: Context, value: t.Any) -> t.Any:
+3514	        # process_value has to be overridden on Options in order to capture
+3515	        # `value == UNSET` cases before `type_cast_value()` gets called.
+3516	        #
+3517	        # Refs:
+3518	        # https://github.com/pallets/click/issues/3069
+3519	        …
+3529	
+3530	
+3531	class Argument(Parameter):
+3532	    """Arguments are positional parameters to a command.  They generally
+3533	    provide fewer features than options but can have infinite ``nargs``
+3534	    and are required by default.
+3535	
+3536	    All parameters are passed onwards to the constructor of :class:`Parameter`.
+3537	    """
+3538	
+3539	    param_type_name = "argument"
+3540	
+3541	    def __init__(
+3542	        self,
+3543	        param_decls: cabc.Sequence[str],
+3544	        required: bool | None = None,
+3545	        **attrs: t.Any,
+3546	    ) -> None:
+3547	        # Auto-detect the requirement status of the argument if not explicitly set.
+3548	        …
+3561	
+3562	    @property
+3563	    def human_readable_name(self) -> str:
+3564	        …
+3567	
+3568	    def make_metavar(self, ctx: Context) -> str:
+3569	        …
+3581	
+3582	    def _parse_decls(
+3583	        self, decls: cabc.Sequence[str], expose_value: bool
+3584	    ) -> tuple[str, list[str], list[str]]:
+3585	        …
+3600	
+3601	    def get_usage_pieces(self, ctx: Context) -> list[str]:
+3602	        return [self.make_metavar(ctx)]
+3603	
+3604	    def get_error_hint(self, ctx: Context | None) -> str:
+3605	        …
+3608	
+3609	    def add_to_parser(self, parser: _OptionParser, ctx: Context) -> None:
+3610	        parser.add_argument(dest=self.name, nargs=self.nargs, obj=self)
+3611	
+3612	
+3613	def __getattr__(name: str) -> object:
+3614	    …
+[function bodies left out: sed -n 'A,Bp' src/click/core.py prints lines A to B]

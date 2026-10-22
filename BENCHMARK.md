@@ -19,6 +19,14 @@ the bug report, the upstream change and every agent's diff next to it.
 | sloth | `--lean --sloth` |
 | all | `--lean --hush --sloth` |
 
+## Command output
+
+In every task's project, the commands an agent typically runs (its tests, build, lint, `git`, `ls`, `find`, `grep`,
+`cat` of the longest source file) were run once as they are and once as muffle's hook rewrites them. Over 304
+commands muffle printed 63% fewer bytes: 86% fewer for `grep`, 80% for `cargo`, 71% for `ls`, 52% for the tasks'
+test commands and 35% for `cat`, which shows a long source file as an outline first. Each output, raw and muffled, is
+in [commands/](commands/).
+
 ## Bug fixes
 
 ### Claude Code

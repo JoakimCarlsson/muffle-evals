@@ -1,0 +1,200 @@
+$ cat tree.go
+tree.go (921 lines)
+1	package chi
+2	
+3	// Radix tree implementation below is a based on the original work by
+4	// Armon Dadgar in https://github.com/armon/go-radix/blob/master/radix.go
+5	// (MIT licensed). It's been heavily modified for use as a HTTP routing tree.
+6	
+7	import (
+8		"fmt"
+9		"net/http"
+10		"reflect"
+11		"regexp"
+12		"slices"
+13		"sort"
+14		"strconv"
+15		"strings"
+16	)
+17	
+18	type methodTyp uint
+19	
+20	const (
+21		mSTUB methodTyp = 1 << iota
+22		mCONNECT
+23		mDELETE
+24		mGET
+25		mHEAD
+26		mOPTIONS
+27		mPATCH
+28		mPOST
+29		mPUT
+30		mQUERY
+31		mTRACE
+32	)
+33	
+34	var mALL = mCONNECT | mDELETE | mGET | mHEAD |
+35		mOPTIONS | mPATCH | mPOST | mPUT | mQUERY | mTRACE
+36	
+37	// methodQuery is the HTTP QUERY method (RFC 10008), a safe, idempotent
+38	// method that conveys a request body. It is defined here until net/http
+39	// provides an equivalent constant, at which point this is a 1-1 swap.
+40	const methodQuery = "QUERY"
+41	
+42	var methodMap = map[string]methodTyp{
+43		http.MethodConnect: mCONNECT,
+44		http.MethodDelete:  mDELETE,
+45		http.MethodGet:     mGET,
+46		http.MethodHead:    mHEAD,
+47		http.MethodOptions: mOPTIONS,
+48		http.MethodPatch:   mPATCH,
+49		http.MethodPost:    mPOST,
+50		http.MethodPut:     mPUT,
+51		methodQuery:        mQUERY,
+52		http.MethodTrace:   mTRACE,
+53	}
+54	
+55	var reverseMethodMap = map[methodTyp]string{
+56		mCONNECT: http.MethodConnect,
+57		mDELETE:  http.MethodDelete,
+58		mGET:     http.MethodGet,
+59		mHEAD:    http.MethodHead,
+60		mOPTIONS: http.MethodOptions,
+61		mPATCH:   http.MethodPatch,
+62		mPOST:    http.MethodPost,
+63		mPUT:     http.MethodPut,
+64		mQUERY:   methodQuery,
+65		mTRACE:   http.MethodTrace,
+66	}
+67	
+68	// RegisterMethod adds support for custom HTTP method handlers, available
+69	// via Router#Method and Router#MethodFunc
+70	func RegisterMethod(method string) { … }
+87	
+88	type nodeTyp uint8
+89	
+90	const (
+91		ntStatic   nodeTyp = iota // /home
+92		ntRegexp                  // /{id:[0-9]+}
+93		ntParam                   // /{user}
+94		ntCatchAll                // /api/v1/*
+95	)
+96	
+97	type node struct {
+98		// subroutes on the leaf node
+99		subroutes Routes
+100	
+101		// regexp matcher for regexp nodes
+102		rex *regexp.Regexp
+103	
+104		// HTTP handler endpoints on the leaf node
+105		endpoints endpoints
+106	
+107		// prefix is the common prefix we ignore
+108		prefix string
+109	
+110		// child nodes should be stored in-order for iteration,
+111		// in groups of the node type.
+112		children [ntCatchAll + 1]nodes
+113	
+114		// first byte of the child prefix
+115		tail byte
+116	
+117		// node type: static, regexp, param, catchAll
+118		typ nodeTyp
+119	
+120		// first byte of the prefix
+121		label byte
+122	}
+123	
+124	// endpoints is a mapping of http method constants to handlers
+125	// for a given route.
+126	type endpoints map[methodTyp]*endpoint
+127	
+128	type endpoint struct {
+129		// endpoint handler
+130		handler http.Handler
+131	
+132		// pattern is the routing pattern for handler nodes
+133		pattern string
+134	
+135		// parameter keys recorded on handler nodes
+136		paramKeys []string
+137	}
+138	
+139	func (s endpoints) Value(method methodTyp) *endpoint { … }
+147	
+148	func (n *node) InsertRoute(method methodTyp, pattern string, handler http.Handler) *node { … }
+239	
+240	// addChild appends the new `child` node to the tree using the `pattern` as the trie key.
+241	// For a URL router like chi's, we split the static, param, regexp and wildcard segments
+242	// into different nodes. In addition, addChild will recursively call itself until every
+243	// pattern segment is added to the url pattern tree as individual nodes, depending on type.
+244	func (n *node) addChild(child *node, prefix string) *node { … }
+327	
+328	func (n *node) replaceChild(label, tail byte, child *node) { … }
+339	
+340	func (n *node) getEdge(ntyp nodeTyp, label, tail byte, prefix string) *node { … }
+352	
+353	func (n *node) setEndpoint(method methodTyp, handler http.Handler, pattern string) { … }
+382	
+383	func (n *node) FindRoute(rctx *Context, method methodTyp, path string) (*node, endpoints, http.Handler) { … }
+407	
+408	// Recursive edge traversal by checking all nodeTyp groups along the way.
+409	// It's like searching through a multi-dimensional radix trie.
+410	func (n *node) findRoute(rctx *Context, method methodTyp, path string) *node { … }
+554	
+555	func (n *node) findEdge(ntyp nodeTyp, label byte) *node { … }
+582	
+583	func (n *node) isLeaf() bool { … }
+586	
+587	func (n *node) findPattern(pattern string) bool { … }
+628	
+629	func (n *node) routes() []Route { … }
+688	
+689	// equalHandlers reports whether a and b are the same handler value. Handlers
+690	// are commonly funcs (e.g. http.HandlerFunc), and a direct == on those
+691	// panics at runtime, so funcs are compared by pointer instead.
+692	func equalHandlers(a, b http.Handler) bool { … }
+711	
+712	func (n *node) walk(fn func(eps endpoints, subroutes Routes) bool) bool { … }
+728	
+729	// patNextSegment returns the next segment details from a pattern:
+730	// node type, param key, regexp string, param tail byte, param starting index, param ending index
+731	func patNextSegment(pattern string) (nodeTyp, string, string, byte, int, int) { … }
+798	
+799	func patParamKeys(pattern string) []string { … }
+816	
+817	// longestPrefix finds the length of the shared prefix of two strings
+818	func longestPrefix(k1, k2 string) (i int) { … }
+826	
+827	type nodes []*node
+828	
+829	// Sort the list of nodes by label
+830	func (ns nodes) Sort()              { sort.Sort(ns); ns.tailSort() }
+831	func (ns nodes) Len() int           { return len(ns) }
+832	func (ns nodes) Swap(i, j int)      { ns[i], ns[j] = ns[j], ns[i] }
+833	func (ns nodes) Less(i, j int) bool { return ns[i].label < ns[j].label }
+834	
+835	// tailSort pushes nodes with '/' as the tail to the end of the list for param nodes.
+836	// The list order determines the traversal order.
+837	func (ns nodes) tailSort() { … }
+845	
+846	func (ns nodes) findEdge(label byte) *node { … }
+865	
+866	// Route describes the details of a routing handler.
+867	// Handlers map key is an HTTP method
+868	type Route struct {
+869		SubRoutes Routes
+870		Handlers  map[string]http.Handler
+871		Pattern   string
+872	}
+873	
+874	// WalkFunc is the type of the function called for each method and route visited by Walk.
+875	type WalkFunc func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error
+876	
+877	// Walk walks any router tree that implements Routes interface.
+878	func Walk(r Routes, walkFn WalkFunc) error { … }
+881	
+882	func walk(r Routes, walkFn WalkFunc, parentRoute string, parentMw ...func(http.Handler) http.Handler) error { … }
+[function bodies left out: sed -n 'A,Bp' tree.go prints lines A to B]

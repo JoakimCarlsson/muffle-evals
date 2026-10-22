@@ -1,0 +1,94 @@
+$ git diff
+diff --git a/README.rst b/README.rst
+index 2799b7f..12fedb8 100644
+--- a/README.rst
++++ b/README.rst
+@@ -55,7 +55,7 @@ Methods
+ - ``compare``, ``compare_nouns``, ``compare_nouns``, ``compare_adjs``
+ - ``a``, ``an``
+ - ``present_participle``
+-- ``ordinal``, ``number_to_words``
++- ``ordinal``, ``number_to_words``, ``number_to_currency``
+ - ``join``
+ - ``inflect``, ``classical``, ``gender``
+ - ``defnoun``, ``defverb``, ``defadj``, ``defa``, ``defan``
+@@ -245,6 +245,17 @@ Above provided threshold, numerals will remain numerals
+     >>> p.number_to_words(1000, threshold=10)
+     '1,000'
+ 
++Write an Amount as on a Check
++^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
++The cents are written as a fraction of one hundred.
++
++.. code-block:: python
++
++    >>> p.number_to_currency(100_020.56)
++    'one hundred thousand and twenty and 56/100'
++    >>> p.number_to_currency(1234.5, andword="")
++    'one thousand, two hundred thirty-four and 50/100'
++
+ Join Words into a List
+ ^^^^^^^^^^^^^^^^^^^^^^
+ 
+diff --git a/inflect/__init__.py b/inflect/__init__.py
+index cbe1702..500b5be 100644
+--- a/inflect/__init__.py
++++ b/inflect/__init__.py
+@@ -14,7 +14,7 @@ methods:
+     compare compare_nouns compare_verbs compare_adjs
+     present_participle
+     ordinal
+-    number_to_words
++    number_to_words number_to_currency
+     join
+     defnoun defverb defadj defa defan
+ 
+@@ -36,7 +36,7 @@ ARTICLES:
+     classical inflect num a an
+ 
+ NUMERICAL:
+-    ordinal number_to_words
++    ordinal number_to_words number_to_currency
+ 
+ USER_DEFINED:
+     defnoun defverb defadj defa defan
+@@ -61,7 +61,7 @@ import functools
+ import itertools
+ import re
+ from collections.abc import Callable, Iterable, Iterator, Sequence
+-from decimal import Decimal
++from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+ from numbers import Number
+ from re import Match
+ from typing import (
+@@ -4062,6 +4062,30 @@ class engine:
+                 yield comma
+             yield f" {nc}"
+ 
++    @typechecked
++    def number_to_currency(self, num: Number | Word, andword: str = "and") -> str:
++        """
++        Return an amount in words, with the cents written as a fraction
++        of one hundred, as on checks and money orders.
++
++        The amount is rounded half up to the nearest cent.
++
++        andword: word for 'and' in the whole amount, as in number_to_words.
++            The 'and' before the cents is always written.
++
++        >>> number_to_currency = engine().number_to_currency
++        >>> number_to_currency(100_020.56)
++        'one hundred thousand and twenty and 56/100'
++        >>> number_to_currency(120, andword="")
++        'one hundred twenty and 00/100'
++        """
++        try:
++            amount = Decimal(str(num)).quantize(Decimal("0.01"), ROUND_HALF_UP)
++            whole, cents = format(amount, "f").split(".")
++        except (InvalidOperation, ValueError) as err:
++            raise BadNumValueError from err
++        return f"{self.number_to_words(whole, andword=andword)} and {cents}/100"
++
+     @typechecked
+     def join(
+         self,

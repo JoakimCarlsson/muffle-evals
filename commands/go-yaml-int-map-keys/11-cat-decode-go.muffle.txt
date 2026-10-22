@@ -1,0 +1,203 @@
+$ cat decode.go
+decode.go (2036 lines)
+1	package yaml
+2	
+3	import (
+4		"bytes"
+5		"context"
+6		"encoding"
+7		"encoding/base64"
+8		"fmt"
+9		"io"
+10		"maps"
+11		"math"
+12		"os"
+13		"path/filepath"
+14		"reflect"
+15		"sort"
+16		"strconv"
+17		"strings"
+18		"time"
+19	
+20		"github.com/goccy/go-yaml/ast"
+21		"github.com/goccy/go-yaml/internal/errors"
+22		"github.com/goccy/go-yaml/internal/format"
+23		"github.com/goccy/go-yaml/parser"
+24		"github.com/goccy/go-yaml/token"
+25	)
+26	
+27	// Decoder reads and decodes YAML values from an input stream.
+28	type Decoder struct {
+29		reader               io.Reader
+30		referenceReaders     []io.Reader
+31		anchorNodeMap        map[string]ast.Node
+32		anchorValueMap       map[string]reflect.Value
+33		customUnmarshalerMap map[reflect.Type]func(context.Context, interface{}, []byte) error
+34		commentMaps          []CommentMap
+35		toCommentMap         CommentMap
+36		opts                 []DecodeOption
+37		referenceFiles       []string
+38		referenceDirs        []string
+39		isRecursiveDir       bool
+40		isResolvedReference  bool
+41		validator            StructValidator
+42		disallowUnknownField bool
+43		allowedFieldPrefixes []string
+44		allowDuplicateMapKey bool
+45		useOrderedMap        bool
+46		useJSONUnmarshaler   bool
+47		parsedFile           *ast.File
+48		streamIndex          int
+49		decodeDepth          int
+50	}
+51	
+52	// NewDecoder returns a new decoder that reads from r.
+53	func NewDecoder(r io.Reader, opts ...DecodeOption) *Decoder { … }
+70	
+71	const maxDecodeDepth = 10000
+72	
+73	func (d *Decoder) stepIn() { … }
+76	
+77	func (d *Decoder) stepOut() { … }
+80	
+81	func (d *Decoder) isExceededMaxDepth() bool { … }
+84	
+85	func (d *Decoder) castToFloat(v interface{}) interface{} { … }
+118	
+119	func (d *Decoder) mapKeyNodeToString(ctx context.Context, node ast.MapKeyNode) (string, error) { … }
+132	
+133	func (d *Decoder) setToMapValue(ctx context.Context, node ast.Node, m map[string]interface{}) error { … }
+177	
+178	func (d *Decoder) setToOrderedMapValue(ctx context.Context, node ast.Node, m *MapSlice) error { … }
+219	
+220	func (d *Decoder) setPathToCommentMap(node ast.Node) { … }
+230	
+231	func (d *Decoder) addHeadOrLineCommentToMap(node ast.Node) { … }
+268	
+269	func (d *Decoder) addSequenceNodeCommentToMap(node *ast.SequenceNode) { … }
+295	
+296	func (d *Decoder) addFootCommentToMap(node ast.Node) { … }
+329	
+330	func (d *Decoder) addCommentToMap(path string, comment *Comment) { … }
+342	
+343	func (d *Decoder) nodeToValue(ctx context.Context, node ast.Node) (any, error) { … }
+542	
+543	func (d *Decoder) getMapNode(node ast.Node, isMerge bool) (ast.MapNode, error) { … }
+580	
+581	func (d *Decoder) getArrayNode(node ast.Node) (ast.ArrayNode, error) { … }
+617	
+618	func (d *Decoder) convertValue(v reflect.Value, typ reflect.Type, src ast.Node) (reflect.Value, error) { … }
+665	
+666	func (d *Decoder) deleteStructKeys(structType reflect.Type, unknownFields map[string]ast.Node) error { … }
+694	
+695	func (d *Decoder) unmarshalableDocument(node ast.Node) ([]byte, error) { … }
+699	
+700	func (d *Decoder) unmarshalableText(node ast.Node) ([]byte, bool) { … }
+708	
+709	type jsonUnmarshaler interface {
+710		UnmarshalJSON([]byte) error
+711	}
+712	
+713	func (d *Decoder) existsTypeInCustomUnmarshalerMap(t reflect.Type) bool { … }
+725	
+726	func (d *Decoder) unmarshalerFromCustomUnmarshalerMap(t reflect.Type) (func(context.Context, interface{}, []byte) error, bool) { … }
+738	
+739	func (d *Decoder) canDecodeByUnmarshaler(dst reflect.Value) bool { … }
+761	
+762	func (d *Decoder) decodeByUnmarshaler(ctx context.Context, dst reflect.Value, src ast.Node) error { … }
+884	
+885	var (
+886		astNodeType = reflect.TypeOf((*ast.Node)(nil)).Elem()
+887	)
+888	
+889	func (d *Decoder) decodeValue(ctx context.Context, dst reflect.Value, src ast.Node) error { … }
+1047	
+1048	func (d *Decoder) createDecodableValue(typ reflect.Type) reflect.Value { … }
+1058	
+1059	func (d *Decoder) castToAssignableValue(value reflect.Value, target reflect.Type, src ast.Node) (reflect.Value, error) { … }
+1083	
+1084	func (d *Decoder) createDecodedNewValue(
+1085		ctx context.Context, typ reflect.Type, defaultVal reflect.Value, node ast.Node,
+1086	) (reflect.Value, error) { … }
+1120	
+1121	func (d *Decoder) keyToNodeMap(ctx context.Context, node ast.Node, ignoreMergeKey bool, getKeyOrValueNode func(*ast.MapNodeIter) ast.Node) (map[string]ast.Node, error) { … }
+1168	
+1169	func (d *Decoder) keyToKeyNodeMap(ctx context.Context, node ast.Node, ignoreMergeKey bool) (map[string]ast.Node, error) { … }
+1176	
+1177	func (d *Decoder) keyToValueNodeMap(ctx context.Context, node ast.Node, ignoreMergeKey bool) (map[string]ast.Node, error) { … }
+1184	
+1185	func (d *Decoder) setDefaultValueIfConflicted(v reflect.Value, fieldMap StructFieldMap) error { … }
+1214	
+1215	// This is a subset of the formats allowed by the regular expression
+1216	// defined at http://yaml.org/type/timestamp.html.
+1217	var allowedTimestampFormats = []string{
+1218		"2006-1-2T15:4:5.999999999Z07:00", // RCF3339Nano with short date fields.
+1219		"2006-1-2t15:4:5.999999999Z07:00", // RFC3339Nano with short date fields and lower-case "t".
+1220		"2006-1-2 15:4:5.999999999",       // space separated with no time zone
+1221		"2006-1-2",                        // date only
+1222	}
+1223	
+1224	func (d *Decoder) castToTime(ctx context.Context, src ast.Node) (time.Time, error) { … }
+1249	
+1250	func (d *Decoder) decodeTime(ctx context.Context, dst reflect.Value, src ast.Node) error { … }
+1258	
+1259	func (d *Decoder) castToDuration(ctx context.Context, src ast.Node) (time.Duration, error) { … }
+1280	
+1281	func (d *Decoder) decodeDuration(ctx context.Context, dst reflect.Value, src ast.Node) error { … }
+1289	
+1290	// getMergeAliasName support single alias only
+1291	func (d *Decoder) getMergeAliasName(src ast.Node) string { … }
+1306	
+1307	func (d *Decoder) decodeStruct(ctx context.Context, dst reflect.Value, src ast.Node) error { … }
+1496	
+1497	// getParentMapTokenIfExists if the NodeType is a container type such as MappingType or SequenceType,
+1498	// it is necessary to return the parent MapNode's colon token to represent the entire container.
+1499	func (d *Decoder) getParentMapTokenIfExistsForValidationError(typ ast.NodeType, tk *token.Token) *token.Token { … }
+1527	
+1528	func (d *Decoder) decodeArray(ctx context.Context, dst reflect.Value, src ast.Node) error { … }
+1572	
+1573	func (d *Decoder) decodeSlice(ctx context.Context, dst reflect.Value, src ast.Node) error { … }
+1615	
+1616	func (d *Decoder) decodeMapItem(ctx context.Context, dst *MapItem, src ast.Node) error { … }
+1650	
+1651	func (d *Decoder) validateDuplicateKey(keyMap map[string]struct{}, key interface{}, keyNode ast.Node) error { … }
+1664	
+1665	func (d *Decoder) decodeMapSlice(ctx context.Context, dst *MapSlice, src ast.Node) error { … }
+1711	
+1712	func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node) error { … }
+1798	
+1799	func (d *Decoder) fileToReader(file string) (io.Reader, error) { … }
+1806	
+1807	func (d *Decoder) isYAMLFile(file string) bool { … }
+1817	
+1818	func (d *Decoder) readersUnderDir(dir string) ([]io.Reader, error) { … }
+1837	
+1838	func (d *Decoder) readersUnderDirRecursive(dir string) ([]io.Reader, error) { … }
+1855	
+1856	func (d *Decoder) resolveReference(ctx context.Context) error { … }
+1898	
+1899	func (d *Decoder) parse(ctx context.Context, bytes []byte) (*ast.File, error) { … }
+1931	
+1932	func (d *Decoder) isInitialized() bool { … }
+1935	
+1936	func (d *Decoder) decodeInit(ctx context.Context) error { … }
+1953	
+1954	func (d *Decoder) decode(ctx context.Context, v reflect.Value) error { … }
+1980	
+1981	// Decode reads the next YAML-encoded value from its input
+1982	// and stores it in the value pointed to by v.
+1983	//
+1984	// See the documentation for Unmarshal for details about the
+1985	// conversion of YAML into a Go value.
+1986	func (d *Decoder) Decode(v interface{}) error { … }
+1989	
+1990	// DecodeContext reads the next YAML-encoded value from its input
+1991	// and stores it in the value pointed to by v with context.Context.
+1992	func (d *Decoder) DecodeContext(ctx context.Context, v interface{}) error { … }
+2011	
+2012	// DecodeFromNode decodes node into the value pointed to by v.
+2013	func (d *Decoder) DecodeFromNode(node ast.Node, v interface{}) error { … }
+2016	
+2017	// DecodeFromNodeContext decodes node into the value pointed to by v with context.Context.
+2018	func (d *Decoder) DecodeFromNodeContext(ctx context.Context, node ast.Node, v interface{}) error { … }
+[function bodies left out: sed -n 'A,Bp' decode.go prints lines A to B]

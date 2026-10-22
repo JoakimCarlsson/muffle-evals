@@ -1,0 +1,442 @@
+$ cat url/src/parser.rs
+url/src/parser.rs (1836 lines)
+1	// Copyright 2013-2016 The rust-url developers.
+2	//
+3	// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+4	// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+5	// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+6	// option. This file may not be copied, modified, or distributed
+7	// except according to those terms.
+8	
+9	use alloc::borrow::Cow;
+10	use alloc::string::String;
+11	use core::fmt::{self, Formatter, Write};
+12	use core::str;
+13	
+14	use crate::host::{Host, HostInternal};
+15	use crate::Url;
+16	use form_urlencoded::EncodingOverride;
+17	use percent_encoding::{percent_encode, utf8_percent_encode, AsciiSet, CONTROLS};
+18	
+19	/// https://url.spec.whatwg.org/#fragment-percent-encode-set
+20	const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
+21	
+22	/// https://url.spec.whatwg.org/#path-percent-encode-set
+23	const PATH: &AsciiSet = &FRAGMENT.add(b'#').add(b'?').add(b'{').add(b'}');
+24	
+25	/// https://url.spec.whatwg.org/#userinfo-percent-encode-set
+26	pub(crate) const USERINFO: &AsciiSet = &PATH
+27	    .add(b'/')
+28	    .add(b':')
+29	    .add(b';')
+30	    .add(b'=')
+31	    .add(b'@')
+32	    .add(b'[')
+33	    .add(b'\\')
+34	    .add(b']')
+35	    .add(b'^')
+36	    .add(b'|');
+37	
+38	pub(crate) const PATH_SEGMENT: &AsciiSet = &PATH.add(b'/').add(b'%');
+39	
+40	// The backslash (\) character is treated as a path separator in special URLs
+41	// so it needs to be additionally escaped in that case.
+42	pub(crate) const SPECIAL_PATH_SEGMENT: &AsciiSet = &PATH_SEGMENT.add(b'\\');
+43	
+44	// https://url.spec.whatwg.org/#query-state
+45	const QUERY: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'#').add(b'<').add(b'>');
+46	const SPECIAL_QUERY: &AsciiSet = &QUERY.add(b'\'');
+47	
+48	pub type ParseResult<T> = Result<T, ParseError>;
+49	
+50	macro_rules! simple_enum_error {
+51	    ($($name: ident => $description: expr,)+) => {
+52	        /// Errors that can occur during parsing.
+53	        ///
+54	        /// This may be extended in the future so exhaustive matching is
+55	        /// forbidden.
+56	        #[derive(PartialEq, Eq, Clone, Copy, Debug)]
+57	        #[non_exhaustive]
+58	        pub enum ParseError {
+59	            $(
+60	                $name,
+61	            )+
+62	        }
+63	
+64	        impl fmt::Display for ParseError {
+65	            fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
+66	                match *self {
+67	                    $(
+68	                        ParseError::$name => fmt.write_str($description),
+69	                    )+
+70	                }
+71	            }
+72	        }
+73	    }
+74	}
+75	
+76	macro_rules! ascii_tab_or_new_line_pattern {
+77	    () => {
+78	        '\t' | '\n' | '\r'
+79	    };
+80	}
+81	
+82	#[cfg(feature = "std")]
+83	impl std::error::Error for ParseError {}
+84	
+85	#[cfg(not(feature = "std"))]
+86	impl core::error::Error for ParseError {}
+87	
+88	simple_enum_error! {
+89	    EmptyHost => "empty host",
+90	    IdnaError => "invalid international domain name",
+91	    InvalidPort => "invalid port number",
+92	    InvalidIpv4Address => "invalid IPv4 address",
+93	    InvalidIpv6Address => "invalid IPv6 address",
+94	    InvalidDomainCharacter => "invalid domain character",
+95	    RelativeUrlWithoutBase => "relative URL without a base",
+96	    RelativeUrlWithCannotBeABaseBase => "relative URL with a cannot-be-a-base base",
+97	    SetHostOnCannotBeABaseUrl => "a cannot-be-a-base URL doesn’t have a host to set",
+98	    Overflow => "URLs more than 4 GB are not supported",
+99	}
+100	
+101	impl From<::idna::Errors> for ParseError {
+102	    fn from(_: ::idna::Errors) -> Self { … }
+105	}
+106	
+107	macro_rules! syntax_violation_enum {
+108	    ($($name: ident => $description: literal,)+) => {
+109	        /// Non-fatal syntax violations that can occur during parsing.
+110	        ///
+111	        /// This may be extended in the future so exhaustive matching is
+112	        /// forbidden.
+113	        #[derive(PartialEq, Eq, Clone, Copy, Debug)]
+114	        #[non_exhaustive]
+115	        pub enum SyntaxViolation {
+116	            $(
+117	                /// ```text
+118	                #[doc = $description]
+119	                /// ```
+120	                $name,
+121	            )+
+122	        }
+123	
+124	        impl SyntaxViolation {
+125	            pub fn description(&self) -> &'static str {
+126	                match *self {
+127	                    $(
+128	                        SyntaxViolation::$name => $description,
+129	                    )+
+130	                }
+131	            }
+132	        }
+133	    }
+134	}
+135	
+136	syntax_violation_enum! {
+137	    Backslash => "backslash",
+138	    C0SpaceIgnored =>
+139	        "leading or trailing control or space character are ignored in URLs",
+140	    EmbeddedCredentials =>
+141	        "embedding authentication information (username or password) \
+142	         in an URL is not recommended",
+143	    ExpectedDoubleSlash => "expected //",
+144	    ExpectedFileDoubleSlash => "expected // after file:",
+145	    FileWithHostAndWindowsDrive => "file: with host and Windows drive letter",
+146	    NonUrlCodePoint => "non-URL code point",
+147	    NullInFragment => "NULL characters are ignored in URL fragment identifiers",
+148	    PercentDecode => "expected 2 hex digits after %",
+149	    TabOrNewlineIgnored => "tabs or newlines are ignored in URLs",
+150	    UnencodedAtSign => "unencoded @ sign in username or password",
+151	}
+152	
+153	impl fmt::Display for SyntaxViolation {
+154	    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result { … }
+157	}
+158	
+159	#[derive(Copy, Clone, PartialEq, Eq)]
+160	pub enum SchemeType {
+161	    File,
+162	    SpecialNotFile,
+163	    NotSpecial,
+164	}
+165	
+166	impl SchemeType {
+167	    pub fn is_special(&self) -> bool { … }
+170	
+171	    pub fn is_file(&self) -> bool { … }
+174	}
+175	
+176	impl<T: AsRef<str>> From<T> for SchemeType {
+177	    fn from(s: T) -> Self { … }
+184	}
+185	
+186	pub fn default_port(scheme: &str) -> Option<u16> { … }
+194	
+195	#[derive(Clone, Debug)]
+196	pub struct Input<'i> {
+197	    chars: str::Chars<'i>,
+198	}
+199	
+200	impl<'i> Input<'i> {
+201	    pub fn new_no_trim(input: &'i str) -> Self { … }
+206	
+207	    pub fn new_trim_tab_and_newlines(
+208	        original_input: &'i str,
+209	        vfn: Option<&dyn Fn(SyntaxViolation)>,
+210	    ) -> Self { … }
+224	
+225	    pub fn new_trim_c0_control_and_space(
+226	        original_input: &'i str,
+227	        vfn: Option<&dyn Fn(SyntaxViolation)>,
+228	    ) -> Self { … }
+242	
+243	    #[inline]
+244	    pub fn is_empty(&self) -> bool { … }
+247	
+248	    #[inline]
+249	    pub fn starts_with<P: Pattern>(&self, p: P) -> bool { … }
+252	
+253	    #[inline]
+254	    pub fn split_prefix<P: Pattern>(&self, p: P) -> Option<Self> { … }
+262	
+263	    #[inline]
+264	    fn split_first(&self) -> (Option<char>, Self) { … }
+268	
+269	    #[inline]
+270	    fn count_matching<F: Fn(char) -> bool>(&self, f: F) -> (u32, Self) { … }
+283	
+284	    #[inline]
+285	    fn next_utf8(&mut self) -> Option<(char, &'i str)> { … }
+298	}
+299	
+300	pub trait Pattern {
+301	    fn split_prefix(self, input: &mut Input) -> bool;
+302	}
+303	
+304	impl Pattern for char {
+305	    fn split_prefix(self, input: &mut Input) -> bool { … }
+308	}
+309	
+310	impl Pattern for &str {
+311	    fn split_prefix(self, input: &mut Input) -> bool { … }
+319	}
+320	
+321	impl<F: FnMut(char) -> bool> Pattern for F {
+322	    fn split_prefix(self, input: &mut Input) -> bool { … }
+325	}
+326	
+327	impl Iterator for Input<'_> {
+328	    type Item = char;
+329	    fn next(&mut self) -> Option<char> { … }
+332	
+333	    fn size_hint(&self) -> (usize, Option<usize>) { … }
+336	}
+337	
+338	pub struct Parser<'a> {
+339	    pub serialization: String,
+340	    pub base_url: Option<&'a Url>,
+341	    pub query_encoding_override: EncodingOverride<'a>,
+342	    pub violation_fn: Option<&'a dyn Fn(SyntaxViolation)>,
+343	    pub context: Context,
+344	}
+345	
+346	#[derive(PartialEq, Eq, Copy, Clone)]
+347	pub enum Context {
+348	    UrlParser,
+349	    Setter,
+350	    PathSegmentSetter,
+351	}
+352	
+353	impl Parser<'_> {
+354	    fn log_violation(&self, v: SyntaxViolation) { … }
+359	
+360	    fn log_violation_if(&self, v: SyntaxViolation, test: impl FnOnce() -> bool) { … }
+367	
+368	    pub fn for_setter(serialization: String) -> Self { … }
+377	
+378	    /// https://url.spec.whatwg.org/#concept-basic-url-parser
+379	    pub fn parse_url(mut self, input: &str) -> ParseResult<Url> { … }
+403	
+404	    pub fn parse_scheme<'i>(&mut self, mut input: Input<'i>) -> Result<Input<'i>, ()> { … }
+429	
+430	    fn parse_with_scheme(mut self, input: Input<'_>) -> ParseResult<Url> { … }
+474	
+475	    /// Scheme other than file, http, https, ws, ws, ftp.
+476	    fn parse_non_special(
+477	        mut self,
+478	        input: Input<'_>,
+479	        scheme_type: SchemeType,
+480	        scheme_end: u32,
+481	    ) -> ParseResult<Url> { … }
+511	
+512	    fn parse_file(
+513	        mut self,
+514	        input: Input<'_>,
+515	        scheme_type: SchemeType,
+516	        base_file_url: Option<&Url>,
+517	    ) -> ParseResult<Url> { … }
+722	
+723	    fn parse_relative(
+724	        mut self,
+725	        input: Input<'_>,
+726	        scheme_type: SchemeType,
+727	        base_url: &Url,
+728	    ) -> ParseResult<Url> { … }
+843	
+844	    fn after_double_slash(
+845	        mut self,
+846	        input: Input<'_>,
+847	        scheme_type: SchemeType,
+848	        scheme_end: u32,
+849	    ) -> ParseResult<Url> { … }
+878	
+879	    /// Return (username_end, remaining)
+880	    fn parse_userinfo<'i>(
+881	        &mut self,
+882	        mut input: Input<'i>,
+883	        scheme_type: SchemeType,
+884	    ) -> ParseResult<(u32, Input<'i>)> { … }
+953	
+954	    fn parse_host_and_port<'i>(
+955	        &mut self,
+956	        input: Input<'i>,
+957	        scheme_end: u32,
+958	        scheme_type: SchemeType,
+959	    ) -> ParseResult<(u32, HostInternal, Option<u16>, Input<'i>)> { … }
+990	
+991	    pub fn parse_host(
+992	        mut input: Input<'_>,
+993	        scheme_type: SchemeType,
+994	    ) -> ParseResult<(Host<Cow<'_, str>>, Input<'_>)> { … }
+1045	
+1046	    fn get_file_host(input: Input<'_>) -> ParseResult<(Host<Cow<'_, str>>, Input<'_>)> { … }
+1056	
+1057	    fn parse_file_host<'i>(
+1058	        &mut self,
+1059	        input: Input<'i>,
+1060	    ) -> ParseResult<(bool, HostInternal, Input<'i>)> { … }
+1081	
+1082	    pub fn file_host(input: Input<'_>) -> ParseResult<(bool, Cow<'_, str>, Input<'_>)> { … }
+1113	
+1114	    pub fn parse_port<P>(
+1115	        mut input: Input<'_>,
+1116	        default_port: P,
+1117	        context: Context,
+1118	    ) -> ParseResult<(Option<u16>, Input<'_>)>
+1119	    where
+1120	        P: Fn() -> Option<u16>,
+1121	    { … }
+1149	
+1150	    pub fn parse_path_start<'i>(
+1151	        &mut self,
+1152	        scheme_type: SchemeType,
+1153	        has_host: &mut bool,
+1154	        input: Input<'i>,
+1155	    ) -> Input<'i> { … }
+1188	
+1189	    pub fn parse_path<'i>(
+1190	        &mut self,
+1191	        scheme_type: SchemeType,
+1192	        has_host: &mut bool,
+1193	        path_start: usize,
+1194	        mut input: Input<'i>,
+1195	    ) -> Input<'i> { … }
+1383	
+1384	    fn last_slash_can_be_removed(serialization: &str, path_start: usize) -> bool { … }
+1395	
+1396	    /// https://url.spec.whatwg.org/#shorten-a-urls-path
+1397	    fn shorten_path(&mut self, scheme_type: SchemeType, path_start: usize) { … }
+1411	
+1412	    /// https://url.spec.whatwg.org/#pop-a-urls-path
+1413	    fn pop_path(&mut self, scheme_type: SchemeType, path_start: usize) { … }
+1426	
+1427	    pub fn parse_cannot_be_a_base_path<'i>(&mut self, mut input: Input<'i>) -> Input<'i> { … }
+1443	
+1444	    #[allow(clippy::too_many_arguments)]
+1445	    fn with_query_and_fragment(
+1446	        mut self,
+1447	        scheme_type: SchemeType,
+1448	        scheme_end: u32,
+1449	        username_end: u32,
+1450	        host_start: u32,
+1451	        host_end: u32,
+1452	        host: HostInternal,
+1453	        port: Option<u16>,
+1454	        mut path_start: u32,
+1455	        remaining: Input<'_>,
+1456	    ) -> ParseResult<Url> { … }
+1513	
+1514	    /// Return (query_start, fragment_start)
+1515	    fn parse_query_and_fragment(
+1516	        &mut self,
+1517	        scheme_type: SchemeType,
+1518	        scheme_end: u32,
+1519	        mut input: Input<'_>,
+1520	    ) -> ParseResult<(Option<u32>, Option<u32>)> { … }
+1543	
+1544	    pub fn parse_query<'i>(
+1545	        &mut self,
+1546	        scheme_type: SchemeType,
+1547	        scheme_end: u32,
+1548	        input: Input<'i>,
+1549	    ) -> Option<Input<'i>> { … }
+1624	
+1625	    fn fragment_only(mut self, base_url: &Url, mut input: Input<'_>) -> ParseResult<Url> { … }
+1644	
+1645	    pub fn parse_fragment(&mut self, input: Input<'_>) { … }
+1695	
+1696	    #[inline]
+1697	    fn check_url_code_point(&self, c: char, input: &Input<'_>) { … }
+1702	}
+1703	
+1704	fn check_url_code_point(vfn: &dyn Fn(SyntaxViolation), c: char, input: &Input<'_>) { … }
+1716	
+1717	// Non URL code points:
+1718	// U+0000 to U+0020 (space)
+1719	// " # % < > [ \ ] ^ ` { | }
+1720	// U+007F to U+009F
+1721	// surrogates
+1722	// U+FDD0 to U+FDEF
+1723	// Last two of each plane: U+__FFFE to U+__FFFF for __ in 00 to 10 hex
+1724	#[inline]
+1725	fn is_url_code_point(c: char) -> bool { … }
+1742	
+1743	/// https://infra.spec.whatwg.org/#c0-control-or-space
+1744	#[inline]
+1745	fn c0_control_or_space(ch: char) -> bool { … }
+1748	
+1749	/// https://infra.spec.whatwg.org/#ascii-tab-or-newline
+1750	#[inline]
+1751	fn ascii_tab_or_new_line(ch: char) -> bool { … }
+1754	
+1755	/// https://url.spec.whatwg.org/#ascii-alpha
+1756	#[inline]
+1757	pub fn ascii_alpha(ch: char) -> bool { … }
+1760	
+1761	#[inline]
+1762	pub fn to_u32(i: usize) -> ParseResult<u32> { … }
+1769	
+1770	fn is_normalized_windows_drive_letter(segment: &str) -> bool { … }
+1773	
+1774	/// Whether the scheme is file:, the path has a single segment, and that segment
+1775	/// is a Windows drive letter
+1776	#[inline]
+1777	pub fn is_windows_drive_letter(segment: &str) -> bool { … }
+1780	
+1781	/// Whether path starts with a root slash
+1782	/// and a windows drive letter eg: "/c:" or "/a:/"
+1783	fn path_starts_with_windows_drive_letter(s: &str) -> bool { … }
+1790	
+1791	fn starts_with_windows_drive_letter(s: &str) -> bool { … }
+1797	
+1798	/// https://url.spec.whatwg.org/#start-with-a-windows-drive-letter
+1799	fn starts_with_windows_drive_letter_segment(input: &Input<'_>) -> bool { … }
+1815	
+1816	#[inline]
+1817	fn fast_u16_to_str(
+1818	    // max 5 digits for u16 (65535)
+1819	    buffer: &mut [u8; 5],
+1820	    mut value: u16,
+1821	) -> &str { … }
+[function bodies left out: sed -n 'A,Bp' url/src/parser.rs prints lines A to B]

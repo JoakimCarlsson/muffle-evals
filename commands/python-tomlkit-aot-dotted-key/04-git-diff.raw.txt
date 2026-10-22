@@ -1,0 +1,36 @@
+$ git diff
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index f3ee402..e38d57d 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -34,6 +34,7 @@
+ - Fix a `KeyAlreadyPresent` error when parsing or accessing an out-of-order table whose array-of-tables elements are split across the table's parts. ([#505](https://github.com/python-poetry/tomlkit/issues/505))
+ - Out-of-order value-vs-table and dotted-key-vs-table redefinitions are now rejected at parse time instead of being silently accepted or raising only on access. The parser also detects when a non-dotted key is a prefix of an existing dotted key, matching the stdlib `tomllib` behaviour. ([#523](https://github.com/python-poetry/tomlkit/issues/523))
+ - Reject tables inserted into inline tables instead of serializing invalid TOML. ([#531](https://github.com/python-poetry/tomlkit/issues/531))
++- Fix assigning an array of tables over a dotted key (e.g. `doc["a"] = aot(...)` where `a` came from `a.b = ...`): the new `[[a]]` header kept the dotted key's inline position and swallowed the following dotted sibling on round-trip. The array of tables now renders past the inline entries it would otherwise capture, mirroring the table fix for [#513](https://github.com/python-poetry/tomlkit/issues/513). ([#542](https://github.com/python-poetry/tomlkit/issues/542))
+ - Fix invalid serialization with a duplicated `[table]` header when adding a key to an out-of-order table whose concrete header is declared after its sub-tables; the new key now lands in the existing concrete part instead of giving the header-less super part a second header. ([#545](https://github.com/python-poetry/tomlkit/pull/545))
+ - Fix a table's display name (its exact header spelling, including whitespace and quoting) being normalised when the table is assigned onto itself, e.g. `doc[k] = doc[k]` rewriting `[keys .'a'.'c']` to `[keys.a.'c']`. ([#291](https://github.com/python-poetry/tomlkit/issues/291))
+ - Fix missing newlines when appending a key after a dotted inline table, including when the original document has no trailing newline. ([#533](https://github.com/python-poetry/tomlkit/pull/533))
+diff --git a/tomlkit/container.py b/tomlkit/container.py
+index e3ee4fd..4e38253 100644
+--- a/tomlkit/container.py
++++ b/tomlkit/container.py
+@@ -860,11 +860,13 @@ class Container(_CustomDict):  # type: ignore[type-arg]
+         assert k is not None
+         # A dotted key renders its value inline (e.g. ``a.b = 1``), which is only
+         # consistent with a super table. When the replacement value renders with
+-        # its own ``[header]`` instead (a non-super table), keeping the dotted key
+-        # duplicates the prefix onto the header (#524). Drop the dotted key so the
+-        # replacement renders as a plain table.
+-        dotted_to_header = (
+-            k.is_dotted() and isinstance(value, Table) and not value.is_super_table()
++        # its own ``[header]`` instead (a non-super table, or an array of tables),
++        # keeping the dotted key duplicates the prefix onto the header (#524) and
++        # lets the header swallow following dotted siblings (#542). Drop the dotted
++        # key so the replacement renders as a plain table/array of tables.
++        dotted_to_header = k.is_dotted() and (
++            isinstance(value, AoT)
++            or (isinstance(value, Table) and not value.is_super_table())
+         )
+         # That new header also captures every sibling that renders inline -- plain
+         # values and dotted keys -- if any still follow it (#513), so it must be

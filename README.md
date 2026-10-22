@@ -19,11 +19,13 @@ diffs: a passing run can still be bad code.
 ./evals.py verify $(ls tasks)               # hidden tests fail before the fix, pass after
 ./evals.py matrix base,muffle,all claude,codex 3
 ./evals.py report                           # writes results/README.md
+./evals.py commands                         # writes commands/: each command's output with and without muffle
 ```
 
 `MUFFLE_BIN` picks the muffle binary (default `~/Documents/repos/muffle/build/release/muffle`). Agents: Claude Code
 with Sonnet, Codex with gpt-6.1-sol at low effort. Clones, prepared projects and raw agent output live in
 `~/.cache/muffle-evals`.
 
-Results: [BENCHMARK.md](BENCHMARK.md). The code each agent wrote, next to the upstream change, per task:
+Results: [BENCHMARK.md](BENCHMARK.md). What muffle does to each command's output, raw next to muffled, for every
+task: [commands/](commands/). The code each agent wrote, next to the upstream change, per task:
 [results/tasks/](results/tasks/). Adding a task: see [TASKS.md](TASKS.md).

@@ -1,0 +1,71 @@
+$ git diff
+diff --git a/tenacity/__init__.py b/tenacity/__init__.py
+index e93793c..b0b4794 100644
+--- a/tenacity/__init__.py
++++ b/tenacity/__init__.py
+@@ -59,6 +59,7 @@ from .stop import stop_when_event_set  # noqa
+ # Import all built-in wait strategies for easier usage.
+ from .wait import wait_chain  # noqa
+ from .wait import wait_combine  # noqa
++from .wait import wait_exception  # noqa
+ from .wait import wait_exponential  # noqa
+ from .wait import wait_fixed  # noqa
+ from .wait import wait_incrementing  # noqa
+@@ -686,6 +687,7 @@ __all__ = [
+     "stop_when_event_set",
+     "wait_chain",
+     "wait_combine",
++    "wait_exception",
+     "wait_exponential",
+     "wait_fixed",
+     "wait_incrementing",
+diff --git a/tenacity/wait.py b/tenacity/wait.py
+index dc3c850..abfde77 100644
+--- a/tenacity/wait.py
++++ b/tenacity/wait.py
+@@ -113,6 +113,45 @@ class wait_chain(wait_base):
+         return wait_func(retry_state=retry_state)
+ 
+ 
++class wait_exception(wait_base):
++    """Wait strategy that waits the amount of time returned by the predicate.
++
++    The predicate is passed the exception object. Based on the exception, the
++    user can decide how much time to wait before retrying.
++
++    For example::
++
++        def http_error(exception: BaseException) -> float:
++            if (
++                isinstance(exception, requests.HTTPError)
++                and exception.response.status_code == requests.codes.too_many_requests
++            ):
++                return float(exception.response.headers.get("Retry-After", "1"))
++            return 60.0
++
++
++        @retry(
++            stop=stop_after_attempt(3),
++            wait=wait_exception(http_error),
++        )
++        def http_get_request(url: str) -> None:
++            response = requests.get(url)
++            response.raise_for_status()
++    """
++
++    def __init__(self, predicate: typing.Callable[[BaseException], float]) -> None:
++        self.predicate = predicate
++
++    def __call__(self, retry_state: "RetryCallState") -> float:
++        if retry_state.outcome is None:
++            raise RuntimeError("__call__() called before outcome was set")
++
++        exception = retry_state.outcome.exception()
++        if exception is None:
++            raise RuntimeError("outcome failed but the exception is None")
++        return self.predicate(exception)
++
++
+ class wait_incrementing(wait_base):
+     """Wait an incremental amount of time after each attempt.
+ 

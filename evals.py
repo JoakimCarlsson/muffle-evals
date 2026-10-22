@@ -12,8 +12,8 @@ usage:
   evals.py run <setup> <agent> <task> <n>          one run: the agent works, then it is scored
   evals.py matrix <setups> <agents> <runs> [tasks] every missing run, 4 at a time; lists are comma separated
   evals.py files                                   write the changed files of older runs and each task's upstream files
-  evals.py files                                   write the changed files of older runs and each task's upstream files
   evals.py report                                  write results/README.md from every scored run
+  evals.py commands [task]...                      write commands/: typical command output with and without muffle
 
 Setups are in setups.toml. Bulky files (clones, prepared copies, raw agent output) live in ~/.cache/muffle-evals;
 results/ keeps what a reader needs: the diff, the reply and the score of each run.
@@ -24,6 +24,7 @@ import concurrent.futures
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -189,17 +190,6 @@ def save_changed_files(source, start_tree, end_tree, target):
         (target / path).write_bytes(content)
 
 
-def save_changed_files(source, start_tree, end_tree, target):
-    """Copy every file that differs between ``start_tree`` and ``end_tree`` of the repository ``source``, as it is in
-    ``end_tree``, to the same path under ``target``."""
-    changed = git("diff", "--name-only", "--no-renames", "--diff-filter=d", start_tree, end_tree, cwd=source)
-    for path in changed.splitlines():
-        content = subprocess.run(["git", "cat-file", "blob", f"{end_tree}:{path}"], cwd=source, capture_output=True,
-                                 check=True).stdout
-        (target / path).parent.mkdir(parents=True, exist_ok=True)
-        (target / path).write_bytes(content)
-
-
 def reference_patch(task):
     """Return the fix's diff without its test files."""
     excludes = [f":(exclude){path}" for path in task["tests"]]
@@ -334,7 +324,6 @@ def run(setup, agent, task, n):
     }
     result.mkdir(parents=True)
     (result / "diff.patch").write_text(diff)
-    save_changed_files(work, start_tree, end_tree, result / "files")
     save_changed_files(work, start_tree, end_tree, result / "files")
     (result / "reply.md").write_text(reply + "\n")
     (result / "score.json").write_text(json.dumps(score, indent=2) + "\n")
@@ -535,45 +524,139 @@ def snapshot_fresh(work):
     return git("write-tree", cwd=work).strip()
 
 
-def backfill_files():
-    """Write the changed files of every scored run that has none yet, and each task's upstream files, from the diffs.
+LANGUAGE_COMMANDS = {
+    "rust": ["cargo build", "cargo test", "cargo clippy --all-targets"],
+    "go": ["go build ./...", "go test ./...", "go vet ./..."],
+    "python": ["uvx ruff check ."],
+    "typescript": [],
+}
+EXTENSIONS = {"rust": "rs", "go": "go", "python": "py", "typescript": "ts"}
 
-    Each run's diff is applied to a fresh copy of the prepared project in a scratch repository, whose start and end
-    trees then give the files the same way a run does.
+
+def task_commands(task):
+    """Return the shell commands an agent typically runs on the task, as (label, command, state) triples.
+
+    The state is ``failing`` (the hidden tests added, no fix) or ``fixed`` (the upstream change applied, uncommitted).
     """
-    scratch = CACHE / "files-scratch"
-    for task_dir in sorted((ROOT / "tasks").iterdir()):
-        task = load_task(task_dir.name)
-        upstream = task_dir / "upstream"
-        if not upstream.exists():
-            save_changed_files(mirror(task), task["base"], task["fix"], upstream)
-        for run_dir in sorted(glob.glob(str(ROOT / "results" / "*" / "*" / f"{task['id']}-*"))):
-            run_dir = Path(run_dir)
-            if (run_dir / "files").exists() or not (run_dir / "score.json").exists():
-                continue
-            diff = (run_dir / "diff.patch").read_text()
-            if not diff.strip():
-                continue
-            shutil.rmtree(scratch, ignore_errors=True)
-            scratch.mkdir(parents=True)
-            git("init", "-q", cwd=scratch)
-            archive = subprocess.run(["git", "archive", "HEAD"], cwd=prepared(task), check=True,
-                                     capture_output=True).stdout
-            subprocess.run(["tar", "x"], cwd=scratch, input=archive, check=True)
-            start_tree = snapshot_fresh(scratch)
-            applied = subprocess.run(["git", "apply", "--binary", "-"], cwd=scratch, input=diff, text=True,
-                                     capture_output=True)
-            if applied.returncode:
-                print(f"{run_dir}: diff does not apply: {applied.stderr.strip()}")
-                continue
-            save_changed_files(scratch, start_tree, snapshot_fresh(scratch), run_dir / "files")
-    shutil.rmtree(scratch, ignore_errors=True)
+    language = task["language"]
+    ident = re.search(r"`([A-Za-z_][A-Za-z0-9_]*)", task["prompt"])
+    source = max((path for path in task_dir_files(task) if path.endswith("." + EXTENSIONS[language])),
+                 key=lambda path: (prepared(task) / path).stat().st_size if (prepared(task) / path).exists() else 0,
+                 default=None)
+    commands = [("task tests", task["test"], "failing")]
+    commands += [(command, command, "failing") for command in LANGUAGE_COMMANDS[language]]
+    commands += [("git status", "git status", "fixed"), ("git diff", "git diff", "fixed"),
+                 ("git diff --stat", "git diff --stat", "fixed"), ("ls -la", "ls -la", "failing"),
+                 ("find", f"find . -name '*.{EXTENSIONS[language]}' -not -path './node_modules/*' "
+                          "-not -path './target/*'", "failing")]
+    if ident:
+        commands.append((f"grep -rn {ident.group(1)}", f"grep -rn {ident.group(1)} --exclude-dir=node_modules "
+                                                        "--exclude-dir=target --exclude-dir=.git .", "failing"))
+    if source and (prepared(task) / source).exists():
+        commands.append((f"cat {source}", f"cat {source}", "failing"))
+    return commands
 
 
-def snapshot_fresh(work):
-    """Return the tree id of everything in the repository ``work``, staging it all."""
-    git("add", "-A", "-f", cwd=work)
-    return git("write-tree", cwd=work).strip()
+def task_dir_files(task):
+    """Return the non-test files the task's upstream change touches."""
+    return [path for path in git("diff", "--name-only", task["base"], task["fix"], cwd=mirror(task)).splitlines()
+            if path not in task["tests"] and not is_test_file(path)]
+
+
+def muffled(command, env):
+    """Return ``command`` as muffle's Claude Code hook rewrites it in a fresh session, or ``None`` when it does not."""
+    event = json.dumps({"session_id": f"commands-{time.time_ns()}", "hook_event_name": "PreToolUse",
+                        "tool_name": "Bash", "tool_input": {"command": command}})
+    answer = subprocess.run([str(MUFFLE), "hook", "claude"], input=event, capture_output=True, text=True,
+                            env=env).stdout
+    if not answer.strip():
+        return None
+    return json.loads(answer)["hookSpecificOutput"]["updatedInput"]["command"]
+
+
+def capture(command, cwd, env):
+    """Return the output of the shell ``command`` run in ``cwd``, standard error merged into standard output as an
+    agent's shell tool shows it."""
+    try:
+        return subprocess.run(["bash", "-c", command], cwd=cwd, env=env, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, text=True, errors="replace", stdin=subprocess.DEVNULL,
+                              timeout=TEST_TIMEOUT).stdout
+    except subprocess.TimeoutExpired as timeout:
+        return (timeout.stdout or b"").decode(errors="replace") + "\n[timed out]\n"
+
+
+def command_examples(task):
+    """Run the task's typical commands with and without muffle and write both outputs under commands/<task>/.
+
+    Returns one row per command that muffle rewrites: label, file stem, raw and muffled byte counts.
+    """
+    out_dir = ROOT / "commands" / task["id"]
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True)
+    scratch = CACHE / "commands"
+    cache = scratch / "muffle-cache"
+    env = task_env(task, {"GOCACHE": str(CACHE / "go" / "build"), "TMPDIR": str(CACHE / "tmp"),
+                          "XDG_CACHE_HOME": str(cache)})
+    rows = []
+    states = {}
+    for state in ("failing", "fixed"):
+        work = scratch / f"{task['id']}-{state}"
+        copy_project(task, work)
+        if state == "fixed":
+            subprocess.run(["git", "apply", "-"], cwd=work, input=reference_patch(task), text=True, check=True)
+        else:
+            put_hidden_tests(task, work)
+        states[state] = work
+    for number, (label, command, state) in enumerate(task_commands(task), 1):
+        rewritten = muffled(command, env)
+        if rewritten is None:
+            continue
+        raw = capture(command, states[state], env)
+        shown = capture(rewritten, states[state], env)
+        shown = shown.replace(str(cache), "~/.cache")
+        stem = f"{number:02d}-" + re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")[:40]
+        (out_dir / f"{stem}.raw.txt").write_text(f"$ {command}\n{raw}")
+        (out_dir / f"{stem}.muffle.txt").write_text(f"$ {command}\n{shown}")
+        rows.append((label, stem, len(raw.encode()), len(shown.encode())))
+        print(f"{task['id']}: {label}: {len(raw.encode())} -> {len(shown.encode())} bytes", flush=True)
+    for work in states.values():
+        shutil.rmtree(work, ignore_errors=True)
+    return rows
+
+
+def commands_report(task_ids):
+    """Write commands/<task>/ examples for ``task_ids`` and commands/README.md with every task's rows."""
+    rows_file = ROOT / "commands" / "rows.json"
+    rows = json.loads(rows_file.read_text()) if rows_file.exists() else {}
+    for task_id in task_ids:
+        rows[task_id] = command_examples(load_task(task_id))
+    rows_file.parent.mkdir(exist_ok=True)
+    rows_file.write_text(json.dumps(rows, indent=1) + "\n")
+    by_program = collections.defaultdict(lambda: [0, 0, 0])
+    lines = ["# Command output, before and after", "",
+             "Each task's project was put in two states: failing (the hidden tests added, no fix) and fixed (the "
+             "upstream change applied, not committed). In each, the commands an agent typically runs were run once as "
+             "they are and once as muffle's hook rewrites them. Only commands muffle rewrites are listed; the files "
+             "hold both outputs.", "", "Tokens are estimated as bytes / 4.", ""]
+    for task_id in sorted(rows):
+        for label, stem, raw, shown in rows[task_id]:
+            total = by_program[label.split()[0] if not label.startswith("task tests") else "task tests"]
+            total[0] += 1
+            total[1] += raw
+            total[2] += shown
+    lines += ["## Totals by program", "", "| program | commands | raw bytes | muffle bytes | saved |", "|---|---:|---:|---:|---:|"]
+    all_raw = sum(t[1] for t in by_program.values())
+    all_shown = sum(t[2] for t in by_program.values())
+    for program, (count, raw, shown) in sorted(by_program.items(), key=lambda item: -item[1][1]):
+        lines.append(f"| {program} | {count} | {raw:,} | {shown:,} | {100 - 100 * shown // max(raw, 1)}% |")
+    lines += [f"| **all** | {sum(t[0] for t in by_program.values())} | {all_raw:,} | {all_shown:,} | "
+              f"**{100 - 100 * all_shown // max(all_raw, 1)}%** |", "", "## Every command", "",
+              "| task | command | raw | muffle | saved | ~tokens saved |", "|---|---|---:|---:|---:|---:|"]
+    for task_id in sorted(rows):
+        for label, stem, raw, shown in rows[task_id]:
+            lines.append(f"| {task_id} | [{label}]({task_id}/{stem}.raw.txt) → [muffle]({task_id}/{stem}.muffle.txt) | "
+                         f"{raw:,} | {shown:,} | {100 - 100 * shown // max(raw, 1)}% | {(raw - shown) // 4:,} |")
+    (ROOT / "commands" / "README.md").write_text("\n".join(lines) + "\n")
 
 
 def main():
@@ -594,10 +677,10 @@ def main():
         matrix(rest[0].split(","), rest[1].split(","), int(rest[2]), tasks)
     elif command == "files":
         backfill_files()
-    elif command == "files":
-        backfill_files()
     elif command == "report":
         report()
+    elif command == "commands":
+        commands_report(rest or sorted(p.name for p in (ROOT / "tasks").iterdir()))
     else:
         sys.exit(__doc__)
 

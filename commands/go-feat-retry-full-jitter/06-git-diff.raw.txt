@@ -1,0 +1,49 @@
+$ git diff
+diff --git a/README.md b/README.md
+index 47b6e26..3464965 100644
+--- a/README.md
++++ b/README.md
+@@ -126,6 +126,9 @@ b = WithJitter(500*time.Millisecond, b)
+ 
+ // Return the next value, +/- 5% of the result
+ b = WithJitterPercent(5, b)
++
++// Return a random value in [0, next value)
++b = WithFullJitter(b)
+ ```
+ 
+ ### MaxRetries
+diff --git a/backoff.go b/backoff.go
+index b493869..47f7475 100644
+--- a/backoff.go
++++ b/backoff.go
+@@ -67,6 +67,29 @@ func WithJitterPercent(j uint64, next Backoff) Backoff {
+ 	})
+ }
+ 
++// WithFullJitter wraps a backoff function and returns a random value between
++// zero (inclusive) and the wrapped backoff's returned value (exclusive). For
++// example, if the backoff returned 20s, the value could be anywhere in [0, 20s).
++//
++// Unlike WithJitter, which applies "+/- j" around the value, full jitter
++// spreads the wait across the entire range, which spreads out retrying clients
++// more effectively. See
++// https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/.
++func WithFullJitter(next Backoff) Backoff {
++	return BackoffFunc(func() (time.Duration, bool) {
++		val, stop := next.Next()
++		if stop {
++			return 0, true
++		}
++
++		if val <= 0 {
++			return val, false
++		}
++
++		return time.Duration(rand.Int64N(int64(val))), false
++	})
++}
++
+ // WithMaxRetries executes the backoff function up until the maximum attempts.
+ func WithMaxRetries(max uint64, next Backoff) Backoff {
+ 	var l sync.Mutex
