@@ -22,10 +22,22 @@ the bug report, the upstream change and every agent's diff next to it.
 ## Command output
 
 In every task's project, the commands an agent typically runs (its tests, build, lint, `git`, `ls`, `find`, `grep`,
-`cat` of the longest source file) were run once as they are and once as muffle's hook rewrites them. Over 304
-commands muffle printed 63% fewer bytes: 86% fewer for `grep`, 80% for `cargo`, 71% for `ls`, 52% for the tasks'
-test commands and 35% for `cat`, which shows a long source file as an outline first. Each output, raw and muffled, is
-in [commands/](commands/).
+`cat` of the longest source file) were run once as they are and once as muffle's hook rewrites them. `cat` shows a
+long source file as an outline first.
+
+| Program | Commands | Raw bytes | With muffle | Saved |
+|---|---:|---:|---:|---:|
+| grep | 32 | 1,538,295 | 222,063 | 86% |
+| cargo | 24 | 970,305 | 194,253 | 80% |
+| ls | 32 | 42,045 | 12,292 | 71% |
+| task tests | 32 | 80,372 | 38,763 | 52% |
+| go | 24 | 11,253 | 5,570 | 51% |
+| find | 32 | 73,111 | 41,434 | 44% |
+| cat | 32 | 1,641,446 | 1,082,651 | 35% |
+| git | 96 | 81,669 | 58,827 | 28% |
+| **All** | **304** | **4,438,496** | **1,655,853** | **63%** |
+
+Each output, raw and with muffle, is in [commands/](commands/), listed in [commands/README.md](commands/README.md).
 
 ## Bug fixes
 

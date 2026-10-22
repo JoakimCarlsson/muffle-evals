@@ -1,8 +1,29 @@
 # muffle-evals
 
-Does muffle save tokens without making the agent's code worse? Each task here is a real bug, fixed upstream in an
-open-source project. The agent gets the bug report and the project as it was before the fix, without its git history.
-When it is done, the tests the upstream fix added are put back over its work and run. The agent never sees them.
+Does muffle save tokens without making the agent's code worse? Yes:
+
+- **Same results.** On 32 real bug fixes and features in Rust, Python, TypeScript and Go, agents with muffle passed as
+  many tasks as without it.
+- **Fewer tokens.** With `muffle init --hush --lean`, Claude Code read 43% fewer input tokens and cost 26% less on the
+  bug fixes; Codex read 28% fewer.
+- **Shorter command output.** Over 304 commands agents typically run, muffle printed 63% fewer bytes: 86% fewer for
+  `grep`, 80% for `cargo`, 52% for test runs.
+
+| Bug fixes, `--hush --lean` | Passed | Input tokens | Cost |
+|---|---:|---:|---:|
+| Claude Code alone | 19/20 | 192,627 | $0.106 |
+| Claude Code with muffle | 19/20 | **109,941 (−43%)** | **$0.079 (−26%)** |
+| Codex alone | 19/20 | 195,499 | |
+| Codex with muffle | 19/20 | **139,839 (−28%)** | |
+
+Every setup and number is in [BENCHMARK.md](BENCHMARK.md); the code each agent wrote is in
+[results/tasks/](results/tasks/), and each command's output with and without muffle in [commands/](commands/).
+
+## How it works
+
+Each task is a real change made upstream in an open-source project. The agent gets the bug report or feature request
+and the project as it was before the change, without its git history. When it is done, the tests the upstream change
+added are put back over its work and run. The agent never sees them.
 
 Every run is kept in `results/<setup>/<agent>/<task>-<n>/`: the diff the agent made, its reply, the hidden test output
 and `score.json` with pass or fail, tokens, cost, lines changed against the upstream fix, and new lint warnings. Read the
