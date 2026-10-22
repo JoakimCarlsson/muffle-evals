@@ -6,8 +6,8 @@ Does muffle save tokens without making the agent's code worse? Yes:
   many tasks as without it.
 - **Fewer tokens.** With `muffle init --hush --lean`, Claude Code read 43% fewer input tokens and cost 26% less on the
   bug fixes; Codex read 28% fewer.
-- **Shorter command output.** Over 304 commands agents typically run, muffle printed 63% fewer bytes: 86% fewer for
-  `grep`, 80% for `cargo`, 52% for test runs.
+- **Shorter command output.** Over 311 commands agents typically run, written as agents write them, muffle printed
+  65% fewer bytes: 88% fewer for `grep`, 80% for `cargo`, 52% for test runs.
 
 | Bug fixes, `--hush --lean` | Passed | Input tokens | Cost |
 |---|---:|---:|---:|

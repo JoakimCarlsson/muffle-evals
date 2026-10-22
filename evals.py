@@ -525,9 +525,9 @@ def snapshot_fresh(work):
 
 
 LANGUAGE_COMMANDS = {
-    "rust": ["cargo build", "cargo test", "cargo clippy --all-targets"],
-    "go": ["go build ./...", "go test ./...", "go vet ./..."],
-    "python": ["uvx ruff check ."],
+    "rust": ["cargo build 2>&1", "cargo test 2>&1", "cargo clippy --all-targets 2>&1"],
+    "go": ["go build ./... 2>&1", "go test ./... 2>&1", "go vet ./... 2>&1"],
+    "python": ["uvx ruff check . 2>&1"],
     "typescript": [],
 }
 EXTENSIONS = {"rust": "rs", "go": "go", "python": "py", "typescript": "ts"}
@@ -536,22 +536,26 @@ EXTENSIONS = {"rust": "rs", "go": "go", "python": "py", "typescript": "ts"}
 def task_commands(task):
     """Return the shell commands an agent typically runs on the task, as (label, command, state) triples.
 
-    The state is ``failing`` (the hidden tests added, no fix) or ``fixed`` (the upstream change applied, uncommitted).
+    The commands are written the way agents write them: builds and tests with ``2>&1``, and ``grep`` for two names
+    from the prompt longer than three letters at once with a quoted ``\\|`` pattern. The state is ``failing`` (the
+    hidden tests added, no fix) or ``fixed`` (the upstream change applied, uncommitted).
     """
     language = task["language"]
-    ident = re.search(r"`([A-Za-z_][A-Za-z0-9_]*)", task["prompt"])
+    idents = [name for name in dict.fromkeys(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)", task["prompt"]))
+              if len(name) > 3][:2]
     source = max((path for path in task_dir_files(task) if path.endswith("." + EXTENSIONS[language])),
                  key=lambda path: (prepared(task) / path).stat().st_size if (prepared(task) / path).exists() else 0,
                  default=None)
-    commands = [("task tests", task["test"], "failing")]
+    commands = [("task tests", f"{task['test']} 2>&1", "failing")]
     commands += [(command, command, "failing") for command in LANGUAGE_COMMANDS[language]]
     commands += [("git status", "git status", "fixed"), ("git diff", "git diff", "fixed"),
                  ("git diff --stat", "git diff --stat", "fixed"), ("ls -la", "ls -la", "failing"),
                  ("find", f"find . -name '*.{EXTENSIONS[language]}' -not -path './node_modules/*' "
                           "-not -path './target/*'", "failing")]
-    if ident:
-        commands.append((f"grep -rn {ident.group(1)}", f"grep -rn {ident.group(1)} --exclude-dir=node_modules "
-                                                        "--exclude-dir=target --exclude-dir=.git .", "failing"))
+    if idents:
+        pattern = "\\|".join(idents)
+        commands.append((f'grep -rn "{pattern}"', f'grep -rn "{pattern}" --exclude-dir=node_modules '
+                                                  "--exclude-dir=target --exclude-dir=.git .", "failing"))
     if source and (prepared(task) / source).exists():
         commands.append((f"cat {source}", f"cat {source}", "failing"))
     return commands
@@ -588,7 +592,8 @@ def capture(command, cwd, env):
 def command_examples(task):
     """Run the task's typical commands with and without muffle and write both outputs under commands/<task>/.
 
-    Returns one row per command that muffle rewrites: label, file stem, raw and muffled byte counts.
+    Returns one row per command: label, file stem, raw and muffled byte counts. A command muffle leaves alone counts
+    its raw output as muffled and gets no files.
     """
     out_dir = ROOT / "commands" / task["id"]
     shutil.rmtree(out_dir, ignore_errors=True)
@@ -609,12 +614,14 @@ def command_examples(task):
         states[state] = work
     for number, (label, command, state) in enumerate(task_commands(task), 1):
         rewritten = muffled(command, env)
-        if rewritten is None:
-            continue
         raw = capture(command, states[state], env)
+        stem = f"{number:02d}-" + re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")[:40]
+        if rewritten is None:
+            rows.append((label, None, len(raw.encode()), len(raw.encode())))
+            print(f"{task['id']}: {label}: {len(raw.encode())} bytes, left alone", flush=True)
+            continue
         shown = capture(rewritten, states[state], env)
         shown = shown.replace(str(cache), "~/.cache")
-        stem = f"{number:02d}-" + re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")[:40]
         (out_dir / f"{stem}.raw.txt").write_text(f"$ {command}\n{raw}")
         (out_dir / f"{stem}.muffle.txt").write_text(f"$ {command}\n{shown}")
         rows.append((label, stem, len(raw.encode()), len(shown.encode())))
@@ -636,8 +643,8 @@ def commands_report(task_ids):
     lines = ["# Command output, before and after", "",
              "Each task's project was put in two states: failing (the hidden tests added, no fix) and fixed (the "
              "upstream change applied, not committed). In each, the commands an agent typically runs were run once as "
-             "they are and once as muffle's hook rewrites them. Only commands muffle rewrites are listed; the files "
-             "hold both outputs.", "", "Tokens are estimated as bytes / 4.", ""]
+             "they are and once as muffle's hook rewrites them. A command muffle leaves alone counts its raw output "
+             "on both sides and has no files; the files of the others hold both outputs.", "", "Tokens are estimated as bytes / 4.", ""]
     for task_id in sorted(rows):
         for label, stem, raw, shown in rows[task_id]:
             total = by_program[label.split()[0] if not label.startswith("task tests") else "task tests"]
@@ -654,7 +661,9 @@ def commands_report(task_ids):
               "| task | command | raw | muffle | saved | ~tokens saved |", "|---|---|---:|---:|---:|---:|"]
     for task_id in sorted(rows):
         for label, stem, raw, shown in rows[task_id]:
-            lines.append(f"| {task_id} | [{label}]({task_id}/{stem}.raw.txt) → [muffle]({task_id}/{stem}.muffle.txt) | "
+            link = (f"[{label}]({task_id}/{stem}.raw.txt) → [muffle]({task_id}/{stem}.muffle.txt)" if stem
+                    else f"{label} (left alone)")
+            lines.append(f"| {task_id} | {link} | "
                          f"{raw:,} | {shown:,} | {100 - 100 * shown // max(raw, 1)}% | {(raw - shown) // 4:,} |")
     (ROOT / "commands" / "README.md").write_text("\n".join(lines) + "\n")
 

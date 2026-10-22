@@ -22,20 +22,27 @@ the bug report, the upstream change and every agent's diff next to it.
 ## Command output
 
 In every task's project, the commands an agent typically runs (its tests, build, lint, `git`, `ls`, `find`, `grep`,
-`cat` of the longest source file) were run once as they are and once as muffle's hook rewrites them. `cat` shows a
-long source file as an outline first.
+`cat` of the longest source file) were run once as they are and once as muffle's hook rewrites them. They are written
+the way agents write them: tests and builds with `2>&1`, and `grep` for two names at once with a quoted `"a\|b"`
+pattern. `cat` shows a long source file as an outline first. A command muffle leaves alone counts its raw output on
+both sides.
 
 | Program | Commands | Raw bytes | With muffle | Saved |
 |---|---:|---:|---:|---:|
-| grep | 32 | 1,538,295 | 222,063 | 86% |
-| cargo | 24 | 970,305 | 194,253 | 80% |
+| grep | 31 | 2,202,674 | 265,922 | 88% |
+| cargo | 24 | 970,299 | 197,575 | 80% |
 | ls | 32 | 42,045 | 12,292 | 71% |
-| task tests | 32 | 80,372 | 38,763 | 52% |
+| task tests | 32 | 80,361 | 38,741 | 52% |
 | go | 24 | 11,253 | 5,570 | 51% |
 | find | 32 | 73,111 | 41,434 | 44% |
 | cat | 32 | 1,641,446 | 1,082,651 | 35% |
 | git | 96 | 81,669 | 58,827 | 28% |
-| **All** | **304** | **4,438,496** | **1,655,853** | **63%** |
+| uvx | 8 | 174,798 | 174,798 | 0% |
+| **All** | **311** | **5,277,656** | **1,877,810** | **65%** |
+
+Before muffle's hook looked past quoted text and a trailing `2>&1`, it left the tests, builds and `grep` above alone
+and saved 14% of the same output (4,590,571 bytes); now it saves 65%, about 850,000 tokens over these 311 commands
+instead of 170,000. The agent runs below were made before that change.
 
 Each output, raw and with muffle, is in [commands/](commands/), listed in [commands/README.md](commands/README.md).
 
