@@ -4,17 +4,17 @@ Does muffle save tokens without making the agent's code worse? Yes:
 
 - **Same results.** On 32 real bug fixes and features in Rust, Python, TypeScript and Go, agents with muffle passed as
   many tasks as without it.
-- **Fewer tokens.** With `muffle init --hush --lean`, Claude Code read 43% fewer input tokens and cost 26% less on the
-  bug fixes; Codex read 28% fewer.
+- **Fewer tokens.** With `muffle init --lean --hush --sloth`, Claude Code read 35% fewer input tokens and cost 14% less
+  on the bug fixes; Codex read 14% fewer.
 - **Shorter command output.** Over 311 commands agents typically run, written as agents write them, muffle printed
   65% fewer bytes: 88% fewer for `grep`, 80% for `cargo`, 52% for test runs.
 
-| Bug fixes, `--hush --lean` | Passed | Input tokens | Cost |
+| Bug fixes, `--lean --hush --sloth` | Passed | Input tokens | Cost |
 |---|---:|---:|---:|
-| Claude Code alone | 19/20 | 192,627 | $0.106 |
-| Claude Code with muffle | 19/20 | **109,941 (−43%)** | **$0.079 (−26%)** |
+| Claude Code alone | 19/20 | 192,628 | $0.106 |
+| Claude Code with muffle | 19/20 | **125,689 (−35%)** | **$0.092 (−14%)** |
 | Codex alone | 19/20 | 195,499 | |
-| Codex with muffle | 19/20 | **139,839 (−28%)** | |
+| Codex with muffle | 20/20 | **168,900 (−14%)** | |
 
 Every setup and number is in [BENCHMARK.md](BENCHMARK.md); the code each agent wrote is in
 [results/tasks/](results/tasks/), and each command's output with and without muffle in [commands/](commands/).

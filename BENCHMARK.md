@@ -7,8 +7,9 @@ The agent gets the bug report or feature request and the project as it was befor
 The tests the upstream change added are hidden from it and decide pass or fail; the agent's own test changes are
 undone before they run. A feature request names the functions and options the tests call, never how to build them.
 
-Claude Code with Sonnet and Codex 0.163.0 with gpt-6.1-sol at low effort, 2026-10-22, one run per task, agent and
-setup: 320 runs. To judge the code itself, each task has a page in [results/tasks/](results/tasks/) with
+Claude Code with Sonnet and Codex 0.163.0 with gpt-6.1-sol at low effort, one run per task, agent and setup: 320 runs.
+The `base` runs are from 2026-10-22; the setups with muffle were run on 2026-10-22 and 23, after `muffle init` began
+pointing both agents at muffle's proxy, which leaves old tool results, call inputs and reasoning out of what they send. To judge the code itself, each task has a page in [results/tasks/](results/tasks/) with
 the bug report, the upstream change and every agent's diff next to it.
 
 | Setup | `muffle init` flags |
@@ -42,7 +43,7 @@ both sides.
 
 Before muffle's hook looked past quoted text and a trailing `2>&1`, it left the tests, builds and `grep` above alone
 and saved 14% of the same output (4,590,571 bytes); now it saves 65%, about 850,000 tokens over these 311 commands
-instead of 170,000. The agent runs below were made before that change.
+instead of 170,000. The agent runs below were made after that change.
 
 Each output, raw and with muffle, is in [commands/](commands/), listed in [commands/README.md](commands/README.md).
 
@@ -52,21 +53,21 @@ Each output, raw and with muffle, is in [commands/](commands/), listed in [comma
 
 | Setup | Passed | Cost per run | Input tokens | Output tokens | Reply words | Lines of code added |
 |---|---:|---:|---:|---:|---:|---:|
-| base | 19/20 | $0.106 | 192,627 | 2,744 | 165 | 14.4 |
-| muffle | 18/20 | $0.106 (0%) | 147,656 (−23%) | 3,266 (+19%) | 168 (+2%) | 16.8 |
-| hush | 19/20 | **$0.079 (−26%)** | 109,941 (−43%) | 1,941 (−29%) | 53 (−68%) | 14.8 |
-| sloth | 18/20 | $0.110 (+4%) | 144,185 (−25%) | 3,151 (+15%) | 181 (+10%) | 10.2 |
-| all | 19/20 | $0.081 (−23%) | 110,046 (−43%) | 1,894 (−31%) | 59 (−64%) | 12.9 |
+| base | 19/20 | $0.106 | 192,628 | 2,744 | 165 | 14.4 |
+| muffle | 19/20 | $0.096 (−10%) | 127,543 (−34%) | 2,636 (−4%) | 157 (−5%) | 15.9 |
+| hush | 18/20 | $0.091 (−14%) | **122,516 (−36%)** | 2,234 (−19%) | 51 (−69%) | 16.8 |
+| sloth | 19/20 | $0.095 (−11%) | 129,308 (−33%) | 2,569 (−6%) | 151 (−8%) | 11.9 (−17%) |
+| all | 19/20 | **$0.092 (−14%)** | 125,689 (−35%) | 2,253 (−18%) | 57 (−66%) | 11.3 (−22%) |
 
 ### Codex
 
 | Setup | Passed | Input tokens | Output tokens | Reply words | Lines of code added |
 |---|---:|---:|---:|---:|---:|
-| base | 19/20 | 195,499 | 1,661 | 94 | 13.2 |
-| muffle | 19/20 | 155,890 (−20%) | 1,558 (−6%) | 94 (0%) | 14.4 |
-| hush | 19/20 | **139,839 (−28%)** | 1,228 (−26%) | 25 (−73%) | 12.8 |
-| sloth | 20/20 | 165,081 (−16%) | 1,387 (−16%) | 125 (+33%) | 9.8 |
-| all | 18/20 | 152,156 (−22%) | 1,059 (−36%) | 21 (−78%) | 9.2 |
+| base | 19/20 | 195,499 | 1,662 | 94 | 13.2 |
+| muffle | 19/20 | **145,820 (−25%)** | 1,635 (−2%) | 97 (+3%) | 14.1 |
+| hush | 19/20 | 148,705 (−24%) | 1,322 (−20%) | 25 (−74%) | 12.1 |
+| sloth | 20/20 | 166,016 (−15%) | 1,765 (+6%) | 137 (+45%) | 10.6 (−20%) |
+| all | 20/20 | 168,900 (−14%) | 1,482 (−11%) | 24 (−74%) | 11.9 (−10%) |
 
 Input tokens count cached and uncached input together. Lines added leave out test files.
 
@@ -76,45 +77,35 @@ Input tokens count cached and uncached input together. Lines added leave out tes
 
 | Setup | Passed | Cost per run | Input tokens | Output tokens | Reply words | Lines of code added |
 |---|---:|---:|---:|---:|---:|---:|
-| base | 11/12 | $0.124 | 165,734 | 3,885 | 183 | 60.0 |
-| muffle | 12/12 | $0.103 (−17%) | 115,118 (−31%) | 3,451 (−11%) | 174 (−5%) | 60.2 |
-| hush | 11/12 | $0.100 (−19%) | 108,867 (−34%) | 3,091 (−20%) | 44 (−76%) | 56.2 |
-| sloth | 12/12 | **$0.084 (−32%)** | 88,103 (−47%) | 2,503 (−36%) | 168 (−8%) | 41.9 (−30%) |
-| all | 12/12 | $0.096 (−23%) | 109,477 (−34%) | 2,688 (−31%) | 57 (−69%) | 45.5 (−24%) |
+| base | 11/12 | $0.124 | 165,735 | 3,886 | 184 | 60.0 |
+| muffle | 12/12 | $0.108 (−13%) | 107,893 (−35%) | 4,017 (+3%) | 168 (−9%) | 60.2 |
+| hush | 12/12 | **$0.097 (−22%)** | **96,743 (−42%)** | 3,044 (−22%) | 39 (−79%) | 55.8 (−7%) |
+| sloth | 11/12 | $0.111 (−10%) | 128,597 (−22%) | 3,483 (−10%) | 171 (−7%) | 42.8 (−29%) |
+| all | 12/12 | $0.104 (−16%) | 113,767 (−31%) | 3,152 (−19%) | 60 (−67%) | 45.8 (−24%) |
 
 ### Codex
 
 | Setup | Passed | Input tokens | Output tokens | Reply words | Lines of code added |
 |---|---:|---:|---:|---:|---:|
-| base | 12/12 | 185,691 | 2,288 | 88 | 48.7 |
-| muffle | 12/12 | 168,352 (−9%) | 2,291 (0%) | 90 (+2%) | 46.8 (−4%) |
-| hush | 12/12 | 131,042 (−29%) | 1,834 (−20%) | 25 (−72%) | 43.2 (−11%) |
-| sloth | 12/12 | 147,535 (−21%) | 1,649 (−28%) | 125 (+42%) | 44.8 (−8%) |
-| all | 12/12 | **134,487 (−28%)** | 1,374 (−40%) | 25 (−72%) | 39.2 (−20%) |
+| base | 12/12 | 185,691 | 2,288 | 89 | 48.7 |
+| muffle | 12/12 | 153,329 (−17%) | 2,371 (+4%) | 92 (+4%) | 48.7 (0%) |
+| hush | 12/12 | **136,381 (−27%)** | 1,968 (−14%) | 22 (−75%) | 45.5 (−7%) |
+| sloth | 12/12 | 185,962 (0%) | 2,683 (+17%) | 132 (+49%) | 41.2 (−15%) |
+| all | 12/12 | 169,871 (−9%) | 2,124 (−7%) | 20 (−77%) | 37.6 (−23%) |
 
 ## Reading the numbers
 
 - No setup lost correctness beyond the noise of one run per task. Claude Code fails `rust-chrono-iter-days-rev` in
-  every setup, `base` included, and `ts-mlly-generic-export-names` with muffle and sloth. Codex fails
-  `ts-yaml-flow-key-after-blank` in base and all, and `rust-chrono-iter-days-rev` in muffle, hush and all.
-- muffle alone cuts input by about a fifth with both agents. With Claude Code that did not show in the cost of these
-  short tasks, since it wrote more.
-- `--hush` saves the most: about a quarter of Claude Code's cost and of Codex's input, with the same pass rate.
-- `--sloth` pays off where there is code to leave out. On features it is the cheapest Claude Code setup, 32% under
-  `base` with 30% fewer lines and every task passed; on bug fixes, whose upstream changes are a few lines, it costs
-  4% more.
-- On features every setup with muffle passed at least as many tasks as `base`; the one miss in `base` and `hush` is
-  `python-feat-packaging-requirement-replace`.
-- Run times are not comparable: Claude Code hit its session limit during the muffle and sloth runs, which stalled some
-  of them for over ten minutes.
-
-## Since these runs
-
-`--sloth` now has the agent add one focused test for each fix or feature, keep the behaviour of cases the request does
-not mention, and check the request's examples against the types. The runs above used the earlier version, which wrote
-no tests. In a smaller check of the new version, 5 tasks with 2 runs each with Claude Code in one batch, it passed
-10/10 at $0.090 a run against $0.104 for `base`; a second batch on all 32 tasks had it 6 to 11% above `base`, so its
-effect on cost is within the noise between batches. Its effect on code is not: it writes 15 to 25% fewer lines.
+  base, muffle, hush and all, `ts-mlly-generic-export-names` in hush and sloth, and
+  `python-feat-packaging-requirement-replace` in base and sloth. Codex fails `rust-chrono-iter-days-rev` in muffle and
+  hush, and `ts-yaml-flow-key-after-blank` in base.
+- muffle alone cuts input by about a third with Claude Code and a fifth with Codex, and Claude Code's cost by 10 to
+  13%.
+- Every setup with muffle costs Claude Code less than `base`, 10 to 22%; `--hush` saves the most on features and
+  `all` on bug fixes.
+- `--sloth` writes 15 to 29% fewer lines of code and adds one focused test for each fix or feature.
+- Codex's cost is not reported, so only its tokens are compared. Its uncached input rose with muffle while its cached
+  input fell further.
 
 ## Reproducing
 
