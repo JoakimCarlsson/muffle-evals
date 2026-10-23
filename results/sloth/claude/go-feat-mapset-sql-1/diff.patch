@@ -1,5 +1,5 @@
 diff --git a/threadsafe.go b/threadsafe.go
-index a9d7526..e4c2871 100644
+index a9d7526..38f7554 100644
 --- a/threadsafe.go
 +++ b/threadsafe.go
 @@ -26,6 +26,7 @@ SOFTWARE.
@@ -10,29 +10,28 @@ index a9d7526..e4c2871 100644
  	"sync"
  )
  
-@@ -351,3 +352,20 @@ func (t *threadSafeSet[T]) UnmarshalJSON(p []byte) error {
+@@ -351,3 +352,19 @@ func (t *threadSafeSet[T]) UnmarshalJSON(p []byte) error {
  
  	return err
  }
 +
-+// Value implements driver.Valuer, returning the set as a JSON array of bytes.
 +func (t *threadSafeSet[T]) Value() (driver.Value, error) {
 +	t.RLock()
-+	defer t.RUnlock()
++	v, err := t.uss.Value()
++	t.RUnlock()
 +
-+	return t.uss.Value()
++	return v, err
 +}
 +
-+// Scan implements sql.Scanner, replacing the set's contents with the JSON
-+// array in src. A nil src empties the set. On error the set is unchanged.
 +func (t *threadSafeSet[T]) Scan(src any) error {
 +	t.Lock()
-+	defer t.Unlock()
++	err := t.uss.Scan(src)
++	t.Unlock()
 +
-+	return t.uss.Scan(src)
++	return err
 +}
 diff --git a/threadunsafe.go b/threadunsafe.go
-index 07b8ee0..041e965 100644
+index 07b8ee0..82ffe11 100644
 --- a/threadunsafe.go
 +++ b/threadunsafe.go
 @@ -26,6 +26,7 @@ SOFTWARE.
@@ -43,23 +42,24 @@ index 07b8ee0..041e965 100644
  	"encoding/json"
  	"fmt"
  	"strings"
-@@ -382,3 +383,33 @@ func (s *threadUnsafeSet[T]) UnmarshalJSON(b []byte) error {
+@@ -382,3 +383,35 @@ func (s *threadUnsafeSet[T]) UnmarshalJSON(b []byte) error {
  
  	return nil
  }
 +
-+// Value implements driver.Valuer, returning the set as a JSON array of bytes.
++// Value implements driver.Valuer, it returns the set as a JSON array of bytes.
 +func (s threadUnsafeSet[T]) Value() (driver.Value, error) {
 +	return s.MarshalJSON()
 +}
 +
-+// Scan implements sql.Scanner, replacing the set's contents with the JSON
-+// array in src. A nil src empties the set. On error the set is unchanged.
++// Scan implements sql.Scanner, it replaces the contents of the set with the
++// JSON array in src (string or []byte). A nil src empties the set. On error
++// the set is left unchanged.
 +func (s *threadUnsafeSet[T]) Scan(src any) error {
 +	var b []byte
 +	switch v := src.(type) {
 +	case nil:
-+		clear(*s)
++		s.Clear()
 +		return nil
 +	case string:
 +		b = []byte(v)
@@ -68,12 +68,65 @@ index 07b8ee0..041e965 100644
 +	default:
 +		return fmt.Errorf("mapset: cannot scan %T into a set", src)
 +	}
-+	var elems []T
-+	if err := json.Unmarshal(b, &elems); err != nil {
++
++	var i []T
++	if err := json.Unmarshal(b, &i); err != nil {
 +		return err
 +	}
-+	clear(*s)
-+	s.append(elems...)
++	s.Clear()
++	s.append(i...)
 +
 +	return nil
++}
+diff --git a/threadunsafe_test.go b/threadunsafe_test.go
+index c670305..87d2f85 100644
+--- a/threadunsafe_test.go
++++ b/threadunsafe_test.go
+@@ -26,6 +26,8 @@ SOFTWARE.
+ package mapset
+ 
+ import (
++	"database/sql"
++	"database/sql/driver"
+ 	"encoding/json"
+ 	"testing"
+ )
+@@ -162,3 +164,38 @@ func (t *testStruct) UnmarshalJSON(b []byte) error {
+ 
+ 	return nil
+ }
++
++func TestSQLValuerScanner(t *testing.T) {
++	for name, newSet := range map[string]func(...int) Set[int]{
++		"safe":   NewSet[int],
++		"unsafe": NewThreadUnsafeSet[int],
++	} {
++		s := newSet(1, 2, 3)
++		v, err := s.(driver.Valuer).Value()
++		if err != nil {
++			t.Fatalf("%s: Value: %v", name, err)
++		}
++		b, ok := v.([]byte)
++		if !ok {
++			t.Fatalf("%s: Value returned %T, want []byte", name, v)
++		}
++
++		got := newSet(9)
++		sc := got.(sql.Scanner)
++		if err := sc.Scan(b); err != nil || !got.Equal(s) {
++			t.Errorf("%s: Scan([]byte) = %v, set %v", name, err, got)
++		}
++		if err := sc.Scan("[4]"); err != nil || !got.Equal(newSet(4)) {
++			t.Errorf("%s: Scan(string) = %v, set %v", name, err, got)
++		}
++		if err := sc.Scan(1.5); err == nil || !got.Equal(newSet(4)) {
++			t.Errorf("%s: Scan(float) err %v, set %v", name, err, got)
++		}
++		if err := sc.Scan("[oops"); err == nil || !got.Equal(newSet(4)) {
++			t.Errorf("%s: Scan(invalid) err %v, set %v", name, err, got)
++		}
++		if err := sc.Scan(nil); err != nil || got.Cardinality() != 0 {
++			t.Errorf("%s: Scan(nil) = %v, set %v", name, err, got)
++		}
++	}
 +}

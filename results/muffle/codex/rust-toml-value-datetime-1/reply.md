@@ -1,11 +1,7 @@
-I’ll check how `Value` deserializes datetimes, fix the mismatch, and verify that conversion to other formats still produces a string.
+I’ll check how `Value` deserializes datetimes and add a fix that preserves their string representation in other formats.
 
+`Value` currently passes datetimes to every target as strings. I’ve added handling for targets that request a TOML datetime, while keeping the existing string behavior for JSON and `String`. The regression test covers struct deserialization, `try_into`, and all four TOML datetime forms.
 
-`Value` was passing datetimes to every target as strings. The fix recognizes when the target specifically requests a TOML datetime and uses its datetime visitor. Other targets still receive a string. I’ve added regression coverage for nested structs, `try_into`, all four TOML datetime forms, and JSON conversion.
+Fixed `Value` deserialization to recognize TOML datetime targets, so struct deserialization and `try_into::<Datetime>()` now work. JSON and `String` conversions still receive plain strings.
 
-
-Fixed datetime deserialization from `toml::Value`, including nested struct fields and `try_into::<Datetime>()`.
-
-Conversions to `serde_json::Value` and strings retain their existing string behavior. Added regression tests covering all TOML datetime forms.
-
-Validation passed: 12 tests, the serde-only build check, formatting, and diff checks.
+Added regression coverage for all TOML datetime forms. All 12 testsuite tests pass, and the serde-only build check passes.

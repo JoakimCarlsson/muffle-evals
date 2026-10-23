@@ -1,5 +1,2 @@
-BytesMut method needs range validation before reserve; checking existing range helpers and allocation paths.
-
-
-Done. Added `BytesMut::extend_from_within`; bounds checked before growth.
-All 1,302 tests passed; no-default-features build and formatting passed.
+Done.
+Added `BytesMut::extend_from_within` with growth, bounds checks, docs, edge-case tests. All 1,303 tests passed; no-default-features build passed.

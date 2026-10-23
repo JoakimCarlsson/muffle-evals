@@ -1,47 +1,54 @@
 diff --git a/CHANGES.md b/CHANGES.md
-index 8991e82..e3de4ea 100644
+index 8991e82..6491367 100644
 --- a/CHANGES.md
 +++ b/CHANGES.md
-@@ -18,6 +18,8 @@ Unreleased
-   stream when no external pager runs, completing the partial
-   `I/O operation on closed file` fix from {pr}`3482`. {issue}`3449`
-   {pr}`3533`
-+- An optional argument of type {class}`Choice` or {class}`DateTime` no longer
-+  shows double square brackets in the usage help.
- 
- ## Version 8.4.1
- 
-diff --git a/src/click/types.py b/src/click/types.py
-index 1e9872e..30b0481 100644
---- a/src/click/types.py
-+++ b/src/click/types.py
-@@ -380,7 +380,12 @@ class Choice(ParamType[_ValueT_co], t.Generic[_ValueT_co]):
-         if param.required and param.param_type_name == "argument":
-             return f"{{{choices_str}}}"
- 
--        # Use square braces to indicate an option or optional argument.
-+        # An optional argument is already wrapped in square braces by
-+        # the argument itself.
-+        if param.param_type_name == "argument":
-+            return choices_str
+@@ -11,6 +11,8 @@ Unreleased
+ - A {class}`Group` with `invoke_without_command=True` marks its subcommand as
+   optional in the usage help, showing `[COMMAND]` instead of `COMMAND`.
+   {issue}`3059` {pr}`3507`
++- Optional arguments of type {class}`Choice` or {class}`DateTime` no longer
++  show doubled square brackets in the usage help.
+ - `echo_via_pager` flushes after each write, so passing a generator streams
+   output to the pager incrementally instead of staying hidden until the pipe
+   buffer fills. {issue}`3242` {issue}`2542` {pr}`3534`
+diff --git a/src/click/core.py b/src/click/core.py
+index d2db291..35a3370 100644
+--- a/src/click/core.py
++++ b/src/click/core.py
+@@ -3573,7 +3573,8 @@ class Argument(Parameter):
+             var = self.name.upper()
+         if self.deprecated:
+             var += "!"
+-        if not self.required:
++        # Choice and DateTime metavars are already wrapped in square brackets.
++        if not self.required and not (var.startswith("[") and var.endswith("]")):
+             var = f"[{var}]"
+         if self.nargs != 1:
+             var += "..."
+diff --git a/tests/test_arguments.py b/tests/test_arguments.py
+index 6015282..d7540a1 100644
+--- a/tests/test_arguments.py
++++ b/tests/test_arguments.py
+@@ -653,3 +653,22 @@ def test_argument_custom_class_can_override_type_cast_value_and_never_sees_unset
+     result = runner.invoke(cmd, pass_argv)
+     assert not result.exception
+     assert result.exit_code == 0
 +
-+        # Use square braces to indicate an option.
-         return f"[{choices_str}]"
- 
-     def get_missing_message(self, param: Parameter, ctx: Context | None) -> str:
-@@ -497,7 +502,14 @@ class DateTime(ParamType[datetime]):
-         return {"formats": self.formats, **super().to_info_dict()}
- 
-     def get_metavar(self, param: Parameter, ctx: Context) -> str:
--        return f"[{'|'.join(self.formats)}]"
-+        formats_str = "|".join(self.formats)
 +
-+        # An optional argument is already wrapped in square braces by
-+        # the argument itself.
-+        if param.param_type_name == "argument" and not param.required:
-+            return formats_str
++@pytest.mark.parametrize(
++    ("type", "kwargs", "expected"),
++    [
++        (click.Choice(["foo", "bar"]), {"nargs": -1}, "[foo|bar]..."),
++        (click.Choice(["foo", "bar"]), {"required": False}, "[foo|bar]"),
++        (click.Choice(["foo", "bar"]), {"required": True}, "{foo|bar}"),
++        (click.DateTime(formats=["%Y-%m-%d"]), {"required": False}, "[%Y-%m-%d]"),
++    ],
++)
++def test_optional_argument_metavar_single_brackets(runner, type, kwargs, expected):
++    @click.command()
++    @click.argument("method", type=type, **kwargs)
++    def cli(method):
++        pass
 +
-+        return f"[{formats_str}]"
- 
-     def _try_to_convert_date(self, value: t.Any, format: str) -> datetime | None:
-         try:
++    result = runner.invoke(cli, ["--help"])
++    assert f"[OPTIONS] {expected}" in result.output

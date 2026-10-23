@@ -179,7 +179,7 @@ Generate typescript `declare module` augmentation.
 
 ### `genDynamicTypeImport(specifier, name?, options)`
 
-Generate a typescript `typeof import()` type, using dot access for valid identifiers.
+Generate a typescript `typeof import()` type, optionally for a named export.
 
 ### `genInlineTypeImport(specifier, name, options)`
 

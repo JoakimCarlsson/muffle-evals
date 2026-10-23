@@ -39,9 +39,9 @@ export interface CookieParseOptions {
 export type Cookies = Record<string, string | undefined>;
 
 /**
- * Cookies object where repeated names map to arrays of values.
+ * Cookies object where a repeated name maps to an array of values.
  */
-export type MultiCookies = Record<string, string | string[] | undefined>;
+export type CookiesMultiple = Record<string, string | string[] | undefined>;
 
 /**
  * Stringify options.

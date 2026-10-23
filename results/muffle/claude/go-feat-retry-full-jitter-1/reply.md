@@ -1,9 +1,9 @@
-I added `WithFullJitter(next Backoff) Backoff` in `backoff.go`, next to the other jitter middleware. `gofmt` is clean and `go test ./...` passes.
+I added `WithFullJitter(next Backoff) Backoff` in `backoff.go`, next to the other jitter middleware. `go vet` and `go test` pass, and `gofmt` reports nothing.
 
 - **Normal case:** each `Next()` returns a random duration in `[0, base)`, where `base` is what the wrapped backoff returned.
-- **Stop:** if the wrapped backoff says stop, it returns `0, true`.
-- **Zero or negative base:** the base is returned unchanged, so nothing panics.
+- **Stop:** when the wrapped backoff says stop, it returns `0, true`.
+- **Zero or negative base:** the value is returned unchanged, and it doesn't panic.
 
-I also added three tests and an example to `backoff_test.go`. The tests cover the `[0, base)` range, stopping, and zero or negative bases. The README's Jitter section now shows `WithFullJitter` too.
+I added tests to `backoff_test.go` for the range, the stop case and zero/negative bases. I also added a short "full jitter" example to the Jitter section of `README.md`.
 
-Nothing is committed.
+I haven't committed anything.

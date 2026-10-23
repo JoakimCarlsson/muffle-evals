@@ -2074,17 +2074,15 @@ class Constant(Field[_ContantT]):
     _CHECK_ATTRIBUTE = False
 
     def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
-        """Initialize the field with its constant value."""
-        kwargs["load_default"] = missing_
+        required = kwargs.pop("required", False)
+        kwargs["load_default"] = constant
         kwargs["dump_default"] = constant
-        if kwargs.get("allow_none") is None:
-            kwargs["allow_none"] = constant is None
         super().__init__(**kwargs)
-        self.load_default = constant
+        self.required = required
         self.constant = constant
 
     def _validate_missing(self, value: typing.Any) -> None:
-        """Allow missing input to use the constant, even for required fields."""
+        """Allow missing values to resolve to the constant, even when required."""
         if value is not missing_:
             super()._validate_missing(value)
 

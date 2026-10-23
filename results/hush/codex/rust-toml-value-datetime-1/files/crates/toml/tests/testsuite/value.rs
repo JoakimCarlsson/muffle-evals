@@ -36,34 +36,37 @@ fn deserialize_datetime() {
         minimum_interval: i64,
     }
 
+    #[derive(Deserialize)]
+    struct Document {
+        settings: Settings,
+    }
+
     for datetime in [
         "2023-01-15T11:42:14-06:00",
+        "2023-01-15T11:42:14Z",
         "2023-01-15T11:42:14",
         "2023-01-15",
         "11:42:14",
     ] {
-        let document = format!("last_updated = {datetime}\nminimum_interval = 3600\n");
-        let expected: Settings = toml::from_str(&document).unwrap();
-        let value: toml::Value = toml::from_str(&document).unwrap();
-        assert_eq!(Settings::deserialize(value.clone()).unwrap(), expected);
-        assert_eq!(value.clone().try_into::<Settings>().unwrap(), expected);
-        let datetime_value = value.get("last_updated").unwrap().clone();
+        let input = format!("[settings]\nlast_updated = {datetime}\nminimum_interval = 3600\n");
+        let direct: Document = toml::from_str(&input).unwrap();
+        let table: toml::Table = toml::from_str(&input).unwrap();
+        let settings = table.get("settings").unwrap().clone();
+        assert_eq!(Settings::deserialize(settings).unwrap(), direct.settings);
+
+        let value = table["settings"]["last_updated"].clone();
         assert_eq!(
-            datetime_value
-                .clone()
-                .try_into::<toml::value::Datetime>()
-                .unwrap(),
-            expected.last_updated
+            value.clone().try_into::<toml::value::Datetime>().unwrap(),
+            direct.settings.last_updated
         );
         assert_eq!(
-            serde_json::Value::deserialize(datetime_value).unwrap(),
+            serde_json::Value::deserialize(value).unwrap(),
             serde_json::Value::String(datetime.to_owned())
         );
+        assert!(
+            String(datetime.to_owned())
+                .try_into::<toml::value::Datetime>()
+                .is_err()
+        );
     }
-
-    assert!(
-        String("2023-01-15".to_owned())
-            .try_into::<toml::value::Datetime>()
-            .is_err()
-    );
 }

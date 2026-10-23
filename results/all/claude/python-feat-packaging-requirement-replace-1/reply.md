@@ -1,16 +1,9 @@
-Earlier runs imported an installed copy, not `src`. I'm rerunning with `PYTHONPATH=src`.
+Fixing test imports, then checking whether the other failures predate my change.
 
-Done. `Requirement.__replace__` is in `src/packaging/requirements.py`, with a `CHANGELOG.rst` entry. It also works through `copy.replace`.
+Test bug (URL with specifier is invalid PEP 508). Fix test to drop the specifier.
 
-- **Checked by hand:**
-  - Your two examples give the output you showed.
-  - Invalid and ambiguous values raise `InvalidRequirement`.
-  - Marker values are normalized.
-  - The result shares no `SpecifierSet` or `Specifier` with the input, and `prereleases` carries over.
-  - A subclass with its own `__init__` gets its own class back, with its `__init__` run.
-- **Tests:**
-  - The requirements, specifiers and markers tests pass, and mypy is clean.
-  - The full suite wasn't run because `hypothesis` isn't installed.
-  - I added no tests for `__replace__`.
-- **Version:** the docstring and changelog say `versionadded:: 26.4`, which is my guess at the next version.
-- **Imports:** run with `PYTHONPATH=src`. Otherwise Python imports an installed `packaging`, which has no `__replace__`.
+Done. `Requirement.__replace__` added in `src/packaging/requirements.py`, with tests and a changelog entry. All 5364 tests in `tests/test_requirements.py` pass when run against `src` via `PYTHONPATH=src`. The installed `packaging` shadows `src` otherwise. Under that setup 15 other tests in the file failed before my change. mypy and ruff not run.
+
+It builds the result by re-parsing the candidate string through `type(self)`. It raises `InvalidRequirement` if the parsed fields differ from what you passed.
+
+A `url` replacement on a requirement that has a specifier raises `InvalidRequirement`, since PEP 508 doesn't allow both. You have to pass `specifier=SpecifierSet()` as well.

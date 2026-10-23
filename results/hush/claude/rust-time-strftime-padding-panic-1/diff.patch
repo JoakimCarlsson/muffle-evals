@@ -1,8 +1,8 @@
 diff --git a/time/src/format_description/parse/strftime.rs b/time/src/format_description/parse/strftime.rs
-index b98df69..24717b1 100644
+index b98df69..adc4efb 100644
 --- a/time/src/format_description/parse/strftime.rs
 +++ b/time/src/format_description/parse/strftime.rs
-@@ -76,10 +76,20 @@ impl<'input> Iterator for Tokenizer<'input> {
+@@ -76,10 +76,10 @@ impl<'input> Iterator for Tokenizer<'input> {
          }
  
          let (padding, component, advance) = match self.input.get(1) {
@@ -10,20 +10,23 @@ index b98df69..24717b1 100644
 -            Some(&b'-') => (Some(Padding::None), self.input[2], 3),
 -            Some(&b'0') => (Some(Padding::Zero), self.input[2], 3),
 -            Some(_) => (None, self.input[1], 2),
-+            Some(&modifier @ (b'_' | b'-' | b'0')) => {
-+                let Some(&component) = self.input.get(2) else {
-+                    return Some(Err(error_expected_end(Location {
-+                        byte: self.byte_pos + 2,
-+                    })));
-+                };
-+                let padding = match modifier {
-+                    b'_' => Padding::Space,
-+                    b'-' => Padding::None,
-+                    _ => Padding::Zero,
-+                };
-+                (Some(padding), component, 3)
-+            }
-+            Some(&component) => (None, component, 2),
++            Some(&b'_') => (Some(Padding::Space), self.input.get(2), 3),
++            Some(&b'-') => (Some(Padding::None), self.input.get(2), 3),
++            Some(&b'0') => (Some(Padding::Zero), self.input.get(2), 3),
++            Some(_) => (None, self.input.get(1), 2),
              _ => {
                  return Some(Err(error_expected_end(Location {
                      byte: self.byte_pos,
+@@ -87,6 +87,12 @@ impl<'input> Iterator for Tokenizer<'input> {
+             }
+         };
+ 
++        let Some(&component) = component else {
++            return Some(Err(error_expected_end(Location {
++                byte: self.byte_pos + (advance - 1) as u32,
++            })));
++        };
++
+         let component_loc = Location {
+             byte: self.byte_pos + (advance - 1) as u32,
+         };

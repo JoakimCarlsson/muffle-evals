@@ -1,11 +1,11 @@
 I’ll check how `Requirement` is parsed and tested, then add `__replace__` with validation and independent specifier copies.
 
-Parsing the assembled string will validate the result, but I’ll also compare the parsed fields with the requested ones to catch values that would silently change another field. I’ll copy specifiers separately to preserve their prerelease settings.
+Parsing the assembled requirement will validate its syntax, but it can also silently reinterpret a field—for example, `name="foo[bar]"` becomes a name plus an extra. I’ll check that fields survive parsing unchanged, then copy the specifiers separately to preserve their prerelease settings.
 
-The requirement tests pass against the workspace source, including the new round-trip and copying cases. I’m finishing the documentation and lint/type checks. The first test run used the installed `packaging`; I corrected the import path for the passing run.
+The requirement tests pass, including `copy.replace()`, subclass initialization, field validation, and independent prerelease settings. I’m finishing the documentation and style checks, then running the related marker and specifier tests.
 
-Implemented `Requirement.__replace__` with field validation, parsing normalization, independent specifier copies that preserve prerelease settings, and subclass construction.
+Added `Requirement.__replace__` with field validation, independent mutable copies, preserved prerelease settings, and subclass initialization support. It works directly and through `copy.replace()`.
 
-Added tests, documentation examples, and a changelog entry.
+Added tests, documentation, and a changelog entry.
 
-Validation: 7,414 tests passed; doctests, Ruff, and mypy passed.
+Validation: 9,746 tests passed; Ruff and mypy checks passed.

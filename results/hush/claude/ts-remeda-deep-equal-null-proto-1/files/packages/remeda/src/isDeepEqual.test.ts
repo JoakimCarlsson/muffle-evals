@@ -152,27 +152,24 @@ describe("objects", () => {
     expect(isDeepEqual(undefined as unknown, {})).toBe(false);
   });
 
-  describe("null-prototype objects", () => {
-    const nullProto = (obj: object): unknown =>
-      Object.assign(Object.create(null), obj);
+  describe("null prototype", () => {
+    const nullProto = (obj: object) => Object.assign(Object.create(null), obj);
 
-    test("equal to plain object", () => {
+    test("equals a plain object", () => {
       expect(isDeepEqual(nullProto({ a: 1 }), { a: 1 })).toBe(true);
     });
 
-    test("equal to plain object, reversed", () => {
-      expect(isDeepEqual({ a: 1 } as unknown, nullProto({ a: 1 }))).toBe(true);
+    test("equals a plain object (reversed)", () => {
+      expect(isDeepEqual({ a: 1 }, nullProto({ a: 1 }))).toBe(true);
     });
 
-    test("equal to each other", () => {
+    test("equals a null prototype object", () => {
       expect(isDeepEqual(nullProto({ a: 1 }), nullProto({ a: 1 }))).toBe(true);
     });
 
     test("nested", () => {
       expect(
-        isDeepEqual({ x: [nullProto({ a: 1 })] } as unknown, {
-          x: [{ a: 1 }],
-        }),
+        isDeepEqual({ x: [nullProto({ a: 1 })] }, { x: [{ a: 1 }] }),
       ).toBe(true);
     });
 
@@ -180,14 +177,11 @@ describe("objects", () => {
       expect(isDeepEqual(nullProto({ a: 1 }), { a: 2 })).toBe(false);
     });
 
-    test("not equal to class instances", () => {
-      class Foo {
-        public a = 1;
+    test("class instances are still not equal", () => {
+      class A {
+        a = 1;
       }
-      expect(isDeepEqual(nullProto({ a: 1 }), new Foo())).toBe(false);
-      expect(isDeepEqual(new Foo() as unknown, nullProto({ a: 1 }))).toBe(
-        false,
-      );
+      expect(isDeepEqual(nullProto({ a: 1 }), new A())).toBe(false);
     });
   });
 });

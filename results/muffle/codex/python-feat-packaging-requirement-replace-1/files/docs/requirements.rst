@@ -69,13 +69,14 @@ Usage
     not have such rules, and the check incorrectly disallows valid requirement
     strings from being parsed.
 
-Requirements can be copied with selected fields changed using
-:meth:`Requirement.__replace__`. On Python 3.13 and later, this also supports
-:func:`copy.replace`. Omitted fields are preserved, and the original requirement
-is left untouched. The result is parsed to validate and normalize its fields;
-invalid values or values that would change field boundaries raise
-:class:`InvalidRequirement`. Specifiers are copied independently, including
-their prerelease settings. Subclasses are constructed using their own initializer.
+Copying with changes
+--------------------
+
+Use ``Requirement.__replace__`` to create a validated copy with selected fields
+changed. It accepts keyword arguments ``name`` (a string), ``url`` (a string or
+``None``), ``extras`` (a set of strings), ``specifier`` (a
+:class:`~packaging.specifiers.SpecifierSet`), and ``marker`` (a
+:class:`~packaging.markers.Marker` or ``None``). Unspecified fields are retained.
 
 .. doctest::
 
@@ -86,10 +87,17 @@ their prerelease settings. Subclasses are constructed using their own initialize
     >>> req.__replace__(specifier=SpecifierSet(">=3.0"), marker=None)
     <Requirement('requests[security]>=3.0')>
 
+On Python 3.13 and later, ``copy.replace(req, name="flask")`` also works.
+Calling ``req.__replace__()`` creates an equal but distinct object. Mutable
+fields are copied, including individual specifiers, and explicit prerelease
+settings are preserved. Subclasses are constructed using their own initializer.
+Invalid fields or combinations raise :class:`InvalidRequirement`, including
+values that would be interpreted as different fields when parsed. Unknown
+keywords raise :class:`TypeError`.
+
 Reference
 ---------
 
 .. automodule:: packaging.requirements
     :members:
     :exclude-members: __init__, __new__
-    :special-members: __replace__

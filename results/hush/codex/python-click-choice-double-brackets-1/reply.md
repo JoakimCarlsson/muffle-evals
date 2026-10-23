@@ -1,5 +1,5 @@
-Usage formatting needs fix. Checking argument metavars and tests.
+Fix targets optional argument usage brackets; checking formatter and tests.
 
 
 Done.
-Optional Choice and DateTime arguments show single brackets. Added regression coverage; 1,672 tests passed.
+Optional arguments reuse existing brackets. Choice/DateTime regression tests added. Suite: 1664 passed, 24 skipped, 31000 deselected, 1 xfailed.

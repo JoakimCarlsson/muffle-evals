@@ -215,10 +215,10 @@ class TestStopConditions(unittest.TestCase):
 
 class TestWaitConditions(unittest.TestCase):
     def test_exception_sleep(self):
-        errors = [ValueError("first"), TypeError("second")]
+        errors = [ValueError("retry later"), TypeError("other error")]
         predicate = mock.Mock(side_effect=[1.5, 60.0])
         sleep = mock.Mock()
-        attempt = mock.Mock(side_effect=errors + ["success"])
+        attempt = mock.Mock(side_effect=[*errors, "success"])
         r = Retrying(
             wait=tenacity.wait_exception(predicate=predicate),
             stop=tenacity.stop_after_attempt(3),
@@ -229,8 +229,8 @@ class TestWaitConditions(unittest.TestCase):
         self.assertEqual(predicate.call_args_list, [mock.call(e) for e in errors])
         self.assertEqual(sleep.call_args_list, [mock.call(1.5), mock.call(60.0)])
 
-    def test_exception_sleep_without_exception(self):
-        predicate = mock.Mock()
+    def test_exception_sleep_requires_exception(self):
+        predicate = mock.Mock(return_value=1)
         r = Retrying(
             wait=tenacity.wait_exception(predicate),
             retry=tenacity.retry_if_result(lambda result: result is None),
@@ -240,19 +240,19 @@ class TestWaitConditions(unittest.TestCase):
             r(lambda: None)
         predicate.assert_not_called()
 
-    def test_exception_sleep_without_outcome(self):
-        predicate = mock.Mock()
-        state = RetryCallState(None, None, (), {})
-        with self.assertRaisesRegex(RuntimeError, "before outcome was set"):
-            tenacity.wait_exception(predicate)(state)
+        state = RetryCallState(r, None, (), {})
+        with self.assertRaisesRegex(RuntimeError, "requires an exception"):
+            r.wait(state)
         predicate.assert_not_called()
 
-    def test_exception_sleep_combine(self):
-        error = BaseException("failed")
-        state = make_retry_state(1, 0, tenacity.Future.construct(1, error, True))
+    def test_exception_sleep_combines(self):
+        error = BaseException("retry")
         predicate = mock.Mock(return_value=2.5)
-        wait = tenacity.wait_exception(predicate) + tenacity.wait_fixed(1)
-        self.assertEqual(wait(state), 3.5)
+        state = make_retry_state(1, 0)
+        state.set_exception((type(error), error, None))
+        wait = tenacity.wait_exception(predicate) + tenacity.wait_fixed(3)
+
+        self.assertEqual(wait(state), 5.5)
         predicate.assert_called_once_with(error)
 
     def test_no_sleep(self):

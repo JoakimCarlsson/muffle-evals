@@ -66,6 +66,10 @@ import {} from "https://esm.sh/knitwork";
 
 Generate an ESM dynamic `import()` statement.
 
+### `genDynamicTypeImport(specifier, name?, options)`
+
+Generate a typescript `typeof import()` type, optionally for a named export.
+
 ### `genExport(specifier, exports?, options)`
 
 Generate an ESM `export` statement.
@@ -176,10 +180,6 @@ Generate a string with double or single quotes and handle escapes.
 ### `genAugmentation(specifier)`
 
 Generate typescript `declare module` augmentation.
-
-### `genDynamicTypeImport(specifier, name?, options)`
-
-Generate a typescript `typeof import()` type, optionally for a named export.
 
 ### `genInlineTypeImport(specifier, name, options)`
 

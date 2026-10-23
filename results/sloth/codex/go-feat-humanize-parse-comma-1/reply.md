@@ -1,7 +1,9 @@
-I’ll check the comma formatters and package conventions, add the parsers, then build and run the existing tests.
+I’ll check the existing formatters and tests, add the parsers in the same style, and run the build and test suite.
 
-Both functions can live in `comma.go` using the existing `strings` and `strconv` imports. No callers, fixtures, config, or export lists need changes. I’ll remove commas and parse the result, returning zero on any error, including overflow. This leaves the formatters unchanged and adds no dependencies or options.
+The change needs two exported functions in `comma.go` and tests in `comma_test.go`; no existing callers, fixtures, or configuration need changes. I’ll remove commas and use Go’s standard numeric parsers, returning zero on errors, including overflow. Comma placement validation and locale options are outside this request.
 
-Added `ParseComma` and `ParseCommaf` in `comma.go`. Both ignore commas, support plain and negative numbers, and return zero with an error for invalid or overflowing input.
+Added `ParseComma` and `ParseCommaf`. Both ignore commas and return zero with an error for invalid or overflowing input.
 
-Validation passed: `go build ./...`, `go test ./...`, and `git diff --check`.
+Tests cover round trips, integer limits, float extremes, negative and plain numbers, and invalid inputs.
+
+`go build ./...` and `go test ./...` pass.

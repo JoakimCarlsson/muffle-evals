@@ -1,5 +1,2 @@
-Compiler stack handling needs checking; then shared fix, build, existing tests.
-
-
-Done.
-Reverse loops pop condition flags. Existing tests pass; compiler/VM build pass. Full build fails: `function main is undeclared in the main package`.
+Done. Reverse loops now pop condition flags; regression tests cover matches, misses, empty arrays.
+`go test ./...` passes; build fails: `function main is undeclared`.

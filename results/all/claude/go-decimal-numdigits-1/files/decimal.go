@@ -1255,12 +1255,14 @@ func (d Decimal) Ln(precision int32) (Decimal, error) {
 func (d Decimal) NumDigits() int {
 	v := d.getValue()
 	if v.IsInt64() {
+		// math.Log10 is inexact near powers of ten, so count with integer division
 		u := uint64(v.Int64())
 		if v.Sign() < 0 {
 			u = -u
 		}
 		n := 1
-		for ; u >= 10; u /= 10 {
+		for u >= 10 {
+			u /= 10
 			n++
 		}
 		return n

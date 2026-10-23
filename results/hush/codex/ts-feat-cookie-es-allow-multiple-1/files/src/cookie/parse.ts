@@ -54,17 +54,18 @@ export function parse(str: string, options?: CookieParseOptions): Cookies<boolea
       continue;
     }
 
-    // Preserve the first value unless duplicate values are requested.
     const previous = obj[key];
-    if (options?.allowMultiple && Object.hasOwn(obj, key)) {
-      const value = dec(valueSlice(str, eqIdx + 1, endIdx));
-      if (Array.isArray(previous)) {
-        previous.push(value);
-      } else {
-        obj[key] = [previous, value];
-      }
-    } else if (previous === undefined) {
+    if (previous === undefined) {
       obj[key] = dec(valueSlice(str, eqIdx + 1, endIdx));
+    } else if (options?.allowMultiple) {
+      const value = dec(valueSlice(str, eqIdx + 1, endIdx));
+      if (value !== undefined) {
+        if (Array.isArray(previous)) {
+          previous.push(value);
+        } else {
+          obj[key] = [previous, value];
+        }
+      }
     }
 
     index = endIdx + 1;

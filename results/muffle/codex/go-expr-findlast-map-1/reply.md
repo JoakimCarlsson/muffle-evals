@@ -1,9 +1,9 @@
-I’ll trace how the reverse searches affect the VM stack, fix the issue, and add regression tests for map values.
+I’ll trace how the reverse-search builtins use the VM stack, fix the issue, and add regression coverage for map values.
 
-The reverse loop leaves its condition boolean on the stack on every iteration and at exhaustion. Map construction then reads that boolean as a key. I’ve added cleanup on both paths and regression tests for matches, no matches, and empty arrays, with optimization enabled and disabled. The full test suite is running now.
+The reverse loop leaves its loop-condition boolean on the stack on every iteration and when it finishes. That extra value makes map construction read a boolean as a key. I’ve added cleanup on both paths and regression cases for matches at different positions, no match, and empty arrays, with optimization enabled and disabled.
 
-Fixed both builtins by cleaning up the reverse loop’s condition boolean, which was left on the VM stack and mistaken for a map key.
+Fixed both builtins by removing leftover loop-condition booleans from the VM stack.
 
-Added regression tests covering matches, no matches, and empty arrays, with optimization enabled and disabled.
+Added regression coverage for map values with matches, no matches, and empty arrays, with optimization enabled and disabled.
 
-All tests pass: `go test ./...`.
+Validation: `go test ./...` passes.

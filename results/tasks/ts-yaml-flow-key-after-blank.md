@@ -58,15 +58,15 @@ index 1443cc1..e5599d1 100644
 | agent | setup | hidden tests | lines +/- (code) | test lines | output tokens | cost |
 |---|---|---|---:|---:|---:|---:|
 | claude | base | pass | +1/-1 | 8 | 5,823 | $0.227 |
-| claude | muffle | pass | +1/-1 | 18 | 9,809 | $0.313 |
-| claude | hush | pass | +4/-1 | 10 | 4,794 | $0.195 |
-| claude | sloth | pass | +4/-1 | 0 | 2,823 | $0.124 |
-| claude | all | pass | +1/-1 | 0 | 2,503 | $0.114 |
+| claude | muffle | pass | +1/-1 | 13 | 3,539 | $0.122 |
+| claude | hush | pass | +1/-1 | 17 | 2,738 | $0.116 |
+| claude | sloth | pass | +1/-1 | 8 | 4,363 | $0.138 |
+| claude | all | pass | +1/-1 | 14 | 3,815 | $0.145 |
 | codex | base | **FAIL** | +1/-1 | 51 | 2,442 | - |
-| codex | muffle | pass | +1/-1 | 36 | 1,901 | - |
-| codex | hush | pass | +1/-1 | 36 | 1,467 | - |
-| codex | sloth | pass | +1/-1 | 0 | 2,109 | - |
-| codex | all | **FAIL** | +1/-1 | 0 | 1,547 | - |
+| codex | muffle | pass | +1/-1 | 43 | 2,069 | - |
+| codex | hush | pass | +1/-1 | 43 | 1,955 | - |
+| codex | sloth | pass | +1/-1 | 36 | 1,969 | - |
+| codex | all | pass | +1/-1 | 35 | 1,562 | - |
 
 ### claude, base: pass
 
@@ -145,6 +145,73 @@ Files: [src/parse/parser.ts](../muffle/claude/ts-yaml-flow-key-after-blank-1/fil
 
 ```diff
 diff --git a/src/parse/parser.ts b/src/parse/parser.ts
+index 1443cc1..08a2397 100644
+--- a/src/parse/parser.ts
++++ b/src/parse/parser.ts
+@@ -698,7 +698,7 @@ export class Parser {
+                 })
+                 return
+               }
+-            } else if (atMapIndent) {
++            } else if (atMapIndent && (it.sep || it.explicitKey || it.value)) {
+               map.items.push({ start })
+             }
+             this.stack.push(bv)
+diff --git a/tests/doc/parse.ts b/tests/doc/parse.ts
+index 1364d0a..5b5cdd3 100644
+--- a/tests/doc/parse.ts
++++ b/tests/doc/parse.ts
+@@ -269,6 +269,19 @@ test('stream end after : indicator (#120)', () => {
+   })
+ })
+ 
++test('flow collection key after blank or comment line', () => {
++  for (const src of ['1: 2\n\n[3]: 4', '1: 2\n# c\n[3]: 4']) {
++    const doc = YAML.parseDocument(src)
++    expect(doc.errors).toHaveLength(0)
++    expect(doc.toJS({ mapAsMap: true })).toEqual(
++      new Map<unknown, unknown>([
++        [1, 2],
++        [[3], 4]
++      ])
++    )
++  }
++})
++
+ test('comment between key & : in flow collection (#149)', () => {
+   const src1 = '{"a"\n#c\n:1}'
+   expect(YAML.parse(src1)).toEqual({ a: 1 })
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+Found it: the parser puts the blank line in its own map item and then starts a second item for the flow key. I'm reading `blockMap` in the parser to see why.
+
+Fixed. Your example, `1: 2\n\n[3]: 4`, and the version with a comment line instead of the blank line now parse with no errors.
+
+**Cause:** the bug was in the CST parser, not the composer. When a block map got a flow collection key after a blank or comment line, `blockMap` in `src/parse/parser.ts` always started a new map item for the key. The empty item holding the blank line was left behind. The composer then took that leftover item for trailing map-comment content and raised `IMPOSSIBLE`.
+
+**Fix:** at `src/parse/parser.ts:701`, a new item is now pushed only when the current item already has a separator, an explicit key or a value. Otherwise the key goes into the current item, which is how scalar keys already behave.
+
+**Verification:**
+- **Spec example:** I ran Example 2.11 (mapping between sequences) with a blank line before the flow-key line. It parses correctly, as does `{a: 1}` as a key.
+- **New test:** I added one in `tests/doc/parse.ts` covering the blank-line and comment-line cases.
+- **Test run:** 954 tests pass. The two suites that failed to load, `json-test-suite` and `yaml-test-suite`, need their test-data directories, which aren't in this checkout, so those cases did not run.
+
+Nothing is committed.
+
+</details>
+
+### claude, hush: pass
+
+Files: [src/parse/parser.ts](../hush/claude/ts-yaml-flow-key-after-blank-1/files/src/parse/parser.ts), [tests/doc/parse.ts](../hush/claude/ts-yaml-flow-key-after-blank-1/files/tests/doc/parse.ts)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/src/parse/parser.ts b/src/parse/parser.ts
 index 1443cc1..78b841b 100644
 --- a/src/parse/parser.ts
 +++ b/src/parse/parser.ts
@@ -158,30 +225,29 @@ index 1443cc1..78b841b 100644
              }
              this.stack.push(bv)
 diff --git a/tests/doc/parse.ts b/tests/doc/parse.ts
-index 1364d0a..8fccd88 100644
+index 1364d0a..8ad476a 100644
 --- a/tests/doc/parse.ts
 +++ b/tests/doc/parse.ts
-@@ -951,3 +951,21 @@ describe('stringKeys', () => {
+@@ -951,3 +951,20 @@ describe('stringKeys', () => {
      expect(doc.errors).toMatchObject([{ code: 'NON_STRING_KEY' }])
    })
  })
 +
-+describe('flow collection key after blank or comment line', () => {
-+  for (const [name, src] of [
-+    ['blank line', '1: 2\n\n[3]: 4'],
-+    ['comment line', '1: 2\n# c\n[3]: 4']
-+  ]) {
-+    test(name, () => {
-+      const doc = YAML.parseDocument(src)
-+      expect(doc.errors).toHaveLength(0)
-+      expect(doc.toJS({ mapAsMap: true })).toEqual(
-+        new Map<unknown, unknown>([
-+          [1, 2],
-+          [[3], 4]
-+        ])
-+      )
-+    })
-+  }
++describe('flow collection key after blank line or comment', () => {
++  test('blank line', () => {
++    const doc = YAML.parseDocument('1: 2\n\n[3]: 4\n')
++    expect(doc.errors).toHaveLength(0)
++    expect(doc.toJS({ mapAsMap: true })).toMatchObject(
++      new Map<unknown, unknown>([
++        [1, 2],
++        [[3], 4]
++      ])
++    )
++  })
++  test('comment line', () => {
++    const doc = YAML.parseDocument('1: 2\n# c\n{ a: 3 }: 4\n')
++    expect(doc.errors).toHaveLength(0)
++  })
 +})
 ```
 
@@ -189,145 +255,17 @@ index 1364d0a..8fccd88 100644
 
 <details><summary>reply</summary>
 
-I accidentally ran a stray `cat` that blocked on stdin. I'm cleaning that up, then I'll go back to the parser.
+Saying it: found cause in `src/parse/parser.ts` default case. Flow key after blank line pushes a new empty item, orphaning the blank-line item. Fixing.
 
-Tool output is being elided; I'll run the tokenizer directly instead.
+Done. In `src/parse/parser.ts`, a flow-collection key after a blank or comment line no longer starts a second empty map item. That empty item caused the `IMPOSSIBLE` error. I added two regression tests to `tests/doc/parse.ts`.
 
-Fixed in the parser. Now I'll add a test and run the suite.
-
-The `IMPOSSIBLE` error is fixed. Your Example 2.11 and the smaller `1: 2\n\n[3]: 4` case both parse correctly now.
-
-**Cause:** this was a CST parser bug in `src/parse/parser.ts`. A blank or comment line before the flow collection had already created an empty map item. When the `[` arrived, the parser pushed a second empty item. The key then landed on that second item, and the composer saw the first one as stray content.
-
-**Fix:** the parser now adds a new item for a block value only when the previous item already has a separator, a value or an explicit key. It no longer adds one when the previous item is just leftover blank-line or comment tokens.
-
-I checked these inputs by hand, and all parse without errors:
-- a blank line before `[3]: 4`
-- a comment line before `[3]: 4`
-- a mixed explicit and flow-key map
-- a `{a: 1}` key
-- an anchored `&a [3]` key
-
-I added regression tests for the blank-line and comment-line cases in `tests/doc/parse.ts`.
-
-**Tests:** all 956 tests that ran pass. Two test files, `json-test-suite.ts` and `yaml-test-suite.ts`, didn't run. Their fixture directories (`tests/json-test-suite/test_parsing` and `tests/yaml-test-suite/src`) aren't checked out here, so the full YAML test suite hasn't been run against this change.
-
-Earlier I made a stray `cat` call that wrote to `/tmp`. I deleted that file and removed my scratch directory. Nothing is committed.
-
-The background command from earlier, the one that hung on my stray `cat`, was stopped after hitting its time limit. I'm not restarting it because the fix doesn't need it. It had only printed source lines and tried to run a tokenizer script, and I re-ran that script successfully afterward.
-
-The fix and the tests are unaffected. The only open item is that the YAML and JSON test-suite fixtures aren't checked out here, so those two files didn't run.
-
-</details>
-
-### claude, hush: pass
-
-Files: [src/parse/parser.ts](../hush/claude/ts-yaml-flow-key-after-blank-1/files/src/parse/parser.ts), [tests/doc/parse.ts](../hush/claude/ts-yaml-flow-key-after-blank-1/files/tests/doc/parse.ts)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/src/parse/parser.ts b/src/parse/parser.ts
-index 1443cc1..5308eb7 100644
---- a/src/parse/parser.ts
-+++ b/src/parse/parser.ts
-@@ -698,7 +698,10 @@ export class Parser {
-                 })
-                 return
-               }
--            } else if (atMapIndent) {
-+            } else if (
-+              atMapIndent &&
-+              (it.sep || it.value || it.explicitKey || it.key)
-+            ) {
-               map.items.push({ start })
-             }
-             this.stack.push(bv)
-diff --git a/tests/doc/parse.ts b/tests/doc/parse.ts
-index 1364d0a..7dc7611 100644
---- a/tests/doc/parse.ts
-+++ b/tests/doc/parse.ts
-@@ -951,3 +951,13 @@ describe('stringKeys', () => {
-     expect(doc.errors).toMatchObject([{ code: 'NON_STRING_KEY' }])
-   })
- })
-+
-+describe('flow collection as block map key after blank or comment line', () => {
-+  for (const sep of ['\n', '\n\n', '\n# comment\n']) {
-+    test(JSON.stringify(sep), () => {
-+      const doc = YAML.parseDocument(`1: 2${sep}[3]: 4`)
-+      expect(doc.errors).toHaveLength(0)
-+      expect(doc.value.size).toBe(2)
-+    })
-+  }
-+})
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-Look at the flow-collection handling at line 765+ and 880+.
-
-Adding regression test to `tests/doc/parse.ts`.
-
-Test bug: `doc.contents` undefined in this version; use `doc.toJS`-style check.
-
-Helper shape mismatch; simplify the assertion.
-
-Done. `src/parse/parser.ts` `blockMap` no longer pushes a spurious empty item when a flow collection starts after a blank or comment line. I added regression tests in `tests/doc/parse.ts`; they fail without the fix and pass with it. All 957 tests pass, but `json-test-suite.ts` and `yaml-test-suite.ts` can't load here (they error on their test-suite directories), so those suites didn't run.
+Your Example 2.11 YAML wasn't run verbatim. The tests cover `1: 2\n\n[3]: 4` and a comment-line variant, and they pass along with the 955 other tests. `tests/yaml-test-suite.ts` and one other test file fail to load because the test-suite files under `tests/yaml-test-suite/src` are missing here, so they didn't run.
 
 </details>
 
 ### claude, sloth: pass
 
-Files: [src/parse/parser.ts](../sloth/claude/ts-yaml-flow-key-after-blank-1/files/src/parse/parser.ts)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/src/parse/parser.ts b/src/parse/parser.ts
-index 1443cc1..b498296 100644
---- a/src/parse/parser.ts
-+++ b/src/parse/parser.ts
-@@ -698,7 +698,10 @@ export class Parser {
-                 })
-                 return
-               }
--            } else if (atMapIndent) {
-+            } else if (
-+              atMapIndent &&
-+              !(bv.type === 'flow-collection' && !it.sep && !it.explicitKey)
-+            ) {
-               map.items.push({ start })
-             }
-             this.stack.push(bv)
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-Let me look at the block-map handler where a flow collection starts a key.
-
-My test expectation was wrong (the key stringifies); the parse itself works. Checking the other failures and cleaning up.
-
-Fixed. `1: 2\n\n[3]: 4` and the Example 2.11 document now parse without an `IMPOSSIBLE` error. Parsing `1: 2\n# c\n[3]: 4` also no longer throws.
-
-**Cause:** in `src/parse/parser.ts`, `blockMap()` pushed a new empty map item whenever a flow collection started at the map's indent. After a blank line or comment, the previous item already held those leading tokens as an empty placeholder. The new item took the key, which left an orphan item behind. The composer then reported that orphan as a map comment with trailing content.
-
-**Fix:** a flow collection that starts a key now reuses that placeholder item when it has no `sep` and isn't an explicit key. The change is a small extra condition on the `atMapIndent` push.
-
-**Tests:**
-- The existing suite passes: 954 tests.
-- `tests/json-test-suite.ts` and `tests/yaml-test-suite.ts` can't run, because their test-suite directories are missing. They fail the same way without my change.
-- I checked your cases with a throwaway test and then deleted it. I added no permanent regression test, since you didn't ask for one. The `[3]` key stringifies as `"[ 3 ]"` in a plain JS object, as before.
-
-</details>
-
-### claude, all: pass
-
-Files: [src/parse/parser.ts](../all/claude/ts-yaml-flow-key-after-blank-1/files/src/parse/parser.ts)
+Files: [src/parse/parser.ts](../sloth/claude/ts-yaml-flow-key-after-blank-1/files/src/parse/parser.ts), [tests/doc/parse.ts](../sloth/claude/ts-yaml-flow-key-after-blank-1/files/tests/doc/parse.ts)
 
 <details><summary>diff</summary>
 
@@ -345,15 +283,109 @@ index 1443cc1..945337c 100644
                map.items.push({ start })
              }
              this.stack.push(bv)
+diff --git a/tests/doc/parse.ts b/tests/doc/parse.ts
+index 1364d0a..4cac92a 100644
+--- a/tests/doc/parse.ts
++++ b/tests/doc/parse.ts
+@@ -219,6 +219,14 @@ describe('flow collection keys', () => {
+     )
+   })
+ 
++  test('flow collection as block map key after blank line or comment', () => {
++    for (const gap of ['\n', '# c\n']) {
++      const doc = YAML.parseDocument(`1: 2\n${gap}[3]: 4`)
++      expect(doc.errors).toHaveLength(0)
++      expect(doc.toJS()).toMatchObject({ 1: 2, '[ 3 ]': 4 })
++    }
++  })
++
+   test('empty scalar as last flow collection value (#550)', () => {
+     const doc = YAML.parseDocument<YAML.YAMLMap, false>('{c:}')
+     expect(doc.value).toMatchObject(_map({ c: { value: null } }))
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Cause: blank line leaves empty `{start:[newline]}` item. Flow-collection key then pushes a second item. Fixing in the parser.
+Still tracing where the blank-line item gets split from the flow key in the parser.
 
-Done. `src/parse/parser.ts` `blockMap`: the fallback branch now pushes a new item on `atNextItem`, not `atMapIndent`, so a flow-collection key reuses the blank-line item. I checked your example, `1: 2\n\n[3]: 4`, a comment-line variant and a `{a: b}` key, and all parse correctly. 954 tests pass. The two suite files fail to load because the `tests/json-test-suite` and `tests/yaml-test-suite` directories are missing. I added no regression test.
+Line range was off; applying the edit directly.
+
+Parser fix works; only my assertion's expected key was wrong.
+
+The `IMPOSSIBLE` error is fixed. A flow collection can now be a block map key after a blank line or a comment line.
+
+**Cause:** In `src/parse/parser.ts`, a blank or comment line before a key becomes its own start-only item in the block map. When the next token was a flow collection (`[` or `{`), the parser added a new item at the map's indent without checking whether that blank item was still open. The blank item stayed in the map as an orphan, and the composer then raised `IMPOSSIBLE`. Scalar keys already avoided this by using the open item.
+
+**Fix:** In `blockMap`, I changed `else if (atMapIndent)` to `else if (atNextItem)`. A new item is now pushed only after a completed item, not onto a blank start-only one.
+
+**Test:** I added a case to `tests/doc/parse.ts` covering both a blank line and a `# c` comment line before `[3]: 4`.
+
+**Results:** 955 tests pass. `tests/json-test-suite.ts` and `tests/yaml-test-suite.ts` fail to load because their fixture directories (`tests/json-test-suite/test_parsing` and `tests/yaml-test-suite/src`) are missing. They failed the same way before my change.
+
+I did not run your exact Example 2.11 file. My last check on it didn't run (a Node error), and I didn't retry it. The `1: 2\n\n[3]: 4` case from your report is covered by the new test.
+
+</details>
+
+### claude, all: pass
+
+Files: [src/parse/parser.ts](../all/claude/ts-yaml-flow-key-after-blank-1/files/src/parse/parser.ts), [tests/doc/parse.ts](../all/claude/ts-yaml-flow-key-after-blank-1/files/tests/doc/parse.ts)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/src/parse/parser.ts b/src/parse/parser.ts
+index 1443cc1..cdf68a6 100644
+--- a/src/parse/parser.ts
++++ b/src/parse/parser.ts
+@@ -698,7 +698,7 @@ export class Parser {
+                 })
+                 return
+               }
+-            } else if (atMapIndent) {
++            } else if (atMapIndent && (it.sep || it.explicitKey)) {
+               map.items.push({ start })
+             }
+             this.stack.push(bv)
+diff --git a/tests/doc/parse.ts b/tests/doc/parse.ts
+index 1364d0a..311a276 100644
+--- a/tests/doc/parse.ts
++++ b/tests/doc/parse.ts
+@@ -183,6 +183,20 @@ describe('flow collection keys', () => {
+     }
+   })
+ 
++  test.each(['\n', '# c\n'])(
++    'flow collection key after blank or comment line %j',
++    gap => {
++      const doc = YAML.parseDocument(`1: 2\n${gap}[3]: 4\n`)
++      expect(doc.errors).toHaveLength(0)
++      expect(doc.toJS({ mapAsMap: true })).toEqual(
++        new Map<unknown, unknown>([
++          [1, 2],
++          [[3], 4]
++        ])
++      )
++    }
++  )
++
+   test('flow collection as first block map key (redhat-developer/vscode-yaml#712)', () => {
+     const doc = YAML.parseDocument(source`
+       a:
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+Tracing the CST: the blank line becomes its own item. Reading the flow-collection start handler next.
+
+Adding a regression test, then running the suite.
+
+Done. In `src/parse/parser.ts` `blockMap`, a flow collection key no longer gets a second item after a blank or comment line. I added a regression test in `tests/doc/parse.ts` that covers both cases.
+
+All 956 tests pass. The `json-test-suite` and `yaml-test-suite` files fail to load because their submodule directories are missing here, so they didn't run. I didn't run your Example 2.11 file directly.
 
 </details>
 
@@ -478,38 +510,215 @@ index 1443cc1..9b18906 100644
              }
              this.stack.push(bv)
 diff --git a/tests/doc/parse.ts b/tests/doc/parse.ts
-index 1364d0a..c3a0739 100644
+index 1364d0a..4c6761f 100644
 --- a/tests/doc/parse.ts
 +++ b/tests/doc/parse.ts
-@@ -172,6 +172,42 @@ test('long scalar value in flow map (#36)', () => {
- })
+@@ -20,6 +20,49 @@ if (typeof window === 'undefined') {
+   }
+ }
  
- describe('flow collection keys', () => {
-+  test.each(['', '\n', '# comment\n', '\n# comment\n'])(
-+    'flow keys after separator %j',
-+    separator => {
-+      for (const key of ['[3]', '{3: 4}']) {
-+        const src = `1: 2\n${separator}${key}: 4\n`
-+        const doc = YAML.parseDocument(src)
-+        expect(doc.errors).toHaveLength(0)
-+        expect(doc.toJS({ mapAsMap: true })).toEqual(
-+          new Map<number | number[] | Map<number, number>, number>([
-+            [1, 2],
-+            [key === '[3]' ? [3] : new Map([[3, 4]]), 4]
-+          ])
++describe('flow collection keys in block maps', () => {
++  test.each(['[3]', '{ a: 3 }'])('%s after blank lines or comments', key => {
++    for (const before of ['', '\n', '# comment\n', '\n# comment\n\n']) {
++      const src = `1: 2\n${before}${key}: 4\n`
++      const doc = YAML.parseDocument(src)
++      expect(doc.errors).toHaveLength(0)
++      expect(doc.toJS({ mapAsMap: true })).toEqual(
++        new Map([
++          [1, 2],
++          [YAML.parse(key, { mapAsMap: true }), 4]
++        ])
++      )
++      const items = Array.from((doc.value as YAML.YAMLMap).values.values())
++      expect(items).toHaveLength(2)
++      if (before.includes('#'))
++        expect(items[1].key).toHaveProperty(
++          'commentBefore',
++          before.endsWith('\n\n') ? ' comment\n' : ' comment'
 +        )
-+        expect(String(doc).startsWith(`1: 2\n${separator}? `)).toBe(true)
-+      }
++      if (before.startsWith('\n'))
++        expect(items[1].key).toHaveProperty('spaceBefore', true)
 +    }
-+  )
++  })
 +
-+  test('mapping between sequences with a blank line before a flow key', () => {
++  test('Example 2.11 with an implicit flow sequence key', () => {
 +    const src = `? - Detroit Tigers
 +  - Chicago cubs
 +: - 2001-07-23
 +
 +[New York Yankees, Atlanta Braves]: [2001-07-02, 2001-08-12, 2001-08-14]
 +`
++    expect(YAML.parse(src, { mapAsMap: true })).toEqual(
++      new Map([
++        [['Detroit Tigers', 'Chicago cubs'], ['2001-07-23']],
++        [
++          ['New York Yankees', 'Atlanta Braves'],
++          ['2001-07-02', '2001-08-12', '2001-08-14']
++        ]
++      ])
++    )
++  })
++})
++
+ describe('scalars', () => {
+   test('empty block scalar at end of document', () => {
+     const docs = YAML.parseAllDocuments('|\n---\nfoo')
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+I’ll check how blank lines and comments are handled before flow collection keys, fix the parser, and add regression coverage.
+
+The parser creates an extra map item when a flow key follows a blank line or comment. That leaves the preceding item looking like a trailing map comment, which triggers `IMPOSSIBLE`. The fix reuses the pending item and preserves its whitespace and comments.
+
+Fixed the parser to reuse the pending map item when a flow collection key follows blank lines or comments, preventing the `IMPOSSIBLE` error.
+
+Added regression coverage for sequence and mapping keys, comment preservation, and your spec example.
+
+Validation: 957 tests passed; type checks and lint passed. Two external test suites could not run because their fixture directories are missing.
+
+</details>
+
+### codex, hush: pass
+
+Files: [src/parse/parser.ts](../hush/codex/ts-yaml-flow-key-after-blank-1/files/src/parse/parser.ts), [tests/doc/parse.ts](../hush/codex/ts-yaml-flow-key-after-blank-1/files/tests/doc/parse.ts)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/src/parse/parser.ts b/src/parse/parser.ts
+index 1443cc1..910c67e 100644
+--- a/src/parse/parser.ts
++++ b/src/parse/parser.ts
+@@ -698,7 +698,7 @@ export class Parser {
+                 })
+                 return
+               }
+-            } else if (atMapIndent) {
++            } else if (atNextItem || (atMapIndent && it.value)) {
+               map.items.push({ start })
+             }
+             this.stack.push(bv)
+diff --git a/tests/doc/parse.ts b/tests/doc/parse.ts
+index 1364d0a..663710d 100644
+--- a/tests/doc/parse.ts
++++ b/tests/doc/parse.ts
+@@ -611,6 +611,49 @@ describe('handling complex keys', () => {
+   beforeEach(() => mockWarn.mockReset().mockImplementation(() => {}))
+   afterAll(() => mockWarn.mockRestore())
+ 
++  test.each(['\n', '\n\n', '\n# comment\n', '\n\n# comment\n'])(
++    'flow keys after %j',
++    separator => {
++      for (const key of ['[3]', '{3: 4}']) {
++        const doc = YAML.parseDocument(`1: 2${separator}${key}: 5`)
++        expect(doc.errors).toEqual([])
++        expect(doc.toJS({ mapAsMap: true })).toEqual(
++          new Map<unknown, number>([
++            [1, 2],
++            [key === '[3]' ? [3] : new Map([[3, 4]]), 5]
++          ])
++        )
++        const node = doc.value as YAML.YAMLMap
++        const keyNode = Array.from(node.values.values())[1].key as YAML.Node
++        expect(keyNode.spaceBefore).toBe(
++          separator.startsWith('\n\n') || undefined
++        )
++        expect(keyNode.commentBefore).toBe(
++          separator.includes('#') ? ' comment' : undefined
++        )
++      }
++    }
++  )
++
++  test('mapping between sequences with a blank line', () => {
++    const src = source`
++      ? - Detroit Tigers
++        - Chicago cubs
++      : - 2001-07-23
++
++      [New York Yankees, Atlanta Braves]: [2001-07-02, 2001-08-12, 2001-08-14]
++    `
++    expect(YAML.parse(src, { mapAsMap: true })).toEqual(
++      new Map([
++        [['Detroit Tigers', 'Chicago cubs'], ['2001-07-23']],
++        [
++          ['New York Yankees', 'Atlanta Braves'],
++          ['2001-07-02', '2001-08-12', '2001-08-14']
++        ]
++      ])
++    )
++  })
++
+   test('emit warning when casting key in collection to string as JS Object key', () => {
+     const doc = YAML.parseDocument('[foo]: bar', { prettyErrors: false })
+     expect(doc.warnings).toHaveLength(0)
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+Done.
+Flow keys reuse pending map items, preserving blanks/comments. Regression tests, types, lint pass. Full suite blocked by missing fixtures; 958 tests passed.
+
+</details>
+
+### codex, sloth: pass
+
+Files: [src/parse/parser.ts](../sloth/codex/ts-yaml-flow-key-after-blank-1/files/src/parse/parser.ts), [tests/doc/parse.ts](../sloth/codex/ts-yaml-flow-key-after-blank-1/files/tests/doc/parse.ts)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/src/parse/parser.ts b/src/parse/parser.ts
+index 1443cc1..945337c 100644
+--- a/src/parse/parser.ts
++++ b/src/parse/parser.ts
+@@ -698,7 +698,7 @@ export class Parser {
+                 })
+                 return
+               }
+-            } else if (atMapIndent) {
++            } else if (atNextItem) {
+               map.items.push({ start })
+             }
+             this.stack.push(bv)
+diff --git a/tests/doc/parse.ts b/tests/doc/parse.ts
+index 1364d0a..f68aa24 100644
+--- a/tests/doc/parse.ts
++++ b/tests/doc/parse.ts
+@@ -172,6 +172,42 @@ test('long scalar value in flow map (#36)', () => {
+ })
+ 
+ describe('flow collection keys', () => {
++  test('flow key after blank lines or comments', () => {
++    for (const before of ['', '\n', '# comment\n', '\n# comment\n\n']) {
++      for (const key of ['[3]', '{3: 4}']) {
++        const src = `1: 2\n${before}${key}: 4\n`
++        const doc = YAML.parseDocument<YAML.YAMLMap>(src, {
++          keepSourceTokens: true
++        })
++        expect(doc.errors).toHaveLength(0)
++        expect(doc.toJS({ mapAsMap: true })).toEqual(
++          new Map<unknown, number>([
++            [1, 2],
++            [key === '[3]' ? [3] : new Map([[3, 4]]), 4]
++          ])
++        )
++        expect(YAML.CST.stringify(doc.value.srcToken!)).toBe(src)
++      }
++    }
++
++    const src = source`
++      ? - Detroit Tigers
++        - Chicago cubs
++      : - 2001-07-23
++
++      [New York Yankees, Atlanta Braves]: [2001-07-02, 2001-08-12, 2001-08-14]
++    `
 +    expect(YAML.parse(src, { mapAsMap: true })).toEqual(
 +      new Map([
 +        [['Detroit Tigers', 'Chicago cubs'], ['2001-07-23']],
@@ -530,27 +739,29 @@ index 1364d0a..c3a0739 100644
 
 <details><summary>reply</summary>
 
-I’ll check how the parser handles blank lines before flow collection keys, add a regression test, and run the relevant tests.
+I’ll trace how block maps handle blank lines before flow collection keys, add regression coverage, and run the build and tests.
 
-The parser creates an extra map entry when a flow key follows a blank line or comment. That leaves the separator in an empty entry, which later triggers the `IMPOSSIBLE` error. I’ve changed it to reuse the pending entry and added tests for sequence keys, mapping keys, and your full example.
+The parser creates an extra map item when a flow key follows blank lines or comments. That leaves the spacing in a comment-only item, which later triggers the `IMPOSSIBLE` error. I’ll fix the item creation condition and add tests in the existing flow-key group; no API, export, config, or fixture changes are needed.
 
-Fixed the parser to reuse the pending map entry when a flow collection key follows blank lines or comments.
+The fix passes the reported example and tests for sequence and mapping keys after blank lines or comments. The build and type checks pass, and all 955 available tests pass. Two external test suites could not run because their fixture directories are missing from this checkout.
 
-Added regression tests covering sequence and mapping keys, separator preservation, and your full example.
+Fixed the parser to reuse the pending map item when a flow collection key follows blank lines or comments.
 
-Validation: 959 tests passed, plus type checks and lint. Two external test suites could not run because their fixture directories are missing.
+Added regression coverage for both flow key types and your YAML spec example.
+
+Build, type checks, lint, and all 955 available tests pass. Two external suites could not run because their fixture directories are missing.
 
 </details>
 
-### codex, hush: pass
+### codex, all: pass
 
-Files: [src/parse/parser.ts](../hush/codex/ts-yaml-flow-key-after-blank-1/files/src/parse/parser.ts), [tests/doc/parse.ts](../hush/codex/ts-yaml-flow-key-after-blank-1/files/tests/doc/parse.ts)
+Files: [src/parse/parser.ts](../all/codex/ts-yaml-flow-key-after-blank-1/files/src/parse/parser.ts), [tests/doc/parse.ts](../all/codex/ts-yaml-flow-key-after-blank-1/files/tests/doc/parse.ts)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/src/parse/parser.ts b/src/parse/parser.ts
-index 1443cc1..cdf68a6 100644
+index 1443cc1..08a2397 100644
 --- a/src/parse/parser.ts
 +++ b/src/parse/parser.ts
 @@ -698,7 +698,7 @@ export class Parser {
@@ -558,42 +769,41 @@ index 1443cc1..cdf68a6 100644
                  return
                }
 -            } else if (atMapIndent) {
-+            } else if (atMapIndent && (it.sep || it.explicitKey)) {
++            } else if (atMapIndent && (it.sep || it.explicitKey || it.value)) {
                map.items.push({ start })
              }
              this.stack.push(bv)
 diff --git a/tests/doc/parse.ts b/tests/doc/parse.ts
-index 1364d0a..b441411 100644
+index 1364d0a..833565a 100644
 --- a/tests/doc/parse.ts
 +++ b/tests/doc/parse.ts
-@@ -172,6 +172,42 @@ test('long scalar value in flow map (#36)', () => {
+@@ -172,6 +172,41 @@ test('long scalar value in flow map (#36)', () => {
  })
  
  describe('flow collection keys', () => {
-+  test.each(['', '\n', '# comment\n', '\n# comment\n'])(
-+    'flow keys after separator %j',
-+    separator => {
-+      for (const key of ['[3]', '{3: 5}']) {
-+        const src = `1: 2\n${separator}${key}: 4\n`
-+        const doc = YAML.parseDocument<YAML.YAMLMap>(src)
++  test.each(['', '\n', '# comment\n', '\n# comment\n\n'])(
++    'flow keys after separation %j',
++    separation => {
++      for (const key of ['[3]', '{ a: 3 }']) {
++        const src = `1: 2\n${separation}${key}: 4\n`
++        const doc = YAML.parseDocument(src)
 +        expect(doc.errors).toHaveLength(0)
-+        expect(doc.value?.size).toBe(2)
 +        expect(doc.toJS({ mapAsMap: true })).toEqual(
 +          new Map<unknown, number>([
 +            [1, 2],
-+            [key === '[3]' ? [3] : new Map([[3, 5]]), 4]
++            [key === '[3]' ? [3] : new Map([['a', 3]]), 4]
 +          ])
 +        )
-+        expect(String(doc)).toContain(`1: 2\n${separator}? `)
++        expect(String(doc).startsWith(`1: 2\n${separation}? `)).toBe(true)
 +      }
 +    }
 +  )
 +
 +  test('mapping between sequences with a blank line', () => {
-+    const src =
++    const doc = YAML.parseDocument(
 +      '? - Detroit Tigers\n  - Chicago cubs\n: - 2001-07-23\n\n' +
-+      '[New York Yankees, Atlanta Braves]: [2001-07-02, 2001-08-12, 2001-08-14]\n'
-+    const doc = YAML.parseDocument(src)
++        '[New York Yankees, Atlanta Braves]: [2001-07-02, 2001-08-12, 2001-08-14]\n'
++    )
 +    expect(doc.errors).toHaveLength(0)
 +    expect(doc.toJS({ mapAsMap: true })).toEqual(
 +      new Map([
@@ -616,73 +826,6 @@ index 1364d0a..b441411 100644
 <details><summary>reply</summary>
 
 Done.
-Fixed flow keys after blank/comment lines; added regressions. 959 tests, types, lint passed. Two suites blocked by missing fixtures.
-
-</details>
-
-### codex, sloth: pass
-
-Files: [src/parse/parser.ts](../sloth/codex/ts-yaml-flow-key-after-blank-1/files/src/parse/parser.ts)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/src/parse/parser.ts b/src/parse/parser.ts
-index 1443cc1..9b18906 100644
---- a/src/parse/parser.ts
-+++ b/src/parse/parser.ts
-@@ -698,7 +698,7 @@ export class Parser {
-                 })
-                 return
-               }
--            } else if (atMapIndent) {
-+            } else if (atNextItem || it.value) {
-               map.items.push({ start })
-             }
-             this.stack.push(bv)
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-I’ll trace how blank lines and comments affect flow collection keys, fix the shared parser path, then build and run the existing tests.
-
-The parser creates an extra map item when a flow collection follows a blank or comment line, leaving the preceding item looking like a trailing comment. The fix belongs in the shared block-map parser, used by both public parsing and CST parsing. No exports, configuration, or fixtures need changes; I’ll use the existing suites and direct checks for both flow sequences and flow maps.
-
-Fixed in [src/parse/parser.ts:701](/home/jdaddy/.cache/muffle-evals/runs/sloth/codex/ts-yaml-flow-key-after-blank-1/work/src/parse/parser.ts:701). Flow collection keys now reuse the pending map item after blank lines or comments, preventing the `IMPOSSIBLE` error.
-
-Validated your example and 48 related cases, including nested maps and lossless CST round trips. Build, type checks, and 954 existing tests passed. Two fixture-based suites could not run because their fixture directories are missing.
-
-</details>
-
-### codex, all: FAIL
-
-Files: [src/parse/parser.ts](../all/codex/ts-yaml-flow-key-after-blank-1/files/src/parse/parser.ts)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/src/parse/parser.ts b/src/parse/parser.ts
-index 1443cc1..364a545 100644
---- a/src/parse/parser.ts
-+++ b/src/parse/parser.ts
-@@ -698,7 +698,7 @@ export class Parser {
-                 })
-                 return
-               }
--            } else if (atMapIndent) {
-+            } else if (atMapIndent && (it.sep || it.value)) {
-               map.items.push({ start })
-             }
-             this.stack.push(bv)
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-Done.
-Parser reuses pending map item before flow keys. Build, types, 954 tests, 18 repro checks passed. Two suites blocked by missing fixtures.
+Fixed flow keys after blank/comment lines. Build, types, lint, 959 tests passed; two suites blocked by missing fixtures.
 
 </details>

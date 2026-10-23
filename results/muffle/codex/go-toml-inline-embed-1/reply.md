@@ -1,9 +1,9 @@
-I’ll check how the decoder handles embedded fields, add a regression test, and fix the lookup.
+I’ll check how decoding handles embedded fields, add a regression test, and fix the failure.
 
-The decoder treats any `toml` tag as a field name, so `toml:",inline"` prevents the embedded fields from being flattened. The regression tests reproduce this for both value and pointer embeddings. I’ll make the decoder match the encoder: flatten an embedded struct when its tag has no explicit name.
+The decoder treats any TOML tag on an embedded struct as a field name, even when the tag only contains `inline`. The encoder already distinguishes those cases. I’ll make decoding follow the same rule: flatten the embedded struct when the tag has no name.
 
-Fixed the decoder to flatten embedded structs when the `toml` tag has no explicit field name, including `toml:",inline"`.
+Fixed decoding for embedded structs tagged `toml:",inline"`. Tags without an explicit field name now preserve embedded-field flattening, matching the encoder.
 
-Added regression tests for value embeddings, pointer embeddings, empty tags, and strict decoding. Confirmed they failed before the fix.
+Added regression coverage for embedded values, pointers, empty tags, and explicitly named fields.
 
-All tests pass with `go test ./...`.
+Validation: `go test ./...` passes.

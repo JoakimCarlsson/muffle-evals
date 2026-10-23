@@ -1,11 +1,12 @@
-Now a test for the specified orderings, plus a changelog check.
+Now a test for the specified error cases.
 
-I added `Slab::get_disjoint_mut` and the public `GetDisjointMutError` enum. All tests pass, including a new test in `tests/slab.rs` and a doc example. I didn't commit anything.
+I added `Slab::get_disjoint_mut` and the public `GetDisjointMutError` enum to `src/lib.rs`, and `cargo test` passes with a new test in `tests/slab.rs`. The enum is defined in the crate root, so `slab::GetDisjointMutError` works. It derives `Debug`, `Clone`, `PartialEq` and `Eq`.
 
-- **Signature:** it matches what you asked for, and the references come back in the order of `keys`.
-- **Error order:** it checks all keys for duplicates first, then checks the keys in order. `[42, 2, 1, 2]` gives `OverlappingIndices`. In a 5-slot slab with key 1 vacant, `[1, 5]` gives `IndexVacant` and `[5, 1]` gives `IndexOutOfBounds`. An empty array returns `Ok([])`.
-- **Error type:** `GetDisjointMutError` derives `Debug`, `Clone`, `PartialEq` and `Eq`. It is defined in `src/lib.rs`, so it is exported from the crate root. I also gave it `Display` and, with the `std` feature, `std::error::Error`, which you didn't ask for.
-- **Unsafe code:** the API needs none from callers, but the implementation has one `unsafe` block. It runs only after the checks above, which guarantee every key is in bounds, occupied and distinct. The block has a `SAFETY` comment.
-- **MSRV:** `Cargo.toml` declares `rust-version = "1.46"`, but const generics need Rust 1.51 and the array `map` I used needs 1.55. The MSRV would need raising to at least 1.55 for this to build on the declared minimum. I only built on the local toolchain, so I haven't tested an older compiler.
+- **Behaviour:** the method follows the signature and ordering rules you gave. Duplicate keys are rejected first. The remaining keys are then checked in order, and the first bad one decides `IndexOutOfBounds` or `IndexVacant`. An empty array returns `Ok([])`.
+- **Unsafe:** callers need no unsafe code, but the method itself uses one small `unsafe` block. It runs only after every key has been checked as distinct, in bounds and occupied.
+- **Test:** it covers your swap example and `[]`. It also checks `[42, 2, 1, 2]`, `[1, 5]` and `[5, 1]` on a 5-slot slab with key 1 vacant.
+- **Beyond the spec:** I added a `Display` impl for the error, and a `std::error::Error` impl behind the `std` feature.
+- **MSRV:** `Cargo.toml` declares `rust-version = "1.46"`, but const generics need Rust 1.51 and `[T; N]::map` needs 1.55. The MSRV needs raising to 1.55, or the method needs a different implementation. I left `Cargo.toml` alone.
+- **Changelog:** I didn't add an entry to `CHANGELOG.md`.
 
-I left `CHANGELOG.md` alone because its entries are tied to release versions and PR numbers.
+I made no commit.

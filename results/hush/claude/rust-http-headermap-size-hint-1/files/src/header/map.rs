@@ -2368,12 +2368,8 @@ impl<'a, T> Iterator for Iter<'a, T> {
         let map = self.map;
         debug_assert!(map.entries.len() >= self.entry);
 
-        // Current entry still has items only while the cursor is set.
-        let lower = if self.cursor.is_some() {
-            map.entries.len() - self.entry
-        } else {
-            (map.entries.len() - self.entry).saturating_sub(1)
-        };
+        // The current entry is exhausted once the cursor is `None`.
+        let lower = (map.entries.len() - self.entry).saturating_sub(self.cursor.is_none() as usize);
         // We could pessimistically guess at the upper bound, saying
         // that its lower + map.extra_values.len(). That could be
         // way over though, such as if we're near the end, and have
@@ -2458,12 +2454,8 @@ impl<'a, T> Iterator for IterMut<'a, T> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         debug_assert!(self.entries_len >= self.entry);
 
-        // Current entry still has items only while the cursor is set.
-        let lower = if self.cursor.is_some() {
-            self.entries_len - self.entry
-        } else {
-            (self.entries_len - self.entry).saturating_sub(1)
-        };
+        // The current entry is exhausted once the cursor is `None`.
+        let lower = (self.entries_len - self.entry).saturating_sub(self.cursor.is_none() as usize);
         // We could pessimistically guess at the upper bound, saying
         // that its lower + map.extra_values.len(). That could be
         // way over though, such as if we're near the end, and have

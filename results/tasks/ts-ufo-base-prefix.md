@@ -58,15 +58,15 @@ index db7c2c2..19004d9 100644
 | agent | setup | hidden tests | lines +/- (code) | test lines | output tokens | cost |
 |---|---|---|---:|---:|---:|---:|
 | claude | base | pass | +10/-2 | 17 | 1,708 | $0.080 |
-| claude | muffle | pass | +10/-2 | 6 | 2,164 | $0.078 |
-| claude | hush | pass | +10/-2 | 0 | 602 | $0.036 |
-| claude | sloth | pass | +12/-2 | 0 | 1,943 | $0.073 |
-| claude | all | pass | +12/-2 | 0 | 985 | $0.061 |
+| claude | muffle | pass | +10/-2 | 4 | 1,648 | $0.067 |
+| claude | hush | pass | +10/-2 | 2 | 1,557 | $0.050 |
+| claude | sloth | pass | +12/-2 | 9 | 1,770 | $0.075 |
+| claude | all | pass | +15/-2 | 8 | 1,679 | $0.072 |
 | codex | base | pass | +10/-2 | 17 | 1,218 | - |
-| codex | muffle | pass | +10/-2 | 44 | 991 | - |
-| codex | hush | pass | +10/-2 | 22 | 891 | - |
-| codex | sloth | pass | +14/-6 | 0 | 1,238 | - |
-| codex | all | pass | +8/-2 | 0 | 924 | - |
+| codex | muffle | pass | +10/-2 | 22 | 1,123 | - |
+| codex | hush | pass | +10/-2 | 22 | 1,079 | - |
+| codex | sloth | pass | +5/-2 | 23 | 1,244 | - |
+| codex | all | pass | +10/-2 | 44 | 1,061 | - |
 
 ### claude, base: pass
 
@@ -175,14 +175,21 @@ Files: [src/utils.ts](../muffle/claude/ts-ufo-base-prefix-1/files/src/utils.ts),
 
 ```diff
 diff --git a/src/utils.ts b/src/utils.ts
-index db7c2c2..ebfb55e 100644
+index db7c2c2..f950431 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
-@@ -272,6 +272,14 @@ export function cleanDoubleSlashes(input = ""): string {
-     .join("://");
+@@ -292,12 +292,20 @@ export function withBase(input: string, base: string) {
+     return input;
+   }
+   const _base = withoutTrailingSlash(base);
+-  if (input.startsWith(_base)) {
++  if (isUnderBase(input, _base)) {
+     return input;
+   }
+   return joinURL(_base, input);
  }
  
-+function _isUnderBase(input: string, base: string) {
++function isUnderBase(input: string, base: string) {
 +  if (!input.startsWith(base)) {
 +    return false;
 +  }
@@ -191,67 +198,52 @@ index db7c2c2..ebfb55e 100644
 +}
 +
  /**
-  * Ensures the URL or pathname starts with base.
+  * Removes the base from the URL or pathname.
   *
-@@ -292,7 +300,7 @@ export function withBase(input: string, base: string) {
-     return input;
-   }
-   const _base = withoutTrailingSlash(base);
--  if (input.startsWith(_base)) {
-+  if (_isUnderBase(input, _base)) {
-     return input;
-   }
-   return joinURL(_base, input);
 @@ -316,7 +324,7 @@ export function withoutBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
 -  if (!input.startsWith(_base)) {
-+  if (!_isUnderBase(input, _base)) {
++  if (!isUnderBase(input, _base)) {
      return input;
    }
    const trimmed = input.slice(_base.length);
 diff --git a/test/base.test.ts b/test/base.test.ts
-index ed684d1..ac67a09 100644
+index ed684d1..b8f3eb0 100644
 --- a/test/base.test.ts
 +++ b/test/base.test.ts
-@@ -11,6 +11,8 @@ describe("withBase", () => {
-     { base: "/base", input: "/base/", out: "/base/" },
-     { base: "/base", input: "/base/a", out: "/base/a" },
+@@ -13,6 +13,8 @@ describe("withBase", () => {
      { base: "/base/", input: "/base/a", out: "/base/a" },
-+    { base: "/admin/", input: "/admin-dashboard", out: "/admin/admin-dashboard" },
-+    { base: "/admin/", input: "/admin/dashboard", out: "/admin/dashboard" },
      { base: "/base/", input: "https://test.com", out: "https://test.com" },
      { base: "/", input: "https://test.com", out: "https://test.com" },
++    { base: "/admin/", input: "/admin-dashboard", out: "/admin/admin-dashboard" },
++    { base: "/admin/", input: "/admin?x", out: "/admin?x" },
    ];
-@@ -36,6 +38,10 @@ describe("withoutBase", () => {
+ 
+   for (const t of tests) {
+@@ -33,6 +35,8 @@ describe("withoutBase", () => {
+     { base: "/base", input: "/base/a", out: "/a" },
+     { base: "/base/", input: "/base/a", out: "/a" },
+     { base: "/base/a/", input: "/base/a", out: "/" },
++    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
++    { base: "/admin/", input: "/admin?x", out: "/?x" },
      { base: "/", input: "/test/", out: "/test/" },
      { base: "/", input: "/?test", out: "/?test" },
      { base: "/api", input: "/api?test", out: "/?test" },
-+    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
-+    { base: "/admin/", input: "/admin", out: "/" },
-+    { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
-+    { base: "/admin/", input: "/admin?x", out: "/?x" },
-     { base: "/base/", input: "https://test.com", out: "https://test.com" },
-     { base: "/", input: "https://test.com", out: "https://test.com" },
-   ];
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Now add tests.
+I fixed `withBase` and `withoutBase` in `src/utils.ts`. A path now counts as under the base only if it equals the base or the base is followed by `/`, `?` or `#`. The full test suite passes.
 
-I fixed `withBase` and `withoutBase` in `src/utils.ts`. The full test suite and eslint both pass.
-
-A path now counts as under the base only if the character right after the base is `/`, `?` or `#`, or if the path ends exactly at the base. Both functions use one shared helper, `_isUnderBase`, for this check. So:
-
-- `withoutBase('/admin-dashboard', '/admin/')` returns `/admin-dashboard`.
-- `withBase('/admin-dashboard', '/admin/')` returns `/admin/admin-dashboard`.
+- `withoutBase('/admin-dashboard', '/admin/')` now returns `/admin-dashboard`.
+- `withBase('/admin-dashboard', '/admin/')` now returns `/admin/admin-dashboard`.
 - `/admin`, `/admin/dashboard` and `/admin?x` behave as before.
 
-I added cases for all of these to `test/base.test.ts`. I didn't run `nuxt generate`, so the stray `-dashboard` file in `.output/public` isn't confirmed gone. It should be, since that file came from `withoutBase` returning `/-dashboard`.
+I added test cases for the prefix-only path and the `?x` case to `test/base.test.ts`. I haven't tried it in your Nuxt app, so `nuxt generate` still needs to be run against the fixed ufo to confirm the stray `-dashboard` file is gone.
 
 I haven't committed anything.
 
@@ -259,7 +251,7 @@ I haven't committed anything.
 
 ### claude, hush: pass
 
-Files: [src/utils.ts](../hush/claude/ts-ufo-base-prefix-1/files/src/utils.ts)
+Files: [src/utils.ts](../hush/claude/ts-ufo-base-prefix-1/files/src/utils.ts), [test/base.test.ts](../hush/claude/ts-ufo-base-prefix-1/files/test/base.test.ts)
 
 <details><summary>diff</summary>
 
@@ -299,33 +291,60 @@ index db7c2c2..832c069 100644
      return input;
    }
    const trimmed = input.slice(_base.length);
+diff --git a/test/base.test.ts b/test/base.test.ts
+index ed684d1..6e10deb 100644
+--- a/test/base.test.ts
++++ b/test/base.test.ts
+@@ -13,6 +13,7 @@ describe("withBase", () => {
+     { base: "/base/", input: "/base/a", out: "/base/a" },
+     { base: "/base/", input: "https://test.com", out: "https://test.com" },
+     { base: "/", input: "https://test.com", out: "https://test.com" },
++    { base: "/admin/", input: "/admin-dashboard", out: "/admin/admin-dashboard" },
+   ];
+ 
+   for (const t of tests) {
+@@ -38,6 +39,7 @@ describe("withoutBase", () => {
+     { base: "/api", input: "/api?test", out: "/?test" },
+     { base: "/base/", input: "https://test.com", out: "https://test.com" },
+     { base: "/", input: "https://test.com", out: "https://test.com" },
++    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
+   ];
+ 
+   for (const t of tests) {
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Done. Added `isUnderBase` in `src/utils.ts`: the base must be followed by end, `/`, `?` or `#`. `withBase` and `withoutBase` use it. Existing tests pass. I added no new test for `/admin-dashboard`.
+Done. Added `isUnderBase` in `src/utils.ts`: base match needs end of input, `/`, `?` or `#` next. `withBase` and `withoutBase` use it. Added `/admin-dashboard` cases to `test/base.test.ts`; full suite passed before the test edit, `base.test.ts` passes after. Not committed.
 
 </details>
 
 ### claude, sloth: pass
 
-Files: [src/utils.ts](../sloth/claude/ts-ufo-base-prefix-1/files/src/utils.ts)
+Files: [src/utils.ts](../sloth/claude/ts-ufo-base-prefix-1/files/src/utils.ts), [test/base.test.ts](../sloth/claude/ts-ufo-base-prefix-1/files/test/base.test.ts)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/src/utils.ts b/src/utils.ts
-index db7c2c2..637bff8 100644
+index db7c2c2..f169722 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
-@@ -272,6 +272,16 @@ export function cleanDoubleSlashes(input = ""): string {
-     .join("://");
+@@ -292,12 +292,22 @@ export function withBase(input: string, base: string) {
+     return input;
+   }
+   const _base = withoutTrailingSlash(base);
+-  if (input.startsWith(_base)) {
++  if (isUnderBase(input, _base)) {
+     return input;
+   }
+   return joinURL(_base, input);
  }
  
 +/**
-+ * Checks whether input is the base itself or continues it at a path, query or hash boundary.
++ * Checks if the input is the base itself or continues it at a segment, query or hash boundary.
 + */
 +function isUnderBase(input: string, base: string) {
 +  return (
@@ -335,17 +354,8 @@ index db7c2c2..637bff8 100644
 +}
 +
  /**
-  * Ensures the URL or pathname starts with base.
+  * Removes the base from the URL or pathname.
   *
-@@ -292,7 +302,7 @@ export function withBase(input: string, base: string) {
-     return input;
-   }
-   const _base = withoutTrailingSlash(base);
--  if (input.startsWith(_base)) {
-+  if (isUnderBase(input, _base)) {
-     return input;
-   }
-   return joinURL(_base, input);
 @@ -316,7 +326,7 @@ export function withoutBase(input: string, base: string) {
      return input;
    }
@@ -355,56 +365,62 @@ index db7c2c2..637bff8 100644
      return input;
    }
    const trimmed = input.slice(_base.length);
+diff --git a/test/base.test.ts b/test/base.test.ts
+index ed684d1..f9cb198 100644
+--- a/test/base.test.ts
++++ b/test/base.test.ts
+@@ -11,6 +11,12 @@ describe("withBase", () => {
+     { base: "/base", input: "/base/", out: "/base/" },
+     { base: "/base", input: "/base/a", out: "/base/a" },
+     { base: "/base/", input: "/base/a", out: "/base/a" },
++    {
++      base: "/admin/",
++      input: "/admin-dashboard",
++      out: "/admin/admin-dashboard",
++    },
++    { base: "/admin/", input: "/admin?x", out: "/admin?x" },
+     { base: "/base/", input: "https://test.com", out: "https://test.com" },
+     { base: "/", input: "https://test.com", out: "https://test.com" },
+   ];
+@@ -36,6 +42,9 @@ describe("withoutBase", () => {
+     { base: "/", input: "/test/", out: "/test/" },
+     { base: "/", input: "/?test", out: "/?test" },
+     { base: "/api", input: "/api?test", out: "/?test" },
++    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
++    { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
++    { base: "/admin/", input: "/admin#x", out: "/#x" },
+     { base: "/base/", input: "https://test.com", out: "https://test.com" },
+     { base: "/", input: "https://test.com", out: "https://test.com" },
+   ];
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Prettier was clean before my edit, so I'll format and verify through vitest instead.
+`withBase` and `withoutBase` now only treat a path as under the base when it equals the base or continues it at a `/`, `?` or `#`. The existing tests and the new cases pass, but `tsc` printed no type errors and I didn't confirm it ran cleanly.
 
-`withBase` and `withoutBase` now only treat a path as under the base when it equals the base or continues it at a `/`, `?` or `#`. I changed `src/utils.ts` and didn't commit anything.
+- **Your examples:** `withoutBase('/admin-dashboard', '/admin/')` now returns `/admin-dashboard`. `withBase('/admin-dashboard', '/admin/')` now returns `/admin/admin-dashboard`.
+- **Paths under the base:** `/admin`, `/admin/dashboard` and `/admin?x` behave as before.
+- **Where the fix is:** a small private helper, `isUnderBase`, in `src/utils.ts`. Both functions call it in place of the plain `startsWith` check.
+- **Tests:** I added cases to `test/base.test.ts` for the prefix-only path, a path under the base, and the `?` and `#` boundaries.
 
-I added a small `isUnderBase` helper there and used it in both functions. I checked your cases with a throwaway test, which I deleted afterwards:
-
-- `withoutBase('/admin-dashboard', '/admin/')` now returns `/admin-dashboard`.
-- `withBase('/admin-dashboard', '/admin/')` now returns `/admin/admin-dashboard`.
-- Paths under the base behave as before: `/admin` gives `/`, `/admin?x` gives `/?x`, and `/admin/dashboard` gives `/dashboard`.
-- `withBase('/admin?x', '/admin/')` still returns `/admin?x`.
-
-The existing suite passes. I didn't add a permanent test because you didn't ask for one. I didn't run a Nuxt build, so I haven't confirmed the stray `-dashboard` file is gone from `nuxt generate`.
+I didn't commit anything.
 
 </details>
 
 ### claude, all: pass
 
-Files: [src/utils.ts](../all/claude/ts-ufo-base-prefix-1/files/src/utils.ts)
+Files: [src/utils.ts](../all/claude/ts-ufo-base-prefix-1/files/src/utils.ts), [test/base.test.ts](../all/claude/ts-ufo-base-prefix-1/files/test/base.test.ts)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/src/utils.ts b/src/utils.ts
-index db7c2c2..255d85a 100644
+index db7c2c2..737b8e6 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
-@@ -272,6 +272,16 @@ export function cleanDoubleSlashes(input = ""): string {
-     .join("://");
- }
- 
-+/**
-+ * Checks if input equals base or continues it at a segment, query or hash boundary.
-+ *
-+ * @param input - URL or pathname to check.
-+ * @param base - Base without trailing slash.
-+ */
-+function isUnderBase(input: string, base: string): boolean {
-+  return input.startsWith(base) && !/^[^/?#]/.test(input.slice(base.length));
-+}
-+
- /**
-  * Ensures the URL or pathname starts with base.
-  *
-@@ -292,7 +302,7 @@ export function withBase(input: string, base: string) {
+@@ -292,12 +292,25 @@ export function withBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
@@ -413,7 +429,25 @@ index db7c2c2..255d85a 100644
      return input;
    }
    return joinURL(_base, input);
-@@ -316,7 +326,7 @@ export function withoutBase(input: string, base: string) {
+ }
+ 
++/**
++ * Checks that input is the base itself or continues it at a segment, query or hash boundary.
++ *
++ * @param input - URL or pathname.
++ * @param base - Base without trailing slash.
++ */
++function isUnderBase(input: string, base: string) {
++  return (
++    input.startsWith(base) &&
++    (input.length === base.length || "/?#".includes(input[base.length]!))
++  );
++}
++
+ /**
+  * Removes the base from the URL or pathname.
+  *
+@@ -316,7 +329,7 @@ export function withoutBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
@@ -422,13 +456,39 @@ index db7c2c2..255d85a 100644
      return input;
    }
    const trimmed = input.slice(_base.length);
+diff --git a/test/base.test.ts b/test/base.test.ts
+index ed684d1..9991a75 100644
+--- a/test/base.test.ts
++++ b/test/base.test.ts
+@@ -11,6 +11,12 @@ describe("withBase", () => {
+     { base: "/base", input: "/base/", out: "/base/" },
+     { base: "/base", input: "/base/a", out: "/base/a" },
+     { base: "/base/", input: "/base/a", out: "/base/a" },
++    {
++      base: "/admin/",
++      input: "/admin-dashboard",
++      out: "/admin/admin-dashboard",
++    },
++    { base: "/admin/", input: "/admin?x", out: "/admin?x" },
+     { base: "/base/", input: "https://test.com", out: "https://test.com" },
+     { base: "/", input: "https://test.com", out: "https://test.com" },
+   ];
+@@ -36,6 +42,8 @@ describe("withoutBase", () => {
+     { base: "/", input: "/test/", out: "/test/" },
+     { base: "/", input: "/?test", out: "/?test" },
+     { base: "/api", input: "/api?test", out: "/?test" },
++    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
++    { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
+     { base: "/base/", input: "https://test.com", out: "https://test.com" },
+     { base: "/", input: "https://test.com", out: "https://test.com" },
+   ];
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Done. Added `isUnderBase` in `src/utils.ts`. `withBase` and `withoutBase` now match only at a `/`, `?`, `#` or end boundary. Existing 477 tests pass. I added no new tests and didn't run your two repro calls.
+Done. `withBase` and `withoutBase` now treat a path as under the base only at a `/`, `?` or `#` boundary, or on an exact match. The fix is a new `isUnderBase` helper in `src/utils.ts`, and I added test cases for `/admin-dashboard`, `/admin?x` and `/admin/dashboard`. All 481 tests pass. The `tsc --noEmit` run printed no errors, but npm printed a notice and no compiler output, so I'm not certain it ran. Not committed.
 
 </details>
 
@@ -527,127 +587,7 @@ Files: [src/utils.ts](../muffle/codex/ts-ufo-base-prefix-1/files/src/utils.ts), 
 
 ```diff
 diff --git a/src/utils.ts b/src/utils.ts
-index db7c2c2..c9471d5 100644
---- a/src/utils.ts
-+++ b/src/utils.ts
-@@ -292,12 +292,20 @@ export function withBase(input: string, base: string) {
-     return input;
-   }
-   const _base = withoutTrailingSlash(base);
--  if (input.startsWith(_base)) {
-+  if (_hasBase(input, _base)) {
-     return input;
-   }
-   return joinURL(_base, input);
- }
- 
-+function _hasBase(input: string, base: string): boolean {
-+  if (!input.startsWith(base)) {
-+    return false;
-+  }
-+  const next = input[base.length];
-+  return !next || next === "/" || next === "?" || next === "#";
-+}
-+
- /**
-  * Removes the base from the URL or pathname.
-  *
-@@ -316,7 +324,7 @@ export function withoutBase(input: string, base: string) {
-     return input;
-   }
-   const _base = withoutTrailingSlash(base);
--  if (!input.startsWith(_base)) {
-+  if (!_hasBase(input, _base)) {
-     return input;
-   }
-   const trimmed = input.slice(_base.length);
-diff --git a/test/base.test.ts b/test/base.test.ts
-index ed684d1..c651f6c 100644
---- a/test/base.test.ts
-+++ b/test/base.test.ts
-@@ -3,6 +3,36 @@ import { withBase, withoutBase } from "../src";
- 
- describe("withBase", () => {
-   const tests = [
-+    {
-+      base: "/admin",
-+      input: "/admin-dashboard",
-+      out: "/admin/admin-dashboard",
-+    },
-+    { base: "/admin", input: "/administrator", out: "/admin/administrator" },
-+    {
-+      base: "/admin",
-+      input: "/admin%2Fdashboard",
-+      out: "/admin/admin%2Fdashboard",
-+    },
-+    { base: "/admin", input: "/admin", out: "/admin" },
-+    { base: "/admin", input: "/admin/dashboard", out: "/admin/dashboard" },
-+    { base: "/admin", input: "/admin?x", out: "/admin?x" },
-+    { base: "/admin", input: "/admin#section", out: "/admin#section" },
-+    {
-+      base: "/admin/",
-+      input: "/admin-dashboard",
-+      out: "/admin/admin-dashboard",
-+    },
-+    { base: "/admin/", input: "/administrator", out: "/admin/administrator" },
-+    {
-+      base: "/admin/",
-+      input: "/admin%2Fdashboard",
-+      out: "/admin/admin%2Fdashboard",
-+    },
-+    { base: "/admin/", input: "/admin", out: "/admin" },
-+    { base: "/admin/", input: "/admin/dashboard", out: "/admin/dashboard" },
-+    { base: "/admin/", input: "/admin?x", out: "/admin?x" },
-+    { base: "/admin/", input: "/admin#section", out: "/admin#section" },
-     { base: "/", input: "/", out: "/" },
-     { base: "/foo", input: "", out: "/foo" },
-     { base: "/foo/", input: "/", out: "/foo" },
-@@ -24,6 +54,20 @@ describe("withBase", () => {
- 
- describe("withoutBase", () => {
-   const tests = [
-+    { base: "/admin", input: "/admin-dashboard", out: "/admin-dashboard" },
-+    { base: "/admin", input: "/administrator", out: "/administrator" },
-+    { base: "/admin", input: "/admin%2Fdashboard", out: "/admin%2Fdashboard" },
-+    { base: "/admin", input: "/admin", out: "/" },
-+    { base: "/admin", input: "/admin/dashboard", out: "/dashboard" },
-+    { base: "/admin", input: "/admin?x", out: "/?x" },
-+    { base: "/admin", input: "/admin#section", out: "/#section" },
-+    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
-+    { base: "/admin/", input: "/administrator", out: "/administrator" },
-+    { base: "/admin/", input: "/admin%2Fdashboard", out: "/admin%2Fdashboard" },
-+    { base: "/admin/", input: "/admin", out: "/" },
-+    { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
-+    { base: "/admin/", input: "/admin?x", out: "/?x" },
-+    { base: "/admin/", input: "/admin#section", out: "/#section" },
-     { base: "/", input: "/", out: "/" },
-     { base: "/foo", input: "/", out: "/" },
-     { base: "/foo/", input: "/", out: "/" },
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-I’ll check the base-matching logic, fix the path boundary check, and add regression tests for these cases.
-
-Fixed both functions to require a boundary after the base: end of input, `/`, `?`, or `#`.
-
-Added regression coverage for prefix collisions, trailing slashes, queries, and fragments. Your `/admin-dashboard` examples now return the expected results.
-
-Validation passed: lint, formatting, all 507 tests, and type checking.
-
-</details>
-
-### codex, hush: pass
-
-Files: [src/utils.ts](../hush/codex/ts-ufo-base-prefix-1/files/src/utils.ts), [test/base.test.ts](../hush/codex/ts-ufo-base-prefix-1/files/test/base.test.ts)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/src/utils.ts b/src/utils.ts
-index db7c2c2..bfa1d35 100644
+index db7c2c2..c7b718c 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
 @@ -292,7 +292,7 @@ export function withBase(input: string, base: string) {
@@ -676,25 +616,25 @@ index db7c2c2..bfa1d35 100644
 +    return false;
 +  }
 +  const next = input[base.length];
-+  return next === undefined || next === "/" || next === "?" || next === "#";
++  return !next || next === "/" || next === "?" || next === "#";
 +}
 +
  /**
   * Add/Replace the query section of the URL.
   *
 diff --git a/test/base.test.ts b/test/base.test.ts
-index ed684d1..c44ee75 100644
+index ed684d1..970c79b 100644
 --- a/test/base.test.ts
 +++ b/test/base.test.ts
 @@ -1,6 +1,28 @@
  import { describe, expect, test } from "vitest";
  import { withBase, withoutBase } from "../src";
  
-+describe("base path boundaries", () => {
++describe("base boundaries", () => {
 +  for (const base of ["/admin", "/admin/"]) {
-+    for (const suffix of ["-dashboard", "istrator", "%2Fdashboard"]) {
++    for (const suffix of ["-dashboard", "istrator", ".html", "%2Fdashboard"]) {
 +      const input = `/admin${suffix}`;
-+      test(`${base} does not contain ${input}`, () => {
++      test(`${base} does not match ${input}`, () => {
 +        expect(withoutBase(input, base)).toBe(input);
 +        expect(withBase(input, base)).toBe(`/admin${input}`);
 +      });
@@ -702,7 +642,7 @@ index ed684d1..c44ee75 100644
 +
 +    for (const suffix of ["", "/dashboard", "?x", "#section"]) {
 +      const input = `/admin${suffix}`;
-+      test(`${base} contains ${input}`, () => {
++      test(`${base} matches ${input}`, () => {
 +        expect(withoutBase(input, base)).toBe(
 +          suffix.startsWith("/") ? suffix : `/${suffix}`,
 +        );
@@ -721,148 +661,92 @@ index ed684d1..c44ee75 100644
 
 <details><summary>reply</summary>
 
-Base matching needs path boundaries. Checking helpers and tests.
+I’ll check the base-matching logic, add regression tests for the prefix collision, and run the relevant checks.
 
+Fixed both functions to require a boundary after the base: end of input, `/`, `?`, or `#`.
 
-Done.
-Fixed base path boundaries; added regression tests. Lint, formatting, types, 493 tests passed via local binaries; `pnpm` unavailable.
+`/admin-dashboard` now stays unchanged with `withoutBase` and becomes `/admin/admin-dashboard` with `withBase`. Existing base-path behavior is preserved.
+
+Added regression coverage. All 495 tests, type checks, lint, and formatting passed.
 
 </details>
 
-### codex, sloth: pass
+### codex, hush: pass
 
-Files: [README.md](../sloth/codex/ts-ufo-base-prefix-1/files/README.md), [src/utils.ts](../sloth/codex/ts-ufo-base-prefix-1/files/src/utils.ts)
+Files: [src/utils.ts](../hush/codex/ts-ufo-base-prefix-1/files/src/utils.ts), [test/base.test.ts](../hush/codex/ts-ufo-base-prefix-1/files/test/base.test.ts)
 
 <details><summary>diff</summary>
 
 ```diff
-diff --git a/README.md b/README.md
-index 4a26073..d703492 100644
---- a/README.md
-+++ b/README.md
-@@ -408,7 +408,7 @@ resolveURL("http://foo.com/foo?test=123#token", "bar", "baz");
- 
- Ensures the URL or pathname starts with base.
- 
--If input already starts with base, it will not be added again.
-+If input already starts with base at a path boundary, it will not be added again.
- 
- **Example:**
- 
-@@ -464,7 +464,7 @@ withLeadingSlash("foo"); // "/foo"
- 
- Removes the base from the URL or pathname.
- 
--If input does not start with base, it will not be removed.
-+If input does not start with base at a path boundary, it will not be removed.
- 
- **Example:**
- 
 diff --git a/src/utils.ts b/src/utils.ts
-index db7c2c2..1f162af 100644
+index db7c2c2..c7b718c 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
-@@ -275,7 +275,7 @@ export function cleanDoubleSlashes(input = ""): string {
- /**
-  * Ensures the URL or pathname starts with base.
-  *
-- * If input already starts with base, it will not be added again.
-+ * If input already starts with base at a path boundary, it will not be added again.
-  *
-  * @example
-  *
 @@ -292,7 +292,7 @@ export function withBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
 -  if (input.startsWith(_base)) {
-+  if (_hasBase(input, _base)) {
++  if (hasBase(input, _base)) {
      return input;
    }
    return joinURL(_base, input);
-@@ -301,7 +301,7 @@ export function withBase(input: string, base: string) {
- /**
-  * Removes the base from the URL or pathname.
-  *
-- * If input does not start with base, it will not be removed.
-+ * If input does not start with base at a path boundary, it will not be removed.
-  *
-  * @example
-  *
 @@ -316,13 +316,21 @@ export function withoutBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
 -  if (!input.startsWith(_base)) {
-+  if (!_hasBase(input, _base)) {
++  if (!hasBase(input, _base)) {
      return input;
    }
    const trimmed = input.slice(_base.length);
    return trimmed[0] === "/" ? trimmed : "/" + trimmed;
  }
  
-+/** Checks if input starts with base at a path boundary. */
-+function _hasBase(input: string, base: string): boolean {
-+  return (
-+    input.startsWith(base) &&
-+    (!input[base.length] || "/?#".includes(input[base.length]))
-+  );
++function hasBase(input: string, base: string): boolean {
++  if (!input.startsWith(base)) {
++    return false;
++  }
++  const next = input[base.length];
++  return !next || next === "/" || next === "?" || next === "#";
 +}
 +
  /**
   * Add/Replace the query section of the URL.
   *
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-I’ll check both helpers and their callers, fix the shared boundary check, then run the build and existing tests.
-
-Both helpers use the same prefix-only check in `src/utils.ts`. I’ll replace it with a shared check that requires the base to end at `/`, `?`, `#`, or the end of the input. Existing exports, callers, tests, fixtures, and config need no changes; no new options or dependencies are needed.
-
-Fixed both helpers with a shared path-boundary check. `/admin-dashboard` now stays unchanged with `withoutBase` and becomes `/admin/admin-dashboard` with `withBase`. Exact matches, nested paths, queries, and fragments retain their behavior.
-
-Build, lint, type checks, and all 479 existing tests passed. Also verified your examples against the built output. Used local tools because `pnpm` was unavailable.
-
-</details>
-
-### codex, all: pass
-
-Files: [src/utils.ts](../all/codex/ts-ufo-base-prefix-1/files/src/utils.ts)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/src/utils.ts b/src/utils.ts
-index db7c2c2..4dc9720 100644
---- a/src/utils.ts
-+++ b/src/utils.ts
-@@ -292,7 +292,10 @@ export function withBase(input: string, base: string) {
-     return input;
-   }
-   const _base = withoutTrailingSlash(base);
--  if (input.startsWith(_base)) {
-+  if (
-+    input.startsWith(_base) &&
-+    (!input[_base.length] || "/?#".includes(input[_base.length]))
-+  ) {
-     return input;
-   }
-   return joinURL(_base, input);
-@@ -316,7 +319,10 @@ export function withoutBase(input: string, base: string) {
-     return input;
-   }
-   const _base = withoutTrailingSlash(base);
--  if (!input.startsWith(_base)) {
-+  if (
-+    !input.startsWith(_base) ||
-+    (input[_base.length] && !"/?#".includes(input[_base.length]))
-+  ) {
-     return input;
-   }
-   const trimmed = input.slice(_base.length);
+diff --git a/test/base.test.ts b/test/base.test.ts
+index ed684d1..105f743 100644
+--- a/test/base.test.ts
++++ b/test/base.test.ts
+@@ -1,6 +1,28 @@
+ import { describe, expect, test } from "vitest";
+ import { withBase, withoutBase } from "../src";
+ 
++describe("base boundaries", () => {
++  for (const base of ["/admin", "/admin/"]) {
++    for (const suffix of ["-dashboard", "istrator", ".html", "%2Fdashboard"]) {
++      test(`${base} does not contain /admin${suffix}`, () => {
++        const input = `/admin${suffix}`;
++        expect(withoutBase(input, base)).toBe(input);
++        expect(withBase(input, base)).toBe(`/admin${input}`);
++      });
++    }
++
++    for (const suffix of ["", "/", "/dashboard", "?x", "#section"]) {
++      test(`${base} contains /admin${suffix}`, () => {
++        const input = `/admin${suffix}`;
++        expect(withoutBase(input, base)).toBe(
++          suffix.startsWith("/") ? suffix : `/${suffix}`,
++        );
++        expect(withBase(input, base)).toBe(input);
++      });
++    }
++  }
++});
++
+ describe("withBase", () => {
+   const tests = [
+     { base: "/", input: "/", out: "/" },
 ```
 
 </details>
@@ -870,6 +754,206 @@ index db7c2c2..4dc9720 100644
 <details><summary>reply</summary>
 
 Done.
-`withBase` and `withoutBase` require path boundaries. Build, lint, 479 tests, typecheck, and reported-case checks passed.
+`withBase`/`withoutBase` now check path boundaries. Regression tests added; 497 tests, typecheck, ESLint, Prettier passed.
+
+</details>
+
+### codex, sloth: pass
+
+Files: [src/utils.ts](../sloth/codex/ts-ufo-base-prefix-1/files/src/utils.ts), [test/base.test.ts](../sloth/codex/ts-ufo-base-prefix-1/files/test/base.test.ts)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/src/utils.ts b/src/utils.ts
+index db7c2c2..1a44b67 100644
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -292,7 +292,7 @@ export function withBase(input: string, base: string) {
+     return input;
+   }
+   const _base = withoutTrailingSlash(base);
+-  if (input.startsWith(_base)) {
++  if (input.startsWith(_base) && /^([/?#]|$)/.test(input.slice(_base.length))) {
+     return input;
+   }
+   return joinURL(_base, input);
+@@ -316,7 +316,10 @@ export function withoutBase(input: string, base: string) {
+     return input;
+   }
+   const _base = withoutTrailingSlash(base);
+-  if (!input.startsWith(_base)) {
++  if (
++    !input.startsWith(_base) ||
++    !/^([/?#]|$)/.test(input.slice(_base.length))
++  ) {
+     return input;
+   }
+   const trimmed = input.slice(_base.length);
+diff --git a/test/base.test.ts b/test/base.test.ts
+index ed684d1..241c664 100644
+--- a/test/base.test.ts
++++ b/test/base.test.ts
+@@ -1,6 +1,29 @@
+ import { describe, expect, test } from "vitest";
+ import { withBase, withoutBase } from "../src";
+ 
++test("base prefixes must end at a path boundary", () => {
++  for (const base of ["/admin", "/admin/"]) {
++    for (const input of [
++      "/admin-dashboard",
++      "/administrator",
++      "/admin%2Fdashboard",
++    ]) {
++      expect(withoutBase(input, base)).toBe(input);
++      expect(withBase(input, base)).toBe("/admin" + input);
++    }
++    for (const [input, output] of [
++      ["/admin", "/"],
++      ["/admin/", "/"],
++      ["/admin/dashboard", "/dashboard"],
++      ["/admin?x", "/?x"],
++      ["/admin#x", "/#x"],
++    ]) {
++      expect(withoutBase(input, base)).toBe(output);
++      expect(withBase(input, base)).toBe(input);
++    }
++  }
++});
++
+ describe("withBase", () => {
+   const tests = [
+     { base: "/", input: "/", out: "/" },
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+I’ll check both helpers and their callers, add a regression test for the path boundary, then run the tests and build.
+
+The change is limited to the two helpers in `src/utils.ts` and the existing base tests. There are no internal callers or signatures to update. I’ll require the prefix to end at the path’s end, `/`, `?`, or `#`, preserving query and fragment handling. No new API or dependency is needed.
+
+Fixed both helpers to require a boundary after the base: end of input, `/`, `?`, or `#`.
+
+Your examples now return the expected results. Regression coverage includes partial prefixes, actual child paths, queries, and fragments, with and without trailing slashes on the base.
+
+Validation passed: lint, all 480 tests, type checks, and build.
+
+</details>
+
+### codex, all: pass
+
+Files: [src/utils.ts](../all/codex/ts-ufo-base-prefix-1/files/src/utils.ts), [test/base.test.ts](../all/codex/ts-ufo-base-prefix-1/files/test/base.test.ts)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/src/utils.ts b/src/utils.ts
+index db7c2c2..52c9167 100644
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -292,7 +292,7 @@ export function withBase(input: string, base: string) {
+     return input;
+   }
+   const _base = withoutTrailingSlash(base);
+-  if (input.startsWith(_base)) {
++  if (hasBase(input, _base)) {
+     return input;
+   }
+   return joinURL(_base, input);
+@@ -316,13 +316,21 @@ export function withoutBase(input: string, base: string) {
+     return input;
+   }
+   const _base = withoutTrailingSlash(base);
+-  if (!input.startsWith(_base)) {
++  if (!hasBase(input, _base)) {
+     return input;
+   }
+   const trimmed = input.slice(_base.length);
+   return trimmed[0] === "/" ? trimmed : "/" + trimmed;
+ }
+ 
++/** Checks whether input starts with a complete base path. */
++function hasBase(input: string, base: string): boolean {
++  return (
++    input.startsWith(base) &&
++    (!input[base.length] || /[/?#]/.test(input[base.length]))
++  );
++}
++
+ /**
+  * Add/Replace the query section of the URL.
+  *
+diff --git a/test/base.test.ts b/test/base.test.ts
+index ed684d1..ff6e87f 100644
+--- a/test/base.test.ts
++++ b/test/base.test.ts
+@@ -4,6 +4,36 @@ import { withBase, withoutBase } from "../src";
+ describe("withBase", () => {
+   const tests = [
+     { base: "/", input: "/", out: "/" },
++    {
++      base: "/admin",
++      input: "/admin-dashboard",
++      out: "/admin/admin-dashboard",
++    },
++    { base: "/admin", input: "/administrator", out: "/admin/administrator" },
++    {
++      base: "/admin",
++      input: "/admin%2Fdashboard",
++      out: "/admin/admin%2Fdashboard",
++    },
++    { base: "/admin", input: "/admin", out: "/admin" },
++    { base: "/admin", input: "/admin/dashboard", out: "/admin/dashboard" },
++    { base: "/admin", input: "/admin?x", out: "/admin?x" },
++    { base: "/admin", input: "/admin#x", out: "/admin#x" },
++    {
++      base: "/admin/",
++      input: "/admin-dashboard",
++      out: "/admin/admin-dashboard",
++    },
++    { base: "/admin/", input: "/administrator", out: "/admin/administrator" },
++    {
++      base: "/admin/",
++      input: "/admin%2Fdashboard",
++      out: "/admin/admin%2Fdashboard",
++    },
++    { base: "/admin/", input: "/admin", out: "/admin" },
++    { base: "/admin/", input: "/admin/dashboard", out: "/admin/dashboard" },
++    { base: "/admin/", input: "/admin?x", out: "/admin?x" },
++    { base: "/admin/", input: "/admin#x", out: "/admin#x" },
+     { base: "/foo", input: "", out: "/foo" },
+     { base: "/foo/", input: "/", out: "/foo" },
+     { base: "/foo", input: "/bar", out: "/foo/bar" },
+@@ -25,6 +55,20 @@ describe("withBase", () => {
+ describe("withoutBase", () => {
+   const tests = [
+     { base: "/", input: "/", out: "/" },
++    { base: "/admin", input: "/admin-dashboard", out: "/admin-dashboard" },
++    { base: "/admin", input: "/administrator", out: "/administrator" },
++    { base: "/admin", input: "/admin%2Fdashboard", out: "/admin%2Fdashboard" },
++    { base: "/admin", input: "/admin", out: "/" },
++    { base: "/admin", input: "/admin/dashboard", out: "/dashboard" },
++    { base: "/admin", input: "/admin?x", out: "/?x" },
++    { base: "/admin", input: "/admin#x", out: "/#x" },
++    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
++    { base: "/admin/", input: "/administrator", out: "/administrator" },
++    { base: "/admin/", input: "/admin%2Fdashboard", out: "/admin%2Fdashboard" },
++    { base: "/admin/", input: "/admin", out: "/" },
++    { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
++    { base: "/admin/", input: "/admin?x", out: "/?x" },
++    { base: "/admin/", input: "/admin#x", out: "/#x" },
+     { base: "/foo", input: "/", out: "/" },
+     { base: "/foo/", input: "/", out: "/" },
+     { base: "/foo", input: "/bar", out: "/bar" },
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+Done.
+`withBase` and `withoutBase` now respect path boundaries. Added regression cases; 507 tests, type checks, lint, and build passed.
 
 </details>

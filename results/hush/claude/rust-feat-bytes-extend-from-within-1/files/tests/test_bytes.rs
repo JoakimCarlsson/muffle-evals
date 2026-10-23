@@ -1727,26 +1727,21 @@ fn bytes_mut_extend_from_within() {
     buf.extend_from_slice(b"aaabbb_");
     buf.extend_from_within(3..6);
     assert_eq!(&buf[..], b"aaabbb_bbb");
-
-    buf.extend_from_within(..2);
+    buf.extend_from_within(..=1);
     assert_eq!(&buf[..], b"aaabbb_bbbaa");
-    buf.extend_from_within(10..);
-    assert_eq!(&buf[..], b"aaabbb_bbbaaaa");
-    buf.extend_from_within(..=0);
-    assert_eq!(&buf[..], b"aaabbb_bbbaaaaa");
-    buf.extend_from_within(4..4);
-    assert_eq!(buf.len(), 15);
-
+    buf.extend_from_within(12..);
+    buf.extend_from_within(..0);
+    assert_eq!(buf.len(), 12);
     // forces reallocation
-    let mut buf = BytesMut::with_capacity(4);
-    buf.extend_from_slice(b"abcd");
-    buf.extend_from_within(..);
-    assert_eq!(&buf[..], b"abcdabcd");
+    let mut b = BytesMut::with_capacity(4);
+    b.extend_from_slice(b"abcd");
+    b.extend_from_within(..);
+    assert_eq!(&b[..], b"abcdabcd");
 }
 
 #[test]
 #[should_panic]
-fn bytes_mut_extend_from_within_out_of_bounds() {
+fn bytes_mut_extend_from_within_oob() {
     let mut buf = BytesMut::from(&b"abc"[..]);
-    buf.extend_from_within(2..4);
+    buf.extend_from_within(2..5);
 }

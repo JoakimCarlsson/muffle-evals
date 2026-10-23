@@ -1,7 +1,11 @@
-I added `genDynamicTypeImport(specifier, name?, options)` next to the other TypeScript helpers in `src/typescript.ts`, and it's exported from the package index. I also added a README entry for it.
+`genDynamicTypeImport(specifier, name?, options)` is now exported from `src/esm.ts`, next to `genDynamicImport`. The full test suite passes (61 tests), and `tsc` and `eslint` report nothing. I haven't committed anything.
 
-A throwaway test (since deleted) confirmed all five of your examples produce exactly the strings you listed. `tsc --noEmit` is clean and the 54 existing tests pass. I didn't add a permanent test for the new helper, since you didn't ask for one.
+- **No name:** `genDynamicTypeImport("pkg")` gives `typeof import("pkg")`.
+- **Valid identifier:** `genDynamicTypeImport("pkg", "foo")` gives `typeof import("pkg").foo`. `default` is also emitted as `.default`.
+- **Not a valid identifier:** `genDynamicTypeImport("pkg", "foo-bar")` gives `typeof import("pkg")["foo-bar"]`. Names that start with a digit, like `1a`, are bracketed too.
+- **Options:** it takes `comment` and `attributes` and renders them exactly as `genDynamicImport` does. Your two examples produce the expected output. The deprecated `assert` option is accepted as well.
+- **Types:** `wrapper` and `interopDefault` are left out of the options type, since they make no sense for a type.
 
-- **Options:** `options` takes only `comment` and `attributes`. `wrapper` and `interopDefault` make no sense in a type, so they aren't accepted.
-- **Identifier check:** It uses its own regex rather than the one behind `genObjectKey`. That regex accepts a lone digit like `"1"`, which would give the invalid `.1`, so `"1"` gets the bracket form instead.
-- **Existing helper:** I left `genInlineTypeImport` as it is.
+I wrote a separate identifier check instead of reusing `genObjectKey`. Its regex accepts a lone digit like `1`, which would give the invalid `.1`.
+
+I added tests for the cases above in `test/esm.test.ts` and an entry in the README.

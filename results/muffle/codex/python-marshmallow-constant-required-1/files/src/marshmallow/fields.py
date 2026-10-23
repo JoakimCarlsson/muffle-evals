@@ -2074,18 +2074,22 @@ class Constant(Field[_ContantT]):
     _CHECK_ATTRIBUTE = False
 
     def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
-        kwargs.pop("load_default", None)
-        kwargs.pop("dump_default", None)
+        kwargs["load_default"] = missing_
         if kwargs.get("allow_none") is None:
             kwargs["allow_none"] = constant is None
         super().__init__(**kwargs)
         self.load_default = self.dump_default = constant
         self.constant = constant
 
+    def _validate_missing(self, value: typing.Any) -> None:
+        # Constants supply their own value even when required and missing.
+        if value is not missing_:
+            super()._validate_missing(value)
+
     def _serialize(self, value, *args, **kwargs) -> _ContantT:
         return self.constant
 
-    def deserialize(self, value, attr=None, data=None, **kwargs) -> _ContantT:
+    def _deserialize(self, value, *args, **kwargs) -> _ContantT:
         return self.constant
 
 

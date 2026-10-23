@@ -2,6 +2,7 @@
 export { parse, parseSetCookie } from "./cookie/parse.ts";
 export { serialize, stringifyCookie } from "./cookie/serialize.ts";
 export type {
+  CookieParseMultipleOptions,
   CookieParseOptions,
   CookieSerializeOptions,
   CookieStringifyOptions,

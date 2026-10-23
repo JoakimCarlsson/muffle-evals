@@ -1,7 +1,7 @@
-I’ll check how `number_to_words` works, add `number_to_currency` with decimal rounding, and run the relevant tests.
+I’ll check how `number_to_words` handles numbers, then add `number_to_currency` with focused tests for rounding and invalid inputs.
 
-I’ll reuse `number_to_words` for the whole amount and convert the input’s string representation to `Decimal` for rounding. That gives `2.675` the requested half-up behavior and lets me reject invalid or non-finite values before formatting.
+The method now rounds the input’s decimal text with half-up rounding, then uses `number_to_words` for the whole amount. It also preserves the sign for negative amounts below one dollar and uses its own decimal context so caller settings won’t change the result.
 
-Added `engine.number_to_currency` with half-up decimal rounding, two-digit cents, `andword` support, and `BadNumValueError` for invalid or non-finite inputs.
+Added `engine.number_to_currency(num, andword="and")` with half-up rounding, two-digit cents, and `BadNumValueError` for invalid or non-finite inputs. Added documentation and regression tests.
 
-Added documentation and tests. Full suite: **307 passed, 16 xfailed**. Ruff was unavailable.
+Validation: 307 passed, 16 expected failures. Ruff wasn’t installed, so lint checks couldn’t run.

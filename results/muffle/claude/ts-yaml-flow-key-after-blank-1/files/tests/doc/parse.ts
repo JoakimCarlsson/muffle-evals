@@ -269,6 +269,19 @@ test('stream end after : indicator (#120)', () => {
   })
 })
 
+test('flow collection key after blank or comment line', () => {
+  for (const src of ['1: 2\n\n[3]: 4', '1: 2\n# c\n[3]: 4']) {
+    const doc = YAML.parseDocument(src)
+    expect(doc.errors).toHaveLength(0)
+    expect(doc.toJS({ mapAsMap: true })).toEqual(
+      new Map<unknown, unknown>([
+        [1, 2],
+        [[3], 4]
+      ])
+    )
+  }
+})
+
 test('comment between key & : in flow collection (#149)', () => {
   const src1 = '{"a"\n#c\n:1}'
   expect(YAML.parse(src1)).toEqual({ a: 1 })
@@ -950,22 +963,4 @@ describe('stringKeys', () => {
     const doc = YAML.parseDocument('{ x, y }: 42', { stringKeys: true })
     expect(doc.errors).toMatchObject([{ code: 'NON_STRING_KEY' }])
   })
-})
-
-describe('flow collection key after blank or comment line', () => {
-  for (const [name, src] of [
-    ['blank line', '1: 2\n\n[3]: 4'],
-    ['comment line', '1: 2\n# c\n[3]: 4']
-  ]) {
-    test(name, () => {
-      const doc = YAML.parseDocument(src)
-      expect(doc.errors).toHaveLength(0)
-      expect(doc.toJS({ mapAsMap: true })).toEqual(
-        new Map<unknown, unknown>([
-          [1, 2],
-          [[3], 4]
-        ])
-      )
-    })
-  }
 })

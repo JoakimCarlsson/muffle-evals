@@ -1,7 +1,5 @@
-I’ll check the comma formatters and test conventions, add the parsers, and verify round trips and invalid inputs.
+I’ll check how `Comma` and `Commaf` format numbers, then add parsers and tests for round trips, limits, and invalid input.
 
-Added `ParseComma` and `ParseCommaf`. Both ignore commas and return `0` with an error for invalid or out-of-range input.
+Added `humanize.ParseComma` and `humanize.ParseCommaf`. Both ignore commas and return `0` with an error for invalid or out-of-range input.
 
-Tests cover round trips, integer limits, float extremes, negative numbers, plain numbers, and invalid inputs.
-
-`go test ./...` passes.
+Tests cover round trips, integer limits, float extremes, negative numbers, and invalid inputs. `go test ./...` passes.

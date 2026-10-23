@@ -1,28 +1,98 @@
 diff --git a/src/utils.ts b/src/utils.ts
-index db7c2c2..4dc9720 100644
+index db7c2c2..52c9167 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
-@@ -292,7 +292,10 @@ export function withBase(input: string, base: string) {
+@@ -292,7 +292,7 @@ export function withBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
 -  if (input.startsWith(_base)) {
-+  if (
-+    input.startsWith(_base) &&
-+    (!input[_base.length] || "/?#".includes(input[_base.length]))
-+  ) {
++  if (hasBase(input, _base)) {
      return input;
    }
    return joinURL(_base, input);
-@@ -316,7 +319,10 @@ export function withoutBase(input: string, base: string) {
+@@ -316,13 +316,21 @@ export function withoutBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
 -  if (!input.startsWith(_base)) {
-+  if (
-+    !input.startsWith(_base) ||
-+    (input[_base.length] && !"/?#".includes(input[_base.length]))
-+  ) {
++  if (!hasBase(input, _base)) {
      return input;
    }
    const trimmed = input.slice(_base.length);
+   return trimmed[0] === "/" ? trimmed : "/" + trimmed;
+ }
+ 
++/** Checks whether input starts with a complete base path. */
++function hasBase(input: string, base: string): boolean {
++  return (
++    input.startsWith(base) &&
++    (!input[base.length] || /[/?#]/.test(input[base.length]))
++  );
++}
++
+ /**
+  * Add/Replace the query section of the URL.
+  *
+diff --git a/test/base.test.ts b/test/base.test.ts
+index ed684d1..ff6e87f 100644
+--- a/test/base.test.ts
++++ b/test/base.test.ts
+@@ -4,6 +4,36 @@ import { withBase, withoutBase } from "../src";
+ describe("withBase", () => {
+   const tests = [
+     { base: "/", input: "/", out: "/" },
++    {
++      base: "/admin",
++      input: "/admin-dashboard",
++      out: "/admin/admin-dashboard",
++    },
++    { base: "/admin", input: "/administrator", out: "/admin/administrator" },
++    {
++      base: "/admin",
++      input: "/admin%2Fdashboard",
++      out: "/admin/admin%2Fdashboard",
++    },
++    { base: "/admin", input: "/admin", out: "/admin" },
++    { base: "/admin", input: "/admin/dashboard", out: "/admin/dashboard" },
++    { base: "/admin", input: "/admin?x", out: "/admin?x" },
++    { base: "/admin", input: "/admin#x", out: "/admin#x" },
++    {
++      base: "/admin/",
++      input: "/admin-dashboard",
++      out: "/admin/admin-dashboard",
++    },
++    { base: "/admin/", input: "/administrator", out: "/admin/administrator" },
++    {
++      base: "/admin/",
++      input: "/admin%2Fdashboard",
++      out: "/admin/admin%2Fdashboard",
++    },
++    { base: "/admin/", input: "/admin", out: "/admin" },
++    { base: "/admin/", input: "/admin/dashboard", out: "/admin/dashboard" },
++    { base: "/admin/", input: "/admin?x", out: "/admin?x" },
++    { base: "/admin/", input: "/admin#x", out: "/admin#x" },
+     { base: "/foo", input: "", out: "/foo" },
+     { base: "/foo/", input: "/", out: "/foo" },
+     { base: "/foo", input: "/bar", out: "/foo/bar" },
+@@ -25,6 +55,20 @@ describe("withBase", () => {
+ describe("withoutBase", () => {
+   const tests = [
+     { base: "/", input: "/", out: "/" },
++    { base: "/admin", input: "/admin-dashboard", out: "/admin-dashboard" },
++    { base: "/admin", input: "/administrator", out: "/administrator" },
++    { base: "/admin", input: "/admin%2Fdashboard", out: "/admin%2Fdashboard" },
++    { base: "/admin", input: "/admin", out: "/" },
++    { base: "/admin", input: "/admin/dashboard", out: "/dashboard" },
++    { base: "/admin", input: "/admin?x", out: "/?x" },
++    { base: "/admin", input: "/admin#x", out: "/#x" },
++    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
++    { base: "/admin/", input: "/administrator", out: "/administrator" },
++    { base: "/admin/", input: "/admin%2Fdashboard", out: "/admin%2Fdashboard" },
++    { base: "/admin/", input: "/admin", out: "/" },
++    { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
++    { base: "/admin/", input: "/admin?x", out: "/?x" },
++    { base: "/admin/", input: "/admin#x", out: "/#x" },
+     { base: "/foo", input: "/", out: "/" },
+     { base: "/foo/", input: "/", out: "/" },
+     { base: "/foo", input: "/bar", out: "/bar" },

@@ -1,5 +1,5 @@
-Adding both methods, public error type, and tests; checking repository conventions first.
+Adding `Itertools` prefix methods, public mismatch error, and focused tests.
 
 
 Done.
-Added both methods, public `StripPrefixError`, docs, tests. Core tests pass with default features and no default features; doctests and formatting pass.
+Added both methods, public `StripPrefixError`, docs, tests. Core, property, doctests, no-default-features checks passed; Clippy blocked by four existing warnings.

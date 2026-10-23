@@ -14,7 +14,7 @@ methods:
     compare compare_nouns compare_verbs compare_adjs
     present_participle
     ordinal
-    number_to_words
+    number_to_words number_to_currency
     join
     defnoun defverb defadj defa defan
 
@@ -36,7 +36,7 @@ ARTICLES:
     classical inflect num a an
 
 NUMERICAL:
-    ordinal number_to_words
+    ordinal number_to_words number_to_currency
 
 USER_DEFINED:
     defnoun defverb defadj defa defan
@@ -61,7 +61,7 @@ import functools
 import itertools
 import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
+from decimal import ROUND_HALF_UP, Context, Decimal, DecimalException
 from numbers import Number
 from re import Match
 from typing import (
@@ -4053,32 +4053,29 @@ class engine:
     def number_to_currency(
         self, num: int | float | Decimal | str, andword: str = "and"
     ) -> str:
-        """
-        Return an amount in words with cents as a fraction of one hundred.
+        """Return an amount in words with cents as a fraction of one hundred.
 
-        Round the number as written to the nearest cent, rounding ties away
-        from zero. ``andword`` applies to the whole amount; the separator
-        before the cents is always "and".
-
-        >>> p = engine()
-        >>> p.number_to_currency(100_020.56)
-        'one hundred thousand and twenty and 56/100'
-        >>> p.number_to_currency(101.01, andword="")
-        'one hundred one and 01/100'
+        Round the written number half up to the nearest cent. ``andword``
+        controls conjunctions in the whole amount; cents always use "and".
+        Invalid or non-finite amounts raise :class:`BadNumValueError`.
         """
         try:
             amount = Decimal(str(num))
-            if not amount.is_finite():
-                raise BadNumValueError
-            with localcontext() as ctx:
-                ctx.prec = max(28, amount.adjusted() + 4)
-                rounded = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        except (InvalidOperation, ValueError, TypeError) as err:
+        except (DecimalException, ValueError, TypeError) as err:
             raise BadNumValueError from err
+        if not amount.is_finite():
+            raise BadNumValueError
 
-        whole, cents = format(rounded, "f").split(".")
+        # Allow a carry and two decimal places, independent of the caller's
+        # decimal precision and rounding settings.
+        precision = max(len(amount.as_tuple().digits), amount.adjusted() + 1) + 3
+        rounded = amount.quantize(
+            Decimal("0.01"), context=Context(prec=precision, rounding=ROUND_HALF_UP)
+        )
+        whole, cents = format(rounded.copy_abs(), "f").split(".")
+        sign = "minus " if rounded.is_signed() else ""
         words = self.number_to_words(whole, andword=andword)
-        return f"{words} and {cents}/100"
+        return f"{sign}{words} and {cents}/100"
 
     @staticmethod
     def _render(chunks, decimal, comma):

@@ -1,3 +1,36 @@
+diff --git a/doc/source/index.rst b/doc/source/index.rst
+index 928ddd9..dfedd04 100644
+--- a/doc/source/index.rst
++++ b/doc/source/index.rst
+@@ -156,6 +156,19 @@ seconds between retries.
+         print("Wait 2 second between retries")
+         raise Exception
+ 
++Wait times can also depend on the exception raised by the last attempt.
++``wait_exception`` passes that exception to a function and uses its return value
++as the number of seconds to wait.
++
++.. testcode::
++
++    @retry(wait=wait_exception(lambda exception: 1 if isinstance(exception, TimeoutError) else 60))
++    def wait_for_exception():
++        raise TimeoutError
++
++``wait_exception`` raises ``RuntimeError`` if no exception is available, including
++when retrying a rejected result.
++
+ Some things perform best with a bit of randomness injected.
+ 
+ .. testcode::
+diff --git a/releasenotes/notes/wait-exception-2dc2f4b2b4104a85.yaml b/releasenotes/notes/wait-exception-2dc2f4b2b4104a85.yaml
+new file mode 100644
+index 0000000..ee15d55
+--- /dev/null
++++ b/releasenotes/notes/wait-exception-2dc2f4b2b4104a85.yaml
+@@ -0,0 +1,3 @@
++features:
++  - Add ``wait_exception`` to compute the wait time from the exception raised by
++    the last attempt. It raises ``RuntimeError`` when no exception is available.
 diff --git a/tenacity/__init__.py b/tenacity/__init__.py
 index e93793c..b0b4794 100644
 --- a/tenacity/__init__.py
@@ -19,15 +52,15 @@ index e93793c..b0b4794 100644
      "wait_fixed",
      "wait_incrementing",
 diff --git a/tenacity/wait.py b/tenacity/wait.py
-index dc3c850..9fb274b 100644
+index dc3c850..725dd14 100644
 --- a/tenacity/wait.py
 +++ b/tenacity/wait.py
-@@ -56,6 +56,24 @@ class wait_fixed(wait_base):
+@@ -56,6 +56,29 @@ class wait_fixed(wait_base):
          return self.wait_fixed
  
  
 +class wait_exception(wait_base):
-+    """Wait for the number of seconds returned by a function of the exception.
++    """Wait for the seconds returned by a predicate given the last exception.
 +
 +    Raise RuntimeError if the last attempt did not raise an exception.
 +    """
@@ -36,11 +69,16 @@ index dc3c850..9fb274b 100644
 +        self.predicate = predicate
 +
 +    def __call__(self, retry_state: "RetryCallState") -> float:
-+        exception = (
-+            retry_state.outcome.exception() if retry_state.outcome is not None else None
-+        )
++        outcome = retry_state.outcome
++        if outcome is None or not outcome.failed:
++            raise RuntimeError(
++                "wait_exception requires an exception from the last attempt"
++            )
++        exception = outcome.exception()
 +        if exception is None:
-+            raise RuntimeError("wait_exception requires an exception from the last attempt")
++            raise RuntimeError(
++                "wait_exception requires an exception from the last attempt"
++            )
 +        return self.predicate(exception)
 +
 +
@@ -48,49 +86,48 @@ index dc3c850..9fb274b 100644
      """Wait strategy that doesn't wait at all before retrying."""
  
 diff --git a/tests/test_tenacity.py b/tests/test_tenacity.py
-index b76fec2..e58713b 100644
+index b76fec2..33a1f98 100644
 --- a/tests/test_tenacity.py
 +++ b/tests/test_tenacity.py
-@@ -214,6 +214,43 @@ class TestStopConditions(unittest.TestCase):
+@@ -214,6 +214,42 @@ class TestStopConditions(unittest.TestCase):
  
  
  class TestWaitConditions(unittest.TestCase):
 +    def test_exception_sleep(self):
-+        exceptions = [ValueError("rate limit"), TypeError("other error")]
++        errors = [ValueError("rate limited"), BaseException("other failure")]
 +        predicate = mock.Mock(side_effect=[1.5, 60.0])
 +        sleep = mock.Mock()
-+        attempts = mock.Mock(side_effect=exceptions + ["success"])
++        attempt = mock.Mock(side_effect=errors + ["success"])
 +        r = Retrying(
 +            wait=tenacity.wait_exception(predicate),
-+            stop=tenacity.stop_after_attempt(3),
 +            sleep=sleep,
++            retry=tenacity.retry_if_exception_type(BaseException),
 +        )
-+        self.assertEqual(r(attempts), "success")
-+        self.assertEqual(predicate.call_args_list, [mock.call(e) for e in exceptions])
++
++        self.assertEqual(r(attempt), "success")
++        self.assertEqual(predicate.call_args_list, [mock.call(e) for e in errors])
 +        self.assertEqual(sleep.call_args_list, [mock.call(1.5), mock.call(60.0)])
 +
-+    def test_exception_sleep_without_exception(self):
-+        predicate = mock.Mock()
-+        r = Retrying(
-+            wait=tenacity.wait_exception(predicate),
-+            retry=tenacity.retry_if_result(lambda result: True),
-+            stop=tenacity.stop_after_attempt(2),
-+        )
-+        with self.assertRaisesRegex(RuntimeError, "requires an exception"):
++    def test_exception_sleep_requires_exception(self):
++        predicate = mock.Mock(return_value=1.0)
++        wait = tenacity.wait_exception(predicate)
++        state = RetryCallState(None, None, (), {})
++        with self.assertRaises(RuntimeError):
++            wait(state)
++        state.set_result(None)
++        with self.assertRaises(RuntimeError):
++            wait(state)
++        r = Retrying(wait=wait, retry=tenacity.retry_if_result(lambda result: True))
++        with self.assertRaises(RuntimeError):
 +            r(lambda: None)
-+        state = RetryCallState(r, None, (), {})
-+        with self.assertRaisesRegex(RuntimeError, "requires an exception"):
-+            r.wait(state)
 +        predicate.assert_not_called()
 +
 +    def test_exception_sleep_combine(self):
-+        predicate = mock.Mock(return_value=2.5)
-+        r = Retrying(wait=tenacity.wait_exception(predicate) + tenacity.wait_fixed(3))
-+        state = RetryCallState(r, None, (), {})
-+        exception = KeyboardInterrupt()
-+        state.set_exception((type(exception), exception, None))
-+        self.assertEqual(r.wait(state), 5.5)
-+        predicate.assert_called_once_with(exception)
++        error = ValueError("failure")
++        state = RetryCallState(None, None, (), {})
++        state.set_exception((type(error), error, None))
++        wait = tenacity.wait_exception(lambda exception: 1.5) + tenacity.wait_fixed(2)
++        self.assertEqual(wait(state), 3.5)
 +
      def test_no_sleep(self):
          r = Retrying()

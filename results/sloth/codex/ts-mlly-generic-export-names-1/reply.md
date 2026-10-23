@@ -1,9 +1,9 @@
-I’ll trace how `findExports` splits declarations, check its callers and existing coverage, then make the smallest fix and run the build and tests.
+I’ll check how `findExports` splits declarations, fix the shared parser, and add regression tests for the examples you gave.
 
-The shared declaration scanner only tracks `<…>` inside type annotations. It also treats the `>` in an arrow type as a closing bracket. I’ll fix both there so `findExports` and its callers inherit the correction. No public API, fixture, or config changes are needed.
+The bug is in the shared declaration scanner, which also feeds `findExportNames`. I’ll keep the change there and add cases to the existing export tests; no fixtures, configuration, or public API changes are needed. The scanner needs to distinguish generic calls from comparisons and ignore the `>` in arrow types.
 
-The declaration regex stops before the closing `>` in some cases, so the scanner also needs the trailing source to recognize a generic call. With that adjustment, all your examples and a nested generic call check pass. I’m rerunning the build and existing checks.
+Fixed `findExports` to recognize generic call arguments and ignore `=>` when tracking type brackets, while preserving comparison handling.
 
-Fixed in `src/analyze.ts`: generic call arguments no longer become export names, comparisons still split declarations correctly, and arrow function types preserve generic nesting.
+Added regression coverage for all reported examples and nested generics.
 
-Verified all supplied examples plus nested generics. Build, type checking, lint, and all 189 existing tests pass.
+Validation passed: 196 tests, lint, formatting, type checking, and build.

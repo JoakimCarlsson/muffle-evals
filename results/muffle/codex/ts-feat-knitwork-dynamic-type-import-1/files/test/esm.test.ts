@@ -110,22 +110,6 @@ describe("genDynamicImport", () => {
   }
 });
 
-const genSafeVariableNameTests = [
-  { key: "valid_import", code: "valid_import" },
-  { key: "for", code: "_for" },
-  { key: "with space", code: "with_32space" },
-  { key: "123 numbers", code: "_123_32numbers" },
-];
-
-describe("genSafeVariableName", () => {
-  for (const t of genSafeVariableNameTests) {
-    it(genTestTitle(t.code), () => {
-      const code = genSafeVariableName(t.key);
-      expect(code).to.equal(t.code);
-    });
-  }
-});
-
 const genDynamicTypeImportTests: Array<{
   input: Parameters<typeof genDynamicTypeImport>;
   code: string;
@@ -134,19 +118,12 @@ const genDynamicTypeImportTests: Array<{
   { input: ["pkg", undefined], code: 'typeof import("pkg")' },
   { input: ["pkg", "foo"], code: 'typeof import("pkg").foo' },
   { input: ["pkg", "default"], code: 'typeof import("pkg").default' },
-  { input: ["pkg", "$foo_1"], code: 'typeof import("pkg").$foo_1' },
-  { input: ["pkg", "é"], code: 'typeof import("pkg").é' },
+  { input: ["pkg", "$_foo$"], code: 'typeof import("pkg").$_foo$' },
+  { input: ["pkg", "café"], code: 'typeof import("pkg").café' },
   { input: ["pkg", "foo-bar"], code: 'typeof import("pkg")["foo-bar"]' },
-  { input: ["pkg", "1foo"], code: 'typeof import("pkg")["1foo"]' },
+  { input: ["pkg", "123"], code: 'typeof import("pkg")["123"]' },
   { input: ["pkg", ""], code: 'typeof import("pkg")[""]' },
-  {
-    input: ["pkg", 'foo"bar'],
-    code: 'typeof import("pkg")["foo\\"bar"]',
-  },
-  {
-    input: ["pkg", "foo-bar", { singleQuotes: true }],
-    code: "typeof import('pkg')['foo-bar']",
-  },
+  { input: ["pkg", 'a"b'], code: 'typeof import("pkg")["a\\"b"]' },
   {
     input: ["pkg", "foo", { comment: 'webpackChunkName: "chunks/dynamic"' }],
     code: 'typeof import("pkg" /* webpackChunkName: "chunks/dynamic" */).foo',
@@ -163,12 +140,32 @@ const genDynamicTypeImportTests: Array<{
     ],
     code: 'typeof import("pkg" /* chunk */, { with: { type: "json" } })',
   },
+  {
+    input: ["pkg", "foo-bar", { singleQuotes: true }],
+    code: "typeof import('pkg')['foo-bar']",
+  },
 ];
 
 describe("genDynamicTypeImport", () => {
   for (const t of genDynamicTypeImportTests) {
     it(genTestTitle(t.code), () => {
       expect(genDynamicTypeImport(...t.input)).to.equal(t.code);
+    });
+  }
+});
+
+const genSafeVariableNameTests = [
+  { key: "valid_import", code: "valid_import" },
+  { key: "for", code: "_for" },
+  { key: "with space", code: "with_32space" },
+  { key: "123 numbers", code: "_123_32numbers" },
+];
+
+describe("genSafeVariableName", () => {
+  for (const t of genSafeVariableNameTests) {
+    it(genTestTitle(t.code), () => {
+      const code = genSafeVariableName(t.key);
+      expect(code).to.equal(t.code);
     });
   }
 });

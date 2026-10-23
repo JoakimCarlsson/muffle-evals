@@ -68,15 +68,9 @@ Generate an ESM dynamic `import()` statement.
 
 ### `genDynamicTypeImport(specifier, name?, options)`
 
-Generate a TypeScript `typeof import()` expression. Export names use dot access
-when valid identifiers and bracket access otherwise. Supports dynamic import
-comments and attributes.
-
-```js
-genDynamicTypeImport("pkg", undefined); // typeof import("pkg")
-genDynamicTypeImport("pkg", "foo"); // typeof import("pkg").foo
-genDynamicTypeImport("pkg", "foo-bar"); // typeof import("pkg")["foo-bar"]
-```
+Generate a TypeScript `typeof import()` expression. Export names use dot notation
+for valid identifiers and bracket notation otherwise. Omit the name for the module
+type. Supports the same comments and import attributes as `genDynamicImport`.
 
 ### `genExport(specifier, exports?, options)`
 

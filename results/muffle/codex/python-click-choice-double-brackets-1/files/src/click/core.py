@@ -3571,9 +3571,12 @@ class Argument(Parameter):
         var = self.type.get_metavar(param=self, ctx=ctx)
         if not var:
             var = self.name.upper()
+        if not self.required and var.startswith("[") and var.endswith("]"):
+            # The type may already indicate that the argument is optional.
+            var = var[1:-1]
         if self.deprecated:
             var += "!"
-        if not self.required and not (var.startswith("[") and var.endswith("]")):
+        if not self.required:
             var = f"[{var}]"
         if self.nargs != 1:
             var += "..."

@@ -603,17 +603,17 @@ func TestNewFromBigRat(t *testing.T) {
 	}
 
 	tests := map[Inp]string{
-		Inp{big.NewRat(0, 1), 16}:                                    "0",
-		Inp{big.NewRat(4, 5), 16}:                                    "0.8",
-		Inp{big.NewRat(10, 2), 16}:                                   "5",
-		Inp{big.NewRat(1023427554493, 43432632), 16}:                 "23563.5628642767953828", // rounded
-		Inp{big.NewRat(1, 434324545566634), 16}:                      "0.0000000000000023",
-		Inp{big.NewRat(1, 3), 16}:                                    "0.3333333333333333",
-		Inp{big.NewRat(2, 3), 2}:                                     "0.67",               // rounded
-		Inp{big.NewRat(2, 3), 16}:                                    "0.6666666666666667", // rounded
-		Inp{big.NewRat(10000, 3), 16}:                                "3333.3333333333333333",
-		Inp{mustParseRat("30702832066636633479"), 16}:                "30702832066636633479",
-		Inp{mustParseRat("487028320159896636679.1827512895753"), 16}: "487028320159896636679.1827512895753",
+		Inp{big.NewRat(0, 1), 16}:                                                     "0",
+		Inp{big.NewRat(4, 5), 16}:                                                     "0.8",
+		Inp{big.NewRat(10, 2), 16}:                                                    "5",
+		Inp{big.NewRat(1023427554493, 43432632), 16}:                                  "23563.5628642767953828", // rounded
+		Inp{big.NewRat(1, 434324545566634), 16}:                                       "0.0000000000000023",
+		Inp{big.NewRat(1, 3), 16}:                                                     "0.3333333333333333",
+		Inp{big.NewRat(2, 3), 2}:                                                      "0.67",               // rounded
+		Inp{big.NewRat(2, 3), 16}:                                                     "0.6666666666666667", // rounded
+		Inp{big.NewRat(10000, 3), 16}:                                                 "3333.3333333333333333",
+		Inp{mustParseRat("30702832066636633479"), 16}:                                 "30702832066636633479",
+		Inp{mustParseRat("487028320159896636679.1827512895753"), 16}:                  "487028320159896636679.1827512895753",
 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), -2}: "127028320612589896636633500",                  // rounded
 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), 16}: "127028320612589896636633479.1735827512895753", // rounded
 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), 32}: "127028320612589896636633479.173582751289575278357832",
@@ -3963,17 +3963,14 @@ func ExampleNewFromFloat() {
 	//-10000000000000
 }
 
-func TestNumDigitsPowersOfTen(t *testing.T) {
-	for i := 0; i < 40; i++ {
-		d := New(1, int32(i)).Mul(New(1, 0))
-		want := len(d.Coefficient().Text(10))
-		if got := d.NumDigits(); got != want {
-			t.Errorf("10^%d: got %d, want %d", i, got, want)
-		}
-		d = RequireFromString("1" + strings.Repeat("0", i) + "E20")
-		want = len(d.Coefficient().Text(10))
-		if got := d.NumDigits(); got != want {
-			t.Errorf("1e%d E20: got %d, want %d", i, got, want)
+func TestDecimal_NumDigitsPowersOfTen(t *testing.T) {
+	for i := 0; i < 60; i++ {
+		v := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(i)), nil)
+		for _, c := range []*big.Int{v, new(big.Int).Sub(v, big.NewInt(1)), new(big.Int).Neg(v)} {
+			d := NewFromBigInt(c, 20)
+			if want := len(new(big.Int).Abs(c).Text(10)); d.NumDigits() != want {
+				t.Errorf("%s: expected %d digits, got %d", c, want, d.NumDigits())
+			}
 		}
 	}
 }

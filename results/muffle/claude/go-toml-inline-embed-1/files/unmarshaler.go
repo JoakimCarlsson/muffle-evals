@@ -2232,12 +2232,6 @@ func buildPlan(t reflect.Type) *structPlan {
 	return plan
 }
 
-// parts0 returns the name part of a toml struct tag.
-func parts0(tag string) string {
-	name, _, _ := strings.Cut(tag, ",")
-	return name
-}
-
 func addFields(plan *structPlan, t reflect.Type, prefix []int) {
 	var embedded []reflect.StructField
 	for i := 0; i < t.NumField(); i++ {
@@ -2263,11 +2257,11 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
 				// Embedded non-struct fields are not decoded into.
 				continue
 			}
-			if !tagged || parts0(tag) == "" {
-				// Embedded structs without a tag name (untagged, or with
-				// only options such as ",inline") are flattened, even when
-				// their type is unexported: only their own exported fields
-				// are reachable. This mirrors the encoder.
+			if !tagged || tagName(tag) == "" {
+				// Embedded structs without a tag name (untagged, or only
+				// options such as ",inline") are flattened, even when their
+				// type is unexported: only their own exported fields are
+				// reachable.
 				embedded = append(embedded, f)
 				continue
 			}

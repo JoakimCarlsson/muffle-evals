@@ -11,3 +11,26 @@ index d2db291..cd642b5 100644
              var = f"[{var}]"
          if self.nargs != 1:
              var += "..."
+diff --git a/tests/test_arguments.py b/tests/test_arguments.py
+index 6015282..371eab2 100644
+--- a/tests/test_arguments.py
++++ b/tests/test_arguments.py
+@@ -653,3 +653,18 @@ def test_argument_custom_class_can_override_type_cast_value_and_never_sees_unset
+     result = runner.invoke(cmd, pass_argv)
+     assert not result.exception
+     assert result.exit_code == 0
++
++
++@pytest.mark.parametrize(
++    ("type", "metavar"),
++    [
++        (click.Choice(["foo", "bar"]), "[foo|bar]"),
++        (click.DateTime(formats=["%Y-%m-%d"]), "[%Y-%m-%d]"),
++    ],
++)
++@pytest.mark.parametrize("kwargs", [{"nargs": -1}, {"required": False}])
++def test_optional_argument_bracketed_metavar_not_doubled(type, metavar, kwargs):
++    arg = click.Argument(["a"], type=type, **kwargs)
++    ctx = click.Context(click.Command("cmd"))
++    expected = metavar + ("..." if kwargs.get("nargs") == -1 else "")
++    assert arg.make_metavar(ctx) == expected

@@ -1,40 +1,47 @@
-diff --git a/context.go b/context.go
-index 8222073..5bcb8b1 100644
---- a/context.go
-+++ b/context.go
-@@ -164,3 +164,13 @@ type contextKey struct {
- func (k *contextKey) String() string {
- 	return "chi context value " + k.name
+diff --git a/mux.go b/mux.go
+index 37cd500..34d4ebc 100644
+--- a/mux.go
++++ b/mux.go
+@@ -523,7 +523,12 @@ func (mx *Mux) updateRouteHandler() {
+ // methods for the route.
+ func methodNotAllowedHandler(methodsAllowed ...methodTyp) func(w http.ResponseWriter, r *http.Request) {
+ 	return func(w http.ResponseWriter, r *http.Request) {
++		seen := make(map[methodTyp]bool, len(methodsAllowed))
+ 		for _, m := range methodsAllowed {
++			if seen[m] {
++				continue
++			}
++			seen[m] = true
+ 			w.Header().Add("Allow", reverseMethodMap[m])
+ 		}
+ 		w.WriteHeader(405)
+diff --git a/mux_test.go b/mux_test.go
+index 3e3b18f..1ce4ade 100644
+--- a/mux_test.go
++++ b/mux_test.go
+@@ -1855,6 +1855,25 @@ func TestQueryHTTPMethod(t *testing.T) {
+ 	}
  }
+ 
++func TestMethodNotAllowedNoDuplicateAllow(t *testing.T) {
++	r := NewRouter()
++	h := func(w http.ResponseWriter, r *http.Request) {}
++	r.Post("/article/1-2-3", h)
++	r.Post("/article/{a}", h)
++	r.Post("/article/{b}-{c}", h)
++	r.Post("/article/{b}-{c}-{d}", h)
++	ts := httptest.NewServer(r)
++	defer ts.Close()
 +
-+// addMethodAllowed records m for the 405 Allow header unless already recorded.
-+func (x *Context) addMethodAllowed(m methodTyp) {
-+	for _, have := range x.methodsAllowed {
-+		if have == m {
-+			return
-+		}
++	resp, _ := testRequest(t, ts, "GET", "/article/1-2-3", nil)
++	if resp.StatusCode != 405 {
++		t.Fatal(resp.Status)
 +	}
-+	x.methodsAllowed = append(x.methodsAllowed, m)
++	if got := resp.Header.Values("Allow"); len(got) != 1 || got[0] != "POST" {
++		t.Fatal("Allow header should contain only POST. Received: ", got)
++	}
 +}
-diff --git a/tree.go b/tree.go
-index 9f56549..1370e12 100644
---- a/tree.go
-+++ b/tree.go
-@@ -479,7 +479,7 @@ func (n *node) findRoute(rctx *Context, method methodTyp, path string) *node {
- 							if endpoints == mALL || endpoints == mSTUB {
- 								continue
- 							}
--							rctx.methodsAllowed = append(rctx.methodsAllowed, endpoints)
-+							rctx.addMethodAllowed(endpoints)
- 						}
- 
- 						// flag that the routing context found a route, but not a corresponding
-@@ -525,7 +525,7 @@ func (n *node) findRoute(rctx *Context, method methodTyp, path string) *node {
- 					if endpoints == mALL || endpoints == mSTUB {
- 						continue
- 					}
--					rctx.methodsAllowed = append(rctx.methodsAllowed, endpoints)
-+					rctx.addMethodAllowed(endpoints)
- 				}
- 
- 				// flag that the routing context found a route, but not a corresponding
++
+ func TestMuxMatch(t *testing.T) {
+ 	r := NewRouter()
+ 	r.Get("/hi", func(w http.ResponseWriter, r *http.Request) {

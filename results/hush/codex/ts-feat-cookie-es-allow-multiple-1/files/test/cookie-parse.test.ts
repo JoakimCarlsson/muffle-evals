@@ -87,39 +87,43 @@ describe('with "allowMultiple" option', () => {
     ["foo=;bar=bar;foo=boo", { foo: ["", "boo"], bar: "bar" }],
     ["foo=%1;foo=boo", { foo: ["%1", "boo"] }],
     ["foo=%20;foo=%2F", { foo: [" ", "/"] }],
-    ["foo=a", { foo: "a" }],
-    ["", {}],
+    ["foo=a;foo=a", { foo: ["a", "a"] }],
     ["__proto__=a;__proto__=b", { ["__proto__"]: ["a", "b"] }],
-  ])("should preserve values from %s", (header, expected) => {
+    ["", {}],
+  ])("collects values from %s", (header, expected) => {
     expect(parse(header, { allowMultiple: true })).toEqual(expected);
   });
 
-  it("should support custom decoders and filters", () => {
+  it("keeps the first value when disabled", () => {
+    expect(parse("foo=;foo=b", { allowMultiple: false })).toEqual({ foo: "" });
+  });
+
+  it("supports custom decoding and filtering", () => {
     expect(
-      parse("foo=a;bar=b;foo=c;bar=d", {
+      parse("foo=a;bar=x;foo=b;bar=y", {
         allowMultiple: true,
         decode: (value) => value.toUpperCase(),
         filter: (key) => key === "foo",
       }),
-    ).toEqual({ foo: ["A", "C"] });
-    expect(parse("foo=a;foo=b", { allowMultiple: true, decode: () => undefined })).toEqual({
-      foo: [undefined, undefined],
-    });
+    ).toEqual({ foo: ["A", "B"] });
   });
 
-  it("should keep the first value when disabled", () => {
-    expect(parse("foo=;foo=b", { allowMultiple: false })).toEqual({ foo: "" });
+  it("preserves undefined decoder behavior", () => {
+    expect(
+      parse("foo=skip;foo=a;foo=skip;foo=b", {
+        allowMultiple: true,
+        decode: (value) => (value === "skip" ? undefined : value),
+      }),
+    ).toEqual({ foo: ["a", "b"] });
   });
 
-  it("should infer return types from the option", () => {
-    expectTypeOf(parse("foo=a").foo).toEqualTypeOf<string | undefined>();
-    expectTypeOf(parse("foo=a", { allowMultiple: false }).foo).toEqualTypeOf<string | undefined>();
-    expectTypeOf(parse("foo=a", { allowMultiple: true }).foo).toEqualTypeOf<
-      string | undefined | (string | undefined)[]
+  it("infers return types from options", () => {
+    expectTypeOf(parse("").foo).toEqualTypeOf<string | undefined>();
+    expectTypeOf(parse("", { allowMultiple: false }).foo).toEqualTypeOf<string | undefined>();
+    expectTypeOf(parse("", { allowMultiple: true }).foo).toEqualTypeOf<
+      string | string[] | undefined
     >();
     const options: import("../src").CookieParseOptions = {};
-    expectTypeOf(parse("foo=a", options).foo).toEqualTypeOf<
-      string | undefined | (string | undefined)[]
-    >();
+    expectTypeOf(parse("", options).foo).toEqualTypeOf<string | string[] | undefined>();
   });
 });

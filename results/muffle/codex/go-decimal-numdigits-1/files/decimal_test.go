@@ -603,17 +603,17 @@ func TestNewFromBigRat(t *testing.T) {
 	}
 
 	tests := map[Inp]string{
-		Inp{big.NewRat(0, 1), 16}:                                    "0",
-		Inp{big.NewRat(4, 5), 16}:                                    "0.8",
-		Inp{big.NewRat(10, 2), 16}:                                   "5",
-		Inp{big.NewRat(1023427554493, 43432632), 16}:                 "23563.5628642767953828", // rounded
-		Inp{big.NewRat(1, 434324545566634), 16}:                      "0.0000000000000023",
-		Inp{big.NewRat(1, 3), 16}:                                    "0.3333333333333333",
-		Inp{big.NewRat(2, 3), 2}:                                     "0.67",               // rounded
-		Inp{big.NewRat(2, 3), 16}:                                    "0.6666666666666667", // rounded
-		Inp{big.NewRat(10000, 3), 16}:                                "3333.3333333333333333",
-		Inp{mustParseRat("30702832066636633479"), 16}:                "30702832066636633479",
-		Inp{mustParseRat("487028320159896636679.1827512895753"), 16}: "487028320159896636679.1827512895753",
+		Inp{big.NewRat(0, 1), 16}:                                                     "0",
+		Inp{big.NewRat(4, 5), 16}:                                                     "0.8",
+		Inp{big.NewRat(10, 2), 16}:                                                    "5",
+		Inp{big.NewRat(1023427554493, 43432632), 16}:                                  "23563.5628642767953828", // rounded
+		Inp{big.NewRat(1, 434324545566634), 16}:                                       "0.0000000000000023",
+		Inp{big.NewRat(1, 3), 16}:                                                     "0.3333333333333333",
+		Inp{big.NewRat(2, 3), 2}:                                                      "0.67",               // rounded
+		Inp{big.NewRat(2, 3), 16}:                                                     "0.6666666666666667", // rounded
+		Inp{big.NewRat(10000, 3), 16}:                                                 "3333.3333333333333333",
+		Inp{mustParseRat("30702832066636633479"), 16}:                                 "30702832066636633479",
+		Inp{mustParseRat("487028320159896636679.1827512895753"), 16}:                  "487028320159896636679.1827512895753",
 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), -2}: "127028320612589896636633500",                  // rounded
 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), 16}: "127028320612589896636633479.1735827512895753", // rounded
 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), 32}: "127028320612589896636633479.173582751289575278357832",
@@ -3144,13 +3144,15 @@ func TestDecimal_NumDigits(t *testing.T) {
 	}{
 		{"0", 1},
 		{"0.00", 1},
-		{"100000000000000E20", 15},
-		{"1000000000000000E20", 16},
-		{"10000000000000000E20", 17},
 		{"1.0", 2},
 		{"3.0", 2},
 		{"5.26", 3},
 		{"5.2663117716", 11},
+		{"100000000000000E20", 15},
+		{"1000000000000000E20", 16},
+		{"10000000000000000E20", 17},
+		{"9223372036854775807", 19},
+		{"-9223372036854775808", 19},
 		{"3164836416948884.2162426426426267863", 35},
 		{"26.1", 3},
 		{"529.1591", 7},
@@ -3170,27 +3172,21 @@ func TestDecimal_NumDigits(t *testing.T) {
 	}
 }
 
-func TestDecimal_NumDigitsBoundaries(t *testing.T) {
-	// Check both sides of powers of ten, including the int64 fast path
-	// and coefficients that require arbitrary precision.
+func TestDecimal_NumDigitsPowersOfTen(t *testing.T) {
 	for exponent := int64(0); exponent <= 100; exponent++ {
 		power := new(big.Int).Exp(big.NewInt(10), big.NewInt(exponent), nil)
 		for _, offset := range []int64{-1, 0, 1} {
 			coefficient := new(big.Int).Add(power, big.NewInt(offset))
-			want := len(coefficient.String())
+			want := len(coefficient.Text(10))
 			for _, sign := range []int64{1, -1} {
-				value := new(big.Int).Mul(coefficient, big.NewInt(sign))
-				d := NewFromBigInt(value, 20)
-				if got := d.NumDigits(); got != want {
-					t.Errorf("coefficient %s: expected %d digits, got %d", value, want, got)
+				signed := new(big.Int).Mul(coefficient, big.NewInt(sign))
+				for _, scale := range []int32{-20, 0, 20} {
+					d := NewFromBigInt(signed, scale)
+					if got := d.NumDigits(); got != want {
+						t.Errorf("coefficient %s, exponent %d: expected %d digits, got %d", signed, scale, want, got)
+					}
 				}
 			}
-		}
-	}
-	for _, coefficient := range []int64{math.MinInt64, math.MaxInt64} {
-		d := New(coefficient, 0)
-		if got := d.NumDigits(); got != 19 {
-			t.Errorf("coefficient %d: expected 19 digits, got %d", coefficient, got)
 		}
 	}
 }

@@ -1,3 +1,3 @@
-Done. Fixed in `src/attr/_make.py`: positional args are now passed to `__attrs_pre_init__` by name only, not with their defaults. I added `changelog.d/pre-init-defaults.change.md`. Tests matching `-k init` pass (58), and I didn't run the full suite.
+Done. Fixed in `src/attr/_make.py`: positional args now go to `__attrs_pre_init__` without their defaults, so passed values arrive. Changelog added at `changelog.d/+pre-init-defaults.change.md`. I ran only the `pre_init` and `init` tests, which pass. I added no regression test.
 
-Fields with a `factory` still get `NOTHING` in `__attrs_pre_init__` when you don't pass them, because the factory runs after pre-init.
+Omitted factory fields still reach `__attrs_pre_init__` as `NOTHING`.

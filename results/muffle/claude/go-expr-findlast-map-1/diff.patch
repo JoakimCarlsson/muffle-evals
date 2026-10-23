@@ -1,5 +1,5 @@
 diff --git a/compiler/compiler.go b/compiler/compiler.go
-index f66cf9e..6851753 100644
+index f66cf9e..22d608c 100644
 --- a/compiler/compiler.go
 +++ b/compiler/compiler.go
 @@ -1213,12 +1213,14 @@ func (c *compiler) emitLoopBackwards(body func()) {
@@ -13,30 +13,36 @@ index f66cf9e..6851753 100644
  	c.emit(OpDecrementIndex)
  	c.emit(OpJumpBackward, c.calcBackwardJump(begin))
  	c.patchJump(end)
-+	c.emit(OpPop)
++	c.emit(OpPop) // JumpIfFalse leaves the failed bound check on the stack.
  }
  
  func (c *compiler) PredicateNode(node *ast.PredicateNode) {
 diff --git a/expr_test.go b/expr_test.go
-index 1bce3c8..d490fc7 100644
+index 1bce3c8..0c8a497 100644
 --- a/expr_test.go
 +++ b/expr_test.go
-@@ -3005,3 +3005,18 @@ func TestBytesLiteral_errors(t *testing.T) {
+@@ -3005,3 +3005,24 @@ func TestBytesLiteral_errors(t *testing.T) {
  		})
  	}
  }
 +
-+func TestExpr_findLast_inMapLiteral(t *testing.T) {
-+	tests := map[string]any{
-+		`{"r": findLast([1, 2, 3, 4, 5], # > 3)}`:      map[string]any{"r": 5},
-+		`{"r": findLastIndex([1, 2, 3, 4, 5], # > 3)}`: map[string]any{"r": 4},
-+		`{"r": findLast([1, 2], # > 3)}`:               map[string]any{"r": nil},
++func TestFindLast_inMapLiteral(t *testing.T) {
++	tests := []struct {
++		code string
++		want any
++	}{
++		{`{"r": findLast([1.0, 2.0, 3.0, 4.0, 5.0], # > 3)}`, map[string]any{"r": 5.0}},
++		{`{"r": findLastIndex([1.0, 2.0, 3.0, 4.0, 5.0], # > 3)}`, map[string]any{"r": 4}},
++		{`{"r": findLast([1, 2, 3], # > 9)}`, map[string]any{"r": nil}},
++		{`{"r": findLastIndex([1, 2, 3], # > 9)}`, map[string]any{"r": nil}},
 +	}
-+	for input, want := range tests {
-+		program, err := expr.Compile(input)
-+		require.NoError(t, err)
-+		out, err := expr.Run(program, nil)
-+		require.NoError(t, err)
-+		assert.Equal(t, want, out, input)
++	for _, tt := range tests {
++		t.Run(tt.code, func(t *testing.T) {
++			program, err := expr.Compile(tt.code)
++			require.NoError(t, err)
++			out, err := expr.Run(program, nil)
++			require.NoError(t, err)
++			assert.Equal(t, tt.want, out)
++		})
 +	}
 +}

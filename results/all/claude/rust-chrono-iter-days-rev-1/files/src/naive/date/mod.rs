@@ -1341,12 +1341,17 @@ impl NaiveDate {
     /// }
     /// assert_eq!(count, 4);
     ///
-    /// let last_four: Vec<_> = NaiveDate::from_ymd_opt(2016, 2, 27).unwrap().iter_days().rev().take(4).collect();
-    /// assert_eq!(last_four[0], NaiveDate::MAX);
+    /// for d in NaiveDate::from_ymd_opt(2016, 2, 27).unwrap().iter_days().take(4).rev() {
+    ///     count -= 1;
+    ///     assert_eq!(d, expected[count]);
+    /// }
     /// ```
     #[inline]
     pub const fn iter_days(&self) -> NaiveDateDaysIterator {
-        NaiveDateDaysIterator::new(*self)
+        NaiveDateDaysIterator {
+            value: *self,
+            remaining: (NaiveDate::MAX.num_days_from_ce() - self.num_days_from_ce()) as usize + 1,
+        }
     }
 
     /// Returns an iterator that steps by weeks across all representable dates.
@@ -1370,12 +1375,18 @@ impl NaiveDate {
     /// }
     /// assert_eq!(count, 4);
     ///
-    /// let last = NaiveDate::from_ymd_opt(2016, 2, 27).unwrap().iter_weeks().next_back().unwrap();
-    /// assert!(last <= NaiveDate::MAX && NaiveDate::MAX - last < chrono::TimeDelta::days(7));
+    /// for d in NaiveDate::from_ymd_opt(2016, 2, 27).unwrap().iter_weeks().take(4).rev() {
+    ///     count -= 1;
+    ///     assert_eq!(d, expected[count]);
+    /// }
     /// ```
     #[inline]
     pub const fn iter_weeks(&self) -> NaiveDateWeeksIterator {
-        NaiveDateWeeksIterator::new(*self)
+        NaiveDateWeeksIterator {
+            value: *self,
+            remaining: ((NaiveDate::MAX.num_days_from_ce() - self.num_days_from_ce()) / 7) as usize
+                + 1,
+        }
     }
 
     /// Returns the [`NaiveWeek`] that the date belongs to, starting with the [`Weekday`]
@@ -2207,38 +2218,31 @@ impl From<NaiveDateTime> for NaiveDate {
 
 /// Iterator over `NaiveDate` with a step size of one day.
 ///
-/// Yields every date from the start date up to and including `NaiveDate::MAX`; both ends work on
-/// that same range.
+/// Iterates from the start date up to and including `NaiveDate::MAX`. Iterating in reverse starts
+/// at `NaiveDate::MAX`.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Eq, Ord)]
 pub struct NaiveDateDaysIterator {
-    front: i32,
-    end_exclusive: i32,
-}
-
-impl NaiveDateDaysIterator {
-    const fn new(start: NaiveDate) -> Self {
-        Self {
-            front: start.num_days_from_ce(),
-            end_exclusive: NaiveDate::MAX.num_days_from_ce() + 1,
-        }
-    }
+    value: NaiveDate,
+    remaining: usize,
 }
 
 impl Iterator for NaiveDateDaysIterator {
     type Item = NaiveDate;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.front >= self.end_exclusive {
+        if self.remaining == 0 {
             return None;
         }
-        let current = NaiveDate::from_num_days_from_ce_opt(self.front)?;
-        self.front += 1;
+        let current = self.value;
+        self.remaining -= 1;
+        if self.remaining > 0 {
+            self.value = current.succ_opt()?;
+        }
         Some(current)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let exact_size = (self.end_exclusive - self.front).max(0) as usize;
-        (exact_size, Some(exact_size))
+        (self.remaining, Some(self.remaining))
     }
 }
 
@@ -2246,11 +2250,11 @@ impl ExactSizeIterator for NaiveDateDaysIterator {}
 
 impl DoubleEndedIterator for NaiveDateDaysIterator {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.front >= self.end_exclusive {
+        if self.remaining == 0 {
             return None;
         }
-        self.end_exclusive -= 1;
-        NaiveDate::from_num_days_from_ce_opt(self.end_exclusive)
+        self.remaining -= 1;
+        self.value.checked_add_days(Days::new(self.remaining as u64))
     }
 }
 
@@ -2258,45 +2262,31 @@ impl FusedIterator for NaiveDateDaysIterator {}
 
 /// Iterator over `NaiveDate` with a step size of one week.
 ///
-/// Yields the start date and every seventh date after it that is not past `NaiveDate::MAX`; both
-/// ends work on that same range.
+/// Iterates from the start date while the date is representable. Iterating in reverse starts at
+/// the last date of that sequence.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Eq, Ord)]
 pub struct NaiveDateWeeksIterator {
-    front: i32,
-    end_exclusive: i32,
-}
-
-impl NaiveDateWeeksIterator {
-    const fn new(start: NaiveDate) -> Self {
-        Self {
-            front: start.num_days_from_ce(),
-            end_exclusive: NaiveDate::MAX.num_days_from_ce() + 1,
-        }
-    }
-
-    const fn remaining(&self) -> usize {
-        if self.front >= self.end_exclusive {
-            return 0;
-        }
-        ((self.end_exclusive - self.front + 6) / 7) as usize
-    }
+    value: NaiveDate,
+    remaining: usize,
 }
 
 impl Iterator for NaiveDateWeeksIterator {
     type Item = NaiveDate;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining() == 0 {
+        if self.remaining == 0 {
             return None;
         }
-        let current = NaiveDate::from_num_days_from_ce_opt(self.front)?;
-        self.front += 7;
+        let current = self.value;
+        self.remaining -= 1;
+        if self.remaining > 0 {
+            self.value = current.checked_add_days(Days::new(7))?;
+        }
         Some(current)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let exact_size = self.remaining();
-        (exact_size, Some(exact_size))
+        (self.remaining, Some(self.remaining))
     }
 }
 
@@ -2304,13 +2294,11 @@ impl ExactSizeIterator for NaiveDateWeeksIterator {}
 
 impl DoubleEndedIterator for NaiveDateWeeksIterator {
     fn next_back(&mut self) -> Option<Self::Item> {
-        let remaining = self.remaining();
-        if remaining == 0 {
+        if self.remaining == 0 {
             return None;
         }
-        let last = self.front + 7 * (remaining as i32 - 1);
-        self.end_exclusive = last;
-        NaiveDate::from_num_days_from_ce_opt(last)
+        self.remaining -= 1;
+        self.value.checked_add_days(Days::new(self.remaining as u64 * 7))
     }
 }
 

@@ -1,2 +1,2 @@
 Done.
-Fixed both iterators’ reverse ranges, lengths, boundary inclusion; updated docs/tests. 291 unit tests, iterator doctests, formatting pass. Three unrelated doctests fail deprecated constants.
+Fixed both iterators’ reverse bounds, exhaustion, lengths; added regression tests. Build/tests pass except 3 unrelated doctests failing deprecated `core::i32::MAX` warnings.

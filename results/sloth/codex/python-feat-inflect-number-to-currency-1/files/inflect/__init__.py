@@ -4050,26 +4050,28 @@ class engine:
         )
         return signout + valout
 
+    @typechecked
     def number_to_currency(
-        self, num: int | float | Decimal | str, andword: str = "and"
+        self, num: float | Decimal | str, andword: str = "and"
     ) -> str:
-        """
-        Return an amount in words with cents as a two-digit fraction of 100.
+        """Return an amount in words with cents as a two-digit fraction.
 
-        Round the number as written half up to the nearest cent. The andword
-        applies to the whole amount; the cents are always introduced by 'and'.
+        Round half up to the nearest cent using the number's written value.
+        ``andword`` controls the whole amount; cents always follow 'and'.
         Raise BadNumValueError for invalid or non-finite numbers.
         """
         try:
             amount = Decimal(str(num))
             if not amount.is_finite():
                 raise BadNumValueError
-            with localcontext() as context:
-                context.prec = max(28, amount.adjusted() + 4)
+            with localcontext() as ctx:
+                ctx.prec = max(
+                    ctx.prec, len(amount.as_tuple().digits), amount.adjusted() + 3
+                )
                 rounded = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        except (InvalidOperation, ValueError) as err:
+        except InvalidOperation as err:
             raise BadNumValueError from err
-        whole, cents = format(rounded, "f").split(".")
+        whole, cents = format(rounded, ".2f").split(".")
         return f"{self.number_to_words(whole, andword=andword)} and {cents}/100"
 
     @staticmethod

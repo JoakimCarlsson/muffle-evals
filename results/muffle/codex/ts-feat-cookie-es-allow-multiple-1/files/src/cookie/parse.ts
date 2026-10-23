@@ -22,10 +22,15 @@ const NullObject = /* @__PURE__ */ (() => {
  * Parse the given cookie header string into an object
  * The object has the various cookies as keys(names) => values
  */
-export function parse<AllowMultiple extends boolean = false>(
+export function parse(
   str: string,
-  options?: CookieParseOptions & { allowMultiple?: AllowMultiple },
-): Cookies<AllowMultiple>;
+  options: CookieParseOptions & { allowMultiple: true },
+): Cookies<true>;
+export function parse(
+  str: string,
+  options?: CookieParseOptions & { allowMultiple?: false },
+): Cookies;
+export function parse(str: string, options?: CookieParseOptions): Cookies<boolean>;
 export function parse(str: string, options?: CookieParseOptions): Cookies<boolean> {
   const obj: Cookies<boolean> = new NullObject();
   const len = str.length;
@@ -54,9 +59,9 @@ export function parse(str: string, options?: CookieParseOptions): Cookies<boolea
       continue;
     }
 
-    if (options?.allowMultiple && key in obj) {
-      const value = dec(valueSlice(str, eqIdx + 1, endIdx));
+    if (options?.allowMultiple && Object.hasOwn(obj, key)) {
       const previous = obj[key];
+      const value = dec(valueSlice(str, eqIdx + 1, endIdx));
       if (Array.isArray(previous)) {
         previous.push(value);
       } else {

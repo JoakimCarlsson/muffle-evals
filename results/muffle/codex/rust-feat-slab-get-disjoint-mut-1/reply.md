@@ -1,9 +1,9 @@
-I’ll check the crate’s MSRV and existing conventions, then add the method, public error type, and tests for ordering and edge cases.
+I’ll check the crate’s implementation and compatibility requirements, then add the method, error type, and focused tests.
 
-The requested signature requires Rust 1.51 for const generics; the crate currently declares 1.46. I’ll update that minimum and keep the implementation compatible with 1.51, including `no_std` builds.
+The requested signature needs const generics, so I’ll raise the declared minimum Rust version from 1.46 to 1.51. The method will check all keys for duplicates first, then check bounds and occupancy in input order before creating references.
 
-Added `Slab::get_disjoint_mut` and the public `GetDisjointMutError` enum with the requested derives, key ordering, and error precedence.
+Added `Slab::get_disjoint_mut` and public `GetDisjointMutError` with the requested derives, ordering, error precedence, and empty-array behavior.
 
-Tests cover swapping, duplicate keys, vacant and out-of-bounds slots, empty arrays, and zero-sized values. All tests and doctests pass with all features and with default features disabled.
+Added documentation and tests covering swaps, errors, empty inputs, and zero-sized values. Tests pass with all features and with default features disabled.
 
 Raised the minimum Rust version from 1.46 to 1.51 for const generics.

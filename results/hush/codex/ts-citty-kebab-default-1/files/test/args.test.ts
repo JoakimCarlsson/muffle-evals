@@ -3,6 +3,30 @@ import { parseArgs } from "../src/args.ts";
 import type { ArgsDef } from "../src/types.ts";
 
 describe("args", () => {
+  it.each(["fooBar", "foo-bar", "f"])("lets --%s override an enum default", (name) => {
+    const parsed = parseArgs([`--${name}`, "one"], {
+      fooBar: { type: "enum", options: ["one", "two"], default: "two", alias: "f" },
+    });
+
+    expect(parsed).toEqual({ _: [], fooBar: "one", "foo-bar": "one", f: "one" });
+  });
+
+  it("propagates an omitted enum default to all aliases", () => {
+    expect(
+      parseArgs([], {
+        fooBar: { type: "enum", options: ["one", "two"], default: "two", alias: "f" },
+      }),
+    ).toEqual({ _: [], fooBar: "two", "foo-bar": "two", f: "two" });
+  });
+
+  it("validates an enum value supplied through a kebab-case alias", () => {
+    expect(() =>
+      parseArgs(["--foo-bar", "three"], {
+        fooBar: { type: "enum", options: ["one", "two"], default: "two" },
+      }),
+    ).toThrow("Invalid value for argument: --fooBar (three).");
+  });
+
   it.each([
     [[], {}, { _: [] }],
     /**
@@ -74,24 +98,6 @@ describe("args", () => {
     expect(() => {
       parseArgs(rawArgs, definition);
     }).toThrowError(result);
-  });
-
-  it.each([
-    ["fooBar", "--foo-bar"],
-    ["foo-bar", "--fooBar"],
-    ["fooBar", "--fooBar"],
-  ])("should override defaults for %s with %s", (name, flag) => {
-    const definition: ArgsDef = {
-      [name]: { type: "enum", options: ["one", "two"], default: "two" },
-    };
-
-    const parsed = parseArgs([flag, "one"], definition);
-
-    expect(parsed).toEqual({ _: [], fooBar: "one", "foo-bar": "one" });
-    expect(parseArgs([], definition)).toEqual({ _: [], fooBar: "two", "foo-bar": "two" });
-    expect(() => parseArgs([flag, "three"], definition)).toThrowError(
-      "Invalid value for argument:",
-    );
   });
 
   it("should resolve camelCase argument", () => {

@@ -1,5 +1,5 @@
-Iterator lower bound needs checking against remaining entries; regression test will cover exhaustion.
+Header iterator bounds need inspection; fix and regression check follow.
 
 
 Done.
-Fixed `Iter` and `IterMut` lower bounds; added regression coverage for empty, exhausted, and multivalue maps. All 415 tests passed.
+Fixed `Iter`/`IterMut` bounds, including `values` variants. Added regression coverage. `cargo test`: 415 passed.

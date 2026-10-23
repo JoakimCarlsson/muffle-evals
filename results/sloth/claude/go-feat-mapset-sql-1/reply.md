@@ -1,9 +1,11 @@
-Both set types now implement `driver.Valuer` and `sql.Scanner`, so the value from `NewSet` or `NewThreadUnsafeSet` can be type-asserted to either interface. The build, vet and existing tests pass. I also ran a throwaway test covering Scan, Value and `Scan(nil)` on both types. I deleted it afterwards, so no test for this is left in the repo.
+Both set types now implement `driver.Valuer` and `sql.Scanner`, so you can type-assert the value returned by `NewSet` or `NewThreadUnsafeSet` to either interface. Build, vet and the full test suite pass, including the new test.
 
-- **`Value()`** returns the set as a JSON array in a `[]byte`. It reuses the existing `MarshalJSON`.
-- **`Scan(src)`** accepts a `string` or `[]byte` and replaces the set's contents with the decoded array.
-- **`Scan(nil)`** empties the set.
-- **Errors:** any other type, or invalid JSON, returns an error and leaves the set as it was. It decodes first and only clears the set once the JSON is valid.
-- **Thread-safe set:** `Value` takes the read lock and `Scan` takes the write lock.
+- **`Value()`** returns the set as a JSON array of `[]byte`, in no particular order.
+- **`Scan(src)`** replaces the contents of the set. It accepts a `string` or `[]byte`, and `nil` empties the set. Any other type or invalid JSON returns an error and leaves the set as it was.
+- **Thread safety:** the thread-safe set locks around `Value` and `Scan`, as it does for its JSON methods.
 
-The changes are in `threadunsafe.go` and `threadsafe.go`. I didn't add tests or a README note, since you didn't ask for them.
+I added `TestSQLValuerScanner` to `threadunsafe_test.go`. It runs both implementations through round-trip, `string`, `[]byte`, `nil`, wrong-type and invalid-JSON cases.
+
+I did not add these methods to the `Set` interface, so existing external implementations keep compiling. That means you reach them by type assertion rather than directly on `Set[T]`. The code is in `threadunsafe.go` and `threadsafe.go`.
+
+I haven't committed anything.

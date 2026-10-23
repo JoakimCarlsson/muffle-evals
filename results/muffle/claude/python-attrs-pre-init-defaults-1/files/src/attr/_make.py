@@ -2321,8 +2321,11 @@ def _attrs_to_init_script(
 
         lines.append(f"BaseException.__init__(self, {vals})")
 
-    # We need to remove the defaults from the positional args, too.
-    pre_init_args = ", ".join(a.split("=")[0] for a in args)
+    pre_init_args = ", ".join(
+        # We need to remove the defaults from the positional args.
+        arg.split("=")[0]
+        for arg in args
+    )
     args = ", ".join(args)
     if kw_only_args:
         # leading comma & kw_only args

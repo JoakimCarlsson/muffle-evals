@@ -173,21 +173,25 @@ describe("genTypeExport", () => {
 });
 
 describe("genDynamicTypeImport", () => {
-  it("generates type imports", () => {
-    expect(genDynamicTypeImport("pkg", undefined)).toBe('typeof import("pkg")');
-    expect(genDynamicTypeImport("pkg", "foo")).toBe('typeof import("pkg").foo');
-    expect(genDynamicTypeImport("pkg", "foo-bar")).toBe(
-      'typeof import("pkg")["foo-bar"]',
-    );
-    expect(
-      genDynamicTypeImport("pkg", "foo", {
-        comment: 'webpackChunkName: "chunks/dynamic"',
-      }),
-    ).toBe(
-      'typeof import("pkg" /* webpackChunkName: "chunks/dynamic" */).foo',
-    );
-    expect(
-      genDynamicTypeImport("pkg", "foo", { attributes: { type: "json" } }),
-    ).toBe('typeof import("pkg", { with: { type: "json" } }).foo');
-  });
+  const tests: Array<{
+    input: Parameters<typeof genDynamicTypeImport>;
+    code: string;
+  }> = [
+    { input: ["pkg", undefined], code: 'typeof import("pkg")' },
+    { input: ["pkg", "foo"], code: 'typeof import("pkg").foo' },
+    { input: ["pkg", "foo-bar"], code: 'typeof import("pkg")["foo-bar"]' },
+    {
+      input: ["pkg", "foo", { comment: 'webpackChunkName: "chunks/dynamic"' }],
+      code: 'typeof import("pkg" /* webpackChunkName: "chunks/dynamic" */).foo',
+    },
+    {
+      input: ["pkg", "foo", { attributes: { type: "json" } }],
+      code: 'typeof import("pkg", { with: { type: "json" } }).foo',
+    },
+  ];
+  for (const t of tests) {
+    it(t.code, () => {
+      expect(genDynamicTypeImport(...t.input)).toBe(t.code);
+    });
+  }
 });

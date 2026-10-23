@@ -1,7 +1,3 @@
-Running tests without `--all-features`; rkyv features conflict.
+My test was wrong. Dec 12 plus whole weeks reaches Dec 26, not Dec 31, so `next_back` correctly returns Dec 26. I'm fixing the assertion.
 
-Done. `NaiveDateDaysIterator` and `NaiveDateWeeksIterator` now hold an inclusive front and back, and both ends stop when they meet. Your example now passes. `.len()` now counts the start and the last date, so it is one higher than before. The lib tests for `naive::date` and the `iter_` doctests pass. I couldn't run `--all-features` because the rkyv features conflict.
-
-- **Behaviour change:** `.rev()` now starts from `NaiveDate::MAX` (weeks: the last whole-week step not past it), not from the start date. I rewrote the two doctests and the two limit tests to match.
-- **Tests added:** `test_iterator_double_ended` covers your reversal case and the two ends meeting.
-- **Skipped:** I didn't add a CHANGELOG entry.
+Done. Both iterators now keep front and back ends and stop where they meet. `rev()` now starts at `NaiveDate::MAX` for days, and at the last whole-week date for weeks. `len()` now includes `MAX`. I added `nth` and `nth_back`, because `take(7).rev()` would otherwise step through about 94 million items. The existing `iter_days`/`iter_weeks` doctests and limit tests relied on the old `rev()` and are rewritten. Library tests and the new reverse tests pass. Three unrelated doctests (`checked_add_months`, `checked_sub_months`) fail on a deprecated `std::i32::MAX`, which this change doesn't touch.

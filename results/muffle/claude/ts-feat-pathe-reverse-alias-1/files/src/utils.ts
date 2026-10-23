@@ -75,12 +75,12 @@ export function resolveAlias(path: string, aliases: Record<string, string>) {
 }
 
 /**
- * Finds every aliased form of a path, the reverse of `resolveAlias`.
- * An alias target only matches on a path separator boundary or the whole path.
+ * Finds every aliased form of a path, the reverse of {@link resolveAlias}.
+ * Alias targets only match on a path separator boundary or the whole path.
  *
- * @param path - The real path to find aliased forms of.
- * @param aliases - A set of alias mappings to use.
- * @returns the matching aliased paths, longest first, or an empty array if none match.
+ * @param path - The real path to find aliases for.
+ * @param aliases - A set of alias mappings to use for resolution.
+ * @returns the aliased paths, sorted longest first, or an empty array if none match.
  */
 export function reverseResolveAlias(
   path: string,
@@ -88,27 +88,21 @@ export function reverseResolveAlias(
 ): string[] {
   const _path = normalizeWindowsPath(path);
   aliases = normalizeAliases(aliases);
-  const matches: string[] = [];
-  for (const [alias, to] of Object.entries(aliases)) {
-    let _to = normalizeWindowsPath(to);
-    if (hasTrailingSlash(_to)) {
-      _to = _to.slice(0, -1);
-    }
+  const matches = new Set<string>();
+  for (const [alias, target] of Object.entries(aliases)) {
+    const to = normalizeWindowsPath(target);
+    // Strip trailing slash from target for the boundary check
+    const _to = hasTrailingSlash(to) ? to.slice(0, -1) : to;
 
-    if (!_path.startsWith(_to)) {
-      continue;
+    if (_path === to || _path === _to) {
+      matches.add(alias);
+    } else if (_path.startsWith(_to) && hasTrailingSlash(_path[_to.length])) {
+      // Strip trailing slash from alias, the remainder starts with one
+      const _alias = hasTrailingSlash(alias) ? alias.slice(0, -1) : alias;
+      matches.add(_alias + _path.slice(_to.length));
     }
-
-    const rest = _path.slice(_to.length);
-    if (rest !== "" && rest[0] !== "/") {
-      continue;
-    }
-
-    matches.push(
-      hasTrailingSlash(alias) ? alias + rest.replace(/^\/+/, "") : alias + rest,
-    );
   }
-  return matches.sort((a, b) => b.length - a.length);
+  return [...matches].sort((a, b) => b.length - a.length);
 }
 
 /**

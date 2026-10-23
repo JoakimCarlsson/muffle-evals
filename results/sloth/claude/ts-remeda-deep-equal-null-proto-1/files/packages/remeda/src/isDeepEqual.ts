@@ -99,7 +99,7 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
     return false;
   }
 
-  if (getPrototype(data) !== getPrototype(other)) {
+  if (getComparablePrototype(data) !== getComparablePrototype(other)) {
     // If the objects don't share a prototype it's unlikely that they are
     // semantically equal. It is technically possible to build 2 prototypes that
     // act the same but are not equal (at the reference level, checked via
@@ -141,7 +141,7 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
   }
 
   for (const [key, value] of Object.entries(data)) {
-    if (!Object.hasOwn(other, key)) {
+    if (!(key in other)) {
       return false;
     }
 
@@ -161,10 +161,10 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
 
 /**
  * Objects with a `null` prototype (e.g. the result of `querystring.parse`) are
- * structurally plain objects, so they are treated as having `Object.prototype`.
+ * compared as if they were plain objects.
  */
-function getPrototype(value: object): object {
-  return (Object.getPrototypeOf(value) as object | null) ?? Object.prototype;
+function getComparablePrototype(value: object): object {
+  return Object.getPrototypeOf(value) ?? Object.prototype;
 }
 
 function isDeepEqualArrays(

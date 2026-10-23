@@ -1,3 +1,3 @@
-Fixing: regex truncates the captured text before `>()`, so I'm passing a longer lookahead to the scanner.
+Done. `findExports` now skips generic call arguments (`new Map<string, X>()`, `foo<A, B>(...)`) and no longer miscounts `=>` in type annotations. `1<2, b = 3` still gives `["a", "b"]`. All 193 tests pass, including 4 new cases; `tsc` printed no errors. Nothing committed.
 
-Done. `src/analyze.ts` now skips generic type args in `_extractExtraNames`, with lookahead past the regex cut. All 5 cases pass, existing tests pass, `tsc` is clean. I added no permanent tests.
+One limit: a generic call whose arguments continue on the next line is not handled. The scan only reads to the end of the line.

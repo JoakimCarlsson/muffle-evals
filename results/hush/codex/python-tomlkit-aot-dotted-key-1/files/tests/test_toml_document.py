@@ -1170,29 +1170,21 @@ x = 9
     assert parse(doc.as_string()) == {"c": {"d": 2}, "a": {"x": 9}}
 
 
-@pytest.mark.parametrize("nested", [False, True])
-@pytest.mark.parametrize("following_table", [False, True])
-def test_replace_dotted_key_with_aot_keeps_following_sibling(
-    nested: bool, following_table: bool
-) -> None:
-    content = "a.b = 1\nc.d = 2\n"
-    if following_table:
-        content += "\n[other]\ny = 3\n"
-    if nested:
-        content = "[parent]\n" + content
-    doc = parse(content)
-    target = doc["parent"] if nested else doc
-    replacement = tomlkit.aot()
-    replacement.append(tomlkit.table().add("x", 9))
-    target["a"] = replacement
+@pytest.mark.parametrize("following", ["c.d = 2\n", "c = 2\n", "c.d = 2\n\n[e]\nf = 3\n"])
+def test_replace_dotted_key_with_aot_keeps_following_sibling(following: str) -> None:
+    doc = parse("a.b = 1\n" + following)
+    aot = tomlkit.aot()
+    table = tomlkit.table()
+    table["x"] = 9
+    aot.append(table)
+    doc["a"] = aot
 
-    expected = {"c": {"d": 2}, "a": [{"x": 9}]}
-    if nested:
-        expected = {"parent": expected}
-    if following_table:
-        expected["other"] = {"y": 3}
+    expected = parse(following).unwrap()
+    expected["a"] = [{"x": 9}]
+    rendered = tomlkit.dumps(doc)
+    assert rendered.index("c") < rendered.index("[[a]]")
     assert doc.unwrap() == expected
-    assert parse(tomlkit.dumps(doc)).unwrap() == expected
+    assert parse(rendered).unwrap() == expected
 
 
 def test_replace_value_with_table_keeps_following_dotted_sibling() -> None:

@@ -1,7 +1,9 @@
-I’ll check how argument metavars are formatted, fix the shared cause, then run the existing tests.
+I’ll check how argument metavars are built and where they’re used, then make a focused fix and run the tests.
 
-The extra brackets come from `Argument.make_metavar`, which wraps the already bracketed type metavar. I’ll make that shared formatter skip wrapping when brackets are present. This also covers argument error hints; required arguments, options, and explicit metavars keep their current behavior. No changes are needed to fixtures, config, or exports.
+The extra brackets come from `Argument.make_metavar`, which adds an optional wrapper even when the type already supplies one. I’ll fix that shared method, covering help usage and error hints, and add a parameterized regression test. Type formatting, options, explicit metavars, and required arguments will stay unchanged; no config or export changes are needed.
 
-Fixed the shared argument metavar formatter to avoid adding brackets when they’re already present. Optional `Choice` and `DateTime` arguments now display a single pair, including with `nargs=-1`.
+Fixed optional argument formatting to reuse square brackets already supplied by `Choice` and `DateTime`, producing `[foo|bar|baz]...` as expected.
 
-Validation: 1,656 tests passed, and the wheel built successfully.
+Added regression coverage for optional, variadic, required, and plain string arguments.
+
+Validation: 1,665 tests passed; wheel build succeeded.

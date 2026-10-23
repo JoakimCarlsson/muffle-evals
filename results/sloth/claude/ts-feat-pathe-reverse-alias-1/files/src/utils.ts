@@ -75,11 +75,11 @@ export function resolveAlias(path: string, aliases: Record<string, string>) {
 }
 
 /**
- * Finds every aliased form of a path, the reverse of `resolveAlias`.
+ * Finds every aliased form of a real path, the reverse of `resolveAlias`.
  *
- * @param path - The real path to find aliased forms of.
- * @param aliases - A set of alias mappings to use for matching.
- * @returns the aliased paths sorted longest first, or an empty array if no alias matches.
+ * @param path - The real path string to find aliases for.
+ * @param aliases - A set of alias mappings to use for resolution.
+ * @returns the aliased paths, longest first, or an empty array if no alias matches.
  */
 export function reverseResolveAlias(
   path: string,
@@ -88,16 +88,12 @@ export function reverseResolveAlias(
   const _path = normalizeWindowsPath(path);
   const matches: string[] = [];
   for (const [alias, target] of Object.entries(normalizeAliases(aliases))) {
-    const _target = normalizeWindowsPath(target);
-    const to = hasTrailingSlash(_target) ? _target.slice(0, -1) : _target;
-    if (!_path.startsWith(to)) {
-      continue;
-    }
-    const rest = _path.slice(to.length);
-    if (rest === "") {
+    const _to = normalizeWindowsPath(target).replace(/\/+$/, "");
+    if (_path === _to) {
       matches.push(alias);
-    } else if (hasTrailingSlash(rest[0])) {
-      matches.push((hasTrailingSlash(alias) ? alias.slice(0, -1) : alias) + rest);
+    } else if (_path.startsWith(_to) && _path[_to.length] === "/") {
+      const _alias = hasTrailingSlash(alias) ? alias.slice(0, -1) : alias;
+      matches.push(_alias + _path.slice(_to.length));
     }
   }
   return matches.sort((a, b) => b.length - a.length);

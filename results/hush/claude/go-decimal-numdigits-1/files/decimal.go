@@ -1254,14 +1254,18 @@ func (d Decimal) Ln(precision int32) (Decimal, error) {
 // NumDigits returns the number of digits of the decimal coefficient (d.Value)
 func (d Decimal) NumDigits() int {
 	v := d.getValue()
-	if v.IsInt64() {
-		i64 := v.Int64()
-		if i64 == 0 {
-			return 1
-		}
-		u := uint64(i64)
-		if i64 < 0 {
-			u = -u
+	if v.IsUint64() || v.IsInt64() {
+		// math.Log10 is inexact for exact powers of 10, count digits with integers
+		var u uint64
+		if v.IsInt64() {
+			i64 := v.Int64()
+			if i64 < 0 {
+				u = uint64(-i64)
+			} else {
+				u = uint64(i64)
+			}
+		} else {
+			u = v.Uint64()
 		}
 		n := 1
 		for u >= 10 {

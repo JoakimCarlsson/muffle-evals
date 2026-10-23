@@ -1,5 +1,5 @@
 diff --git a/src/header/map.rs b/src/header/map.rs
-index 08a1b8b..0a277e3 100644
+index 08a1b8b..c61d814 100644
 --- a/src/header/map.rs
 +++ b/src/header/map.rs
 @@ -2368,7 +2368,8 @@ impl<'a, T> Iterator for Iter<'a, T> {
@@ -7,8 +7,8 @@ index 08a1b8b..0a277e3 100644
          debug_assert!(map.entries.len() >= self.entry);
  
 -        let lower = map.entries.len() - self.entry;
-+        let lower = (map.entries.len() - self.entry)
-+            .saturating_sub(usize::from(self.cursor.is_none()));
++        let lower =
++            (map.entries.len() - self.entry).saturating_sub(usize::from(self.cursor.is_none()));
          // We could pessimistically guess at the upper bound, saying
          // that its lower + map.extra_values.len(). That could be
          // way over though, such as if we're near the end, and have
@@ -17,8 +17,54 @@ index 08a1b8b..0a277e3 100644
          debug_assert!(self.entries_len >= self.entry);
  
 -        let lower = self.entries_len - self.entry;
-+        let lower = (self.entries_len - self.entry)
-+            .saturating_sub(usize::from(self.cursor.is_none()));
++        let lower =
++            (self.entries_len - self.entry).saturating_sub(usize::from(self.cursor.is_none()));
          // We could pessimistically guess at the upper bound, saying
          // that its lower + map.extra_values.len(). That could be
          // way over though, such as if we're near the end, and have
+diff --git a/tests/header_map.rs b/tests/header_map.rs
+index f621013..b4d6e48 100644
+--- a/tests/header_map.rs
++++ b/tests/header_map.rs
+@@ -35,6 +35,41 @@ fn smoke() {
+     }
+ }
+ 
++#[test]
++/// Checks iterator bounds before and after every value, including exhaustion.
++fn iter_size_hint() {
++    for values in [
++        vec![],
++        vec![HOST],
++        vec![HOST, HOST],
++        vec![HOST, ACCEPT, ACCEPT],
++    ] {
++        let mut map = HeaderMap::new();
++        for name in values {
++            map.append(name, HeaderValue::from_static("x"));
++        }
++        let len = map.len();
++        let mut mutable_map = map.clone();
++        let mut mutable_values_map = map.clone();
++        let mut iterators: Vec<Box<dyn Iterator<Item = ()> + '_>> = vec![
++            Box::new(map.iter().map(|_| ())),
++            Box::new(map.values().map(|_| ())),
++        ];
++        iterators.push(Box::new(mutable_map.iter_mut().map(|_| ())));
++        iterators.push(Box::new(mutable_values_map.values_mut().map(|_| ())));
++        for mut iter in iterators {
++            for remaining in (0..=len).rev() {
++                let (lower, upper) = iter.size_hint();
++                assert!(lower <= remaining);
++                assert!(upper.map_or(true, |upper| upper >= remaining));
++                assert_eq!(iter.next().is_some(), remaining > 0);
++            }
++            assert_eq!(iter.size_hint().0, 0);
++            assert!(iter.next().is_none());
++        }
++    }
++}
++
+ #[test]
+ #[should_panic]
+ fn reserve_over_capacity() {

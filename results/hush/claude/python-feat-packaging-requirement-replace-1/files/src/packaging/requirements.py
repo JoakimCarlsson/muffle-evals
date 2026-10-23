@@ -3,17 +3,22 @@
 # for complete details.
 from __future__ import annotations
 
-import copy
 from typing import TYPE_CHECKING, Any
 
 from ._parser import parse_requirement as _parse_requirement
 from ._tokenizer import ParserSyntaxError
 from .markers import Marker, _normalize_extra_values
-from .specifiers import InvalidSpecifier, SpecifierSet
+from .specifiers import InvalidSpecifier, Specifier, SpecifierSet
 from .utils import canonicalize_name
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    import sys
+    from collections.abc import Iterable, Iterator
+
+    if sys.version_info >= (3, 11):
+        from typing import Self
+    else:
+        from typing_extensions import Self
 
 __all__ = [
     "InvalidRequirement",
@@ -23,6 +28,9 @@ __all__ = [
 
 def __dir__() -> list[str]:
     return __all__
+
+
+_UNSET: Any = object()
 
 
 class InvalidRequirement(ValueError):
@@ -107,64 +115,6 @@ class Requirement:
             self.marker = Marker.__new__(Marker)
             self.marker._markers = _normalize_extra_values(parsed.marker)
 
-    def __replace__(self, /, **changes: Any) -> Requirement:
-        """Return a copy of this requirement with the given fields replaced.
-
-        Accepts only the keyword arguments ``name``, ``url``, ``extras``,
-        ``specifier`` and ``marker``. The result is validated like a parsed
-        requirement string.
-
-        :raises TypeError: On an unknown keyword argument.
-        :raises InvalidRequirement: If the resulting requirement is invalid or
-            would not read back as the given values.
-
-        .. versionadded:: 26.3
-        """
-        unknown = changes.keys() - set(self.__slots__)
-        if unknown:
-            raise TypeError(
-                f"__replace__() got an unexpected keyword argument {sorted(unknown)[0]!r}"
-            )
-
-        name = changes.get("name", self.name)
-        url = changes.get("url", self.url) or None
-        extras = changes.get("extras", self.extras)
-        specifier = changes.get("specifier", self.specifier)
-        marker = changes.get("marker", self.marker)
-
-        if not isinstance(name, str):
-            raise InvalidRequirement(f"Invalid name: {name!r}")
-        if url is not None and not isinstance(url, str):
-            raise InvalidRequirement(f"Invalid url: {url!r}")
-        if isinstance(extras, str):
-            raise InvalidRequirement(f"Invalid extras: {extras!r}")
-        extras = set(extras)
-        if not all(isinstance(e, str) for e in extras):
-            raise InvalidRequirement(f"Invalid extras: {extras!r}")
-        if not isinstance(specifier, SpecifierSet):
-            raise InvalidRequirement(f"Invalid specifier: {specifier!r}")
-        if marker is not None and not isinstance(marker, Marker):
-            raise InvalidRequirement(f"Invalid marker: {marker!r}")
-
-        # Build via the string form so validation and normalization match
-        # parsing, and subclasses run their own __init__.
-        tmp = copy.copy(self)
-        tmp.name, tmp.url, tmp.extras = name, url, extras
-        tmp.specifier, tmp.marker = specifier, marker
-        result = type(self)(str(tmp))
-
-        if result.name != name or result.url != url or result.extras != extras:
-            raise InvalidRequirement(
-                f"Replacement values do not round-trip: {str(tmp)!r}"
-            )
-
-        # Copy the specifier set and its specifiers, keeping prereleases.
-        result.specifier = SpecifierSet(
-            tuple(copy.copy(s) for s in specifier._specs),
-            prereleases=specifier._prereleases,
-        )
-        return result
-
     def _iter_parts(self, name: str) -> Iterator[str]:
         yield name
 
@@ -182,6 +132,77 @@ class Requirement:
 
         if self.marker:
             yield f"; {self.marker}"
+
+    def __replace__(
+        self,
+        *,
+        name: str = _UNSET,
+        url: str | None = _UNSET,
+        extras: Iterable[str] = _UNSET,
+        specifier: SpecifierSet | str = _UNSET,
+        marker: Marker | None = _UNSET,
+    ) -> Self:
+        """Return a copy with the given fields replaced.
+
+        Fields that are not given are kept. The result is validated and
+        normalized as if its string form had been parsed; values that would not
+        read back unchanged raise :class:`InvalidRequirement`. The result does
+        not share its :class:`~.SpecifierSet` or :class:`~.Specifier` objects
+        with ``self`` or the arguments, and keeps their ``prereleases`` settings.
+        Subclasses get an instance of their own class.
+
+        Supported by :func:`copy.replace` on Python 3.13+.
+
+        .. versionadded:: 26.4
+        """
+        if name is _UNSET:
+            name = self.name
+        if url is _UNSET:
+            url = self.url
+        extras_set = set(self.extras if extras is _UNSET else extras)
+        if specifier is _UNSET:
+            specifier = self.specifier
+        elif isinstance(specifier, str):
+            try:
+                specifier = SpecifierSet(specifier)
+            except InvalidSpecifier as e:
+                raise InvalidRequirement(str(e)) from e
+        if marker is _UNSET:
+            marker = self.marker
+
+        # Render the requested fields, then parse the result so it is exactly
+        # what parsing its string gives.
+        draft = Requirement.__new__(Requirement)
+        draft.name = name
+        draft.url = url
+        draft.extras = extras_set
+        draft.specifier = specifier
+        draft.marker = marker
+        new = self.__class__(str(draft))
+
+        # Reject values that parsed as something other than what was asked for.
+        if (
+            new.name != name
+            or new.url != url
+            or new.extras != extras_set
+            or str(new.specifier) != str(specifier)
+            or (None if new.marker is None else str(new.marker))
+            != (None if marker is None else str(marker))
+        ):
+            raise InvalidRequirement(
+                f"Replacement values do not round-trip: {str(draft)!r}"
+            )
+
+        # The string form drops ``prereleases``; restore it on independent
+        # copies of the set and its specifiers.
+        new.specifier = SpecifierSet(
+            [
+                Specifier(str(s), getattr(s, "_prereleases", None))
+                for s in specifier._specs
+            ],
+            prereleases=specifier._prereleases,
+        )
+        return new
 
     def __getstate__(self) -> tuple[str, bool | None]:
         # Return the requirement string for compactness and stability, paired

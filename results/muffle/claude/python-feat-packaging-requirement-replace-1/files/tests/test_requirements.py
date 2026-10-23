@@ -4,14 +4,13 @@
 
 from __future__ import annotations
 
-import copy
 import pickle
 
 import pytest
 
 from packaging.markers import Marker
 from packaging.requirements import InvalidRequirement, Requirement
-from packaging.specifiers import SpecifierSet
+from packaging.specifiers import Specifier, SpecifierSet
 
 EQUAL_DEPENDENCIES = [
     ("packaging>20.1", "packaging>20.1"),
@@ -1089,46 +1088,33 @@ def test_pickle_requirement_25_0_format_loads() -> None:
 
 
 class TestRequirementReplace:
-    def test_example(self) -> None:
+    def test_replace_name_keeps_rest(self) -> None:
         r = Requirement('requests[security]>=2.0; python_version >= "3"')
         assert str(r.__replace__(name="flask")) == (
             'flask[security]>=2.0; python_version >= "3"'
         )
+        assert r.name == "requests"
 
-    def test_no_args_equal_distinct(self) -> None:
+    def test_no_args_equal_but_distinct(self) -> None:
         r = Requirement("a[x]>=1; os_name == 'a'")
-        n = r.__replace__()
-        assert n == r
-        assert n is not r
-        assert n.specifier is not r.specifier
-        assert n.extras is not r.extras
-
-    def test_copy_replace(self) -> None:
-        if not hasattr(copy, "replace"):
-            pytest.skip("needs Python 3.13+")
-        n = copy.replace(Requirement("requests>=2.0"), specifier=SpecifierSet(">=3.0"))
-        assert str(n) == "requests>=3.0"
+        new = r.__replace__()
+        assert new == r
+        assert new is not r
+        assert new.specifier is not r.specifier
 
     def test_unknown_keyword(self) -> None:
         with pytest.raises(TypeError):
             Requirement("a").__replace__(foo=1)  # type: ignore[call-arg]
-
-    def test_clear_url_and_marker(self) -> None:
-        r = Requirement("a @ http://x/y ; os_name == 'a'")
-        n = r.__replace__(url=None, marker=None)
-        assert str(n) == "a"
-        assert str(r) == 'a @ http://x/y ; os_name == "a"'
 
     @pytest.mark.parametrize(
         "kwargs",
         [
             {"name": "not a name!"},
             {"name": "foo[bar]"},
-            {"name": ""},
             {"extras": {"a,b"}},
-            {"extras": {"a b"}},
-            {"url": "http://x ; os_name == 'a'"},
+            {"url": "http://x ; y"},
             {"url": ""},
+            {"specifier": SpecifierSet(">=1"), "url": "http://x"},
         ],
     )
     def test_invalid(self, kwargs: dict[str, object]) -> None:
@@ -1136,32 +1122,27 @@ class TestRequirementReplace:
             Requirement("a").__replace__(**kwargs)  # type: ignore[arg-type]
 
     def test_marker_normalized(self) -> None:
-        n = Requirement("a").__replace__(marker=Marker('extra == "Foo_Bar"'))
-        assert str(n) == 'a; extra == "foo-bar"'
-        assert n.marker is not None
+        new = Requirement("a").__replace__(marker=Marker('extra == "Foo_Bar"'))
+        assert str(new.marker) == 'extra == "foo-bar"'
 
-    def test_prereleases_preserved_and_not_shared(self) -> None:
-        spec = SpecifierSet(">=1,<3", prereleases=True)
-        list(spec)[0].prereleases = False
-        r = Requirement("a")
-        n = r.__replace__(specifier=spec)
-        assert n.specifier is not spec
-        assert n.specifier._prereleases is True
-        assert {str(s): s._prereleases for s in n.specifier} == {
-            ">=1": False,
-            "<3": None,
-        }
-        assert all(a is not b for a in n.specifier for b in spec)
-        again = n.__replace__(name="b")
-        assert again.specifier._prereleases is True
-        assert again.specifier is not n.specifier
+    def test_specifier_prereleases_and_no_sharing(self) -> None:
+        spec = SpecifierSet([Specifier(">=1", prereleases=False)], prereleases=True)
+        new = Requirement("a").__replace__(specifier=spec)
+        assert new.specifier is not spec
+        assert new.specifier._prereleases is True
+        (old_s,), (new_s,) = list(spec), list(new.specifier)
+        assert new_s is not old_s
+        assert new_s._prereleases is False
+        kept = new.__replace__(name="b")
+        assert kept.specifier._prereleases is True
+        assert kept.specifier is not new.specifier
 
     def test_subclass(self) -> None:
         class Sub(Requirement):
             def __init__(self, s: str) -> None:
                 super().__init__(s)
-                self.extra_state = 1
+                self.extra_attr = 1
 
-        n = Sub("a").__replace__(name="b")
-        assert type(n) is Sub
-        assert n.extra_state == 1
+        new = Sub("a").__replace__(name="b")
+        assert type(new) is Sub
+        assert new.extra_attr == 1

@@ -1,2 +1,2 @@
 Done.
-Defaults now respect explicit alias values, including kebab-case. Build, lint, types, 63 tests, and reproduction checks passed.
+Kebab-case input now overrides camelCase defaults; both keys match. Added regression tests. All 70 tests, type checks, lint, formatting, build passed.

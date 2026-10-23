@@ -1619,7 +1619,7 @@ value = 5
     assert doc.as_string() == expected
 
 
-def test_replace_dotted_key_with_aot_does_not_capture_siblings():
+def test_replace_dotted_key_with_aot_keeps_following_keys():
     doc = parse("a.b = 1\nc.d = 2\n")
     aot = tomlkit.aot()
     t = tomlkit.table()
@@ -1627,4 +1627,5 @@ def test_replace_dotted_key_with_aot_does_not_capture_siblings():
     aot.append(t)
     doc["a"] = aot
 
-    assert parse(doc.as_string()) == {"c": {"d": 2}, "a": [{"x": 9}]}
+    assert doc.unwrap() == {"c": {"d": 2}, "a": [{"x": 9}]}
+    assert parse(doc.as_string()).unwrap() == {"c": {"d": 2}, "a": [{"x": 9}]}

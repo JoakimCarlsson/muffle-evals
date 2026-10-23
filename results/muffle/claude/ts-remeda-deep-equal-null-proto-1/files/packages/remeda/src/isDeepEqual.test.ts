@@ -151,6 +151,44 @@ describe("objects", () => {
   test("undefined and empty object are not equal", () => {
     expect(isDeepEqual(undefined as unknown, {})).toBe(false);
   });
+
+  test("null-prototype object equals a plain object", () => {
+    const nullProto = Object.assign(Object.create(null), { a: 1 }) as object;
+
+    expect(isDeepEqual(nullProto, { a: 1 })).toBe(true);
+    expect(isDeepEqual({ a: 1 }, nullProto)).toBe(true);
+  });
+
+  test("null-prototype objects equal each other", () => {
+    const first = Object.assign(Object.create(null), { a: 1 }) as object;
+    const second = Object.assign(Object.create(null), { a: 1 }) as object;
+
+    expect(isDeepEqual(first, second)).toBe(true);
+  });
+
+  test("nested null-prototype objects equal plain objects", () => {
+    const nullProto = Object.assign(Object.create(null), { a: 1 }) as object;
+
+    expect(isDeepEqual({ x: [nullProto] }, { x: [{ a: 1 }] })).toBe(true);
+    expect(isDeepEqual({ x: [{ a: 1 }] }, { x: [nullProto] })).toBe(true);
+  });
+
+  test("null-prototype objects with different contents are not equal", () => {
+    const nullProto = Object.assign(Object.create(null), { a: 1 }) as object;
+
+    expect(isDeepEqual(nullProto, { a: 2 })).toBe(false);
+    expect(isDeepEqual(nullProto, {})).toBe(false);
+  });
+
+  test("null-prototype object is not equal to a class instance", () => {
+    class Foo {
+      a = 1;
+    }
+    const nullProto = Object.assign(Object.create(null), { a: 1 }) as object;
+
+    expect(isDeepEqual(nullProto, new Foo())).toBe(false);
+    expect(isDeepEqual(new Foo(), nullProto)).toBe(false);
+  });
 });
 
 describe("sets", () => {
@@ -399,41 +437,7 @@ describe("sample objects", () => {
       ),
     ).toBe(true);
   });
-
-  describe("null prototype objects", () => {
-    test("equals a plain object in both orders", () => {
-      expect(isDeepEqual(nullProto({ a: 1 }), { a: 1 })).toBe(true);
-      expect(isDeepEqual({ a: 1 }, nullProto({ a: 1 }))).toBe(true);
-      expect(isDeepEqual(nullProto({ a: 1 }), nullProto({ a: 1 }))).toBe(true);
-    });
-
-    test("equals a plain object when nested", () => {
-      expect(
-        isDeepEqual([{ x: nullProto({ a: 1 }) }], [{ x: { a: 1 } }]),
-      ).toBe(true);
-    });
-
-    test("detects differing contents", () => {
-      expect(isDeepEqual(nullProto({ a: 1 }), { a: 2 })).toBe(false);
-      expect(isDeepEqual({ a: 1 }, nullProto({ a: 1, b: 2 }))).toBe(false);
-    });
-
-    test("doesn't equal class instances, arrays, or maps", () => {
-      class Foo {
-        public a = 1;
-      }
-
-      expect(isDeepEqual(nullProto({ a: 1 }), new Foo())).toBe(false);
-      expect(isDeepEqual(new Foo(), nullProto({ a: 1 }))).toBe(false);
-      expect(isDeepEqual(nullProto({}), [])).toBe(false);
-      expect(isDeepEqual(new Map(), nullProto({}))).toBe(false);
-    });
-  });
 });
-
-function nullProto(obj: object): object {
-  return Object.assign(Object.create(null) as object, obj);
-}
 
 /* v8 ignore next 3 -- We only need the function pointer, we never call it! */
 function func1(): void {

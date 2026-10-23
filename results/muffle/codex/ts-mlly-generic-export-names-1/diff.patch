@@ -1,32 +1,30 @@
 diff --git a/src/analyze.ts b/src/analyze.ts
-index 52caecb..bc03df8 100644
+index 52caecb..c629c67 100644
 --- a/src/analyze.ts
 +++ b/src/analyze.ts
-@@ -393,10 +393,15 @@ export function parseTypeImport(
+@@ -393,9 +393,13 @@ export function parseTypeImport(
   * For `export const foo = fn('a', bar), baz = 2`, only `baz` should be
   * extracted — commas inside `fn(...)` or `Handler<A, B>` are not declaration separators.
   * @param {string} extraNamesStr - The string containing the extra variable declarations to parse.
-+ * @param {string} trailingCode - Code after the match, used to look ahead for closing generic brackets.
++ * @param {string} remainingCode - The source starting at the same position, including trailing call arguments.
   * @returns {string[]} An array of variable names extracted from the declaration list.
   */
 -function _extractExtraNames(extraNamesStr: string): string[] {
 +function _extractExtraNames(
 +  extraNamesStr: string,
-+  trailingCode: string,
++  remainingCode: string,
 +): string[] {
    const names: string[] = [];
-+  const code = extraNamesStr + trailingCode;
    let depth = 0;
    let angleDepth = 0;
-   let inString: string | false = false;
-@@ -436,11 +441,14 @@ function _extractExtraNames(extraNamesStr: string): string[] {
+@@ -436,11 +440,14 @@ function _extractExtraNames(extraNamesStr: string): string[] {
      ) {
        inTypeAnnotation = false;
      }
 -    if (inTypeAnnotation && char === "<") {
 +    if (
 +      char === "<" &&
-+      (inTypeAnnotation || angleDepth > 0 || _isGenericCall(code, i))
++      (inTypeAnnotation || angleDepth > 0 || _isGenericCall(remainingCode, i))
 +    ) {
        angleDepth++;
        continue;
@@ -36,36 +34,36 @@ index 52caecb..bc03df8 100644
        angleDepth--;
        continue;
      }
-@@ -466,6 +474,37 @@ function _extractExtraNames(extraNamesStr: string): string[] {
+@@ -466,6 +473,37 @@ function _extractExtraNames(extraNamesStr: string): string[] {
    return names;
  }
  
-+// In expressions, only treat `<` as a generic argument list when it has a
-+// matching `>` followed by call arguments. An unmatched comparison such as
-+// `1<2, b = 3` must not hide the next declaration.
++// In expressions, require a matching `>` followed by call arguments so that
++// comparisons such as `1<2, b = 3` do not hide declaration separators.
 +function _isGenericCall(code: string, start: number): boolean {
-+  let depth = 0;
-+  let quote = "";
-+  for (let i = start; i < code.length; i++) {
-+    const char = code[i];
-+    if (quote) {
-+      if (char === "\\") {
-+        i++;
-+      } else if (char === quote) {
-+        quote = "";
++  let depth = 1;
++  const tokens =
++    /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|=>|[<>;=]/g;
++  tokens.lastIndex = start + 1;
++  for (let token = tokens.exec(code); token; token = tokens.exec(code)) {
++    switch (token[0]) {
++      case "<": {
++        depth++;
++
++        break;
 +      }
-+      continue;
-+    }
-+    if (char === '"' || char === "'" || char === "`") {
-+      quote = char;
-+    } else if (char === "<") {
-+      depth++;
-+    } else if (char === ">" && code[i - 1] !== "=") {
-+      if (--depth === 0) {
-+        return /^\s*\(/.test(code.slice(i + 1));
++      case ">": {
++        if (--depth === 0) {
++          return /^\s*\(/.test(code.slice(tokens.lastIndex));
++        }
++
++        break;
 +      }
-+    } else if (char === ";" || (char === "=" && code[i + 1] !== ">")) {
-+      return false;
++      case ";":
++      case "=": {
++        return false;
++      }
++      // No default
 +    }
 +  }
 +  return false;
@@ -74,53 +72,52 @@ index 52caecb..bc03df8 100644
  /**
   * Identifies all export statements in the supplied source code and categorises them into different types such as declarations, named, default and star exports.
   * This function processes the code to capture different forms of export statements and normalise their representation for further processing.
-@@ -488,7 +527,10 @@ export function findExports(code: string): ESMExport[] {
+@@ -488,7 +526,10 @@ export function findExports(code: string): ESMExport[] {
        | string
        | undefined;
      if (extraNamesStr) {
 -      const extraNames = _extractExtraNames(extraNamesStr);
 +      const extraNames = _extractExtraNames(
 +        extraNamesStr,
-+        code.slice(declaredExport.end),
++        code.slice(declaredExport.end - extraNamesStr.length),
 +      );
        if (extraNames.length > 0) {
          declaredExport.names = [declaredExport.name, ...extraNames];
        }
 diff --git a/test/exports.test.ts b/test/exports.test.ts
-index baf98d7..d8463b5 100644
+index baf98d7..e78209d 100644
 --- a/test/exports.test.ts
 +++ b/test/exports.test.ts
-@@ -145,6 +145,33 @@ describe("findExports", () => {
-       name: "foo",
-       names: ["foo"],
-     },
-+    "export const APP_MODE_MAP = new Map<string, IAppMode>()": {
-+      names: ["APP_MODE_MAP"],
-+    },
-+    "export const result = foo<Bar, Baz>(arg1, arg2)": {
-+      names: ["result"],
-+    },
-+    "export const a = new Set<string>(), b = new Map<string, number>()": {
-+      names: ["a", "b"],
-+    },
-+    "export const a = new Map<string, Map<number, boolean>>(), b = 1": {
-+      names: ["a", "b"],
-+    },
-+    "export const a = foo<string, (x: string) => void>(), b = 1": {
-+      names: ["a", "b"],
-+    },
-+    "export const a: Map<string, (x: string) => void> = new Map(), b = 1": {
-+      names: ["a", "b"],
-+    },
-+    "export const a = 1<2, b = 3": {
-+      names: ["a", "b"],
-+    },
-+    "export const a = 1 < 2, b = foo<Bar, Baz>()": {
-+      names: ["a", "b"],
-+    },
-+    "export const a = 2 > 1, b = 3": {
-+      names: ["a", "b"],
-+    },
-   };
- 
-   for (const [input, test] of Object.entries(tests)) {
+@@ -169,6 +169,32 @@ describe("findExports", () => {
+       }
+     });
+   }
++  it.each([
++    [
++      "export const APP_MODE_MAP = new Map<string, IAppMode>()",
++      ["APP_MODE_MAP"],
++    ],
++    ["export const result = foo<Bar, Baz>(arg1, arg2)", ["result"]],
++    [
++      "export const a = new Set<string>(), b = new Map<string, number>()",
++      ["a", "b"],
++    ],
++    [
++      "export const a = foo<Map<string, number>, (x: string) => void>(), b = 1",
++      ["a", "b"],
++    ],
++    ["export const a = 1<2, b = 3", ["a", "b"]],
++    ["export const a = 1<2, b = foo<string, number>()", ["a", "b"]],
++    [
++      "export const a: Map<string, (x: string) => void> = new Map(), b = 1",
++      ["a", "b"],
++    ],
++    ["export const a = foo<'a>b', number>(), b = 1", ["a", "b"]],
++  ])("extracts declaration names from %s", (code, names) => {
++    expect(findExports(code)[0].names).toEqual(names);
++    expect(findExportNames(code)).toEqual(names);
++  });
++
+   it("handles multiple exports", () => {
+     const matches = findExports(`
+           export { useTestMe1 } from "@/test/foo1";

@@ -1,3 +1,1 @@
-Done. `value_chain` in `more_itertools/more.py` now calls `iter(value)` inside the `try`, so only non-iterable arguments are emitted as single values. Errors raised during iteration now propagate.
-
-I confirmed your `map` example now raises `TypeError: object of type 'int' has no len()`. Plain scalars and lists still behave as before. The `-k value_chain` pytest run selected no tests, so I didn't run the existing suite.
+Done. `value_chain` in `more_itertools/more.py` now calls `iter(value)` inside the `try`, so only non-iterables are emitted as single values. A `TypeError` raised mid-iteration now propagates. I added `test_error_while_iterating`, and the 6 `ValueChain` tests pass. I didn't run the rest of the suite.

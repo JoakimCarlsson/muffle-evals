@@ -1,7 +1,9 @@
-I’ll check how argument defaults and kebab-case names are handled, add a regression test, and fix the parser.
+I’ll check how argument names and defaults interact, fix the precedence issue, and add a regression test.
 
-Defaults were being applied before alias values were copied, so the default blocked the explicit value. I moved default handling after alias resolution. The regression tests pass, including enum validation through `--foo-bar`; I’m checking lint and types now.
+The parser applies defaults before copying values between aliases, so the default blocks the value passed as `--foo-bar`. I’ll apply defaults after resolving explicit values and test both casing variants, declared aliases, and boolean defaults.
 
-Fixed default handling so explicit alias values take precedence. `--foo-bar one` now sets both `fooBar` and `"foo-bar"` to `"one"`.
+Fixed default precedence: explicit CLI values now resolve across aliases before defaults are applied. `--foo-bar one` produces both `fooBar: "one"` and `"foo-bar": "one"`.
 
-Added regression tests for defaults, aliases, boolean flags, and enum validation. All 71 tests, lint, formatting, and type checks pass.
+Added regression coverage for casing variants, declared aliases, and boolean defaults.
+
+Validation passed: all 71 tests, type checking, lint, and formatting.

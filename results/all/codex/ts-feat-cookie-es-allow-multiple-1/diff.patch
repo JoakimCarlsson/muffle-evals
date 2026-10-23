@@ -1,5 +1,5 @@
 diff --git a/src/cookie/parse.ts b/src/cookie/parse.ts
-index c80c0f9..eded59a 100644
+index c80c0f9..357f2b4 100644
 --- a/src/cookie/parse.ts
 +++ b/src/cookie/parse.ts
 @@ -22,8 +22,19 @@ const NullObject = /* @__PURE__ */ (() => {
@@ -12,47 +12,48 @@ index c80c0f9..eded59a 100644
 +  str: string,
 +  options?: CookieParseOptions & { allowMultiple?: false },
 +): Cookies;
-+/**
-+ * Parse a `Cookie` header, optionally collecting duplicate values in arrays.
-+ */
-+export function parse(str: string, options: CookieParseOptions): Cookies<true>;
-+/**
-+ * Parse a `Cookie` header using the supplied options.
-+ */
-+export function parse(str: string, options?: CookieParseOptions): Cookies<boolean> {
-+  const obj: Cookies<true> = new NullObject();
++export function parse(
++  str: string,
++  options?: CookieParseOptions,
++): Record<string, string | string[] | undefined>;
++export function parse(
++  str: string,
++  options?: CookieParseOptions,
++): Record<string, string | string[] | undefined> {
++  const obj: Record<string, string | string[] | undefined> = new NullObject();
    const len = str.length;
    // RFC 6265 sec 4.1.1, RFC 2616 2.2 defines a cookie name consists of one char minimum, plus '='.
    if (len < 2) return obj;
-@@ -50,8 +61,15 @@ export function parse(str: string, options?: CookieParseOptions): Cookies {
+@@ -50,9 +61,18 @@ export function parse(str: string, options?: CookieParseOptions): Cookies {
        continue;
      }
  
 -    // only assign once
--    if (obj[key] === undefined) {
-+    if (options?.allowMultiple && Object.hasOwn(obj, key)) {
-+      const value = dec(valueSlice(str, eqIdx + 1, endIdx));
-+      const previous = obj[key];
-+      if (Array.isArray(previous)) {
-+        previous.push(value);
-+      } else {
-+        obj[key] = [previous, value];
-+      }
-+    } else if (obj[key] === undefined) {
+     if (obj[key] === undefined) {
        obj[key] = dec(valueSlice(str, eqIdx + 1, endIdx));
++    } else if (options?.allowMultiple) {
++      const value = dec(valueSlice(str, eqIdx + 1, endIdx));
++      if (value !== undefined) {
++        const previous = obj[key];
++        if (Array.isArray(previous)) {
++          previous.push(value);
++        } else {
++          obj[key] = [previous, value];
++        }
++      }
      }
  
+     index = endIdx + 1;
 diff --git a/src/cookie/types.ts b/src/cookie/types.ts
-index 51b39f5..db84d80 100644
+index 51b39f5..b4fc2ec 100644
 --- a/src/cookie/types.ts
 +++ b/src/cookie/types.ts
-@@ -6,6 +6,14 @@
+@@ -6,6 +6,13 @@
   * Parse options.
   */
  export interface CookieParseOptions {
 +  /**
-+   * Collect duplicate cookie values in arrays, preserving their order.
-+   * Cookies that appear only once remain single values.
++   * Collect duplicate cookie values in order, keeping single values as strings.
 +   *
 +   * @default false
 +   */
@@ -61,15 +62,56 @@ index 51b39f5..db84d80 100644
    /**
     * Specifies a function that will be used to decode a [cookie-value](https://datatracker.ietf.org/doc/html/rfc6265#section-4.1.1).
     * Since the value of a cookie has a limited character set (and must be a simple string), this function can be used to decode
-@@ -28,7 +36,10 @@ export interface CookieParseOptions {
- /**
-  * Cookies object.
-  */
--export type Cookies = Record<string, string | undefined>;
-+export type Cookies<AllowMultiple extends boolean = false> = Record<
-+  string,
-+  string | undefined | (AllowMultiple extends true ? (string | undefined)[] : never)
-+>;
+diff --git a/test/cookie-parse.test.ts b/test/cookie-parse.test.ts
+index 30228ee..12a1758 100644
+--- a/test/cookie-parse.test.ts
++++ b/test/cookie-parse.test.ts
+@@ -3,8 +3,9 @@
+ // Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
+ // Last sync: e264dfa
  
- /**
-  * Stringify options.
+-import { describe, it, expect } from "vitest";
++import { describe, it, expect, expectTypeOf } from "vitest";
+ import { parse } from "../src";
++import type { CookieParseOptions, Cookies } from "../src";
+ 
+ describe("cookie.parse(str)", () => {
+   it("should return empty object for empty string", () => {
+@@ -58,6 +59,37 @@ describe("cookie.parse(str)", () => {
+ });
+ 
+ describe("cookie.parse(str, options)", () => {
++  it("should collect duplicate values only when allowMultiple is enabled", () => {
++    const options: CookieParseOptions = { allowMultiple: true };
++    const cookies = parse("foo=a;bar=bar;foo=b;foo=c", options);
++    expect(cookies).toEqual({ foo: ["a", "b", "c"], bar: "bar" });
++    expect(parse("foo=;bar=bar;foo=boo", options)).toEqual({
++      foo: ["", "boo"],
++      bar: "bar",
++    });
++    expect(parse("foo=%1;foo=boo;foo=%20", options)).toEqual({
++      foo: ["%1", "boo", " "],
++    });
++    expect(parse("", options)).toEqual({});
++    expect(parse("foo=a;foo=b", { allowMultiple: false })).toEqual({ foo: "a" });
++    expect(
++      parse("foo=a;bar=b;foo=c", {
++        allowMultiple: true,
++        decode: (value) => value.toUpperCase(),
++        filter: (key) => key === "foo",
++      }),
++    ).toEqual({ foo: ["A", "C"] });
++    expect(parse("__proto__=a;__proto__=b", options)).toEqual({
++      ["__proto__"]: ["a", "b"],
++    });
++    expectTypeOf(cookies).toEqualTypeOf<Record<string, string | string[] | undefined>>();
++    expectTypeOf(parse("foo=a", { allowMultiple: true })).toEqualTypeOf<
++      Record<string, string | string[] | undefined>
++    >();
++    expectTypeOf(parse("foo=a")).toEqualTypeOf<Cookies>();
++    expectTypeOf(parse("foo=a", { allowMultiple: false })).toEqualTypeOf<Cookies>();
++  });
++
+   describe('with "decode" option', () => {
+     it("should specify alternative value decoder", () => {
+       expect(

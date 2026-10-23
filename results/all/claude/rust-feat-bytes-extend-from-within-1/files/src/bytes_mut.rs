@@ -891,8 +891,8 @@ impl BytesMut {
     ///
     /// # Panics
     ///
-    /// Panics if the range start is greater than the range end, or if the
-    /// range end is greater than `self.len()`.
+    /// Panics if the range is out of bounds for the current length, or if its
+    /// start is greater than its end.
     ///
     /// # Examples
     ///
@@ -903,45 +903,42 @@ impl BytesMut {
     /// buf.extend_from_slice(b"aaabbb_");
     /// buf.extend_from_within(3..6);
     ///
-    /// assert_eq!(&buf[..], b"aaabbb_bbb");
+    /// assert_eq!(b"aaabbb_bbb", &buf[..]);
     /// ```
     pub fn extend_from_within(&mut self, range: impl RangeBounds<usize>) {
         let len = self.len();
-
-        let begin = match range.start_bound() {
+        let start = match range.start_bound() {
             Bound::Included(&n) => n,
-            Bound::Excluded(&n) => n.checked_add(1).expect("out of range"),
+            Bound::Excluded(&n) => n.checked_add(1).expect("range start overflow"),
             Bound::Unbounded => 0,
         };
         let end = match range.end_bound() {
-            Bound::Included(&n) => n.checked_add(1).expect("out of range"),
+            Bound::Included(&n) => n.checked_add(1).expect("range end overflow"),
             Bound::Excluded(&n) => n,
             Bound::Unbounded => len,
         };
-
         assert!(
-            begin <= end,
+            start <= end,
             "range start must not be greater than end: {:?} <= {:?}",
-            begin,
-            end,
+            start,
+            end
         );
         assert!(
             end <= len,
             "range end out of bounds: {:?} <= {:?}",
             end,
-            len,
+            len
         );
 
-        let cnt = end - begin;
+        let cnt = end - start;
         self.reserve(cnt);
 
         unsafe {
-            let src = self.as_ptr().add(begin);
-            let dst = self.spare_capacity_mut();
-            debug_assert!(dst.len() >= cnt);
-
-            ptr::copy_nonoverlapping(src, dst.as_mut_ptr().cast(), cnt);
-            self.advance_mut(cnt);
+            let src = self.as_ptr().add(start);
+            let dst = self.as_mut_ptr().add(len);
+            // Reserved above; source lies below `len`, destination at or past it.
+            ptr::copy_nonoverlapping(src, dst, cnt);
+            self.set_len(len + cnt);
         }
     }
 

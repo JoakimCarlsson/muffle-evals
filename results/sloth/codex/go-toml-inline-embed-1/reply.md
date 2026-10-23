@@ -1,9 +1,11 @@
-I’ll trace how decoding handles embedded fields, fix the regression, and run the build and existing tests.
+I’ll trace how decoding handles embedded fields, add a regression test, and run the build and tests.
 
-The decoder treats any TOML tag as a field name, so `toml:",inline"` prevents the embedded struct from being flattened. The encoder already handles this correctly by checking whether the tag has a name.
+The shared decoder field plan treats any TOML tag as a field name, so `toml:",inline"` stops an embedded struct’s fields from being promoted. I’ll make that decision depend on whether the tag supplies a name.
 
-The fix belongs in the shared decoder field mapping, which serves all three decoding paths. No caller, fixture, config, or export changes are needed. Named tags and ignored fields will keep their current behavior.
+The scope is the field-plan builder and regression tests in `unmarshaler_test.go`; no API, encoder, fixture, or configuration changes are needed. Tests will cover value and pointer embeddings, empty names, explicit names, ignored fields, and field precedence.
 
-Fixed in [unmarshaler.go](/home/jdaddy/.cache/muffle-evals/runs/sloth/codex/go-toml-inline-embed-1/work/unmarshaler.go:2260). Embedded structs with unnamed tags such as `toml:",inline"` now decode their promoted fields correctly, matching encoder behavior.
+Fixed decoding of embedded structs tagged `toml:",inline"`. The decoder now promotes embedded fields when the tag has no explicit name.
 
-`go build ./...` and all existing tests pass.
+Added regression coverage for your example, pointer embeddings, empty tags, explicit names, ignored fields, and field precedence.
+
+Validation passed: `go test ./...` and `go build ./...`.

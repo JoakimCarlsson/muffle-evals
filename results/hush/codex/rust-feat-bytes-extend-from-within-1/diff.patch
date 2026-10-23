@@ -1,5 +1,5 @@
 diff --git a/src/bytes_mut.rs b/src/bytes_mut.rs
-index 68c5f73..6114a6e 100644
+index 68c5f73..88f27a8 100644
 --- a/src/bytes_mut.rs
 +++ b/src/bytes_mut.rs
 @@ -1,5 +1,5 @@
@@ -9,17 +9,18 @@ index 68c5f73..6114a6e 100644
  use core::ptr::{self, NonNull};
  use core::{cmp, fmt, hash, slice};
  
-@@ -884,6 +884,50 @@ impl BytesMut {
+@@ -884,6 +884,51 @@ impl BytesMut {
          }
      }
  
 +    /// Appends a copy of the bytes in `range` to this `BytesMut`.
 +    ///
-+    /// The buffer grows as needed to hold the appended bytes.
++    /// The buffer grows as needed to accommodate the additional bytes.
 +    ///
 +    /// # Panics
 +    ///
-+    /// Panics if the range starts after its end or ends beyond the current length.
++    /// Panics if the range start is greater than its end or if the range is
++    /// out of bounds for the current length.
 +    ///
 +    /// # Examples
 +    ///
@@ -31,7 +32,6 @@ index 68c5f73..6114a6e 100644
 +    /// assert_eq!(&buf[..], b"aaabbb_bbb");
 +    /// ```
 +    pub fn extend_from_within(&mut self, range: impl RangeBounds<usize>) {
-+        let len = self.len();
 +        let start = match range.start_bound() {
 +            Bound::Included(&n) => n,
 +            Bound::Excluded(&n) => n.checked_add(1).expect("out of range"),
@@ -40,20 +40,21 @@ index 68c5f73..6114a6e 100644
 +        let end = match range.end_bound() {
 +            Bound::Included(&n) => n.checked_add(1).expect("out of range"),
 +            Bound::Excluded(&n) => n,
-+            Bound::Unbounded => len,
++            Bound::Unbounded => self.len,
 +        };
 +        assert!(start <= end, "range start must not be greater than end");
-+        assert!(end <= len, "range end out of bounds");
++        assert!(end <= self.len, "range end out of bounds");
 +
 +        let count = end - start;
 +        self.reserve(count);
++
++        // SAFETY: The source is within the initialized bytes, and reserve
++        // ensures enough space after them. The regions do not overlap.
++        // Obtain pointers after reserve, which may move the allocation.
 +        unsafe {
-+            // Reserve may move the buffer, so obtain its pointer afterwards.
-+            // The source is initialized and ends before the destination, whose
-+            // capacity was reserved above.
-+            let ptr = self.as_mut_ptr();
-+            ptr::copy_nonoverlapping(ptr.add(start), ptr.add(len), count);
-+            self.advance_mut(count);
++            let ptr = self.ptr.as_ptr();
++            ptr::copy_nonoverlapping(ptr.add(start), ptr.add(self.len), count);
++            self.len += count;
 +        }
 +    }
 +
@@ -61,28 +62,28 @@ index 68c5f73..6114a6e 100644
      /// contiguous, otherwise appends its bytes to this `BytesMut`.
      ///
 diff --git a/tests/test_bytes.rs b/tests/test_bytes.rs
-index b9bd5e1..2a70275 100644
+index b9bd5e1..186ba83 100644
 --- a/tests/test_bytes.rs
 +++ b/tests/test_bytes.rs
-@@ -1720,3 +1720,56 @@ fn bytes_mut_reserve_overflow() {
-     // This call relies on the corrupted cap and may cause UB & HBO
-     b.put_u8(b'h');
+@@ -607,6 +607,69 @@ fn extend_from_slice_mut() {
+     }
  }
-+
+ 
 +#[test]
 +fn extend_from_within_mut() {
 +    use std::ops::Bound::*;
 +
 +    let ranges = [
-+        (Included(3), Excluded(6)),
 +        (Unbounded, Unbounded),
++        (Included(3), Excluded(6)),
++        (Excluded(2), Included(5)),
 +        (Unbounded, Included(2)),
-+        (Excluded(2), Unbounded),
++        (Included(3), Unbounded),
 +        (Included(7), Excluded(7)),
 +        (Included(0), Excluded(0)),
 +    ];
-+    for capacity in [7, 64] {
-+        for range in ranges {
++    for range in ranges {
++        for capacity in [7, 64] {
 +            let mut bytes = BytesMut::with_capacity(capacity);
 +            bytes.extend_from_slice(b"aaabbb_");
 +            let mut expected = bytes.to_vec();
@@ -91,15 +92,24 @@ index b9bd5e1..2a70275 100644
 +            assert_eq!(&bytes[..], &expected[..]);
 +        }
 +    }
++
 +    let mut empty = BytesMut::new();
 +    empty.extend_from_within(..);
 +    assert!(empty.is_empty());
 +
++    // Exercise growth of an offset view while another view stays alive.
 +    let mut bytes = BytesMut::from(&b"prefixaaabbb_"[..]);
 +    let prefix = bytes.split_to(6);
-+    bytes.extend_from_within(3..6);
-+    assert_eq!(&bytes[..], b"aaabbb_bbb");
++    bytes.extend_from_within(..);
++    assert_eq!(&bytes[..], b"aaabbb_aaabbb_");
 +    assert_eq!(&prefix[..], b"prefix");
++
++    // Exercise reclaiming space before the current view.
++    let mut bytes = BytesMut::with_capacity(64);
++    bytes.extend_from_slice(&[b'x'; 64]);
++    bytes.advance(56);
++    bytes.extend_from_within(..);
++    assert_eq!(&bytes[..], &[b'x'; 16]);
 +}
 +
 +#[test]
@@ -107,9 +117,9 @@ index b9bd5e1..2a70275 100644
 +    use std::ops::Bound::*;
 +
 +    for range in [
-+        (Included(4), Excluded(3)),
++        (Included(4), Excluded(2)),
 +        (Included(0), Excluded(8)),
-+        (Included(8), Unbounded),
++        (Included(8), Excluded(8)),
 +        (Excluded(usize::MAX), Unbounded),
 +        (Unbounded, Included(usize::MAX)),
 +    ] {
@@ -121,3 +131,7 @@ index b9bd5e1..2a70275 100644
 +        assert_eq!(&bytes[..], b"aaabbb_");
 +    }
 +}
++
+ #[test]
+ fn extend_mut_from_bytes() {
+     let mut bytes = BytesMut::with_capacity(0);

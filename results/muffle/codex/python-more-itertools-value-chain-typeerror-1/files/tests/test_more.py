@@ -5042,24 +5042,14 @@ class NthCombinationWithReplacementTests(TestCase):
 
 class ValueChainTests(TestCase):
     def test_iteration_type_error(self):
-        values = mi.value_chain(map(len, ['ab', 'cde', 5]))
-        self.assertEqual(next(values), 2)
-        self.assertEqual(next(values), 3)
-        with self.assertRaisesRegex(TypeError, "has no len"):
-            next(values)
-
-    def test_generator_type_error(self):
-        error = TypeError('iteration failed')
-
-        def source():
-            yield 1
-            raise error
-
-        values = mi.value_chain(source())
-        self.assertEqual(next(values), 1)
-        with self.assertRaises(TypeError) as caught:
-            next(values)
-        self.assertIs(caught.exception, error)
+        for values, expected in ((['ab', 'cde', 5], [2, 3]), ([5], [])):
+            with self.subTest(values=values):
+                iterator = mi.value_chain(map(len, values), 'after')
+                for value in expected:
+                    self.assertEqual(next(iterator), value)
+                with self.assertRaises(TypeError):
+                    next(iterator)
+                self.assertEqual(list(iterator), [])
 
     def test_empty(self):
         actual = list(mi.value_chain())

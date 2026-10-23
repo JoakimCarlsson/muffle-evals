@@ -1,13 +1,9 @@
-Now add tests.
+I fixed `withBase` and `withoutBase` in `src/utils.ts`. A path now counts as under the base only if it equals the base or the base is followed by `/`, `?` or `#`. The full test suite passes.
 
-I fixed `withBase` and `withoutBase` in `src/utils.ts`. The full test suite and eslint both pass.
-
-A path now counts as under the base only if the character right after the base is `/`, `?` or `#`, or if the path ends exactly at the base. Both functions use one shared helper, `_isUnderBase`, for this check. So:
-
-- `withoutBase('/admin-dashboard', '/admin/')` returns `/admin-dashboard`.
-- `withBase('/admin-dashboard', '/admin/')` returns `/admin/admin-dashboard`.
+- `withoutBase('/admin-dashboard', '/admin/')` now returns `/admin-dashboard`.
+- `withBase('/admin-dashboard', '/admin/')` now returns `/admin/admin-dashboard`.
 - `/admin`, `/admin/dashboard` and `/admin?x` behave as before.
 
-I added cases for all of these to `test/base.test.ts`. I didn't run `nuxt generate`, so the stray `-dashboard` file in `.output/public` isn't confirmed gone. It should be, since that file came from `withoutBase` returning `/-dashboard`.
+I added test cases for the prefix-only path and the `?x` case to `test/base.test.ts`. I haven't tried it in your Nuxt app, so `nuxt generate` still needs to be run against the fixed ufo to confirm the stray `-dashboard` file is gone.
 
 I haven't committed anything.

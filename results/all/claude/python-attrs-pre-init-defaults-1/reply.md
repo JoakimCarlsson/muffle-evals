@@ -1,4 +1,3 @@
-Done. `src/attr/_make.py` now builds the `__attrs_pre_init__` call from positional argument names without their defaults. I also added `changelog.d/pre-init-defaults.change.md`.
+Done. Positional defaults no longer leak into the `__attrs_pre_init__` call in `src/attr/_make.py`, so `val2` and `val3` now get the values you passed. I added a test and the changelog entry `changelog.d/+pre-init-defaults.change.md`. `tests/test_make.py` passes; I didn't run the rest of the suite.
 
-- **Checks:** `1, 2, {'x': 1}, 3` now reaches `__attrs_pre_init__` in a small repro. The suite passes (1334) with `tests/test_packaging.py` deselected, because it fails here on package metadata, which I didn't look into. I added no regression test.
-- **Risk:** a factory-default field you don't pass still arrives in `__attrs_pre_init__` as `NOTHING`.
+When an argument isn't passed, a factory field (`val3`) still reaches `__attrs_pre_init__` as `NOTHING`, because the factory only runs after pre-init.

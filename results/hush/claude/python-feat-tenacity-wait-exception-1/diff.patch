@@ -1,12 +1,15 @@
-diff --git a/releasenotes/notes/add-wait-exception-3f1c9a7d5b2e4a60.yaml b/releasenotes/notes/add-wait-exception-3f1c9a7d5b2e4a60.yaml
+diff --git a/releasenotes/notes/add-wait-exception-5c1f0a7d9e3b4a62.yaml b/releasenotes/notes/add-wait-exception-5c1f0a7d9e3b4a62.yaml
 new file mode 100644
-index 0000000..96096b9
+index 0000000..25ff4ae
 --- /dev/null
-+++ b/releasenotes/notes/add-wait-exception-3f1c9a7d5b2e4a60.yaml
-@@ -0,0 +1,3 @@
++++ b/releasenotes/notes/add-wait-exception-5c1f0a7d9e3b4a62.yaml
+@@ -0,0 +1,6 @@
 +---
 +features:
-+  - Add ``wait_exception`` wait strategy, which waits for the time returned by a function called with the exception raised by the last attempt.
++  - |
++    Add ``wait_exception`` wait strategy. It calls a function with the exception
++    raised by the last attempt and waits the number of seconds it returns.
++    Raises ``RuntimeError`` if the last attempt did not raise an exception.
 diff --git a/tenacity/__init__.py b/tenacity/__init__.py
 index e93793c..7ebe981 100644
 --- a/tenacity/__init__.py
@@ -28,26 +31,23 @@ index e93793c..7ebe981 100644
      "before_nothing",
      "after_log",
 diff --git a/tenacity/wait.py b/tenacity/wait.py
-index dc3c850..195afcc 100644
+index dc3c850..edbb60c 100644
 --- a/tenacity/wait.py
 +++ b/tenacity/wait.py
-@@ -232,3 +232,25 @@ class wait_exponential_jitter(wait_base):
+@@ -232,3 +232,22 @@ class wait_exponential_jitter(wait_base):
          except OverflowError:
              result = self.max
          return max(0, min(result, self.max))
 +
 +
 +class wait_exception(wait_base):
-+    """Wait strategy that waits the amount of time returned by the predicate.
++    """Wait strategy that waits the amount of time returned by a function
++    called with the exception raised by the last attempt.
 +
-+    The predicate is passed the exception raised by the last attempt and
-+    returns the number of seconds to wait.
++    Raises RuntimeError if the last attempt did not fail with an exception.
 +    """
 +
-+    def __init__(
-+        self,
-+        predicate: typing.Callable[[BaseException], float],
-+    ) -> None:
++    def __init__(self, predicate: typing.Callable[[BaseException], float]) -> None:
 +        self.predicate = predicate
 +
 +    def __call__(self, retry_state: "RetryCallState") -> float:
@@ -58,10 +58,10 @@ index dc3c850..195afcc 100644
 +            raise RuntimeError("outcome failed but the exception is None")
 +        return self.predicate(exception)
 diff --git a/tests/test_tenacity.py b/tests/test_tenacity.py
-index b76fec2..f9b5c29 100644
+index b76fec2..ea2d451 100644
 --- a/tests/test_tenacity.py
 +++ b/tests/test_tenacity.py
-@@ -1795,3 +1795,24 @@ class TestMockingSleep:
+@@ -1795,3 +1795,30 @@ class TestMockingSleep:
  
  if __name__ == "__main__":
      unittest.main()
@@ -72,17 +72,23 @@ index b76fec2..f9b5c29 100644
 +        def predicate(exc):
 +            return 5.0 if isinstance(exc, ValueError) else 1.0
 +
-+        r = Retrying(wait=tenacity.wait_exception(predicate))
-+        fut = tenacity.Future.construct(1, ValueError(), True)
-+        rs = tenacity.RetryCallState(r, None, (), {})
-+        rs.outcome = fut
-+        self.assertEqual(5.0, r.wait(rs))
-+        rs.outcome = tenacity.Future.construct(1, KeyError(), True)
-+        self.assertEqual(1.0, r.wait(rs))
++        w = tenacity.wait_exception(predicate)
++        self.assertEqual(5.0, w(make_retry_state(1, 0, last_result=tenacity.Future.construct(1, ValueError(), True))))
++        self.assertEqual(1.0, w(make_retry_state(1, 0, last_result=tenacity.Future.construct(1, KeyError(), True))))
 +
 +    def test_wait_exception_no_exception(self):
-+        r = Retrying(wait=tenacity.wait_exception(lambda e: 1.0))
-+        rs = tenacity.RetryCallState(r, None, (), {})
-+        rs.outcome = tenacity.Future.construct(1, "value", False)
++        w = tenacity.wait_exception(lambda e: 1.0)
 +        with self.assertRaises(RuntimeError):
-+            r.wait(rs)
++            w(make_retry_state(1, 0, last_result=tenacity.Future.construct(1, "ok", False)))
++
++    def test_wait_exception_retrying(self):
++        calls = []
++
++        def f():
++            calls.append(1)
++            if len(calls) < 3:
++                raise ValueError()
++
++        r = tenacity.Retrying(wait=tenacity.wait_exception(lambda e: 0), sleep=lambda s: None)
++        r(f)
++        self.assertEqual(3, len(calls))

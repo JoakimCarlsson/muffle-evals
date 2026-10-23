@@ -732,51 +732,63 @@ fn clone_from() {
 }
 
 #[test]
-fn get_disjoint_mut_order_and_swap() {
+fn get_disjoint_mut_preserves_order() {
     let mut slab: Slab<_> = (0..5).map(|i| (i, i)).collect();
     slab.remove(1);
     let [last, first, middle] = slab.get_disjoint_mut([4, 0, 2]).unwrap();
-    assert_eq!((*last, *first, *middle), (4, 0, 2));
     std::mem::swap(last, first);
     *middle = 20;
     assert_eq!((slab[0], slab[2], slab[4]), (4, 20, 0));
-    let [value] = slab.get_disjoint_mut([3]).unwrap();
-    *value = 30;
-    assert_eq!(slab[3], 30);
+    assert_eq!(slab.len(), 4);
+    assert_eq!(slab.insert(10), 1);
 }
 
 #[test]
 fn get_disjoint_mut_errors() {
     use GetDisjointMutError::*;
+
     let mut slab: Slab<_> = (0..5).map(|i| (i, i)).collect();
     slab.remove(1);
-    for keys in [[0, 0], [1, 1], [42, 42], [usize::MAX, usize::MAX]] {
-        assert_eq!(slab.get_disjoint_mut(keys), Err(OverlappingIndices));
-    }
     assert_eq!(
         slab.get_disjoint_mut([42, 2, 1, 2]),
         Err(OverlappingIndices)
     );
+    assert_eq!(slab.get_disjoint_mut([1, 1]), Err(OverlappingIndices));
+    assert_eq!(
+        slab.get_disjoint_mut([usize::MAX, usize::MAX]),
+        Err(OverlappingIndices)
+    );
     assert_eq!(slab.get_disjoint_mut([1, 5]), Err(IndexVacant));
     assert_eq!(slab.get_disjoint_mut([5, 1]), Err(IndexOutOfBounds));
-    assert_eq!(slab.get_disjoint_mut([0, 1]), Err(IndexVacant));
     assert_eq!(
         slab.get_disjoint_mut([0, usize::MAX]),
         Err(IndexOutOfBounds)
     );
-    assert_eq!(slab.get_disjoint_mut([0, 2]), Ok([&mut 0, &mut 2]));
+    assert_eq!(slab.get_disjoint_mut([0, 1]), Err(IndexVacant));
+    assert_eq!(
+        slab.iter().map(|(k, v)| (k, *v)).collect::<Vec<_>>(),
+        vec![(0, 0), (2, 2), (3, 3), (4, 4)]
+    );
 }
 
 #[test]
-fn get_disjoint_mut_empty_and_reserved() {
-    let mut slab = Slab::<i32>::with_capacity(10);
+fn get_disjoint_mut_empty_and_single() {
+    let mut slab = Slab::with_capacity(8);
     assert_eq!(slab.get_disjoint_mut([]), Ok([]));
     assert_eq!(
         slab.get_disjoint_mut([0]),
         Err(GetDisjointMutError::IndexOutOfBounds)
     );
-    slab.insert(1);
+    let key = slab.insert(String::from("hello"));
+    let [value] = slab.get_disjoint_mut([key]).unwrap();
+    value.push_str(" world");
+    assert_eq!(slab[key], "hello world");
+    slab.remove(key);
     assert_eq!(slab.get_disjoint_mut([]), Ok([]));
+    assert_eq!(
+        slab.get_disjoint_mut([key]),
+        Err(GetDisjointMutError::IndexVacant)
+    );
 }
 
 #[test]

@@ -608,7 +608,6 @@ impl<'de> de::Deserializer<'de> for Value {
         visitor.visit_newtype_struct(self)
     }
 
-    /// Emits [`Datetime`] as its private map form when asked for one, otherwise defers to `deserialize_any`.
     fn deserialize_struct<V>(
         self,
         name: &'static str,
@@ -619,10 +618,9 @@ impl<'de> de::Deserializer<'de> for Value {
         V: de::Visitor<'de>,
     {
         match self {
-            Self::Datetime(v) if toml_datetime::de::is_datetime(name) => {
-                visitor.visit_map(toml_datetime::de::DatetimeDeserializer::new(v))
-            }
-            other => other.deserialize_any(visitor),
+            Self::Datetime(v) if toml_datetime::de::is_datetime(name) => visitor
+                .visit_map(toml_datetime::de::DatetimeDeserializer::new(v)),
+            _ => self.deserialize_any(visitor),
         }
     }
 

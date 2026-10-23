@@ -104,8 +104,8 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
   const otherPrototype: unknown =
     Object.getPrototypeOf(other) ?? Object.prototype;
   if (dataPrototype !== otherPrototype) {
-    // Plain objects and null-prototype objects are compared by their contents.
-    // All other objects must share a prototype so that classes and built-ins
+    // Null-prototype objects and plain objects compare by their contents.
+    // Otherwise, require the same prototype so different classes and built-ins
     // remain distinct and the type-specific comparisons below are safe.
     return false;
   }
@@ -130,8 +130,8 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
     return data.toString() === (other as unknown as RegExp).toString();
   }
 
-  // At this point the objects have compatible prototypes and are not
-  // any of the previous types. They could be plain objects (Object.prototype),
+  // At this point the objects share a prototype (or have null/Object
+  // prototypes) and are not any of the previous types. They could be plain objects (Object.prototype),
   // they could be classes, they could be other built-ins, or they could be
   // something weird. We assume that comparing values by keys is enough to judge
   // their equality.

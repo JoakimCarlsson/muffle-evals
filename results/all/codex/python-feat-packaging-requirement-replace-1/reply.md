@@ -1,2 +1,2 @@
-Done. Added validated `Requirement.__replace__`, independent specifier copies, subclass support, docs.
-Build, lint, typing, 9,706 tests passed; full suite blocked by missing dependencies.
+Done.
+Added validated `Requirement.__replace__`, independent specifiers, prerelease preservation, subclass support, docs. All 62,510 tests passed; build, lint, types passed.

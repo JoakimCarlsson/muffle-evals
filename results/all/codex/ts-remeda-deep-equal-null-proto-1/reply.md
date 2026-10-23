@@ -1,2 +1,5 @@
+Null-prototype equality needs shared comparison fix and regression tests.
+
+
 Done.
-`isDeepEqual` handles null/plain prototypes both ways, nested; class distinctions kept. Build, typecheck, 2,167 tests, regression checks passed.
+`isDeepEqual` handles null prototypes in both orders and nested values; class checks preserved. Regression tests added. Runtime tests, type tests, build, lint passed.

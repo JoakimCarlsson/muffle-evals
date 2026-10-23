@@ -863,9 +863,10 @@ class Container(_CustomDict):  # type: ignore[type-arg]
         # its own ``[header]`` instead (a non-super table), keeping the dotted key
         # duplicates the prefix onto the header (#524). Drop the dotted key so the
         # replacement renders as a plain table.
-        dotted_to_header = k.is_dotted() and (
-            isinstance(value, AoT)
-            or (isinstance(value, Table) and not value.is_super_table())
+        dotted_to_header = (
+            k.is_dotted()
+            and isinstance(value, (AoT, Table))
+            and not (isinstance(value, Table) and value.is_super_table())
         )
         # That new header also captures every sibling that renders inline -- plain
         # values and dotted keys -- if any still follow it (#513), so it must be

@@ -20,6 +20,49 @@ if (typeof window === 'undefined') {
   }
 }
 
+describe('flow collection keys in block maps', () => {
+  test.each(['[3]', '{ a: 3 }'])('%s after blank lines or comments', key => {
+    for (const before of ['', '\n', '# comment\n', '\n# comment\n\n']) {
+      const src = `1: 2\n${before}${key}: 4\n`
+      const doc = YAML.parseDocument(src)
+      expect(doc.errors).toHaveLength(0)
+      expect(doc.toJS({ mapAsMap: true })).toEqual(
+        new Map([
+          [1, 2],
+          [YAML.parse(key, { mapAsMap: true }), 4]
+        ])
+      )
+      const items = Array.from((doc.value as YAML.YAMLMap).values.values())
+      expect(items).toHaveLength(2)
+      if (before.includes('#'))
+        expect(items[1].key).toHaveProperty(
+          'commentBefore',
+          before.endsWith('\n\n') ? ' comment\n' : ' comment'
+        )
+      if (before.startsWith('\n'))
+        expect(items[1].key).toHaveProperty('spaceBefore', true)
+    }
+  })
+
+  test('Example 2.11 with an implicit flow sequence key', () => {
+    const src = `? - Detroit Tigers
+  - Chicago cubs
+: - 2001-07-23
+
+[New York Yankees, Atlanta Braves]: [2001-07-02, 2001-08-12, 2001-08-14]
+`
+    expect(YAML.parse(src, { mapAsMap: true })).toEqual(
+      new Map([
+        [['Detroit Tigers', 'Chicago cubs'], ['2001-07-23']],
+        [
+          ['New York Yankees', 'Atlanta Braves'],
+          ['2001-07-02', '2001-08-12', '2001-08-14']
+        ]
+      ])
+    )
+  })
+})
+
 describe('scalars', () => {
   test('empty block scalar at end of document', () => {
     const docs = YAML.parseAllDocuments('|\n---\nfoo')
@@ -172,42 +215,6 @@ test('long scalar value in flow map (#36)', () => {
 })
 
 describe('flow collection keys', () => {
-  test.each(['', '\n', '# comment\n', '\n# comment\n'])(
-    'flow keys after separator %j',
-    separator => {
-      for (const key of ['[3]', '{3: 4}']) {
-        const src = `1: 2\n${separator}${key}: 4\n`
-        const doc = YAML.parseDocument(src)
-        expect(doc.errors).toHaveLength(0)
-        expect(doc.toJS({ mapAsMap: true })).toEqual(
-          new Map<number | number[] | Map<number, number>, number>([
-            [1, 2],
-            [key === '[3]' ? [3] : new Map([[3, 4]]), 4]
-          ])
-        )
-        expect(String(doc).startsWith(`1: 2\n${separator}? `)).toBe(true)
-      }
-    }
-  )
-
-  test('mapping between sequences with a blank line before a flow key', () => {
-    const src = `? - Detroit Tigers
-  - Chicago cubs
-: - 2001-07-23
-
-[New York Yankees, Atlanta Braves]: [2001-07-02, 2001-08-12, 2001-08-14]
-`
-    expect(YAML.parse(src, { mapAsMap: true })).toEqual(
-      new Map([
-        [['Detroit Tigers', 'Chicago cubs'], ['2001-07-23']],
-        [
-          ['New York Yankees', 'Atlanta Braves'],
-          ['2001-07-02', '2001-08-12', '2001-08-14']
-        ]
-      ])
-    )
-  })
-
   test('block map with flow collection key as explicit key', () => {
     const doc = YAML.parseDocument<YAML.YAMLMap<YAML.YAMLMap, null>>(`? []: x`)
     expect(doc.errors).toHaveLength(0)

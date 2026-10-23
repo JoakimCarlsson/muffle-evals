@@ -1,5 +1,3 @@
-Found it: the backward loop's exit `JumpIfFalse` leaves a stray bool on the stack. I'm adding a pop there.
+Found cause: backwards loop leaves `>= 0` bool on stack. Fixing now.
 
-Done. `emitLoopBackwards` in `compiler/compiler.go` left a bool on the stack, which broke the surrounding map literal. It now pops it on both the loop-continue and loop-exit paths.
-
-Both builtins now work inside `{ }`, including when nothing matches and on an empty array. The full test suite passes. I added no permanent test.
+Done. `emitLoopBackwards` in `compiler/compiler.go` left the `>= 0` bool on the stack. It now pops it in the loop body and at loop exit. I added three map-literal cases to `expr_test.go`, and the full test suite passes. Nothing is committed.

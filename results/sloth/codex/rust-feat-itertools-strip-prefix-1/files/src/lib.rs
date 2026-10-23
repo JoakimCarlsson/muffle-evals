@@ -2508,29 +2508,18 @@ pub trait Itertools: Iterator {
 
     /// Remove a matching prefix and return the remaining iterator.
     ///
-    /// An empty prefix returns the iterator unchanged. On the first mismatch,
-    /// returns a [`StripPrefixError`] containing both remaining iterators and
-    /// the mismatching items. If this iterator runs out first, its mismatching
-    /// item is `None`. Neither iterator is advanced beyond the mismatch.
+    /// An empty prefix leaves the iterator unchanged. On a mismatch or if this
+    /// iterator runs out first, returns the remaining iterators and the mismatched
+    /// items in a [`StripPrefixError`]. Neither iterator advances past that pair.
     ///
     /// ```
     /// use itertools::Itertools;
     ///
-    /// let rest = (1..6).strip_prefix([1, 2]).unwrap();
-    /// assert_eq!(rest.collect_vec(), vec![3, 4, 5]);
-    /// assert_eq!((1..3).strip_prefix([]).unwrap().collect_vec(), vec![1, 2]);
-    ///
+    /// assert_eq!((1..6).strip_prefix([1, 2]).unwrap().collect_vec(), [3, 4, 5]);
     /// let err = (1..6).strip_prefix([1, 2, 9, 4]).unwrap_err();
     /// assert_eq!(err.mismatch, (Some(3), 9));
-    /// assert_eq!(err.prefix.collect_vec(), vec![4]);
-    /// assert_eq!(err.iterator.collect_vec(), vec![4, 5]);
-    ///
-    /// let err = (1..3).strip_prefix([1, 2, 3]).unwrap_err();
-    /// assert_eq!(err.mismatch, (None, 3));
-    /// assert_eq!(err.iterator.collect_vec(), vec![]);
-    ///
-    /// let rest: String = "hello".chars().strip_prefix("he".chars()).unwrap().collect();
-    /// assert_eq!(Some(rest.as_str()), "hello".strip_prefix("he"));
+    /// assert_eq!(err.prefix.collect_vec(), [4]);
+    /// assert_eq!(err.iterator.collect_vec(), [4, 5]);
     /// ```
     fn strip_prefix<P>(self, prefix: P) -> Result<Self, StripPrefixError<Self, P::IntoIter>>
     where
@@ -2541,22 +2530,19 @@ pub trait Itertools: Iterator {
         self.strip_prefix_by(prefix, PartialEq::eq)
     }
 
-    /// Remove a prefix whose items match according to `eq`.
+    /// Remove a prefix using `eq` to compare each iterator item with a prefix item.
     ///
-    /// The comparison receives a reference to this iterator's item followed by
-    /// a reference to the prefix item. It is called once for each pair until
-    /// the first mismatch, and is not called if this iterator runs out first.
-    /// An empty prefix returns the iterator unchanged. On failure, the returned
-    /// [`StripPrefixError`] contains the remaining iterators and mismatching
-    /// items, as in [`strip_prefix`](Itertools::strip_prefix).
+    /// Like [`strip_prefix`](Itertools::strip_prefix), returns the remaining
+    /// iterator on success or a [`StripPrefixError`] on the first mismatch.
+    /// `eq` is not called when this iterator runs out first.
     ///
     /// ```
     /// use itertools::Itertools;
     ///
-    /// let rest = vec!["one", "two", "three"].into_iter()
-    ///     .strip_prefix_by([3, 3], |word, length| word.len() == *length)
-    ///     .unwrap();
-    /// assert_eq!(rest.collect_vec(), vec!["three"]);
+    /// let rest = (1..4).strip_prefix_by(["1", "2"], |item, prefix| {
+    ///     item.to_string() == *prefix
+    /// }).unwrap();
+    /// assert_eq!(rest.collect_vec(), [3]);
     /// ```
     fn strip_prefix_by<P, F>(
         mut self,

@@ -146,7 +146,11 @@ describe("findExports", () => {
       type: "declaration",
       names: ["a", "b"],
     },
-    "export const a = foo<Map<string, number>, (x: string) => void>(), b = 1": {
+    "export const a = foo<Map<string, number>, boolean>(), b = 1": {
+      type: "declaration",
+      names: ["a", "b"],
+    },
+    "export const a = left < right, b = 3": {
       type: "declaration",
       names: ["a", "b"],
     },

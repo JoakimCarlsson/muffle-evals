@@ -339,18 +339,18 @@ def test_argument_metavar_marks_optional(runner, kwargs, expected):
         (click.DateTime(formats=["%Y-%m-%d"]), "[%Y-%m-%d]", "[%Y-%m-%d]"),
     ],
 )
-@pytest.mark.parametrize(
-    "kwargs",
-    [{"required": False}, {"nargs": -1}, {"required": True}],
-)
-def test_argument_type_metavar_brackets(runner, type, optional, required, kwargs):
+@pytest.mark.parametrize("nargs", [1, 2, -1])
+@pytest.mark.parametrize("is_required", [False, True])
+def test_argument_type_metavar_brackets(
+    runner, type, optional, required, nargs, is_required
+):
     @click.command()
-    @click.argument("value", type=type, **kwargs)
+    @click.argument("value", type=type, nargs=nargs, required=is_required)
     def cli(value):
         pass
 
-    expected = required if kwargs.get("required") else optional
-    if kwargs.get("nargs") == -1:
+    expected = required if is_required else optional
+    if nargs != 1:
         expected += "..."
 
     result = runner.invoke(cli, ["--help"])

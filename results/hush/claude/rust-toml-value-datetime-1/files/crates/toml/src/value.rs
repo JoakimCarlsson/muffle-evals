@@ -588,23 +588,6 @@ impl<'de> de::Deserializer<'de> for Value {
         }
     }
 
-    fn deserialize_struct<V>(
-        self,
-        name: &'static str,
-        _fields: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, crate::de::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        if toml_datetime::de::is_datetime(name) {
-            if let Self::Datetime(v) = self {
-                return visitor.visit_map(toml_datetime::de::DatetimeDeserializer::new(v));
-            }
-        }
-        self.deserialize_any(visitor)
-    }
-
     // `None` is interpreted as a missing field so be sure to implement `Some`
     // as a present field.
     fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, crate::de::Error>
@@ -629,6 +612,23 @@ impl<'de> de::Deserializer<'de> for Value {
         bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit seq
         bytes byte_buf map unit_struct tuple_struct
         tuple ignored_any identifier
+    }
+
+    fn deserialize_struct<V>(
+        self,
+        name: &'static str,
+        _fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, crate::de::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        if toml_datetime::de::is_datetime(name)
+            && let Self::Datetime(d) = self
+        {
+            return visitor.visit_map(toml_datetime::de::DatetimeDeserializer::new(d));
+        }
+        self.deserialize_any(visitor)
     }
 }
 

@@ -1,9 +1,11 @@
-I’ll check how the day and week iterators define their ranges, fix reverse iteration, and add regression tests for both.
+I’ll check the day and week iterators, fix their reverse traversal, and add regression tests for bounded reversal and mixed forward/backward iteration.
 
-Both iterators currently use reverse iteration to move backward from the start date. I’ll make both ends consume the same finite range, include the last reachable date, and update the examples to show reversing a taken window.
+Both iterators currently use the same date as a cursor in either direction, so reversing walks into a different range. I’ll track the remaining range explicitly, include the final representable date on each iterator’s step sequence, and make skipping efficient so `.take(7).rev()` doesn’t walk through millions of dates.
 
-Fixed both iterators so forward and reverse iteration consume the same range. Days now include `NaiveDate::MAX`; weeks include the last reachable date with the starting weekday.
+The fix passes all 290 unit tests, including the new regression tests. Those tests also pass with default features disabled. The iterators now report the correct remaining length and stop when forward and backward traversal meet; documentation and integration tests are still running.
 
-Added regression coverage for reversed windows, mixed iteration, lengths, boundaries, and exhaustion. Updated the examples.
+Fixed both iterators to traverse the same range from either end. Your assertion now passes.
 
-Validation passed: 290 library tests, 224 without default features, formatting, and both iterator doctests. The full doctest run had three unrelated failures involving deprecated `std::i32::MAX`.
+Lengths are accurate, endpoints are included, and mixed forward/backward iteration stops correctly. Added regression tests and updated documentation.
+
+All unit and integration tests pass. Three unrelated doctests fail because existing deprecated constants trigger `deny(warnings)`.

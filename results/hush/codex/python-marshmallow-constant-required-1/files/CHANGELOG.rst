@@ -6,8 +6,8 @@ Changelog
 
 Bug fixes:
 
-- Fix ``fields.Constant`` with ``required=True`` to accept missing input while
-  preserving the constant value and required metadata.
+- Allow ``fields.Constant`` with ``required=True`` while still supplying the constant
+  when input is missing.
 
 - Make `marshmallow.fields.Number` and `marshmallow.fields.Mapping` abstract base classes to
   prevent using them within Schemas (:issue:`2924`). Thanks :user:`MartingaleCoda` for reporting.

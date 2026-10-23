@@ -1,11 +1,9 @@
-I’ll trace how `Value` deserializes datetimes and fix the shared path while preserving string output for formats such as JSON.
+I’ll check how `Value` deserialization handles datetimes, fix the shared path, and add regression coverage while preserving JSON string output.
 
-The cause is in `Value`’s deserializer: it always presents datetimes as strings. I’ll use the existing datetime adapter when the target explicitly requests a TOML datetime, keeping the generic string behavior.
+`Value` forwards datetime struct requests to `deserialize_any`, which emits a string. The fix can use the existing datetime helper for those requests and leave generic conversions unchanged. It needs only the `Value` implementation and an existing test file; the table wrapper already delegates correctly. No new dependencies or public APIs are needed.
 
-The change is limited to `value.rs`. Struct fields and `try_into` share this path; `Table` already forwards struct deserialization. No fixtures, configuration, exports, or new dependencies need changes.
+Fixed `Value` deserialization to preserve datetimes when explicitly requested, including struct fields and `try_into::<Datetime>()`. JSON and string conversions remain unchanged.
 
-The fix uses the existing datetime adapter and preserves the generic string conversion. I also updated `Table` to delegate the new method, as required by the code’s forwarding convention. The initial build and existing tests passed; I’m rerunning checks after that delegation change and checking the serde-only feature configuration.
+Added regression coverage for all datetime forms and the existing string rejection error.
 
-Fixed datetime deserialization from `toml::Value`, covering struct fields and `try_into::<Datetime>()`. Generic conversions such as `serde_json::Value` still receive datetime strings.
-
-Build, existing TOML tests, serde-only compilation, and formatting checks passed.
+Validation passed: `cargo test -p toml`, formatting, and diff checks.

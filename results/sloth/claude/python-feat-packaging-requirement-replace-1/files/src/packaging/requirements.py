@@ -3,16 +3,19 @@
 # for complete details.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ._parser import parse_requirement as _parse_requirement
 from ._tokenizer import ParserSyntaxError
 from .markers import Marker, _normalize_extra_values
 from .specifiers import InvalidSpecifier, Specifier, SpecifierSet
 from .utils import canonicalize_name
+from .version import _UNSET
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
+
+    from typing_extensions import Self
 
 __all__ = [
     "InvalidRequirement",
@@ -71,11 +74,6 @@ class Requirement:
         equivalent specifiers. The string representation still preserves the
         parsed name and extras spelling.
 
-    .. versionchanged:: 26.4
-
-        Added :meth:`__replace__`, so :func:`copy.replace` works on
-        Python 3.13+.
-
     :param str requirement_string: The string representation of a requirement.
     :raises InvalidRequirement: If the given ``requirement_string`` is not
         parseable, then this exception will be raised.
@@ -111,6 +109,75 @@ class Requirement:
             self.marker = Marker.__new__(Marker)
             self.marker._markers = _normalize_extra_values(parsed.marker)
 
+    def __replace__(
+        self,
+        *,
+        name: str = _UNSET,
+        url: str | None = _UNSET,
+        extras: Iterable[str] = _UNSET,
+        specifier: SpecifierSet = _UNSET,
+        marker: Marker | None = _UNSET,
+    ) -> Self:
+        """
+        __replace__(*, name=..., url=..., extras=..., specifier=..., marker=...)
+
+        Return a new requirement with parts replaced.
+
+        The result is validated by parsing its string form; values that are
+        invalid, or that would parse back as something different (such as
+        ``name="foo[bar]"``), raise :exc:`InvalidRequirement`. Markers are
+        normalized. The specifier set and its specifiers are copied, keeping
+        their ``prereleases`` settings. Subclasses get an instance of their
+        own class.
+
+        >>> Requirement("requests[security]>=2.0").__replace__(name="flask")
+        <Requirement('flask[security]>=2.0')>
+
+        :param str name:
+        :param str | None url:
+        :param Iterable[str] extras:
+        :param SpecifierSet specifier:
+        :param Marker | None marker:
+        :raises InvalidRequirement: If the resulting requirement is not valid.
+
+        .. versionadded:: 26.4
+        """
+        new = self.__class__(str(self))
+        if name is not _UNSET:
+            new.name = name
+        if url is not _UNSET:
+            new.url = url or None
+        if extras is not _UNSET:
+            new.extras = set(extras)
+        if specifier is not _UNSET:
+            new.specifier = specifier
+        if marker is not _UNSET:
+            new.marker = marker
+
+        try:
+            parsed = Requirement(str(new))
+        except ParserSyntaxError as e:  # pragma: no cover
+            raise InvalidRequirement(str(e)) from e
+        if (
+            parsed.name != new.name
+            or parsed.url != new.url
+            or parsed.extras != new.extras
+        ):
+            raise InvalidRequirement(f"Invalid requirement parts: {str(new)!r}")
+
+        new.name, new.url, new.extras, new.marker = (
+            parsed.name,
+            parsed.url,
+            parsed.extras,
+            parsed.marker,
+        )
+        source = self.specifier if specifier is _UNSET else specifier
+        new.specifier = SpecifierSet(
+            [Specifier(str(s), s._prereleases) for s in source._specs],
+            source._prereleases,
+        )
+        return new
+
     def _iter_parts(self, name: str) -> Iterator[str]:
         yield name
 
@@ -128,43 +195,6 @@ class Requirement:
 
         if self.marker:
             yield f"; {self.marker}"
-
-    def __replace__(self, /, **changes: Any) -> Requirement:
-        """Return a copy with the given fields replaced.
-
-        Accepts the keyword arguments ``name``, ``url``, ``extras``,
-        ``specifier`` and ``marker``. The result is validated and normalized as
-        if its string form had been parsed. The specifier is copied, keeping the
-        ``prereleases`` settings of the set and of each of its specifiers.
-
-        :raises TypeError: On an unknown keyword argument.
-        :raises InvalidRequirement: If the resulting requirement is invalid, or
-            a value would be read back as something different.
-        """
-        unknown = changes.keys() - set(self.__slots__)
-        if unknown:
-            raise TypeError(f"Unexpected replace arguments: {sorted(unknown)}")
-        fields = {key: changes.get(key, getattr(self, key)) for key in self.__slots__}
-
-        draft = Requirement.__new__(Requirement)
-        for key, value in fields.items():
-            setattr(draft, key, value)
-        result = type(self)(str(draft))
-
-        if (
-            result.name != fields["name"]
-            or result.url != (fields["url"] or None)
-            or result.extras != set(fields["extras"])
-            or result.specifier != fields["specifier"]
-        ):
-            raise InvalidRequirement(f"Replacement values are inconsistent: {draft}")
-
-        source: SpecifierSet = fields["specifier"]
-        result.specifier = SpecifierSet(
-            [Specifier(str(spec), spec._prereleases) for spec in source._specs],
-            source._prereleases,
-        )
-        return result
 
     def __getstate__(self) -> tuple[str, bool | None]:
         # Return the requirement string for compactness and stability, paired

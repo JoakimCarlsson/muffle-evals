@@ -1,14 +1,15 @@
-Adding the missing `copy` import to the tests, then running them.
+Adding `__replace__` to `Requirement` now. I'm editing `requirements.py`, then I'll test it and add docs.
 
-Tests are importing an installed copy; use the source tree.
+`Requirement.__replace__` is added in `src/packaging/requirements.py`, and `copy.replace()` works on it. Your two examples give the output you showed. The full `tests/test_requirements.py` run passes, including new tests for it. I didn't run the rest of the suite, mypy or the linters.
 
-`Requirement.__replace__` is added, so `copy.replace()` works on 3.13+ and you can call it directly on older versions. The requirements, markers and specifiers tests pass (9721) and mypy is clean on `requirements.py`. I didn't run the rest of the suite, and I didn't build the docs. The tests only import this checkout when run with `PYTHONPATH=src`. Without it they pick up the installed `packaging` and fail with `AttributeError`.
+- **Arguments:** it takes keyword-only `name`, `url`, `extras`, `specifier` and `marker`, and any other keyword raises `TypeError`. Fields you leave out are kept. Passing `url=None` or `marker=None` clears that field.
+- **Validation:** it builds the requirement string and parses it again through `type(self)(...)`. It then checks that the name, URL and extras read back unchanged. So `name="foo[bar]"`, `extras={"a,b"}`, `url=""` and a URL containing `; ` all raise `InvalidRequirement`. A specifier together with a URL raises it too, as parsing does. Passing extras as a bare string raises `TypeError`.
+- **Normalization:** markers are normalized by the parse, so `extra == "Foo_Bar"` becomes `extra == "foo-bar"`.
+- **Specifiers:** the result gets a fresh `SpecifierSet` built from fresh `Specifier` copies. `prereleases` is kept on the set and on each specifier, and nothing is shared with the input. I also made it accept a plain string for `specifier`, which you didn't ask for.
+- **Subclasses:** you get an instance of the subclass back, and its `__init__` runs. This assumes the subclass's `__init__` accepts a single requirement string.
 
-- **Arguments:** it takes keyword-only `name`, `url`, `extras`, `specifier` and `marker`, and anything else raises `TypeError`. Passing `url=None` or `marker=None` clears that field.
-- **Building the result:** it builds the requirement string from the final values and parses it with `type(self)(...)`. So the result is what parsing gives, values are normalized (`extra == "foo-bar"`), and a subclass gets back its own class with its own `__init__` run.
-- **Round-trip check:** after parsing, it compares `name`, `url`, `extras` and whether there is a marker against what you passed. A mismatch raises `InvalidRequirement`, which covers `name="foo[bar]"`, `extras={"a,b"}`, `url="http://x ; os_name == 'a'"` and `url=""`.
-- **Specifiers:** the specifier set and each `Specifier` are copied with their `prereleases` settings, so nothing is shared with the input.
-- **Extras:** I made a plain string for `extras` raise `TypeError`, because it would otherwise be split into characters.
-- **Subclass signature:** a subclass whose `__init__` doesn't take a single requirement string won't work with this.
+I added a CHANGELOG entry. The docstring says `versionadded:: 26.4`, which is my guess at the next version, so please check it.
 
-I moved the string-building logic out of `Requirement._iter_parts` into a module-level function so `__replace__` can reuse it, and the method now just calls it. I also added tests in `tests/test_requirements.py`, a docs example and `:special-members: __replace__` in `docs/requirements.rst`, and a changelog entry. I haven't committed anything.
+The tests are in `tests/test_requirements.py` as `TestRequirementReplace`.
+
+I left the changes uncommitted.

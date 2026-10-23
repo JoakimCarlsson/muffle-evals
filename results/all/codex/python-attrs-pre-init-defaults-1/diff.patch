@@ -12,3 +12,55 @@ index e84d979..1bbb0bb 100644
      if kw_only_args:
          # leading comma & kw_only args
          args += f"{', ' if args else ''}*, {', '.join(kw_only_args)}"
+diff --git a/tests/test_make.py b/tests/test_make.py
+index 80c0066..828252f 100644
+--- a/tests/test_make.py
++++ b/tests/test_make.py
+@@ -696,6 +696,47 @@ class TestAttributes:
+ 
+         assert 12 == getattr(c, "z", None)
+ 
++    @pytest.mark.parametrize("passing", ["defaults", "positional", "keyword"])
++    def test_pre_init_defaults(self, passing):
++        """
++        Pre-init receives argument values, including defaults and factories.
++        """
++        received = []
++
++        @attr.define
++        class C:
++            val1: int
++            _val2: int = attr.field(default=100, alias="value")
++            val3: dict = attr.field(factory=dict)
++            val4: int = attr.field(kw_only=True)
++            val5: int = attr.field(default=100, kw_only=True)
++            ignored: int = attr.field(default=1, init=False)
++
++            def __attrs_pre_init__(self, val1, value, val3, *, val4, val5):
++                """Record arguments before attribute initialization."""
++                received.append((val1, value, val3, val4, val5))
++
++        if passing == "defaults":
++            inst = C(200, val4=200)
++            expected = (200, 100, attr.NOTHING, 200, 100)
++            assert inst.val3 == {}
++        else:
++            value = {"blah": "blah"}
++            if passing == "positional":
++                inst = C(200, 200, value, val4=200, val5=200)
++            else:
++                inst = C(val1=200, value=200, val3=value, val4=200, val5=200)
++            expected = (200, 200, value, 200, 200)
++            assert inst.val3 is value
++
++        assert received == [expected]
++        assert (inst.val1, inst._val2, inst.val4, inst.val5) == (
++            expected[0],
++            expected[1],
++            expected[3],
++            expected[4],
++        )
++
+     @pytest.mark.usefixtures("with_and_without_validation")
+     def test_pre_init_kw_only_work_with_defaults(self):
+         """

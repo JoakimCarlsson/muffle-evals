@@ -1,20 +1,25 @@
 diff --git a/decode.go b/decode.go
-index 43c317f..5c4e4d6 100644
+index 43c317f..d11b92e 100644
 --- a/decode.go
 +++ b/decode.go
-@@ -1754,6 +1754,10 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
- 			if err != nil {
+@@ -1755,7 +1755,14 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
  				return err
  			}
-+			if _, isStr := keyVal.(string); keyVal != nil && !isStr && keyType.Kind() == reflect.String {
-+				// avoid integer -> string rune conversion (42 -> "*")
-+				keyVal = fmt.Sprint(keyVal)
-+			}
  			k = reflect.ValueOf(keyVal)
- 			if k.IsValid() && k.Type().ConvertibleTo(keyType) {
+-			if k.IsValid() && k.Type().ConvertibleTo(keyType) {
++			if k.IsValid() && keyType.Kind() == reflect.String && k.Kind() != reflect.String {
++				// integer -> string conversion would yield a rune; use the textual form
++				keyStr, err := d.mapKeyNodeToString(ctx, key)
++				if err != nil {
++					return err
++				}
++				k = reflect.ValueOf(keyStr).Convert(keyType)
++			} else if k.IsValid() && k.Type().ConvertibleTo(keyType) {
  				k = k.Convert(keyType)
+ 			}
+ 		}
 diff --git a/decode_test.go b/decode_test.go
-index 2d56942..5ba077d 100644
+index 2d56942..2fbea2d 100644
 --- a/decode_test.go
 +++ b/decode_test.go
 @@ -3853,3 +3853,13 @@ func TestSetNullValue(t *testing.T) {
@@ -22,7 +27,7 @@ index 2d56942..5ba077d 100644
  	}
  }
 +
-+func TestDecoder_IntKeyToStringMap(t *testing.T) {
++func TestDecoder_IntegerKeyToStringMap(t *testing.T) {
 +	var d map[string]any
 +	if err := yaml.Unmarshal([]byte("42: 100\n"), &d); err != nil {
 +		t.Fatal(err)

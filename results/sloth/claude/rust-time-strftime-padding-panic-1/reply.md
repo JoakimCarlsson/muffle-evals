@@ -1,7 +1,11 @@
-Re-running my check with the `formatting` feature enabled.
+Now the fix and test.
 
-`parse_strftime_borrowed` no longer panics on `"%_"`, `"%-"` or `"%0"`. It now returns the same error as `"%"` alone, `Expected { what: "valid escape sequence", index }`. The `index` is where the missing component should be, which is 2 for these three. Format strings with text in front of the `%` report the shifted position, so `"a%_"` gives index 3.
+Use pattern matching like the existing tests.
 
-The fix is in `time/src/format_description/parse/strftime.rs`. The tokenizer now reads the component byte with `get` instead of indexing, so it can't run off the end. The error index for a bare `"%"` is unchanged at 0.
+`parse_strftime_borrowed("%_")`, `"%-"` and `"%0"` now return an error instead of panicking. It is the same "valid escape sequence" expected-error that a truncated `"%"` already gave. Its index is the position where the component is missing, so 2 for each of your three inputs. The strftime tests pass (46), but I didn't run the rest of the suite or your `poc_strftime_oob_panic` example.
 
-I ran the five inputs `"%_"`, `"%-"`, `"%0"`, `"%"` and `"a%_"` through a throwaway example, and they gave the errors above. `cargo test -p time --all-features` passed in the unit-test section that I looked at, but I cut the output short, so I didn't confirm that every suite finished. I did not add a regression test, since you didn't ask for one. I removed the throwaway example, and the only changed file is the one above.
+The fix is in `time/src/format_description/parse/strftime.rs`. The tokenizer now reads the component byte with `get` and returns the error when it is absent. Previously it indexed `self.input[2]` directly after a padding modifier. `parse_strftime_owned` goes through the borrowed parser, so it is fixed too.
+
+I added a `strftime_missing_component` test to `time/tests/integration/parse_format_description.rs`. It covers `%`, `%_`, `%-`, `%0` and `a%_` (index 3 after a literal), for both the borrowed and owned parsers.
+
+The integration tests need `--all-features`, e.g. `cargo test -p time --all-features --test tests strftime`.

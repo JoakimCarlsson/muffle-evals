@@ -3,24 +3,23 @@
 # for complete details.
 from __future__ import annotations
 
-from copy import deepcopy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from ._parser import parse_requirement as _parse_requirement
 from ._tokenizer import ParserSyntaxError
 from .markers import Marker, _normalize_extra_values
-from .specifiers import InvalidSpecifier, SpecifierSet
+from .specifiers import InvalidSpecifier, Specifier, SpecifierSet
 from .utils import canonicalize_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from typing_extensions import Self
-
 __all__ = [
     "InvalidRequirement",
     "Requirement",
 ]
+
+_RequirementT = TypeVar("_RequirementT", bound="Requirement")
 
 
 def __dir__() -> list[str]:
@@ -109,35 +108,41 @@ class Requirement:
             self.marker = Marker.__new__(Marker)
             self.marker._markers = _normalize_extra_values(parsed.marker)
 
-    def __replace__(self, **changes: object) -> Self:
-        """Return a validated copy with the specified fields replaced.
+    def __replace__(  # noqa: PYI019 - Self is unavailable on Python 3.10
+        self: _RequirementT, **changes: object
+    ) -> _RequirementT:
+        """Return a new requirement with the specified fields replaced.
 
-        Accepted keywords are ``name``, ``url``, ``extras``, ``specifier``, and
-        ``marker``, with the same types as the corresponding attributes.
-        Mutable fields are copied, including specifier prerelease overrides.
-        Invalid fields or combinations raise :class:`InvalidRequirement`.
+        Accepts ``name``, ``url``, ``extras``, ``specifier``, and ``marker``.
+        Values must have the same types as the corresponding attributes.
+        Invalid requirements, including values that change another field when
+        parsed, raise :class:`InvalidRequirement`. Specifier prerelease overrides
+        are preserved, with independent copies of the set and its specifiers.
         """
         fields = Requirement.__slots__
-        for key in changes:
-            if key not in fields:
-                raise TypeError(
-                    "Requirement.__replace__() got an unexpected keyword "
-                    f"argument {key!r}"
-                )
+        unknown = changes.keys() - set(fields)
+        if unknown:
+            raise TypeError(f"Unexpected field(s): {', '.join(sorted(unknown))}")
+
+        values = {field: changes.get(field, getattr(self, field)) for field in fields}
+        name: object = values["name"]
+        url: object = values["url"]
+        extras: object = values["extras"]
+        specifier: object = values["specifier"]
+        marker: object = values["marker"]
+        if not (
+            isinstance(name, str)
+            and (url is None or isinstance(url, str))
+            and isinstance(extras, set)
+            and all(isinstance(extra, str) for extra in extras)
+            and isinstance(specifier, SpecifierSet)
+            and (marker is None or isinstance(marker, Marker))
+        ):
+            raise InvalidRequirement("Invalid requirement field type")
 
         candidate = Requirement.__new__(Requirement)
-        for key in fields:
-            setattr(candidate, key, changes.get(key, getattr(self, key)))
-
-        if not (
-            isinstance(candidate.name, str)
-            and (candidate.url is None or isinstance(candidate.url, str))
-            and isinstance(candidate.extras, (set, frozenset))
-            and all(isinstance(extra, str) for extra in candidate.extras)
-            and isinstance(candidate.specifier, SpecifierSet)
-            and (candidate.marker is None or isinstance(candidate.marker, Marker))
-        ):
-            raise InvalidRequirement("Invalid replacement field type")
+        for field, value in values.items():
+            setattr(candidate, field, value)
 
         result = type(self)(str(candidate))
         if (
@@ -145,11 +150,18 @@ class Requirement:
             or result.url != candidate.url
             or result.extras != candidate.extras
             or str(result.specifier) != str(candidate.specifier)
-            or result.marker != candidate.marker
+            or result.marker
+            != (Marker(str(candidate.marker)) if candidate.marker is not None else None)
         ):
             raise InvalidRequirement("Replacement fields do not round-trip")
 
-        result.specifier = deepcopy(candidate.specifier)
+        result.specifier = SpecifierSet(
+            (
+                Specifier(str(spec), prereleases=spec._prereleases)
+                for spec in candidate.specifier
+            ),
+            prereleases=candidate.specifier._prereleases,
+        )
         return result
 
     def _iter_parts(self, name: str) -> Iterator[str]:

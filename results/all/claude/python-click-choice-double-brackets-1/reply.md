@@ -1,3 +1,1 @@
-Done. `Argument.make_metavar` in `src/click/core.py:3576` no longer wraps a metavar that already has brackets. `[foo|bar]...` and `[%Y]` now render with a single pair, and 1656 tests pass.
-
-Not covered: an optional, deprecated argument of these types still gets double brackets (`[[a|b]!]`), because the `!` is appended before the bracket check.
+Done. `Argument.make_metavar` in `src/click/core.py` no longer wraps a metavar that already has brackets, so optional `Choice` and `DateTime` arguments show single brackets. I added a parametrized test in `tests/test_arguments.py`, and the full suite passes (1660 passed). I did not run `--help` on your exact example.

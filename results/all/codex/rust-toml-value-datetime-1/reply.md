@@ -1,2 +1,2 @@
 Done.
-`Value` now handles datetime struct deserialization; JSON string conversion preserved. `cargo build -p toml` and `cargo test -p toml` passed.
+Fixed typed datetime deserialization from `Value`; JSON strings preserved. Regression tests added. `cargo test -p toml` passed; existing deprecation warnings remain.

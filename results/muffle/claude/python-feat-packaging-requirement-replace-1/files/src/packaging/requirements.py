@@ -14,6 +14,8 @@ from .utils import canonicalize_name
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
+    from typing_extensions import Self
+
 __all__ = [
     "InvalidRequirement",
     "Requirement",
@@ -24,41 +26,7 @@ def __dir__() -> list[str]:
     return __all__
 
 
-_MISSING: Any = object()
-
-
-def _copy_specifier_set(specifier: SpecifierSet) -> SpecifierSet:
-    """Copy a specifier set and its specifiers, keeping ``prereleases``."""
-    specs = [
-        Specifier(str(s), prereleases=getattr(s, "_prereleases", None))
-        for s in specifier._specs
-    ]
-    return SpecifierSet(specs, prereleases=specifier._prereleases)
-
-
-def _iter_parts(
-    name: str,
-    extras: Iterable[str],
-    specifier: SpecifierSet,
-    url: str | None,
-    marker: Marker | None,
-) -> Iterator[str]:
-    yield name
-
-    if extras:
-        formatted_extras = ",".join(sorted(extras))
-        yield f"[{formatted_extras}]"
-
-    if specifier:
-        yield str(specifier)
-
-    if url:
-        yield f" @ {url}"
-        if marker:
-            yield " "
-
-    if marker:
-        yield f"; {marker}"
+_UNSET: Any = object()
 
 
 class InvalidRequirement(ValueError):
@@ -143,71 +111,103 @@ class Requirement:
             self.marker = Marker.__new__(Marker)
             self.marker._markers = _normalize_extra_values(parsed.marker)
 
+    def _iter_parts(self, name: str) -> Iterator[str]:
+        yield name
+
+        if self.extras:
+            formatted_extras = ",".join(sorted(self.extras))
+            yield f"[{formatted_extras}]"
+
+        if self.specifier:
+            yield str(self.specifier)
+
+        if self.url:
+            yield f" @ {self.url}"
+            if self.marker:
+                yield " "
+
+        if self.marker:
+            yield f"; {self.marker}"
+
     def __replace__(
         self,
+        /,
         *,
-        name: str = _MISSING,
-        url: str | None = _MISSING,
-        extras: Iterable[str] = _MISSING,
-        specifier: SpecifierSet = _MISSING,
-        marker: Marker | None = _MISSING,
-    ) -> Requirement:
-        """Return a copy with the given fields replaced.
+        name: str = _UNSET,
+        url: str | None = _UNSET,
+        extras: Iterable[str] = _UNSET,
+        specifier: SpecifierSet = _UNSET,
+        marker: Marker | None = _UNSET,
+    ) -> Self:
+        """Return a copy of this requirement with the given fields replaced.
 
-        Supports :func:`copy.replace` on Python 3.13+. Fields that are not
-        given are kept. The result does not share mutable state with ``self``
-        or the arguments, and is validated and normalized as if its string
-        form had been parsed.
+        Fields that are not passed are kept. The result is validated like a
+        parsed requirement string and the original is left untouched. This is
+        what :func:`copy.replace` calls on Python 3.13+.
 
-        :raises InvalidRequirement: If the result is not a valid requirement,
-            or would parse back differently than the values given.
+        :raises InvalidRequirement: If the resulting requirement is not valid,
+            or a value would not read back unchanged from the requirement
+            string (for example ``name="foo[bar]"``).
+        :raises TypeError: If an unknown keyword is given.
+
+        .. versionadded:: 26.4
         """
-        if name is _MISSING:
-            name = self.name
-        if url is _MISSING:
-            url = self.url
-        if extras is _MISSING:
-            extras = self.extras
+        new_name = self.name if name is _UNSET else name
+        new_url = self.url if url is _UNSET else url
+        new_specifier = self.specifier if specifier is _UNSET else specifier
+        new_marker = self.marker if marker is _UNSET else marker
+        if extras is _UNSET:
+            new_extras = set(self.extras)
         elif isinstance(extras, str):
             raise TypeError("extras must be an iterable of strings, not a string")
-        extras = set(extras)
-        if specifier is _MISSING:
-            specifier = self.specifier
-        elif isinstance(specifier, str):
-            specifier = SpecifierSet(specifier)
-        if marker is _MISSING:
-            marker = self.marker
+        else:
+            new_extras = set(extras)
 
-        if not isinstance(name, str):
-            raise InvalidRequirement(f"Invalid name: {name!r}")
-        if url is not None and not isinstance(url, str):
-            raise InvalidRequirement(f"Invalid url: {url!r}")
-        if not all(isinstance(e, str) for e in extras):
+        if not isinstance(new_name, str):
+            raise InvalidRequirement(f"Invalid name: {new_name!r}")
+        if new_url is not None and not isinstance(new_url, str):
+            raise InvalidRequirement(f"Invalid url: {new_url!r}")
+        if not all(isinstance(e, str) for e in new_extras):
             raise InvalidRequirement(f"Invalid extras: {extras!r}")
-
+        if new_marker is not None and not isinstance(new_marker, Marker):
+            raise InvalidRequirement(f"Invalid marker: {new_marker!r}")
         try:
-            new_specifier = _copy_specifier_set(specifier)
+            if isinstance(new_specifier, str):
+                new_specifier = SpecifierSet(new_specifier)
+            elif not isinstance(new_specifier, SpecifierSet):
+                raise InvalidRequirement(f"Invalid specifier: {new_specifier!r}")
+            # Copy the specifiers, so nothing mutable is shared with the input.
+            specs = [
+                Specifier(str(s), prereleases=getattr(s, "_prereleases", None))
+                for s in new_specifier
+            ]
         except InvalidSpecifier as e:
             raise InvalidRequirement(str(e)) from e
+        spec_set = SpecifierSet(specs, prereleases=new_specifier._prereleases)
 
-        # Round-trip through the string form, so the result is exactly what
-        # parsing would give, then reject anything that parsed differently.
-        text = "".join(_iter_parts(name, extras, new_specifier, url, marker))
-        new = type(self)(text)
+        # Build the string and parse it, so the result is exactly what parsing
+        # would give (and subclass ``__init__`` runs).
+        template = Requirement.__new__(Requirement)
+        template.name = new_name
+        template.url = new_url
+        template.extras = new_extras
+        template.specifier = spec_set
+        template.marker = new_marker
+        result = type(self)(str(template))
+
+        # Anything that did not survive the round trip would silently change
+        # other fields (e.g. a name containing "[").
         if (
-            new.name != name
-            or new.url != url
-            or new.extras != extras
-            or (new.marker is None) != (marker is None)
+            result.name != new_name
+            or result.url != (new_url or None)
+            or new_url == ""
+            or result.extras != new_extras
         ):
             raise InvalidRequirement(
-                f"Replacement values do not form a valid requirement: {text!r}"
+                f"Cannot represent {str(template)!r} as a requirement"
             )
-        new.specifier = new_specifier
-        return new
-
-    def _iter_parts(self, name: str) -> Iterator[str]:
-        return _iter_parts(name, self.extras, self.specifier, self.url, self.marker)
+        result.specifier = spec_set
+        return result
 
     def __getstate__(self) -> tuple[str, bool | None]:
         # Return the requirement string for compactness and stability, paired

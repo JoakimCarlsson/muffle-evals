@@ -391,26 +391,24 @@ func (s threadUnsafeSet[T]) Value() (driver.Value, error) {
 
 // Scan implements sql.Scanner. It replaces the set contents with the JSON
 // array in src (string or []byte); nil empties the set. On error the set
-// is unchanged.
+// is left unchanged.
 func (s *threadUnsafeSet[T]) Scan(src any) error {
-	var b []byte
+	var i []T
 	switch v := src.(type) {
 	case nil:
-		s.Clear()
-		return nil
 	case string:
-		b = []byte(v)
+		if err := json.Unmarshal([]byte(v), &i); err != nil {
+			return err
+		}
 	case []byte:
-		b = v
+		if err := json.Unmarshal(v, &i); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("mapset: cannot scan %T into set", src)
 	}
-	var items []T
-	if err := json.Unmarshal(b, &items); err != nil {
-		return err
-	}
-	s.Clear()
-	s.append(items...)
+	clear(*s)
+	s.append(i...)
 
 	return nil
 }

@@ -1,5 +1,5 @@
 diff --git a/crates/toml/src/value.rs b/crates/toml/src/value.rs
-index 892d2d8..20b4938 100644
+index 892d2d8..ddf1ab5 100644
 --- a/crates/toml/src/value.rs
 +++ b/crates/toml/src/value.rs
 @@ -608,9 +608,26 @@ impl<'de> de::Deserializer<'de> for Value {
@@ -11,7 +11,7 @@ index 892d2d8..20b4938 100644
 +        name: &'static str,
 +        _fields: &'static [&'static str],
 +        visitor: V,
-+    ) -> Result<V::Value, Self::Error>
++    ) -> Result<V::Value, crate::de::Error>
 +    where
 +        V: de::Visitor<'de>,
 +    {
@@ -31,10 +31,10 @@ index 892d2d8..20b4938 100644
      }
  }
 diff --git a/crates/toml/tests/testsuite/value.rs b/crates/toml/tests/testsuite/value.rs
-index 46513da..9801aa8 100644
+index 46513da..8839e16 100644
 --- a/crates/toml/tests/testsuite/value.rs
 +++ b/crates/toml/tests/testsuite/value.rs
-@@ -25,3 +25,45 @@ fn display() {
+@@ -25,3 +25,48 @@ fn display() {
          str!["{ test = 2, test2 = 3 }"].raw()
      );
  }
@@ -49,34 +49,37 @@ index 46513da..9801aa8 100644
 +        minimum_interval: i64,
 +    }
 +
++    #[derive(Deserialize)]
++    struct Document {
++        settings: Settings,
++    }
++
 +    for datetime in [
 +        "2023-01-15T11:42:14-06:00",
++        "2023-01-15T11:42:14Z",
 +        "2023-01-15T11:42:14",
 +        "2023-01-15",
 +        "11:42:14",
 +    ] {
-+        let document = format!("last_updated = {datetime}\nminimum_interval = 3600\n");
-+        let expected: Settings = toml::from_str(&document).unwrap();
-+        let value: toml::Value = toml::from_str(&document).unwrap();
-+        assert_eq!(Settings::deserialize(value.clone()).unwrap(), expected);
-+        assert_eq!(value.clone().try_into::<Settings>().unwrap(), expected);
-+        let datetime_value = value.get("last_updated").unwrap().clone();
++        let input = format!("[settings]\nlast_updated = {datetime}\nminimum_interval = 3600\n");
++        let direct: Document = toml::from_str(&input).unwrap();
++        let table: toml::Table = toml::from_str(&input).unwrap();
++        let settings = table.get("settings").unwrap().clone();
++        assert_eq!(Settings::deserialize(settings).unwrap(), direct.settings);
++
++        let value = table["settings"]["last_updated"].clone();
 +        assert_eq!(
-+            datetime_value
-+                .clone()
-+                .try_into::<toml::value::Datetime>()
-+                .unwrap(),
-+            expected.last_updated
++            value.clone().try_into::<toml::value::Datetime>().unwrap(),
++            direct.settings.last_updated
 +        );
 +        assert_eq!(
-+            serde_json::Value::deserialize(datetime_value).unwrap(),
++            serde_json::Value::deserialize(value).unwrap(),
 +            serde_json::Value::String(datetime.to_owned())
 +        );
++        assert!(
++            String(datetime.to_owned())
++                .try_into::<toml::value::Datetime>()
++                .is_err()
++        );
 +    }
-+
-+    assert!(
-+        String("2023-01-15".to_owned())
-+            .try_into::<toml::value::Datetime>()
-+            .is_err()
-+    );
 +}

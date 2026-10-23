@@ -1464,31 +1464,6 @@ func TestExpr(t *testing.T) {
 	}
 }
 
-func TestExpr_findLast_map_value(t *testing.T) {
-	for _, optimize := range []bool{false, true} {
-		for _, builtin := range []string{"findLast", "findLastIndex"} {
-			for _, tt := range []struct {
-				array string
-				want  any
-			}{
-				{"[1.0, 2.0, 3.0, 4.0, 5.0]", map[string]any{"findLast": 5.0, "findLastIndex": 4}[builtin]},
-				{"[5.0, 4.0, 3.0, 2.0, 1.0]", map[string]any{"findLast": 4.0, "findLastIndex": 1}[builtin]},
-				{"[1.0, 2.0, 3.0]", nil},
-				{"[]", nil},
-			} {
-				expression := fmt.Sprintf(`{"r": %s(%s, # > 3)}`, builtin, tt.array)
-				t.Run(fmt.Sprintf("%s/optimize=%t", expression, optimize), func(t *testing.T) {
-					program, err := expr.Compile(expression, expr.Optimize(optimize))
-					require.NoError(t, err)
-					result, err := expr.Run(program, nil)
-					require.NoError(t, err)
-					assert.Equal(t, map[string]any{"r": tt.want}, result)
-				})
-			}
-		}
-	}
-}
-
 func TestExpr_error(t *testing.T) {
 	env := mock.Env{
 		ArrayOfAny: []any{1, "2", 3, true},
@@ -3028,5 +3003,36 @@ func TestBytesLiteral_errors(t *testing.T) {
 			_, err := expr.Compile(code)
 			require.Error(t, err)
 		})
+	}
+}
+
+func TestExpr_findLast_map_value(t *testing.T) {
+	for _, optimize := range []bool{false, true} {
+		for _, builtin := range []string{"findLast", "findLastIndex"} {
+			for _, tc := range []struct {
+				array     string
+				predicate string
+				value     any
+				index     any
+			}{
+				{`[1.0, 2.0, 3.0, 4.0, 5.0]`, `# > 3`, float64(5), 4},
+				{`[1.0, 2.0, 3.0, 4.0, 5.0]`, `# < 3`, float64(2), 1},
+				{`[1.0, 2.0, 3.0]`, `# > 3`, nil, nil},
+				{`[]`, `# > 3`, nil, nil},
+			} {
+				expression := fmt.Sprintf(`{"r": %s(%s, %s), "tail": 42}`, builtin, tc.array, tc.predicate)
+				t.Run(fmt.Sprintf("%s/optimize=%t", expression, optimize), func(t *testing.T) {
+					program, err := expr.Compile(expression, expr.Optimize(optimize))
+					require.NoError(t, err)
+					result, err := expr.Run(program, nil)
+					require.NoError(t, err)
+					want := tc.value
+					if builtin == "findLastIndex" {
+						want = tc.index
+					}
+					assert.Equal(t, map[string]any{"r": want, "tail": 42}, result)
+				})
+			}
+		}
 	}
 }

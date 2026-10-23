@@ -1756,12 +1756,9 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
 			}
 			k = reflect.ValueOf(keyVal)
 			if k.IsValid() && keyType.Kind() == reflect.String && k.Kind() != reflect.String {
-				keyStr, err := d.mapKeyNodeToString(ctx, key)
-				if err != nil {
-					return err
-				}
-				k = reflect.ValueOf(keyStr).Convert(keyType)
-			} else if k.IsValid() && k.Type().ConvertibleTo(keyType) {
+				k = reflect.ValueOf(fmt.Sprint(keyVal))
+			}
+			if k.IsValid() && k.Type().ConvertibleTo(keyType) {
 				k = k.Convert(keyType)
 			}
 		}

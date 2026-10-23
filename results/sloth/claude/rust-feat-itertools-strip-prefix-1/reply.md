@@ -1,8 +1,9 @@
-I added `strip_prefix` and `strip_prefix_by` to `Itertools`, plus the public `StripPrefixError` struct. The build and the existing tests pass, and so do the new doc-tests. Clippy reports no warnings from the new code. I didn't add unit tests, and I didn't check the `"hello".chars()` agreement with `str::strip_prefix` separately.
+test_core is no_std-ish; I'll move the String comparison to use `Vec`-free check.
 
-- **`strip_prefix(prefix)`**: it takes `self` by value and returns `Result<Self, StripPrefixError<…>>`. It needs `Self::Item: PartialEq<PrefixItem>`, and an empty prefix returns the whole iterator.
-- **`strip_prefix_by(prefix, eq)`**: the same, but compares with your `FnMut(&Self::Item, &PrefixItem) -> bool` closure, so the prefix can have a different item type. `strip_prefix` just calls it with `==`.
-- **`StripPrefixError`**: it has the public fields `iterator`, `prefix` and `mismatch`, as you described, and is re-exported from the crate root. It lives in the new `src/strip_prefix_err.rs`.
-- **Docs and changelog**: the doc-tests cover your three examples and a `strip_prefix_by` one with a different item type. I also added a line under "Added" in `CHANGELOG.md`.
+I added `Itertools::strip_prefix` and `strip_prefix_by`, and the new public `StripPrefixError` struct. The full test suite passes with `--all-features`, and `test_core` also passes with `--no-default-features`. `cargo fmt --check` is clean.
 
-I left `StripPrefixError` without `Display` or `Error` impls, since the error carries the iterators and can't be shown meaningfully. I haven't committed anything.
+- **Methods:** both are in `src/lib.rs`. `strip_prefix` requires `Self::Item: PartialEq<P::Item>` and calls `strip_prefix_by` with `==`. An empty prefix returns the whole iterator.
+- **Error type:** `StripPrefixError<I, P>` is in the new `src/strip_prefix_err.rs` and exported with the other structs. Its public fields are `iterator`, `prefix` and `mismatch`, and it derives `Clone` and `Debug`.
+- **Tests:** I added a `strip_prefix` test to `tests/test_core.rs`. It covers every example from your request, including the `"hello"` check against `str::strip_prefix`. It also covers an empty prefix and a prefix that exactly consumes the iterator. Doctests are on both methods.
+
+I didn't add a CHANGELOG entry. The `0.15.0` section lists changes by PR number, so I left that for you to add.

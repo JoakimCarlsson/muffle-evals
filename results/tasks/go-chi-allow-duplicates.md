@@ -74,15 +74,15 @@ index 9f56549..e7bc9ed 100644
 | agent | setup | hidden tests | lines +/- (code) | test lines | output tokens | cost |
 |---|---|---|---:|---:|---:|---:|
 | claude | base | pass | +13/-2 | 25 | 1,194 | $0.042 |
-| claude | muffle | pass | +12/-2 | 21 | 1,461 | $0.058 |
-| claude | hush | pass | +5/-0 | 0 | 842 | $0.038 |
-| claude | sloth | pass | +5/-0 | 0 | 1,262 | $0.052 |
-| claude | all | pass | +12/-2 | 0 | 578 | $0.041 |
+| claude | muffle | pass | +12/-2 | 21 | 1,230 | $0.083 |
+| claude | hush | pass | +5/-0 | 0 | 579 | $0.066 |
+| claude | sloth | pass | +5/-0 | 20 | 1,570 | $0.101 |
+| claude | all | pass | +5/-0 | 19 | 1,352 | $0.087 |
 | codex | base | pass | +5/-0 | 41 | 1,235 | - |
-| codex | muffle | pass | +5/-0 | 41 | 1,556 | - |
-| codex | hush | pass | +5/-0 | 44 | 1,226 | - |
-| codex | sloth | pass | +5/-0 | 0 | 964 | - |
-| codex | all | pass | +5/-0 | 0 | 673 | - |
+| codex | muffle | pass | +5/-0 | 44 | 1,488 | - |
+| codex | hush | pass | +5/-0 | 29 | 1,090 | - |
+| codex | sloth | pass | +5/-0 | 32 | 1,451 | - |
+| codex | all | pass | +5/-0 | 26 | 1,143 | - |
 
 ### claude, base: pass
 
@@ -187,7 +187,7 @@ Files: [context.go](../muffle/claude/go-chi-allow-duplicates-1/files/context.go)
 
 ```diff
 diff --git a/context.go b/context.go
-index 8222073..23675f7 100644
+index 8222073..c7a4a1b 100644
 --- a/context.go
 +++ b/context.go
 @@ -164,3 +164,13 @@ type contextKey struct {
@@ -195,8 +195,8 @@ index 8222073..23675f7 100644
  	return "chi context value " + k.name
  }
 +
-+// addMethodAllowed records m as allowed for a 405 response, skipping duplicates.
-+func (x *Context) addMethodAllowed(m methodTyp) {
++// addAllowedMethod records m as allowed for a 405, skipping duplicates.
++func (x *Context) addAllowedMethod(m methodTyp) {
 +	for _, have := range x.methodsAllowed {
 +		if have == m {
 +			return
@@ -232,7 +232,7 @@ index 0000000..89f3f96
 +	}
 +}
 diff --git a/tree.go b/tree.go
-index 9f56549..1370e12 100644
+index 9f56549..eb4a419 100644
 --- a/tree.go
 +++ b/tree.go
 @@ -479,7 +479,7 @@ func (n *node) findRoute(rctx *Context, method methodTyp, path string) *node {
@@ -240,7 +240,7 @@ index 9f56549..1370e12 100644
  								continue
  							}
 -							rctx.methodsAllowed = append(rctx.methodsAllowed, endpoints)
-+							rctx.addMethodAllowed(endpoints)
++							rctx.addAllowedMethod(endpoints)
  						}
  
  						// flag that the routing context found a route, but not a corresponding
@@ -249,7 +249,7 @@ index 9f56549..1370e12 100644
  						continue
  					}
 -					rctx.methodsAllowed = append(rctx.methodsAllowed, endpoints)
-+					rctx.addMethodAllowed(endpoints)
++					rctx.addAllowedMethod(endpoints)
  				}
  
  				// flag that the routing context found a route, but not a corresponding
@@ -259,13 +259,13 @@ index 9f56549..1370e12 100644
 
 <details><summary>reply</summary>
 
-I'll dedupe where the methods are appended, so custom 405 handlers also get unique values.
+Simplest: dedupe at the append sites via a helper on the context.
 
-Each method now appears only once in the `Allow` header. Your example returns `Allow: POST`, and `go test .` passes.
+Fixed: the 405 `Allow` header now lists each method once. Your example gives `Allow: [POST]`, and `go test ./...` passes.
 
-Routing can reach the same leaf through several wildcard branches, and each visit appended that leaf's methods again. I added `Context.addMethodAllowed` in `context.go`, which skips a method already recorded. The two append sites in `tree.go` now call it. Because the fix is in the routing context, custom `MethodNotAllowed` handlers also see a deduplicated `methodsAllowed`.
+The cause was in route matching (`tree.go`). It appends the allowed methods each time it reaches a leaf node that matches the path. With several overlapping wildcard routes, it reaches several such leaves, so the same method was added more than once. I added `Context.addAllowedMethod` in `context.go`, which skips methods already recorded. Both append sites in `tree.go` now call it.
 
-I also added a regression test, `TestMethodNotAllowedNoDuplicateAllow`, using your four routes. It's in a new file, `dup_test.go`, and you may want to move it into `mux_test.go`.
+I also added a regression test using your example, in a new file, `dup_test.go`. You may want to move it into an existing test file.
 
 I haven't committed anything.
 
@@ -279,19 +279,19 @@ Files: [mux.go](../hush/claude/go-chi-allow-duplicates-1/files/mux.go)
 
 ```diff
 diff --git a/mux.go b/mux.go
-index 37cd500..3b67039 100644
+index 37cd500..48c3601 100644
 --- a/mux.go
 +++ b/mux.go
 @@ -523,7 +523,12 @@ func (mx *Mux) updateRouteHandler() {
  // methods for the route.
  func methodNotAllowedHandler(methodsAllowed ...methodTyp) func(w http.ResponseWriter, r *http.Request) {
  	return func(w http.ResponseWriter, r *http.Request) {
-+		seen := make(map[methodTyp]struct{}, len(methodsAllowed))
++		var seen methodTyp
  		for _, m := range methodsAllowed {
-+			if _, ok := seen[m]; ok {
++			if seen&m != 0 {
 +				continue
 +			}
-+			seen[m] = struct{}{}
++			seen |= m
  			w.Header().Add("Allow", reverseMethodMap[m])
  		}
  		w.WriteHeader(405)
@@ -301,110 +301,148 @@ index 37cd500..3b67039 100644
 
 <details><summary>reply</summary>
 
-Dedupe in the handler (also covers map-order nondeterminism not at all, but fixes duplicates).
+Dedupe in the handler.
 
-Done. `methodNotAllowedHandler` in `mux.go` now skips repeated methods, so `Allow` lists each once. Existing tests pass. I didn't add a regression test or run your exact example.
+Done. `methodNotAllowedHandler` in `mux.go` now skips methods it already added to `Allow`. Existing tests pass. I didn't add a test for your repro or run the repro itself.
 
 </details>
 
 ### claude, sloth: pass
 
-Files: [mux.go](../sloth/claude/go-chi-allow-duplicates-1/files/mux.go)
+Files: [mux.go](../sloth/claude/go-chi-allow-duplicates-1/files/mux.go), [mux_test.go](../sloth/claude/go-chi-allow-duplicates-1/files/mux_test.go)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/mux.go b/mux.go
-index 37cd500..0325761 100644
+index 37cd500..48c3601 100644
 --- a/mux.go
 +++ b/mux.go
 @@ -523,7 +523,12 @@ func (mx *Mux) updateRouteHandler() {
  // methods for the route.
  func methodNotAllowedHandler(methodsAllowed ...methodTyp) func(w http.ResponseWriter, r *http.Request) {
  	return func(w http.ResponseWriter, r *http.Request) {
-+		seen := make(map[methodTyp]struct{}, len(methodsAllowed))
++		var seen methodTyp
  		for _, m := range methodsAllowed {
-+			if _, dup := seen[m]; dup {
++			if seen&m != 0 {
 +				continue
 +			}
-+			seen[m] = struct{}{}
++			seen |= m
  			w.Header().Add("Allow", reverseMethodMap[m])
  		}
  		w.WriteHeader(405)
+diff --git a/mux_test.go b/mux_test.go
+index 3e3b18f..97230f8 100644
+--- a/mux_test.go
++++ b/mux_test.go
+@@ -428,6 +428,26 @@ func TestMethodNotAllowed(t *testing.T) {
+ 	})
+ }
+ 
++func TestMethodNotAllowedNoDuplicateAllow(t *testing.T) {
++	r := NewRouter()
++	ok := func(w http.ResponseWriter, r *http.Request) {}
++	r.Post("/article/1-2-3", ok)
++	r.Post("/article/{a}", ok)
++	r.Post("/article/{b}-{c}", ok)
++	r.Post("/article/{b}-{c}-{d}", ok)
++
++	ts := httptest.NewServer(r)
++	defer ts.Close()
++
++	resp, _ := testRequest(t, ts, "GET", "/article/1-2-3", nil)
++	if resp.StatusCode != 405 {
++		t.Fatal(resp.Status)
++	}
++	if allowed := resp.Header.Values("Allow"); len(allowed) != 1 || allowed[0] != "POST" {
++		t.Fatal("Allow header should be [POST]. Received: ", allowed)
++	}
++}
++
+ func TestMuxNestedMethodNotAllowed(t *testing.T) {
+ 	r := NewRouter()
+ 	r.Get("/root", func(w http.ResponseWriter, r *http.Request) {
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Dedupe in the shared handler with a bitmask-free seen set (works for any Go version).
+Add a test after TestMethodNotAllowed.
 
-The 405 `Allow` header now lists each method once. I haven't run your four-route example to see the new output. The build passes and the existing tests pass. I didn't add a test, since you didn't ask for one.
+The 405 `Allow` header now lists each method once. Your example returns `Allow: [POST]`, and `go test .` passes.
 
-The cause is that the router collects allowed methods from every route that matches the path. Overlapping wildcard routes each add their own copy of `POST`. I fixed it in `methodNotAllowedHandler` in `mux.go`, which now skips any method it has already written. That is the one place every 405 response goes through.
+The router collects allowed methods from every overlapping wildcard route it visits, so the same method gets added several times. I removed the duplicates where the header is written, in `methodNotAllowedHandler` in `mux.go`. I left the collection in `tree.go` alone.
 
-The order of methods in the header is still random, as it was before, because they come from a map.
+I added `TestMethodNotAllowedNoDuplicateAllow` in `mux_test.go`, which uses the four routes from your report. I ran only the root package tests, not the `middleware` package or the rest of the repo.
 
-I made no git commit.
+I didn't commit anything.
 
 </details>
 
 ### claude, all: pass
 
-Files: [context.go](../all/claude/go-chi-allow-duplicates-1/files/context.go), [tree.go](../all/claude/go-chi-allow-duplicates-1/files/tree.go)
+Files: [mux.go](../all/claude/go-chi-allow-duplicates-1/files/mux.go), [mux_test.go](../all/claude/go-chi-allow-duplicates-1/files/mux_test.go)
 
 <details><summary>diff</summary>
 
 ```diff
-diff --git a/context.go b/context.go
-index 8222073..5bcb8b1 100644
---- a/context.go
-+++ b/context.go
-@@ -164,3 +164,13 @@ type contextKey struct {
- func (k *contextKey) String() string {
- 	return "chi context value " + k.name
+diff --git a/mux.go b/mux.go
+index 37cd500..34d4ebc 100644
+--- a/mux.go
++++ b/mux.go
+@@ -523,7 +523,12 @@ func (mx *Mux) updateRouteHandler() {
+ // methods for the route.
+ func methodNotAllowedHandler(methodsAllowed ...methodTyp) func(w http.ResponseWriter, r *http.Request) {
+ 	return func(w http.ResponseWriter, r *http.Request) {
++		seen := make(map[methodTyp]bool, len(methodsAllowed))
+ 		for _, m := range methodsAllowed {
++			if seen[m] {
++				continue
++			}
++			seen[m] = true
+ 			w.Header().Add("Allow", reverseMethodMap[m])
+ 		}
+ 		w.WriteHeader(405)
+diff --git a/mux_test.go b/mux_test.go
+index 3e3b18f..1ce4ade 100644
+--- a/mux_test.go
++++ b/mux_test.go
+@@ -1855,6 +1855,25 @@ func TestQueryHTTPMethod(t *testing.T) {
+ 	}
  }
+ 
++func TestMethodNotAllowedNoDuplicateAllow(t *testing.T) {
++	r := NewRouter()
++	h := func(w http.ResponseWriter, r *http.Request) {}
++	r.Post("/article/1-2-3", h)
++	r.Post("/article/{a}", h)
++	r.Post("/article/{b}-{c}", h)
++	r.Post("/article/{b}-{c}-{d}", h)
++	ts := httptest.NewServer(r)
++	defer ts.Close()
 +
-+// addMethodAllowed records m for the 405 Allow header unless already recorded.
-+func (x *Context) addMethodAllowed(m methodTyp) {
-+	for _, have := range x.methodsAllowed {
-+		if have == m {
-+			return
-+		}
++	resp, _ := testRequest(t, ts, "GET", "/article/1-2-3", nil)
++	if resp.StatusCode != 405 {
++		t.Fatal(resp.Status)
 +	}
-+	x.methodsAllowed = append(x.methodsAllowed, m)
++	if got := resp.Header.Values("Allow"); len(got) != 1 || got[0] != "POST" {
++		t.Fatal("Allow header should contain only POST. Received: ", got)
++	}
 +}
-diff --git a/tree.go b/tree.go
-index 9f56549..1370e12 100644
---- a/tree.go
-+++ b/tree.go
-@@ -479,7 +479,7 @@ func (n *node) findRoute(rctx *Context, method methodTyp, path string) *node {
- 							if endpoints == mALL || endpoints == mSTUB {
- 								continue
- 							}
--							rctx.methodsAllowed = append(rctx.methodsAllowed, endpoints)
-+							rctx.addMethodAllowed(endpoints)
- 						}
- 
- 						// flag that the routing context found a route, but not a corresponding
-@@ -525,7 +525,7 @@ func (n *node) findRoute(rctx *Context, method methodTyp, path string) *node {
- 					if endpoints == mALL || endpoints == mSTUB {
- 						continue
- 					}
--					rctx.methodsAllowed = append(rctx.methodsAllowed, endpoints)
-+					rctx.addMethodAllowed(endpoints)
- 				}
- 
- 				// flag that the routing context found a route, but not a corresponding
++
+ func TestMuxMatch(t *testing.T) {
+ 	r := NewRouter()
+ 	r.Get("/hi", func(w http.ResponseWriter, r *http.Request) {
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Dedupe at append via helper.
+Dedupe at the handler, single point.
 
-Done. Added `Context.addMethodAllowed` in `context.go`, which skips methods already recorded. Both append sites in `tree.go` now call it. Build and existing tests pass. I didn't run your repro or add a test.
+Done. `methodNotAllowedHandler` in `mux.go` now skips methods it already added, so `Allow` lists each method once. I added `TestMethodNotAllowedNoDuplicateAllow` for your example, and `go test .` passes. Nothing committed.
 
 </details>
 
@@ -525,15 +563,18 @@ index 37cd500..48c3601 100644
  		}
  		w.WriteHeader(405)
 diff --git a/mux_test.go b/mux_test.go
-index 3e3b18f..19a892d 100644
+index 3e3b18f..fb9b684 100644
 --- a/mux_test.go
 +++ b/mux_test.go
-@@ -428,6 +428,47 @@ func TestMethodNotAllowed(t *testing.T) {
+@@ -428,6 +428,50 @@ func TestMethodNotAllowed(t *testing.T) {
  	})
  }
  
 +func TestMethodNotAllowedOverlappingRoutes(t *testing.T) {
-+	for _, methods := range [][]string{{http.MethodPost}, {http.MethodPost, http.MethodPut}} {
++	for _, methods := range [][]string{
++		{http.MethodPost},
++		{http.MethodPost, http.MethodPut},
++	} {
 +		t.Run(fmt.Sprint(methods), func(t *testing.T) {
 +			r := NewRouter()
 +			for _, pattern := range []string{
@@ -556,7 +597,7 @@ index 3e3b18f..19a892d 100644
 +			}
 +			allowed := resp.Header().Values("Allow")
 +			if len(allowed) != len(methods) {
-+				t.Fatalf("expected each allowed method once: want %v, got %v", methods, allowed)
++				t.Fatalf("expected each allowed method once: %v, got %v", methods, allowed)
 +			}
 +			for _, method := range methods {
 +				count := 0
@@ -582,13 +623,13 @@ index 3e3b18f..19a892d 100644
 
 <details><summary>reply</summary>
 
-I’ll check how the router builds the 405 `Allow` header, add a regression test, and fix the duplicates.
+I’ll find where the `Allow` header is built, add a regression test for overlapping routes, and fix the duplicates.
 
-The regression test reproduced the duplicates for both one and two allowed methods. The fix uses the existing method bit flags to emit each method once. The full test suite is running now.
+The regression test reproduced the repeated methods. The handler now adds each method only once, and the router tests pass. The middleware tests are still running.
 
-Fixed the 405 handler to include each allowed HTTP method only once.
+Fixed the 405 handler to include each method only once in the `Allow` header.
 
-Added regression coverage for overlapping routes with both single and multiple allowed methods.
+Added regression tests for overlapping routes with one and multiple allowed methods. Confirmed they failed before the fix.
 
 Validation: `go test ./...` passes.
 
@@ -619,54 +660,39 @@ index 37cd500..48c3601 100644
  		}
  		w.WriteHeader(405)
 diff --git a/mux_test.go b/mux_test.go
-index 3e3b18f..177d2c2 100644
+index 3e3b18f..16310dd 100644
 --- a/mux_test.go
 +++ b/mux_test.go
-@@ -428,6 +428,50 @@ func TestMethodNotAllowed(t *testing.T) {
+@@ -428,6 +428,35 @@ func TestMethodNotAllowed(t *testing.T) {
  	})
  }
  
 +func TestMethodNotAllowedOverlappingRoutes(t *testing.T) {
-+	for _, methods := range [][]string{{"POST"}, {"POST", "PUT"}} {
-+		t.Run(fmt.Sprint(methods), func(t *testing.T) {
-+			r := NewRouter()
-+			for _, pattern := range []string{
-+				"/article/1-2-3",
-+				"/article/{a}",
-+				"/article/{b}-{c}",
-+				"/article/{b}-{c}-{d}",
-+			} {
-+				for _, method := range methods {
-+					r.MethodFunc(method, pattern, func(w http.ResponseWriter, r *http.Request) {
-+						w.WriteHeader(http.StatusOK)
-+					})
-+				}
-+			}
++	r := NewRouter()
++	handler := func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(http.StatusOK)
++	}
++	for _, pattern := range []string{
++		"/article/1-2-3",
++		"/article/{a}",
++		"/article/{b}-{c}",
++		"/article/{b}-{c}-{d}",
++	} {
++		r.Post(pattern, handler)
++	}
++	r.Put("/article/{a}", handler)
 +
-+			// Repeat requests to verify that each response gets its own Allow header.
-+			for i := 0; i < 2; i++ {
-+				resp := httptest.NewRecorder()
-+				r.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/article/1-2-3", nil))
-+				if resp.Code != http.StatusMethodNotAllowed {
-+					t.Fatalf("status = %d, want %d", resp.Code, http.StatusMethodNotAllowed)
-+				}
-+				allowed := resp.Header().Values("Allow")
-+				if len(allowed) != len(methods) {
-+					t.Fatalf("Allow = %v, want each of %v once", allowed, methods)
-+				}
-+				for _, method := range methods {
-+					count := 0
-+					for _, value := range allowed {
-+						if value == method {
-+							count++
-+						}
-+					}
-+					if count != 1 {
-+						t.Fatalf("Allow = %v, want %s once", allowed, method)
-+					}
-+				}
-+			}
-+		})
++	for i := 0; i < 2; i++ {
++		resp := httptest.NewRecorder()
++		r.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/article/1-2-3", nil))
++		if resp.Code != http.StatusMethodNotAllowed {
++			t.Fatalf("expected status 405, got %d", resp.Code)
++		}
++		allowed := resp.Header().Values("Allow")
++		if len(allowed) != 2 || !((allowed[0] == "POST" && allowed[1] == "PUT") ||
++			(allowed[0] == "PUT" && allowed[1] == "POST")) {
++			t.Fatalf("expected POST and PUT exactly once, got %v", allowed)
++		}
 +	}
 +}
 +
@@ -679,30 +705,112 @@ index 3e3b18f..177d2c2 100644
 
 <details><summary>reply</summary>
 
-405 `Allow` needs method deduplication. Checking route matching and existing tests.
-
-
 Done.
-405 `Allow` methods deduplicated. Regression tests cover overlapping routes and repeated requests. `go test ./...` passed.
+405 `Allow` header deduplicates methods. Added regression test for overlapping routes and repeated requests. `go test ./...` passed.
 
 </details>
 
 ### codex, sloth: pass
 
-Files: [mux.go](../sloth/codex/go-chi-allow-duplicates-1/files/mux.go)
+Files: [mux.go](../sloth/codex/go-chi-allow-duplicates-1/files/mux.go), [mux_test.go](../sloth/codex/go-chi-allow-duplicates-1/files/mux_test.go)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/mux.go b/mux.go
-index 37cd500..25b37e3 100644
+index 37cd500..34d4ebc 100644
 --- a/mux.go
 +++ b/mux.go
 @@ -523,7 +523,12 @@ func (mx *Mux) updateRouteHandler() {
  // methods for the route.
  func methodNotAllowedHandler(methodsAllowed ...methodTyp) func(w http.ResponseWriter, r *http.Request) {
  	return func(w http.ResponseWriter, r *http.Request) {
-+		seen := methodTyp(0)
++		seen := make(map[methodTyp]bool, len(methodsAllowed))
+ 		for _, m := range methodsAllowed {
++			if seen[m] {
++				continue
++			}
++			seen[m] = true
+ 			w.Header().Add("Allow", reverseMethodMap[m])
+ 		}
+ 		w.WriteHeader(405)
+diff --git a/mux_test.go b/mux_test.go
+index 3e3b18f..21b9eab 100644
+--- a/mux_test.go
++++ b/mux_test.go
+@@ -428,6 +428,38 @@ func TestMethodNotAllowed(t *testing.T) {
+ 	})
+ }
+ 
++// TestMethodNotAllowedOverlappingRoutes checks that each allowed method appears once.
++func TestMethodNotAllowedOverlappingRoutes(t *testing.T) {
++	r := NewRouter()
++	handler := func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(http.StatusOK)
++	}
++	for _, pattern := range []string{
++		"/article/1-2-3",
++		"/article/{a}",
++		"/article/{b}-{c}",
++		"/article/{b}-{c}-{d}",
++	} {
++		r.Post(pattern, handler)
++	}
++	r.Put("/article/{a}", handler)
++
++	ts := httptest.NewServer(r)
++	defer ts.Close()
++
++	for _, path := range []string{"/article/1-2-3", "/article/other"} {
++		resp, _ := testRequest(t, ts, "GET", path, nil)
++		if resp.StatusCode != http.StatusMethodNotAllowed {
++			t.Fatal(resp.Status)
++		}
++		allowedMethods := resp.Header.Values("Allow")
++		if len(allowedMethods) != 2 || ((allowedMethods[0] != "POST" || allowedMethods[1] != "PUT") &&
++			(allowedMethods[1] != "POST" || allowedMethods[0] != "PUT")) {
++			t.Fatalf("%s: expected Allow headers POST, PUT; got %v", path, allowedMethods)
++		}
++	}
++}
++
+ func TestMuxNestedMethodNotAllowed(t *testing.T) {
+ 	r := NewRouter()
+ 	r.Get("/root", func(w http.ResponseWriter, r *http.Request) {
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+I’ll check where the router collects allowed methods, fix the duplicate handling, and add a regression test for overlapping routes.
+
+Both route-matching paths collect methods, and the shared 405 handler writes them to `Allow`. I’ll deduplicate there, preserving the order of distinct methods. This needs changes only in `mux.go` and `mux_test.go`; no API or configuration changes are needed.
+
+Fixed the shared 405 handler so each method appears only once in `Allow`, preserving the order of distinct methods.
+
+Added regression coverage for overlapping wildcard routes and multiple allowed methods.
+
+Validation passed: `go test ./...`, `go build ./...`, and `git diff --check`.
+
+</details>
+
+### codex, all: pass
+
+Files: [mux.go](../all/codex/go-chi-allow-duplicates-1/files/mux.go), [mux_test.go](../all/codex/go-chi-allow-duplicates-1/files/mux_test.go)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/mux.go b/mux.go
+index 37cd500..48c3601 100644
+--- a/mux.go
++++ b/mux.go
+@@ -523,7 +523,12 @@ func (mx *Mux) updateRouteHandler() {
+ // methods for the route.
+ func methodNotAllowedHandler(methodsAllowed ...methodTyp) func(w http.ResponseWriter, r *http.Request) {
+ 	return func(w http.ResponseWriter, r *http.Request) {
++		var seen methodTyp
  		for _, m := range methodsAllowed {
 +			if seen&m != 0 {
 +				continue
@@ -711,53 +819,53 @@ index 37cd500..25b37e3 100644
  			w.Header().Add("Allow", reverseMethodMap[m])
  		}
  		w.WriteHeader(405)
+diff --git a/mux_test.go b/mux_test.go
+index 3e3b18f..0340405 100644
+--- a/mux_test.go
++++ b/mux_test.go
+@@ -428,6 +428,32 @@ func TestMethodNotAllowed(t *testing.T) {
+ 	})
+ }
+ 
++// TestMethodNotAllowedOverlappingRoutes checks that matching routes advertise each method once.
++func TestMethodNotAllowedOverlappingRoutes(t *testing.T) {
++	r := NewRouter()
++	for _, pattern := range []string{"/article/1-2-3", "/article/{a}", "/article/{b}-{c}", "/article/{b}-{c}-{d}"} {
++		r.Post(pattern, func(w http.ResponseWriter, r *http.Request) {
++			w.WriteHeader(http.StatusOK)
++		})
++	}
++	r.Put("/article/{a}", func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(http.StatusOK)
++	})
++
++	ts := httptest.NewServer(r)
++	defer ts.Close()
++
++	resp, _ := testRequest(t, ts, "GET", "/article/1-2-3", nil)
++	if resp.StatusCode != http.StatusMethodNotAllowed {
++		t.Fatal(resp.Status)
++	}
++	allowedMethods := resp.Header.Values("Allow")
++	if len(allowedMethods) != 2 || ((allowedMethods[0] != "POST" || allowedMethods[1] != "PUT") &&
++		(allowedMethods[1] != "POST" || allowedMethods[0] != "PUT")) {
++		t.Fatal("Allow header should contain 2 headers: POST, PUT. Received: ", allowedMethods)
++	}
++}
++
+ func TestMuxNestedMethodNotAllowed(t *testing.T) {
+ 	r := NewRouter()
+ 	r.Get("/root", func(w http.ResponseWriter, r *http.Request) {
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-I’ll trace how the router builds the `Allow` header, fix the duplicate handling, and run the existing tests.
+405 `Allow` duplicates need deduplication. Checking route matching and existing tests.
 
-Both route lookup paths collect matching methods, and the shared 405 responder writes them all to the header. I’ll deduplicate in that responder using the existing method bit flags. This needs only a change in `mux.go`; callers, exports, fixtures, and configuration stay unchanged. Distinct methods will keep their current order, including custom methods.
-
-Fixed in [mux.go](mux.go:526): the shared 405 responder now emits each allowed method once, including when wildcard routes overlap.
-
-Validation passed: `go build ./...`, `go test -race ./...`, and `git diff --check`.
-
-</details>
-
-### codex, all: pass
-
-Files: [mux.go](../all/codex/go-chi-allow-duplicates-1/files/mux.go)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/mux.go b/mux.go
-index 37cd500..bbd6831 100644
---- a/mux.go
-+++ b/mux.go
-@@ -523,7 +523,12 @@ func (mx *Mux) updateRouteHandler() {
- // methods for the route.
- func methodNotAllowedHandler(methodsAllowed ...methodTyp) func(w http.ResponseWriter, r *http.Request) {
- 	return func(w http.ResponseWriter, r *http.Request) {
-+		var allowed methodTyp
- 		for _, m := range methodsAllowed {
-+			if allowed&m != 0 {
-+				continue
-+			}
-+			allowed |= m
- 			w.Header().Add("Allow", reverseMethodMap[m])
- 		}
- 		w.WriteHeader(405)
-```
-
-</details>
-
-<details><summary>reply</summary>
 
 Done.
-`mux.go` deduplicates 405 `Allow` methods, preserving order. Build and existing tests pass.
+405 `Allow` methods deduplicated; overlapping-route regression test added. `go test ./...` and `go build ./...` passed.
 
 </details>

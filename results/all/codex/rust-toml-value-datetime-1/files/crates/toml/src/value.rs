@@ -608,6 +608,7 @@ impl<'de> de::Deserializer<'de> for Value {
         visitor.visit_newtype_struct(self)
     }
 
+    /// Deserialize a struct, preserving TOML datetime identity when requested.
     fn deserialize_struct<V>(
         self,
         name: &'static str,
@@ -618,11 +619,10 @@ impl<'de> de::Deserializer<'de> for Value {
         V: de::Visitor<'de>,
     {
         if toml_datetime::de::is_datetime(name) {
-            if let Self::Datetime(d) = self {
-                return visitor.visit_map(toml_datetime::de::DatetimeDeserializer::new(d));
+            if let Self::Datetime(datetime) = self {
+                return visitor.visit_map(toml_datetime::de::DatetimeDeserializer::new(datetime));
             }
         }
-
         self.deserialize_any(visitor)
     }
 

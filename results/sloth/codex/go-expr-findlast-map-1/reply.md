@@ -1,9 +1,13 @@
-I’ll trace how the reverse-search builtins use the VM stack, compare them with `find` and `findIndex`, and fix the shared cause. Then I’ll build and run the existing tests.
+I’ll trace how the reverse-search builtins use the VM stack, fix the shared cause, and add regression coverage in the existing tests.
 
-The reverse-loop helper leaves its boundary-check boolean on the stack. Map construction then reads that boolean as a key, causing the error.
+The shared reverse-loop compiler leaves its loop-condition boolean on the stack on every iteration and at exhaustion. That corrupts map construction. The fix belongs in that helper, which serves both builtins and optimized `last(filter(...))` expressions. I’ll add map-value cases for matches, no match, and empty input; no API, VM, or configuration changes are needed.
 
-The fix belongs in that shared helper, which serves both builtins and optimized `filter(... ) | last()` expressions. I’ll remove the boolean on both loop paths. No caller, fixture, config, or export changes are needed; I’ll use the existing tests and direct reproduction checks.
+The stack fix is in place. One new test hit an existing test-harness quirk: it prints and reparses expressions, turning `5.0` into integer `5`. I changed that test value to `5.5` to preserve its type through the round trip.
 
-Fixed in [compiler/compiler.go]( /home/jdaddy/.cache/muffle-evals/runs/sloth/codex/go-expr-findlast-map-1/work/compiler/compiler.go:1207). The shared reverse-loop helper now removes boundary-check booleans from the stack, fixing both builtins inside map literals.
+`go build ./...` also encountered a `main` package with no `main` function. I’m checking the library build separately and rerunning the full test suite.
 
-Validation: all existing tests and 20 direct reproduction/edge-case checks passed. Affected packages build successfully. `go build ./...` fails because the existing examples package lacks a `main` function.
+Fixed the shared reverse-loop compiler to discard its condition booleans, preventing stack corruption in map literals.
+
+Regression coverage includes both builtins, match boundaries, no matches, empty input, and optimized `last(filter(...))`.
+
+Validation: `go test ./...` and `go build .` pass. `go build ./...` hits an existing `main` package without a `main` function.

@@ -1,8 +1,8 @@
 diff --git a/time/src/format_description/parse/strftime.rs b/time/src/format_description/parse/strftime.rs
-index b98df69..5288cbf 100644
+index b98df69..82908e7 100644
 --- a/time/src/format_description/parse/strftime.rs
 +++ b/time/src/format_description/parse/strftime.rs
-@@ -75,16 +75,16 @@ impl<'input> Iterator for Tokenizer<'input> {
+@@ -75,17 +75,22 @@ impl<'input> Iterator for Tokenizer<'input> {
              return Some(Ok(BorrowedFormatItem::StringLiteral(value)));
          }
  
@@ -12,20 +12,49 @@ index b98df69..5288cbf 100644
 -            Some(&b'0') => (Some(Padding::Zero), self.input[2], 3),
 -            Some(_) => (None, self.input[1], 2),
 -            _ => {
--                return Some(Err(error_expected_end(Location {
--                    byte: self.byte_pos,
--                })));
--            }
 +        let (padding, advance) = match self.input.get(1) {
 +            Some(&b'_') => (Some(Padding::Space), 3),
 +            Some(&b'-') => (Some(Padding::None), 3),
 +            Some(&b'0') => (Some(Padding::Zero), 3),
-+            _ => (None, 2),
-+        };
++            Some(_) => (None, 2),
++            None => {
+                 return Some(Err(error_expected_end(Location {
+                     byte: self.byte_pos,
+                 })));
+             }
+         };
 +        let Some(&component) = self.input.get(advance - 1) else {
 +            return Some(Err(error_expected_end(Location {
-+                byte: self.byte_pos + if padding.is_some() { 2 } else { 0 },
++                byte: self.byte_pos + advance as u32 - 1,
 +            })));
-         };
++        };
  
          let component_loc = Location {
+             byte: self.byte_pos + (advance - 1) as u32,
+diff --git a/time/tests/integration/parse_format_description.rs b/time/tests/integration/parse_format_description.rs
+index 8e99b42..0833cb4 100644
+--- a/time/tests/integration/parse_format_description.rs
++++ b/time/tests/integration/parse_format_description.rs
+@@ -1090,3 +1090,22 @@ fn strftime_compound_equivalence(#[case] strftime: &str, #[case] custom: &str) -
+ 
+     Ok(())
+ }
++
++#[rstest]
++#[case("%", 0)]
++#[case("%_", 2)]
++#[case("%-", 2)]
++#[case("%0", 2)]
++#[case("a%_", 3)]
++fn strftime_missing_component(#[case] strftime: &str, #[case] expected_index: usize) {
++    assert!(matches!(
++        format_description::parse_strftime_borrowed(strftime),
++        Err(InvalidFormatDescription::Expected { what: "valid escape sequence", index, .. })
++            if index == expected_index
++    ));
++    assert!(matches!(
++        format_description::parse_strftime_owned(strftime),
++        Err(InvalidFormatDescription::Expected { what: "valid escape sequence", index, .. })
++            if index == expected_index
++    ));
++}

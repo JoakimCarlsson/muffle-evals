@@ -1,11 +1,9 @@
-I’ll check the existing jitter middleware and callers, add `WithFullJitter` in the same style, then build and run the existing tests.
+I’ll check the existing jitter code and tests, add the middleware in the same style, then run the tests and build.
 
-The change needs a new exported function in `backoff.go` and a README example. No callers, fixtures, or configuration need changes. I’ll use the existing random generator and stop convention, with a guard that returns nonpositive durations unchanged.
+The change needs a public function in `backoff.go`, coverage in `backoff_test.go`, and a README example. No existing callers, fixtures, config, or dependencies need changes. I’ll use the existing random-number API and follow the other middleware’s `(0, true)` stop convention.
 
-Added `WithFullJitter(next Backoff) Backoff` and a README example.
+Added `WithFullJitter(next Backoff) Backoff` with `[0, base)` sampling, stop propagation, and unchanged zero or negative durations.
 
-- Returns a random duration in `[0, base)`.
-- Propagates the wrapped stop signal.
-- Returns zero and negative durations unchanged.
+Added README usage and tests covering bounds, duration extremes, and stop behavior.
 
-Build and existing tests pass.
+Validation passed: `go test ./...`, `go build ./...`, and `git diff --check`.

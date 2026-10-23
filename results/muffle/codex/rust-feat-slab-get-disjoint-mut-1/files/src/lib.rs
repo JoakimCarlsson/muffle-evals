@@ -149,7 +149,7 @@ pub struct Slab<T> {
 pub enum GetDisjointMutError {
     /// The same key appears more than once.
     OverlappingIndices,
-    /// A key is beyond the end of the slab's slots.
+    /// A key is past the end of the slab's slots.
     IndexOutOfBounds,
     /// A key refers to a vacant slot.
     IndexVacant,
@@ -736,19 +736,19 @@ impl<T> Slab<T> {
         }
     }
 
-    /// Return mutable references to several values, in the order of `keys`.
-    ///
-    /// An empty array of keys returns an empty array of references.
-    /// This method takes O(N²) time to check for duplicate keys.
+    /// Return mutable references to the values associated with the given keys,
+    /// in the same order as `keys`.
     ///
     /// # Errors
     ///
-    /// Returns [`GetDisjointMutError::OverlappingIndices`] if any keys are
-    /// equal, before checking whether any key is out of bounds or vacant.
-    /// Otherwise, keys are checked in order, returning
-    /// [`GetDisjointMutError::IndexOutOfBounds`] for a key beyond the slab's
-    /// slots or [`GetDisjointMutError::IndexVacant`] for a vacant slot.
-    /// Reserved capacity beyond the existing slots is out of bounds.
+    /// Returns [`GetDisjointMutError::OverlappingIndices`] if any key appears
+    /// more than once, before checking bounds or occupancy. Otherwise, keys are
+    /// checked in order: the first invalid key returns
+    /// [`GetDisjointMutError::IndexOutOfBounds`] if it is past the end of the
+    /// slab's slots, or [`GetDisjointMutError::IndexVacant`] if its slot is vacant.
+    /// An empty array returns `Ok([])`.
+    ///
+    /// Checking for overlapping keys takes O(N²) time.
     ///
     /// # Examples
     ///
@@ -772,27 +772,30 @@ impl<T> Slab<T> {
             }
         }
 
+        for &key in &keys {
+            match self.entries.get(key) {
+                None => return Err(GetDisjointMutError::IndexOutOfBounds),
+                Some(Entry::Vacant(_)) => return Err(GetDisjointMutError::IndexVacant),
+                Some(Entry::Occupied(_)) => {}
+            }
+        }
+
         let mut result = mem::MaybeUninit::<[&mut T; N]>::uninit();
         let output = result.as_mut_ptr() as *mut &mut T;
         let entries = self.entries.as_mut_ptr();
-        for (i, &key) in keys.iter().enumerate() {
-            if key >= self.entries.len() {
-                return Err(GetDisjointMutError::IndexOutOfBounds);
-            }
-            // SAFETY: The key is in bounds, and all keys are distinct. Each
-            // reference therefore borrows a separate entry, and the slab is
-            // exclusively borrowed for the lifetime of the returned references.
-            // Writing through `output` initializes element i without reading
-            // uninitialized memory. On error, initialized references need no drop.
-            unsafe {
+        // SAFETY: Every key is in bounds and occupied, and all keys are distinct.
+        // Thus each reference points to a different value and no entries move
+        // while the references are constructed. Each output element is written
+        // exactly once before assuming initialization, including when N is zero.
+        unsafe {
+            for (i, &key) in keys.iter().enumerate() {
                 match &mut *entries.add(key) {
                     Entry::Occupied(value) => output.add(i).write(value),
-                    Entry::Vacant(_) => return Err(GetDisjointMutError::IndexVacant),
+                    Entry::Vacant(_) => unreachable!(),
                 }
             }
+            Ok(result.assume_init())
         }
-        // SAFETY: Every element has been initialized, including when N is zero.
-        Ok(unsafe { result.assume_init() })
     }
 
     /// Return two mutable references to the values associated with the two

@@ -886,11 +886,12 @@ impl BytesMut {
 
     /// Appends a copy of the bytes in `range` to this `BytesMut`.
     ///
-    /// The buffer grows as needed to hold the appended bytes.
+    /// The buffer grows as needed to accommodate the additional bytes.
     ///
     /// # Panics
     ///
-    /// Panics if the range starts after its end or ends beyond the current length.
+    /// Panics if the range start is greater than its end or if the range is
+    /// out of bounds for the current length.
     ///
     /// # Examples
     ///
@@ -902,7 +903,6 @@ impl BytesMut {
     /// assert_eq!(&buf[..], b"aaabbb_bbb");
     /// ```
     pub fn extend_from_within(&mut self, range: impl RangeBounds<usize>) {
-        let len = self.len();
         let start = match range.start_bound() {
             Bound::Included(&n) => n,
             Bound::Excluded(&n) => n.checked_add(1).expect("out of range"),
@@ -911,20 +911,21 @@ impl BytesMut {
         let end = match range.end_bound() {
             Bound::Included(&n) => n.checked_add(1).expect("out of range"),
             Bound::Excluded(&n) => n,
-            Bound::Unbounded => len,
+            Bound::Unbounded => self.len,
         };
         assert!(start <= end, "range start must not be greater than end");
-        assert!(end <= len, "range end out of bounds");
+        assert!(end <= self.len, "range end out of bounds");
 
         let count = end - start;
         self.reserve(count);
+
+        // SAFETY: The source is within the initialized bytes, and reserve
+        // ensures enough space after them. The regions do not overlap.
+        // Obtain pointers after reserve, which may move the allocation.
         unsafe {
-            // Reserve may move the buffer, so obtain its pointer afterwards.
-            // The source is initialized and ends before the destination, whose
-            // capacity was reserved above.
-            let ptr = self.as_mut_ptr();
-            ptr::copy_nonoverlapping(ptr.add(start), ptr.add(len), count);
-            self.advance_mut(count);
+            let ptr = self.ptr.as_ptr();
+            ptr::copy_nonoverlapping(ptr.add(start), ptr.add(self.len), count);
+            self.len += count;
         }
     }
 

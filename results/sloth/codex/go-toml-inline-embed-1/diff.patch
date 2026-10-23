@@ -1,14 +1,30 @@
 diff --git a/unmarshaler.go b/unmarshaler.go
-index d497669..f1f7d73 100644
+index d497669..77f2e71 100644
 --- a/unmarshaler.go
 +++ b/unmarshaler.go
-@@ -2257,14 +2257,14 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
- 				// Embedded non-struct fields are not decoded into.
+@@ -2232,6 +2232,7 @@ func buildPlan(t reflect.Type) *structPlan {
+ 	return plan
+ }
+ 
++// addFields indexes named and promoted fields of t in plan.
+ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
+ 	var embedded []reflect.StructField
+ 	for i := 0; i < t.NumField(); i++ {
+@@ -2244,7 +2245,8 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
  				continue
  			}
--			if !tagged {
+ 			parts := strings.SplitN(tag, ",", 2)
+-			if parts[0] != "" {
++			tagged = parts[0] != ""
++			if tagged {
+ 				name = parts[0]
+ 			}
+ 		}
+@@ -2258,13 +2260,13 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
+ 				continue
+ 			}
+ 			if !tagged {
 -				// Untagged embedded structs are flattened, even when their
-+			if !tagged || tagName(tag) == "" {
 +				// Embedded structs without a tag name are flattened, even when their
  				// type is unexported: only their own exported fields are
  				// reachable.
@@ -16,7 +32,76 @@ index d497669..f1f7d73 100644
  				continue
  			}
 -			// A tagged embedded struct acts as a regular named field.
-+			// An embedded struct with a tag name acts as a regular named field.
++			// An explicitly named embedded struct acts as a regular named field.
  		} else if f.PkgPath != "" {
  			// unexported
  			continue
+diff --git a/unmarshaler_test.go b/unmarshaler_test.go
+index fbefca8..e6bc95e 100644
+--- a/unmarshaler_test.go
++++ b/unmarshaler_test.go
+@@ -16,6 +16,64 @@ import (
+ 	"github.com/pelletier/go-toml/v2/unstable"
+ )
+ 
++// TestUnmarshalEmbeddedStructTags checks field promotion for embedded TOML tags.
++func TestUnmarshalEmbeddedStructTags(t *testing.T) {
++	type Base struct {
++		Region        string
++		Name          string
++		IPv4          string
++		BsPort        int
++		WebSocketPort int
++		OutOfBandPort int
++	}
++	type Config struct {
++		Base  `toml:",inline"`
++		PID   uint32
++		index int `toml:"-"`
++	}
++	type Pointer struct {
++		*Base `toml:",inline"`
++		PID   uint32
++	}
++	type Empty struct {
++		Base `toml:""`
++		PID  uint32
++	}
++	type Named struct {
++		Base `toml:"base,inline"`
++		PID  uint32
++	}
++	type Ignored struct {
++		Base `toml:"-"`
++		PID  uint32
++	}
++	type Shadowed struct {
++		Base   `toml:",inline"`
++		Region string
++		PID    uint32
++	}
++	base := Base{Region: "us", Name: "srv1", BsPort: 100}
++	for _, tt := range []struct {
++		name string
++		doc  string
++		got  interface{}
++		want interface{}
++	}{
++		{"inline", "Region = 'us'\nName = 'srv1'\nBsPort = 100\nPID = 42", &Config{}, &Config{Base: base, PID: 42}},
++		{"pointer", "Region = 'us'\nName = 'srv1'\nBsPort = 100\nPID = 42", &Pointer{}, &Pointer{Base: &base, PID: 42}},
++		{"empty tag", "Region = 'us'\nName = 'srv1'\nBsPort = 100\nPID = 42", &Empty{}, &Empty{Base: base, PID: 42}},
++		{"named", "PID = 42\n[base]\nRegion = 'us'\nName = 'srv1'\nBsPort = 100", &Named{}, &Named{Base: base, PID: 42}},
++		{"ignored", "Region = 'us'\nPID = 42", &Ignored{}, &Ignored{PID: 42}},
++		{"shadowed", "Region = 'us'\nPID = 42", &Shadowed{}, &Shadowed{Region: "us", PID: 42}},
++		{"empty document", "", &Pointer{}, &Pointer{}},
++	} {
++		t.Run(tt.name, func(t *testing.T) {
++			assert.NoError(t, toml.Unmarshal([]byte(tt.doc), tt.got))
++			assert.Equal(t, tt.want, tt.got)
++		})
++	}
++}
++
+ type unmarshalTextKey struct {
+ 	A string
+ 	B string

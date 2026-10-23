@@ -1,11 +1,11 @@
-I’ll check the slab’s storage, exports, and Rust version requirements, then add the method and error type and run the existing tests.
+I’ll check the slab storage and test layout, add the API and error type, then run the build and tests.
 
-The change reaches `src/lib.rs` for the method, documentation, and crate-root error type, plus `Cargo.toml` for Rust compatibility. The signature needs const generics; using array `map` keeps the implementation small and raises the minimum Rust version from 1.46 to 1.55.
+The change needs the public error enum and method in `src/lib.rs`, plus tests in `tests/slab.rs`. Existing APIs can stay unchanged. The requested const-generic signature also requires raising the minimum Rust version from 1.46 to 1.51; I’ll keep the implementation compatible with 1.51 and `no_std`.
 
-Existing callers need no changes. I’ll preserve the specified error precedence and `no_std` support, with no new dependencies or extra APIs.
+The API passes the requested ordering and error cases, including empty input, vacant slots, and duplicate invalid keys. All 87 tests and doctests pass, along with the `no_std` build, Clippy, and formatting checks. I’m checking compilation with Rust 1.51 as well.
 
-Added `Slab::get_disjoint_mut` and the public `GetDisjointMutError` enum with the requested derives, ordering, error precedence, and empty-array behavior.
+Added `Slab::get_disjoint_mut` and the public `GetDisjointMutError` enum with the requested derives, variants, ordering, and error precedence.
 
-Minimum Rust version is now 1.55. No dependencies added.
+Raised minimum Rust to 1.51 for const generics.
 
-Formatting, build, and existing tests passed with all features and with default features disabled. Rust 1.55 itself wasn’t available to test.
+Verified: all 87 tests and doctests, `no_std` build, Clippy, formatting, and Rust 1.51 compilation.

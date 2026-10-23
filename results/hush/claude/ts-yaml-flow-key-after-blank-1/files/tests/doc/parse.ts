@@ -952,12 +952,19 @@ describe('stringKeys', () => {
   })
 })
 
-describe('flow collection as block map key after blank or comment line', () => {
-  for (const sep of ['\n', '\n\n', '\n# comment\n']) {
-    test(JSON.stringify(sep), () => {
-      const doc = YAML.parseDocument(`1: 2${sep}[3]: 4`)
-      expect(doc.errors).toHaveLength(0)
-      expect(doc.value.size).toBe(2)
-    })
-  }
+describe('flow collection key after blank line or comment', () => {
+  test('blank line', () => {
+    const doc = YAML.parseDocument('1: 2\n\n[3]: 4\n')
+    expect(doc.errors).toHaveLength(0)
+    expect(doc.toJS({ mapAsMap: true })).toMatchObject(
+      new Map<unknown, unknown>([
+        [1, 2],
+        [[3], 4]
+      ])
+    )
+  })
+  test('comment line', () => {
+    const doc = YAML.parseDocument('1: 2\n# c\n{ a: 3 }: 4\n')
+    expect(doc.errors).toHaveLength(0)
+  })
 })

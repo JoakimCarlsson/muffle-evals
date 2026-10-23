@@ -1,13 +1,13 @@
-I’ll check how both iterators define their ranges and use those bounds to fix reverse iteration, then build and run the existing tests.
+I’ll check how both iterators define their ranges, fix reverse traversal, and add regression coverage for the example and date boundaries.
 
-Both iterators use one cursor for two different directions, which violates the `DoubleEndedIterator` contract. I’ll track how many dates remain so both ends consume the same range, preserving the existing forward bounds.
+Both iterators currently move the same date backward in `next_back()`, so reverse traversal leaves the range reported by `len()`. I’ll give each iterator a separate back boundary while preserving its existing forward range, including its upper-limit behavior.
 
-The change reaches the two constructors and iterator implementations, their examples, and two existing boundary tests. Exports and configuration need no changes. Reverse iteration will change behavior: it will start at the end of the forward range instead of walking backward from the starting date.
+The change reaches the two constructors, iterator implementations, documentation examples, and existing iterator tests. Exports and configuration need no changes. Direct `.rev()` calls will now traverse the forward range from its far end.
 
-The fix is in place and builds successfully. Both ends now share a remaining count, and reverse skipping is efficient for calls such as `take(7).rev()`.
+The fix passes all 292 unit tests, including the seven-date example, mixed front/back consumption, and exhaustion checks for both iterators. The build without default features also passes. The full test run is still working through the integration tests.
 
-The existing unit tests pass. The full test run hit three unrelated doctest failures caused by deprecated `std::i32::MAX` references; I’m checking the final run after the reverse-skipping change.
+Fixed both iterators to track separate front and back boundaries. Reversing a taken window now produces the expected dates, and mixed-direction iteration stops when the ends meet. Existing forward ranges are preserved.
 
-Fixed both iterators so forward and reverse iteration consume the same range, stop when they meet, and report the correct remaining length. `take(7).rev()` now works efficiently.
+Added regression tests and updated documentation examples.
 
-Updated the examples and existing boundary tests. Build and formatting checks pass, as do all unit and integration tests and both iterator doctests. Three unrelated doctests still fail on deprecated `std::i32::MAX` references.
+Validation: all 292 unit tests, integration tests, and the build without default features pass. Both iterator doctests pass; three unrelated doctests fail because they use deprecated `core::i32::MAX`.

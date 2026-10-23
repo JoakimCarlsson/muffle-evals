@@ -36,7 +36,7 @@ ARTICLES:
     classical inflect num a an
 
 NUMERICAL:
-    ordinal number_to_words number_to_currency
+    ordinal number_to_words
 
 USER_DEFINED:
     defnoun defverb defadj defa defan
@@ -61,7 +61,7 @@ import functools
 import itertools
 import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from decimal import ROUND_HALF_UP, Decimal, localcontext
+from decimal import ROUND_HALF_UP, Context, Decimal, InvalidOperation
 from numbers import Number
 from re import Match
 from typing import (
@@ -3930,37 +3930,6 @@ class engine:
     def _get_sign(num):
         return {'+': 'plus', '-': 'minus'}.get(num.lstrip()[0], '')
 
-    def number_to_currency(self, num: Number | str, andword: str = "and") -> str:
-        """
-        Return an amount in words with the cents as a fraction of one hundred,
-        as written on a check.
-
-        >>> p = engine()
-        >>> p.number_to_currency(100_020.56)
-        'one hundred thousand and twenty and 56/100'
-
-        The amount is rounded half up to the nearest cent, going by the number
-        as written. andword is used within the whole amount as in
-        number_to_words; the "and" before the cents is always written.
-
-        Raises BadNumValueError if num is not a finite number.
-        """
-        try:
-            amount = Decimal(num if isinstance(num, (int, Decimal)) else str(num))
-        except (ArithmeticError, ValueError, TypeError) as err:
-            raise BadNumValueError from err
-        if not amount.is_finite():
-            raise BadNumValueError
-        with localcontext() as ctx:
-            ctx.prec = max(ctx.prec, len(amount.as_tuple().digits) + 10)
-            amount = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            cents = int(abs(amount) * 100) % 100
-            whole = int(amount)
-        words = self.number_to_words(whole, andword=andword)
-        if amount < 0 and whole == 0:
-            words = f"minus {words}"
-        return f"{words} and {cents:02d}/100"
-
     @typechecked
     def number_to_words(  # noqa: C901
         self,
@@ -4080,6 +4049,37 @@ class engine:
             else ''.join(self._render(numchunks, decimal, resolved_comma))
         )
         return signout + valout
+
+    @typechecked
+    def number_to_currency(self, num: Number | str, andword: str = "and") -> str:
+        """
+        Return an amount in words, with the cents as a fraction of 100.
+
+        e.g. 100020.56 -> "one hundred thousand and twenty and 56/100"
+
+        The amount is rounded half up to the nearest cent, going by the
+        number as written. Raise BadNumValueError if num is not a finite number.
+
+        andword: as for number_to_words (the "and" before the cents is
+        always written).
+        """
+        try:
+            amount = Decimal(num if isinstance(num, Decimal) else str(num))
+        except InvalidOperation as err:
+            raise BadNumValueError from err
+        if not amount.is_finite():
+            raise BadNumValueError
+        try:
+            cents = amount.quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP, context=Context(prec=1000)
+            )
+        except InvalidOperation as err:  # too large to write out
+            raise BadNumValueError from err
+        whole, frac = divmod(abs(cents) * 100, 100)
+        words = self.number_to_words(
+            int(whole) * (-1 if cents < 0 and whole else 1), andword=andword
+        )
+        return f"{words} and {int(frac):02d}/100"
 
     @staticmethod
     def _render(chunks, decimal, comma):

@@ -69,13 +69,11 @@ Usage
     not have such rules, and the check incorrectly disallows valid requirement
     strings from being parsed.
 
-Replacing fields
-----------------
+Copying with changes
+--------------------
 
-Use :meth:`Requirement.__replace__` to create a new requirement with selected
-fields changed. It accepts only keyword arguments: ``name``, ``url``, ``extras``,
-``specifier``, and ``marker``. Omitted fields are kept, and the original is
-unchanged. With no arguments, it returns an equal but distinct requirement.
+Use :meth:`Requirement.__replace__` to create a new requirement with different
+fields. On Python 3.13 and later, :func:`copy.replace` also calls this method.
 
 .. doctest::
 
@@ -83,18 +81,17 @@ unchanged. With no arguments, it returns an equal but distinct requirement.
     >>> req.__replace__(name="flask")
     <Requirement('flask[security]>=2.0; python_version >= "3"')>
     >>> from packaging.specifiers import SpecifierSet
-    >>> req.__replace__(specifier=SpecifierSet(">=3.0"), marker=None)
-    <Requirement('requests[security]>=3.0')>
+    >>> Requirement("requests>=2.0").__replace__(specifier=SpecifierSet(">=3.0"))
+    <Requirement('requests>=3.0')>
 
-On Python 3.13 and later, :func:`copy.replace` also calls this method.
-Replacement fields must form a valid requirement without changing meaning when
-parsed, otherwise :exc:`InvalidRequirement` is raised. For example,
-``name="foo[bar]"`` cannot be used to introduce an extra. To switch from a
-version specifier to a URL, also pass ``specifier=SpecifierSet()``.
-
-Mutable fields are copied, including individual specifiers. Prerelease overrides
-on the specifier set and its members are preserved. Subclasses receive an
-instance of their own class, initialized with the resulting requirement string.
+The keyword arguments are ``name``, ``url``, ``extras``, ``specifier``, and
+``marker``, with the same types as the corresponding attributes. Omitted fields
+are kept; calling without arguments returns an equal but distinct requirement.
+Unknown keywords raise :class:`TypeError`. Invalid fields, including values that
+would be parsed as different fields, raise :class:`InvalidRequirement`.
+The result is normalized by parsing, preserves specifier prerelease overrides,
+and shares no mutable fields with the original or supplied values. Subclasses
+are constructed through their own initializer.
 
 Reference
 ---------

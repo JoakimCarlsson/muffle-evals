@@ -20,17 +20,17 @@ export interface CookieParseOptions {
   decode?: (str: string) => string | undefined;
 
   /**
-   * Custom function to filter parsing specific keys.
-   */
-  filter?(key: string): boolean;
-
-  /**
-   * When `true`, a cookie name that appears more than once maps to an array of all its values (in order).
-   * Names that appear once stay plain strings. By default only the first value is kept.
+   * When a cookie name appears more than once, collect all of its values (in order) into an array
+   * instead of keeping only the first. Names that appear once stay plain strings.
    *
    * @default false
    */
   allowMultiple?: boolean;
+
+  /**
+   * Custom function to filter parsing specific keys.
+   */
+  filter?(key: string): boolean;
 }
 
 /**
@@ -39,9 +39,16 @@ export interface CookieParseOptions {
 export type Cookies = Record<string, string | undefined>;
 
 /**
- * Cookies object where repeated names may map to an array of values (`allowMultiple`).
+ * Cookies object where a name that appears more than once maps to an array of its values.
  */
 export type MultiCookies = Record<string, string | string[] | undefined>;
+
+/**
+ * Parse options with `allowMultiple` enabled.
+ */
+export interface CookieParseMultipleOptions extends CookieParseOptions {
+  allowMultiple: true;
+}
 
 /**
  * Stringify options.

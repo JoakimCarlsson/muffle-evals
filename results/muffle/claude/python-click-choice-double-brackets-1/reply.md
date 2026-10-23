@@ -1,8 +1,11 @@
-Optional arguments of type `Choice` or `DateTime` now show a single pair of brackets in the usage line. Your example prints `[foo|bar]...`, and the `DateTime` argument prints `[%Y]`. The existing test suite passes. I didn't add a regression test.
+Optional arguments of type `Choice` or `DateTime` now show single brackets in `--help`. Your example gives `Usage: cli.py [OPTIONS] [foo|bar|baz]...`, and the `required=False` and `DateTime` cases are fixed the same way. The full test suite passes, and I haven't committed anything.
 
-The cause was that `Argument.make_metavar` already wraps an optional argument's metavar in `[...]`, while `Choice.get_metavar` and `DateTime.get_metavar` added their own brackets as well. I changed the two types in `src/click/types.py`:
+**Cause:** `Choice.get_metavar` and `DateTime.get_metavar` already wrap their output in `[...]`. `Argument.make_metavar` then wrapped it again for any argument that wasn't required.
 
-- **`Choice`:** it no longer adds brackets for arguments. It still adds them for options, and required arguments still use `{a|b}`.
-- **`DateTime`:** it skips its own brackets only for optional arguments. Required arguments and options are unchanged.
+**Fix:** In `src/click/core.py`, `Argument.make_metavar` now skips its own wrapping when the metavar already starts with `[` and ends with `]`. Required `Choice` arguments still render as `{foo|bar}`.
 
-I also added an entry to `CHANGES.md`.
+**Extra changes:**
+- **Tests:** I added a parametrized test to `tests/test_arguments.py` covering optional, `nargs=-1`, required and `DateTime` arguments.
+- **Changelog:** I added an entry to `CHANGES.md`.
+
+The bracket check is a plain string test. A `Choice` whose first choice begins with `[` and whose last ends with `]` would be treated as already wrapped. For an optional argument that still displays a single pair of brackets, so the output is unaffected.

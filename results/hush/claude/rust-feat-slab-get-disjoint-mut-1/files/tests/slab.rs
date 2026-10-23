@@ -738,14 +738,22 @@ fn get_disjoint_mut() {
         slab.insert(i);
     }
     slab.remove(1);
+
+    let [a, b] = slab.get_disjoint_mut([3, 0]).unwrap();
+    std::mem::swap(a, b);
+    assert_eq!((slab[3], slab[0]), (0, 3));
+
     assert_eq!(slab.get_disjoint_mut([]), Ok([]));
     assert_eq!(
         slab.get_disjoint_mut([42, 2, 1, 2]),
         Err(GetDisjointMutError::OverlappingIndices)
     );
-    assert_eq!(slab.get_disjoint_mut([1, 5]), Err(GetDisjointMutError::IndexVacant));
-    assert_eq!(slab.get_disjoint_mut([5, 1]), Err(GetDisjointMutError::IndexOutOfBounds));
-    let [a, b] = slab.get_disjoint_mut([3, 0]).unwrap();
-    std::mem::swap(a, b);
-    assert_eq!((slab[0], slab[3]), (3, 0));
+    assert_eq!(
+        slab.get_disjoint_mut([1, 5]),
+        Err(GetDisjointMutError::IndexVacant)
+    );
+    assert_eq!(
+        slab.get_disjoint_mut([5, 1]),
+        Err(GetDisjointMutError::IndexOutOfBounds)
+    );
 }

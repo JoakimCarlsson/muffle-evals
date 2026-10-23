@@ -160,24 +160,24 @@ export function parseRawArgs<T = Record<string, any>>(
     }
   }
 
-  // Propagate values between aliases
-  for (const [alias, main] of aliasToMain.entries()) {
-    if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
-      (out as any)[main] = (out as any)[alias];
-    }
-    if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
-      (out as any)[alias] = (out as any)[main];
-    }
-  }
+  // Resolve explicit values before defaults so an alias can override a default.
+  propagateAliases();
 
-  // Apply defaults after explicit values have been propagated across aliases.
   for (const [name, value] of Object.entries(defaults)) {
     if ((out as any)[name] === undefined) {
       (out as any)[name] = value;
-      for (const alias of mainToAliases.get(name) || []) {
-        if ((out as any)[alias] === undefined) {
-          (out as any)[alias] = value;
-        }
+    }
+  }
+
+  propagateAliases();
+
+  function propagateAliases() {
+    for (const [alias, main] of aliasToMain.entries()) {
+      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
+        (out as any)[main] = (out as any)[alias];
+      }
+      if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
+        (out as any)[alias] = (out as any)[main];
       }
     }
   }

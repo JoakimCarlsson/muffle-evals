@@ -1256,10 +1256,17 @@ func (d Decimal) NumDigits() int {
 	v := d.getValue()
 	if v.IsInt64() {
 		i64 := v.Int64()
-		if i64 < 0 {
-			i64 = -i64
+		// restrict fast path to integers with exact conversion to float64
+		if i64 <= (1<<53) && i64 >= -(1<<53) {
+			if i64 == 0 {
+				return 1
+			}
+			n := 0
+			for ; i64 != 0; i64 /= 10 {
+				n++
+			}
+			return n
 		}
-		return len(strconv.FormatUint(uint64(i64), 10))
 	}
 
 	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))

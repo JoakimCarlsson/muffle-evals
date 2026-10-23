@@ -201,47 +201,46 @@ func ExampleWithJitterPercent() {
 func TestWithFullJitter(t *testing.T) {
 	t.Parallel()
 
-	bases := []time.Duration{1, 2, time.Second, time.Duration(1<<63 - 1), 0, -1, time.Duration(-1 << 63)}
-	i := 0
-	b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-		base := bases[i%len(bases)]
-		i++
-		return base, false
-	}))
-	for range 1000 {
-		for _, base := range bases {
-			val, stop := b.Next()
-			if stop {
-				t.Fatal("should not stop")
-			}
-			if base <= 0 {
-				if val != base {
-					t.Fatalf("expected %v, got %v", base, val)
+	bases := []time.Duration{0, -time.Second, time.Duration(-1 << 63), 1, time.Second, time.Duration(1<<63 - 1)}
+	for _, base := range bases {
+		t.Run(base.String(), func(t *testing.T) {
+			t.Parallel()
+			calls := 0
+			b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
+				calls++
+				return base, false
+			}))
+			for range 1000 {
+				val, stop := b.Next()
+				if stop {
+					t.Fatal("should not stop")
 				}
-			} else if val < 0 || val >= base {
-				t.Fatalf("expected %v in [0, %v)", val, base)
+				if base <= 0 {
+					if val != base {
+						t.Fatalf("got %v, want %v", val, base)
+					}
+				} else if val < 0 || val >= base {
+					t.Fatalf("got %v, want duration in [0, %v)", val, base)
+				}
 			}
-		}
+			if calls != 1000 {
+				t.Fatalf("got %d wrapped calls, want 1000", calls)
+			}
+		})
 	}
 }
 
 func TestWithFullJitter_Stop(t *testing.T) {
 	t.Parallel()
 
-	for _, base := range []time.Duration{-1, 0, time.Second} {
+	for _, base := range []time.Duration{-time.Second, 0, time.Second} {
 		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
 			return base, true
 		}))
 		if val, stop := b.Next(); val != 0 || !stop {
-			t.Errorf("expected (0, true), got (%v, %t)", val, stop)
+			t.Errorf("base %v: got (%v, %t), want (0, true)", base, val, stop)
 		}
 	}
-}
-
-func ExampleWithFullJitter() {
-	b := retry.NewFibonacci(1 * time.Second)
-	b = retry.WithFullJitter(b)
-	_, _ = b.Next()
 }
 
 func TestWithMaxRetries(t *testing.T) {

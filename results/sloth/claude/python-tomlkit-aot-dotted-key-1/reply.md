@@ -1,16 +1,11 @@
-Script ran outside the repo path; rerun from the repo.
+Running the tests, skipping the toml-test suite whose fixtures are missing.
 
-Fixed in `tomlkit/container.py` (`_replace_at`). Your example now dumps as:
+Fixed: assigning an array of tables over a dotted-key entry now leaves the following keys alone. Your example now keeps `c.d = 2` as a top-level table, so the document still means `{"c": {"d": 2}, "a": [{"x": 9}]}`. I ran the tests with `tests/test_toml_tests.py` excluded, because its fixture files (`tests/toml-test/...`) aren't in the checkout. The other 361 pass.
 
-```
-c.d = 2
+**Cause:** the existing handling for replacing a dotted key with a table (#524/#513) only covered a plain `Table` value. An `AoT` value fell through, so it kept the dotted key and was written in place with its `[[a]]` header, which then took over the sibling keys that followed.
 
-[[a]]
-x = 9
-```
+**Fix:** in `tomlkit/container.py` (`_replace_at`), an `AoT` now gets the same treatment as a non-super table. The dotted key is dropped, and the new entry is moved after any inline siblings.
 
-Parsing that back gives `{'c': {'d': 2}, 'a': [{'x': 9}]}`, so `c` is no longer lost.
+**Test:** I added `test_replace_dotted_key_with_aot_keeps_following_sibling` in `tests/test_toml_document.py`. It covers your case, the reverse key order, and a plain-value sibling. Each time it checks the document before and after a re-parse. It passes.
 
-When you replace a dotted-key entry with a table that renders its own `[header]`, `_replace_at` already drops the dotted key and moves the new header after the inline siblings. An array of tables needs the same handling, so I extended that check to cover it.
-
-I ran the test suite without `tests/test_toml_tests.py`, which fails at collection with a `FileNotFoundError` (I didn't investigate why). The other 360 tests pass. I didn't add a regression test, since you didn't ask for one.
+Nothing is committed.

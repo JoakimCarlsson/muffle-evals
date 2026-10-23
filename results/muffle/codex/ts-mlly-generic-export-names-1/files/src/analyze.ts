@@ -393,15 +393,14 @@ export function parseTypeImport(
  * For `export const foo = fn('a', bar), baz = 2`, only `baz` should be
  * extracted — commas inside `fn(...)` or `Handler<A, B>` are not declaration separators.
  * @param {string} extraNamesStr - The string containing the extra variable declarations to parse.
- * @param {string} trailingCode - Code after the match, used to look ahead for closing generic brackets.
+ * @param {string} remainingCode - The source starting at the same position, including trailing call arguments.
  * @returns {string[]} An array of variable names extracted from the declaration list.
  */
 function _extractExtraNames(
   extraNamesStr: string,
-  trailingCode: string,
+  remainingCode: string,
 ): string[] {
   const names: string[] = [];
-  const code = extraNamesStr + trailingCode;
   let depth = 0;
   let angleDepth = 0;
   let inString: string | false = false;
@@ -443,7 +442,7 @@ function _extractExtraNames(
     }
     if (
       char === "<" &&
-      (inTypeAnnotation || angleDepth > 0 || _isGenericCall(code, i))
+      (inTypeAnnotation || angleDepth > 0 || _isGenericCall(remainingCode, i))
     ) {
       angleDepth++;
       continue;
@@ -474,32 +473,32 @@ function _extractExtraNames(
   return names;
 }
 
-// In expressions, only treat `<` as a generic argument list when it has a
-// matching `>` followed by call arguments. An unmatched comparison such as
-// `1<2, b = 3` must not hide the next declaration.
+// In expressions, require a matching `>` followed by call arguments so that
+// comparisons such as `1<2, b = 3` do not hide declaration separators.
 function _isGenericCall(code: string, start: number): boolean {
-  let depth = 0;
-  let quote = "";
-  for (let i = start; i < code.length; i++) {
-    const char = code[i];
-    if (quote) {
-      if (char === "\\") {
-        i++;
-      } else if (char === quote) {
-        quote = "";
+  let depth = 1;
+  const tokens =
+    /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|=>|[<>;=]/g;
+  tokens.lastIndex = start + 1;
+  for (let token = tokens.exec(code); token; token = tokens.exec(code)) {
+    switch (token[0]) {
+      case "<": {
+        depth++;
+
+        break;
       }
-      continue;
-    }
-    if (char === '"' || char === "'" || char === "`") {
-      quote = char;
-    } else if (char === "<") {
-      depth++;
-    } else if (char === ">" && code[i - 1] !== "=") {
-      if (--depth === 0) {
-        return /^\s*\(/.test(code.slice(i + 1));
+      case ">": {
+        if (--depth === 0) {
+          return /^\s*\(/.test(code.slice(tokens.lastIndex));
+        }
+
+        break;
       }
-    } else if (char === ";" || (char === "=" && code[i + 1] !== ">")) {
-      return false;
+      case ";":
+      case "=": {
+        return false;
+      }
+      // No default
     }
   }
   return false;
@@ -529,7 +528,7 @@ export function findExports(code: string): ESMExport[] {
     if (extraNamesStr) {
       const extraNames = _extractExtraNames(
         extraNamesStr,
-        code.slice(declaredExport.end),
+        code.slice(declaredExport.end - extraNamesStr.length),
       );
       if (extraNames.length > 0) {
         declaredExport.names = [declaredExport.name, ...extraNames];

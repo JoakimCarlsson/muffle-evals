@@ -16,14 +16,13 @@ fn iterator_size_hint_bounds() {
         assert!(iter.next().is_none());
     }
 
-    let mut map = HeaderMap::<usize>::default();
-    for names in 0..=3 {
-        if names > 0 {
-            map.append([HOST, ACCEPT, CONTENT_TYPE][names - 1].clone(), 0);
-        }
-        for extras in 0..=2 {
-            if names > 0 && extras > 0 {
-                map.append(HOST, extras);
+    for keys in 0..=3 {
+        for values in 1..=4 {
+            let mut map = HeaderMap::new();
+            for name in [HOST, ACCEPT, CONTENT_TYPE].iter().take(keys) {
+                for _ in 0..values {
+                    map.append(name, HeaderValue::from_static("x"));
+                }
             }
             let len = map.len();
             check(map.iter(), len);

@@ -127,6 +127,17 @@ use alloc::vec::{self, Vec};
 use core::iter::{self, FromIterator, FusedIterator};
 use core::{fmt, mem, ops, slice};
 
+/// An error returned by [`Slab::get_disjoint_mut`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GetDisjointMutError {
+    /// The same key occurs more than once.
+    OverlappingIndices,
+    /// A key is past the end of the slab's initialized slots.
+    IndexOutOfBounds,
+    /// A key refers to a vacant slot.
+    IndexVacant,
+}
+
 /// Pre-allocated storage for a uniform data type
 ///
 /// See the [module documentation] for more details.
@@ -142,17 +153,6 @@ pub struct Slab<T> {
     // Offset of the next available slot in the slab. Set to the slab's
     // capacity when the slab is full.
     next: usize,
-}
-
-/// An error returned by [`Slab::get_disjoint_mut`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GetDisjointMutError {
-    /// The same key occurs more than once.
-    OverlappingIndices,
-    /// A key is past the end of the slab's slots.
-    IndexOutOfBounds,
-    /// A key refers to a vacant slot.
-    IndexVacant,
 }
 
 impl<T> Clone for Slab<T>
@@ -736,29 +736,23 @@ impl<T> Slab<T> {
         }
     }
 
-    /// Return mutable references to the values associated with the given keys,
-    /// in the same order as `keys`.
+    /// Return mutable references to several values, in the order of `keys`.
     ///
-    /// An empty array returns `Ok([])`. Checking for duplicate keys takes
-    /// O(N²) time and requires no allocation.
-    ///
-    /// # Errors
-    ///
-    /// Duplicate keys return [`GetDisjointMutError::OverlappingIndices`], before
-    /// checking any slots. Otherwise, keys are checked in order: a key past the
-    /// end of the slots returns [`GetDisjointMutError::IndexOutOfBounds`], and
-    /// a vacant slot returns [`GetDisjointMutError::IndexVacant`].
+    /// Duplicate keys return [`GetDisjointMutError::OverlappingIndices`],
+    /// before any bounds or vacancy checks. Otherwise, keys are checked in
+    /// order, returning [`GetDisjointMutError::IndexOutOfBounds`] for a key
+    /// past the end of the slab's slots or [`GetDisjointMutError::IndexVacant`]
+    /// for a vacant slot. An empty array returns `Ok([])`.
     ///
     /// # Examples
     ///
     /// ```
-    /// use slab::Slab;
-    ///
+    /// # use slab::Slab;
     /// let mut slab = Slab::new();
     /// let a = slab.insert(1);
     /// let b = slab.insert(2);
     /// let [x, y] = slab.get_disjoint_mut([a, b]).unwrap();
-    /// std::mem::swap(x, y);
+    /// core::mem::swap(x, y);
     /// assert_eq!((slab[a], slab[b]), (2, 1));
     /// ```
     pub fn get_disjoint_mut<const N: usize>(
@@ -770,25 +764,25 @@ impl<T> Slab<T> {
                 return Err(GetDisjointMutError::OverlappingIndices);
             }
         }
-        for &key in &keys {
-            match self.entries.get(key) {
-                Some(Entry::Occupied(_)) => {}
-                Some(Entry::Vacant(_)) => return Err(GetDisjointMutError::IndexVacant),
-                None => return Err(GetDisjointMutError::IndexOutOfBounds),
-            }
-        }
 
+        let mut values = mem::MaybeUninit::<[&mut T; N]>::uninit();
+        let output = values.as_mut_ptr() as *mut &mut T;
         let entries = self.entries.as_mut_ptr();
-        let mut result = mem::MaybeUninit::<[&mut T; N]>::uninit();
-        let output = result.as_mut_ptr() as *mut &mut T;
-        unsafe {
-            for (i, &key) in keys.iter().enumerate() {
-                if let Entry::Occupied(value) = &mut *entries.add(key) {
-                    output.add(i).write(value);
+        for (i, &key) in keys.iter().enumerate() {
+            if key >= self.entries.len() {
+                return Err(GetDisjointMutError::IndexOutOfBounds);
+            }
+            // SAFETY: Each key is in bounds and unique, so occupied values
+            // are disjoint. Each output slot is written exactly once.
+            unsafe {
+                match &mut *entries.add(key) {
+                    Entry::Occupied(value) => output.add(i).write(value),
+                    Entry::Vacant(_) => return Err(GetDisjointMutError::IndexVacant),
                 }
             }
-            Ok(result.assume_init())
         }
+        // SAFETY: All N references have been initialized, including when N is zero.
+        Ok(unsafe { values.assume_init() })
     }
 
     /// Return two mutable references to the values associated with the two

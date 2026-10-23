@@ -1,9 +1,7 @@
-I’ll check the existing jitter middleware, add `WithFullJitter`, and test its range, stop, and nonpositive-base behavior.
+I’ll check the existing jitter middleware, add `WithFullJitter` alongside it, and test the range and edge cases.
 
-Added `WithFullJitter(next Backoff) Backoff` alongside the existing jitter middleware.
+Added `WithFullJitter(next Backoff) Backoff` with uniform random waits in `[0, base)`, stop propagation, and unchanged zero or negative durations.
 
-- Returns a random duration in `[0, base)`.
-- Propagates stop.
-- Preserves zero and negative durations without panicking.
+Included documentation, a usage example, and tests covering bounds and edge cases.
 
-Added tests, a usage example, and README documentation. `go test ./...` and `git diff --check` pass.
+Validation: `go test ./...` and `git diff --check` passed.

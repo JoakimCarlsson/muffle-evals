@@ -35,8 +35,7 @@ import { parse, serialize, parseSetCookie, splitSetCookieString } from "cookie-e
 import { parse, serialize, parseSetCookie, splitSetCookieString } from "https://esm.sh/cookie-es";
 ```
 
-Pass `allowMultiple: true` to preserve duplicate cookie values in order. Names that
-appear once remain strings. By default, the first value wins.
+To collect duplicate cookie values in order, enable `allowMultiple`. Names that appear once remain strings. By default, the first value wins.
 
 ```js
 parse("foo=a;bar=bar;foo=b;foo=c", { allowMultiple: true });

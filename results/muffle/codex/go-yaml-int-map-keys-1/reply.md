@@ -1,7 +1,9 @@
-I’ll check how map keys are decoded, fix the conversion, and add a regression test.
+I’ll trace how mapping keys are converted to strings, add a regression test, and run the relevant tests.
 
-The decoder uses Go’s integer-to-string conversion, which turns `42` into the character `*`. It already has a conversion helper that formats numbers as decimal strings; I’ll use it for map keys too. The regression tests reproduce the bug for both ordinary and named string keys.
+The decoder was using Go’s integer-to-string conversion, which turns `42` into the Unicode character `*`. I changed it to use the decoder’s existing numeric formatting helper. The regression tests cover signed and unsigned integers, hexadecimal input, and named string key types.
 
-Fixed map key conversion to format integers as decimal strings, so your example now produces `map[42:100]`.
+Fixed: integer map keys now use decimal string formatting, so your example produces `map[42:100]`.
 
-Added regression coverage for negative, zero, large integer, and named string keys. All tests pass with `go test ./...`.
+Added regression tests for signed and unsigned integers, hexadecimal input, and named string key types.
+
+Validation: `go test ./...` passes.

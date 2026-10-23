@@ -1,5 +1,5 @@
 diff --git a/src/parse/parser.ts b/src/parse/parser.ts
-index 1443cc1..945337c 100644
+index 1443cc1..cdf68a6 100644
 --- a/src/parse/parser.ts
 +++ b/src/parse/parser.ts
 @@ -698,7 +698,7 @@ export class Parser {
@@ -7,7 +7,32 @@ index 1443cc1..945337c 100644
                  return
                }
 -            } else if (atMapIndent) {
-+            } else if (atNextItem) {
++            } else if (atMapIndent && (it.sep || it.explicitKey)) {
                map.items.push({ start })
              }
              this.stack.push(bv)
+diff --git a/tests/doc/parse.ts b/tests/doc/parse.ts
+index 1364d0a..311a276 100644
+--- a/tests/doc/parse.ts
++++ b/tests/doc/parse.ts
+@@ -183,6 +183,20 @@ describe('flow collection keys', () => {
+     }
+   })
+ 
++  test.each(['\n', '# c\n'])(
++    'flow collection key after blank or comment line %j',
++    gap => {
++      const doc = YAML.parseDocument(`1: 2\n${gap}[3]: 4\n`)
++      expect(doc.errors).toHaveLength(0)
++      expect(doc.toJS({ mapAsMap: true })).toEqual(
++        new Map<unknown, unknown>([
++          [1, 2],
++          [[3], 4]
++        ])
++      )
++    }
++  )
++
+   test('flow collection as first block map key (redhat-developer/vscode-yaml#712)', () => {
+     const doc = YAML.parseDocument(source`
+       a:

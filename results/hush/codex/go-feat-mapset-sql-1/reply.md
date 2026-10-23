@@ -1,5 +1,4 @@
-Set SQL support needs atomic scans. Checking implementations and tests.
+Set SQL support: checking implementations and tests.
 
 
-Done.
-Both sets support `driver.Valuer` and `sql.Scanner`; scans replace contents, clear NULL, preserve contents on errors. `go test -race ./...` passed.
+Done. Both sets support SQL JSON values, atomic scans, NULL clearing. Tests and race checks pass.

@@ -386,6 +386,35 @@ export function parseTypeImport(
   } as ParsedStaticImport;
 }
 
+/** Checks whether an opening angle bracket starts type arguments for a call. */
+function _isGenericCall(code: string, start: number): boolean {
+  let depth = 0;
+  let quote = "";
+  for (let i = start; i < code.length; i++) {
+    const char = code[i];
+    if (quote) {
+      if (char === "\\") {
+        i++;
+      } else if (char === quote) {
+        quote = "";
+      }
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+    } else if (char === "<") {
+      depth++;
+    } else if (char === ">" && code[i - 1] !== "=") {
+      if (--depth === 0) {
+        return /^\s*\(/.test(code.slice(i + 1));
+      }
+    } else if (char === ";" || (char === "=" && code[i + 1] !== ">")) {
+      return false;
+    }
+  }
+  return false;
+}
+
 /**
  * Extracts extra variable names from a comma-separated declaration list,
  * ignoring commas nested inside parentheses, brackets, braces, generics, or strings.
@@ -393,12 +422,10 @@ export function parseTypeImport(
  * For `export const foo = fn('a', bar), baz = 2`, only `baz` should be
  * extracted — commas inside `fn(...)` or `Handler<A, B>` are not declaration separators.
  * @param {string} extraNamesStr - The string containing the extra variable declarations to parse.
+ * @param {string} suffix - Source following the matched declaration, used to recognise complete type arguments.
  * @returns {string[]} An array of variable names extracted from the declaration list.
  */
-function _extractExtraNames(
-  extraNamesStr: string,
-  trailingCode: string,
-): string[] {
+function _extractExtraNames(extraNamesStr: string, suffix: string): string[] {
   const names: string[] = [];
   let depth = 0;
   let angleDepth = 0;
@@ -441,7 +468,9 @@ function _extractExtraNames(
     }
     if (
       char === "<" &&
-      (inTypeAnnotation || _hasTypeArguments(extraNamesStr + trailingCode, i))
+      (inTypeAnnotation ||
+        angleDepth > 0 ||
+        _isGenericCall(extraNamesStr + suffix, i))
     ) {
       angleDepth++;
       continue;
@@ -470,24 +499,6 @@ function _extractExtraNames(
   }
 
   return names;
-}
-
-/** Checks whether an opening angle bracket starts type arguments for a call. */
-function _hasTypeArguments(code: string, start: number): boolean {
-  let depth = 1;
-  for (let i = start + 1; i < code.length; i++) {
-    const char = code[i];
-    if (char === "<") {
-      depth++;
-    } else if (char === ">" && code[i - 1] !== "=") {
-      if (--depth === 0) {
-        return /^\s*\(/.test(code.slice(i + 1));
-      }
-    } else if (char === "=" && code[i + 1] !== ">") {
-      return false;
-    }
-  }
-  return false;
 }
 
 /**

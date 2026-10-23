@@ -1,9 +1,9 @@
-Those tests are listed as expected failures, and now pass. I'm removing those entries from the expectations file.
+These three "unexpected success" cases are known failures that the fix now makes pass. I'll remove them from the expected-failures list.
 
-The `url` crate now percent-encodes `^` in paths, so `http://localhost/a^b` parses to `http://localhost/a%5Eb`. The `url` crate's tests pass. I haven't run the other crates' tests, and I didn't add a new test for the caret.
+The `url` crate now percent-encodes `^` in paths, so `http://localhost/a^b` parses to `http://localhost/a%5Eb`. The full workspace test suite passes.
 
-The fix is one line in `url/src/parser.rs`: I added `^` to the `PATH` percent-encode set.
+The fix adds `^` to the `PATH` encode set in `url/src/parser.rs:23`. The userinfo set builds on `PATH` and already listed `^`, so it is unchanged.
 
-Three WHPT conformance cases were listed in `url/tests/expected_failures.txt` because of this bug. They now pass, so I removed them from that file. Two are the `foo://` and `wss://` URLs with a path containing `^`, and the third is a `pathname` setter case.
+Three spec-test cases were listed in `url/tests/expected_failures.txt` because of this bug, and they now pass. The test harness reported them as "unexpected success", so I removed them from that list. Two are the `foo://` and `wss://` host path cases. The third is `set pathname` on `a:/`.
 
-I haven't committed anything.
+I didn't commit anything.

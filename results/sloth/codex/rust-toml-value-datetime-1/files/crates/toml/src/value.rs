@@ -608,7 +608,7 @@ impl<'de> de::Deserializer<'de> for Value {
         visitor.visit_newtype_struct(self)
     }
 
-    /// Deserialize a struct, preserving datetimes when explicitly requested.
+    /// Preserve datetime types when explicitly requested by the visitor.
     fn deserialize_struct<V>(
         self,
         name: &'static str,
@@ -623,7 +623,6 @@ impl<'de> de::Deserializer<'de> for Value {
                 return visitor.visit_map(toml_datetime::de::DatetimeDeserializer::new(datetime));
             }
         }
-
         self.deserialize_any(visitor)
     }
 

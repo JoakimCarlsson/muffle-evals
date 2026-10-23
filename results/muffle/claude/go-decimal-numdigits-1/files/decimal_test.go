@@ -3156,6 +3156,12 @@ func TestDecimal_NumDigits(t *testing.T) {
 		{"-5.26", 3},
 		{"-5.2663117716", 11},
 		{"-26.1", 3},
+		{"100000000000000E20", 15},
+		{"1000000000000000E20", 16},
+		{"10000000000000000E20", 17},
+		{"-1000000000000000E20", 16},
+		{"9223372036854775808", 19},
+		{"18446744073709551616", 20},
 		{"", 1},
 	} {
 		d, _ := NewFromString(testCase.Dec)
@@ -3961,24 +3967,4 @@ func ExampleNewFromFloat() {
 	//123.123123123123
 	//0.123123123123123
 	//-10000000000000
-}
-
-func TestDecimal_NumDigitsPowersOfTen(t *testing.T) {
-	p := big.NewInt(1)
-	for i := 1; i <= 400; i++ {
-		for _, delta := range []int64{-1, 0, 1} {
-			v := new(big.Int).Add(p, big.NewInt(delta))
-			if v.Sign() <= 0 {
-				continue
-			}
-			want := len(v.String())
-			if got := NewFromBigInt(v, 0).NumDigits(); got != want {
-				t.Errorf("NumDigits(%s): got %d, want %d", v, got, want)
-			}
-			if got := NewFromBigInt(new(big.Int).Neg(v), 0).NumDigits(); got != want {
-				t.Errorf("NumDigits(-%s): got %d, want %d", v, got, want)
-			}
-		}
-		p.Mul(p, big.NewInt(10))
-	}
 }

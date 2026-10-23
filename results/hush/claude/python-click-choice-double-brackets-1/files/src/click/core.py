@@ -3573,7 +3573,7 @@ class Argument(Parameter):
             var = self.name.upper()
         if self.deprecated:
             var += "!"
-        # Some types already wrap their metavar in square brackets.
+        # Choice and DateTime metavars are already bracketed.
         if not self.required and not (var.startswith("[") and var.endswith("]")):
             var = f"[{var}]"
         if self.nargs != 1:

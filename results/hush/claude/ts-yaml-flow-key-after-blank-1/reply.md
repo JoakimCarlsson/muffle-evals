@@ -1,9 +1,5 @@
-Look at the flow-collection handling at line 765+ and 880+.
+Saying it: found cause in `src/parse/parser.ts` default case. Flow key after blank line pushes a new empty item, orphaning the blank-line item. Fixing.
 
-Adding regression test to `tests/doc/parse.ts`.
+Done. In `src/parse/parser.ts`, a flow-collection key after a blank or comment line no longer starts a second empty map item. That empty item caused the `IMPOSSIBLE` error. I added two regression tests to `tests/doc/parse.ts`.
 
-Test bug: `doc.contents` undefined in this version; use `doc.toJS`-style check.
-
-Helper shape mismatch; simplify the assertion.
-
-Done. `src/parse/parser.ts` `blockMap` no longer pushes a spurious empty item when a flow collection starts after a blank or comment line. I added regression tests in `tests/doc/parse.ts`; they fail without the fix and pass with it. All 957 tests pass, but `json-test-suite.ts` and `yaml-test-suite.ts` can't load here (they error on their test-suite directories), so those suites didn't run.
+Your Example 2.11 YAML wasn't run verbatim. The tests cover `1: 2\n\n[3]: 4` and a comment-line variant, and they pass along with the 955 other tests. `tests/yaml-test-suite.ts` and one other test file fail to load because the test-suite files under `tests/yaml-test-suite/src` are missing here, so they didn't run.

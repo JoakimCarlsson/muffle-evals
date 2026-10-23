@@ -1,13 +1,9 @@
-Running the tests again with the right target name (`tests`). Also checking the file's current state, since it changed on disk.
+I've fixed the panic in the tokenizer and am adding a regression test next.
 
-`parse_strftime_borrowed` and `parse_strftime_owned` no longer panic on a trailing `%_`, `%-` or `%0`. They now return the same "valid escape sequence" error that other malformed escapes give.
+`parse_strftime_borrowed` (and `parse_strftime_owned`) now return an error for `"%_"`, `"%-"` and `"%0"` instead of panicking. The strftime tests pass, including the new ones. I only ran the strftime tests, not the whole suite, and I didn't run your `poc_strftime_oob_panic` example.
 
-The strftime tests pass, including the new ones. I did not run the whole test suite, or the `poc_strftime_oob_panic` example from your report.
+The tokenizer read the byte after the padding modifier without checking it existed. It now checks, and when the component is missing it returns the same `Expected { what: "valid escape sequence" }` error as other malformed escapes. The error index is the position where the component should have been, so 2 for `"%_"`. The fix is in `time/src/format_description/parse/strftime.rs`.
 
-The tokenizer in `time/src/format_description/parse/strftime.rs` read the byte after the padding modifier with direct indexing. It now uses a checked lookup. If that byte is missing, the error index is the position where the component should have been, so `"%_"` gives index 2.
-
-A bare `"%"` still reports index 0, as before.
-
-I added a `strftime_missing_component` test in `time/tests/integration/parse_format_description.rs`. It covers `%`, `%_`, `%-`, `%0` and `a%_` (index 3).
+I added `strftime_missing_component_error` to `time/tests/integration/parse_format_description.rs`. It covers `%_`, `%-`, `%0`, `a%_` and a bare `%`. A bare `%` already returned an error, and its index is still 0.
 
 I haven't committed anything.

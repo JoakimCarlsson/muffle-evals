@@ -1,7 +1,9 @@
-I’ll trace how the router builds the `Allow` header, fix the duplicate handling, and run the existing tests.
+I’ll check where the router collects allowed methods, fix the duplicate handling, and add a regression test for overlapping routes.
 
-Both route lookup paths collect matching methods, and the shared 405 responder writes them all to the header. I’ll deduplicate in that responder using the existing method bit flags. This needs only a change in `mux.go`; callers, exports, fixtures, and configuration stay unchanged. Distinct methods will keep their current order, including custom methods.
+Both route-matching paths collect methods, and the shared 405 handler writes them to `Allow`. I’ll deduplicate there, preserving the order of distinct methods. This needs changes only in `mux.go` and `mux_test.go`; no API or configuration changes are needed.
 
-Fixed in [mux.go](mux.go:526): the shared 405 responder now emits each allowed method once, including when wildcard routes overlap.
+Fixed the shared 405 handler so each method appears only once in `Allow`, preserving the order of distinct methods.
 
-Validation passed: `go build ./...`, `go test -race ./...`, and `git diff --check`.
+Added regression coverage for overlapping wildcard routes and multiple allowed methods.
+
+Validation passed: `go test ./...`, `go build ./...`, and `git diff --check`.

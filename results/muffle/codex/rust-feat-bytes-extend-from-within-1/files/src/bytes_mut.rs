@@ -1,5 +1,5 @@
 use core::mem::{self, ManuallyDrop, MaybeUninit};
-use core::ops::{Bound, Deref, DerefMut, RangeBounds};
+use core::ops::{Deref, DerefMut, RangeBounds};
 use core::ptr::{self, NonNull};
 use core::{cmp, fmt, hash, slice};
 
@@ -886,12 +886,12 @@ impl BytesMut {
 
     /// Appends a copy of the bytes in `range` to this `BytesMut`.
     ///
-    /// The buffer grows as needed to accommodate the additional bytes.
+    /// The buffer grows as needed to accommodate the copied bytes.
     ///
     /// # Panics
     ///
-    /// Panics if the range's start is greater than its end, or if either bound
-    /// is out of bounds for the current length.
+    /// Panics if the range starts after its end or extends beyond the current
+    /// length of the buffer.
     ///
     /// # Examples
     ///
@@ -903,6 +903,9 @@ impl BytesMut {
     /// assert_eq!(&buf[..], b"aaabbb_bbb");
     /// ```
     pub fn extend_from_within(&mut self, range: impl RangeBounds<usize>) {
+        use core::ops::Bound;
+
+        let len = self.len();
         let start = match range.start_bound() {
             Bound::Included(&n) => n,
             Bound::Excluded(&n) => n.checked_add(1).expect("out of range"),
@@ -911,21 +914,23 @@ impl BytesMut {
         let end = match range.end_bound() {
             Bound::Included(&n) => n.checked_add(1).expect("out of range"),
             Bound::Excluded(&n) => n,
-            Bound::Unbounded => self.len(),
+            Bound::Unbounded => len,
         };
+
         assert!(start <= end, "range start must not be greater than end");
-        assert!(end <= self.len(), "range end out of bounds");
+        assert!(end <= len, "range end out of bounds");
 
         let count = end - start;
         self.reserve(count);
 
+        // SAFETY: Obtain the pointer after reserving, which may move the buffer.
+        // The validated source range is initialized and ends at or before `len`,
+        // so it cannot overlap the destination. Reservation ensures space for
+        // the copy, and the length is updated only after initializing the bytes.
         unsafe {
-            // Reserve may move the allocation, so obtain the pointer afterwards.
-            // The source is initialized and ends at or before the destination;
-            // reserve ensures there is room for the entire copy.
             let ptr = self.ptr.as_ptr();
-            ptr::copy_nonoverlapping(ptr.add(start), ptr.add(self.len()), count);
-            self.advance_mut(count);
+            ptr::copy_nonoverlapping(ptr.add(start), ptr.add(len), count);
+            self.set_len(len + count);
         }
     }
 

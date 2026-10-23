@@ -1020,7 +1020,39 @@ fn rfc_3339() {
 }
 
 #[rstest]
+#[case("%_", 2)]
+#[case("%-", 2)]
+#[case("%0", 2)]
+#[case("foo%_", 5)]
+#[case("foo%-", 5)]
+#[case("foo%0", 5)]
+#[case("é%_", 4)]
+#[case("%Y%0", 4)]
+#[case("%", 0)]
+fn strftime_incomplete_escape(#[case] input: &str, #[case] expected_index: usize) {
+    assert!(matches!(
+        format_description::parse_strftime_borrowed(input),
+        Err(InvalidFormatDescription::Expected {
+            what: "valid escape sequence",
+            index,
+            ..
+        }) if index == expected_index
+    ));
+    assert!(matches!(
+        format_description::parse_strftime_owned(input),
+        Err(InvalidFormatDescription::Expected {
+            what: "valid escape sequence",
+            index,
+            ..
+        }) if index == expected_index
+    ));
+}
+
+#[rstest]
 #[case("foo", format_description!("foo"))]
+#[case("%_d", format_description!("[day padding:space]"))]
+#[case("%-d", format_description!("[day padding:none]"))]
+#[case("%0d", format_description!("[day padding:zero]"))]
 #[case("%a", format_description!("[weekday repr:short]"))]
 #[case("%A", format_description!("[weekday]"))]
 #[case("%b", format_description!("[month repr:short]"))]
@@ -1089,30 +1121,4 @@ fn strftime_compound_equivalence(#[case] strftime: &str, #[case] custom: &str) -
     assert_eq!(owned, OwnedFormatItem::from(custom));
 
     Ok(())
-}
-
-#[rstest]
-#[case("%_", 2)]
-#[case("%-", 2)]
-#[case("%0", 2)]
-#[case("prefix %_", 9)]
-#[case("prefix %-", 9)]
-#[case("prefix %0", 9)]
-#[case("é%_", 4)]
-#[case("%Y%_", 4)]
-#[case("%", 0)]
-fn strftime_missing_component(#[case] input: &str, #[case] index: usize) {
-    for error in [
-        format_description::parse_strftime_borrowed(input).unwrap_err(),
-        format_description::parse_strftime_owned(input).unwrap_err(),
-    ] {
-        assert!(matches!(
-            error,
-            InvalidFormatDescription::Expected {
-                what: "valid escape sequence",
-                index: actual_index,
-                ..
-            } if actual_index == index
-        ));
-    }
 }

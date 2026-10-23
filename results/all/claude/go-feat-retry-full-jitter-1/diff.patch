@@ -13,16 +13,16 @@ index 47b6e26..85493e5 100644
  
  ### MaxRetries
 diff --git a/backoff.go b/backoff.go
-index b493869..562c022 100644
+index b493869..36a48d1 100644
 --- a/backoff.go
 +++ b/backoff.go
 @@ -67,6 +67,24 @@ func WithJitterPercent(j uint64, next Backoff) Backoff {
  	})
  }
  
-+// WithFullJitter wraps a backoff function and returns a random duration between
-+// 0 (inclusive) and the base value (exclusive). A base value that is zero or
-+// negative is returned unchanged.
++// WithFullJitter wraps a backoff function and returns a random duration in
++// [0, base), where base is the value returned by the wrapped backoff. A zero or
++// negative base is returned unchanged.
 +func WithFullJitter(next Backoff) Backoff {
 +	return BackoffFunc(func() (time.Duration, bool) {
 +		val, stop := next.Next()
@@ -41,3 +41,56 @@ index b493869..562c022 100644
  // WithMaxRetries executes the backoff function up until the maximum attempts.
  func WithMaxRetries(max uint64, next Backoff) Backoff {
  	var l sync.Mutex
+diff --git a/backoff_test.go b/backoff_test.go
+index 7c528e8..8a12b24 100644
+--- a/backoff_test.go
++++ b/backoff_test.go
+@@ -119,6 +119,48 @@ func ExampleWithJitter() {
+ 	}
+ }
+ 
++func TestWithFullJitter(t *testing.T) {
++	t.Parallel()
++
++	for range 100_000 {
++		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
++			return 1 * time.Second, false
++		}))
++		val, stop := b.Next()
++		if stop {
++			t.Errorf("should not stop")
++		}
++
++		if val < 0 || val >= 1*time.Second {
++			t.Errorf("expected %v to be in [0, 1s)", val)
++		}
++	}
++}
++
++func TestWithFullJitter_NonPositive(t *testing.T) {
++	t.Parallel()
++
++	for _, base := range []time.Duration{0, -1 * time.Second} {
++		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
++			return base, false
++		}))
++		if val, stop := b.Next(); stop || val != base {
++			t.Errorf("expected %v, false, got %v, %v", base, val, stop)
++		}
++	}
++}
++
++func TestWithFullJitter_Stop(t *testing.T) {
++	t.Parallel()
++
++	b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
++		return 1 * time.Second, true
++	}))
++	if _, stop := b.Next(); !stop {
++		t.Errorf("expected stop")
++	}
++}
++
+ func TestWithJitterPercent(t *testing.T) {
+ 	t.Parallel()
+ 

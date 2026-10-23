@@ -162,25 +162,26 @@ export function parseRawArgs<T = Record<string, any>>(
   }
 
   // Propagate values between aliases
-  const propagateAliases = () => {
-    for (const [alias, main] of aliasToMain.entries()) {
-      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
-        (out as any)[main] = (out as any)[alias];
-      }
-      if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
-        (out as any)[alias] = (out as any)[main];
-      }
+  for (const [alias, main] of aliasToMain.entries()) {
+    if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
+      (out as any)[main] = (out as any)[alias];
     }
-  };
-  propagateAliases();
-
-  // Apply defaults only after aliases resolved, so an explicit alias value wins
-  for (const [name, value] of Object.entries(defaults)) {
-    if ((out as any)[name] === undefined) {
-      (out as any)[name] = value;
+    if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
+      (out as any)[alias] = (out as any)[main];
     }
   }
-  propagateAliases();
+
+  // Apply defaults only after alias propagation, so an explicit value passed
+  // via one spelling is not shadowed by the default of another spelling
+  for (const [name, value] of Object.entries(defaults)) {
+    if ((out as any)[name] !== undefined) continue;
+    (out as any)[name] = value;
+    for (const alias of mainToAliases.get(name) || []) {
+      if ((out as any)[alias] === undefined) {
+        (out as any)[alias] = value;
+      }
+    }
+  }
 
   return out;
 }

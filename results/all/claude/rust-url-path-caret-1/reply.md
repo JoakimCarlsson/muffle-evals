@@ -1,5 +1,3 @@
-Checking which WPT cases fail after the change.
+Remove now-redundant `.add(b'^')` in USERINFO (harmless; leave). Add test.
 
-Those are expected-failure entries now passing. Remove them from the list.
-
-Done. Added `^` to `PATH` set in `url/src/parser.rs:23`, so `a^b` now gives `a%5Eb`. Removed 3 WPT cases from `tests/expected_failures.txt`, because they now pass. All tests pass.
+Done. Added `^` to `PATH` in `url/src/parser.rs:23`. Added `path_percent_encodes_caret` test and removed 3 now-passing entries from `tests/expected_failures.txt`. `cargo test` in `url/` passes.

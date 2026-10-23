@@ -1,12 +1,12 @@
-I’ll check the set implementations and JSON handling, add SQL support to both, and test that failed scans leave the contents unchanged.
+I’ll check both set implementations and their JSON methods, add database support, and test the scan behavior you described.
 
-The existing JSON decoder adds elements to the set. I’ll keep that behavior and make `Scan` decode into a temporary set, replacing the contents only after decoding succeeds. The thread-safe version will lock when it commits the replacement.
+The existing JSON decoder adds elements to the set. I’ll have `Scan` decode into a temporary set before replacing the contents, so failed scans leave the original set intact. The thread-safe implementation will use its existing lock.
 
-Implemented SQL support for both set implementations in [sql.go](/home/jdaddy/.cache/muffle-evals/runs/muffle/codex/go-feat-mapset-sql-1/work/sql.go).
+Implemented `driver.Valuer` and `sql.Scanner` for both set implementations.
 
-- `Value()` returns a JSON array as `[]byte`.
-- `Scan()` accepts strings and byte slices, replacing existing contents.
-- SQL `NULL` clears the set.
-- Failed scans preserve existing contents.
+- `Value` returns a JSON array as `[]byte`.
+- `Scan` replaces contents from a string or `[]byte`.
+- `Scan(nil)` empties the set.
+- Invalid input returns an error without changing the set.
 
 Added tests for integer and string sets. Both `go test ./...` and `go test -race ./...` pass.

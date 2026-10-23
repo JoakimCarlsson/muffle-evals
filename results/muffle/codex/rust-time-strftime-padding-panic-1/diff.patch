@@ -1,21 +1,19 @@
 diff --git a/time/src/format_description/parse/strftime.rs b/time/src/format_description/parse/strftime.rs
-index b98df69..eece455 100644
+index b98df69..3240f0e 100644
 --- a/time/src/format_description/parse/strftime.rs
 +++ b/time/src/format_description/parse/strftime.rs
-@@ -75,11 +75,11 @@ impl<'input> Iterator for Tokenizer<'input> {
-             return Some(Ok(BorrowedFormatItem::StringLiteral(value)));
+@@ -76,10 +76,10 @@ impl<'input> Iterator for Tokenizer<'input> {
          }
  
--        let (padding, component, advance) = match self.input.get(1) {
+         let (padding, component, advance) = match self.input.get(1) {
 -            Some(&b'_') => (Some(Padding::Space), self.input[2], 3),
 -            Some(&b'-') => (Some(Padding::None), self.input[2], 3),
 -            Some(&b'0') => (Some(Padding::Zero), self.input[2], 3),
 -            Some(_) => (None, self.input[1], 2),
-+        let (padding, advance) = match self.input.get(1) {
-+            Some(&b'_') => (Some(Padding::Space), 3),
-+            Some(&b'-') => (Some(Padding::None), 3),
-+            Some(&b'0') => (Some(Padding::Zero), 3),
-+            Some(_) => (None, 2),
++            Some(&b'_') => (Some(Padding::Space), self.input.get(2), 3),
++            Some(&b'-') => (Some(Padding::None), self.input.get(2), 3),
++            Some(&b'0') => (Some(Padding::Zero), self.input.get(2), 3),
++            Some(component) => (None, Some(component), 2),
              _ => {
                  return Some(Err(error_expected_end(Location {
                      byte: self.byte_pos,
@@ -23,43 +21,54 @@ index b98df69..eece455 100644
          let component_loc = Location {
              byte: self.byte_pos + (advance - 1) as u32,
          };
-+        let Some(&component) = self.input.get(advance - 1) else {
++        let Some(&component) = component else {
 +            return Some(Err(error_expected_end(component_loc)));
 +        };
          self.input = &self.input[advance..];
          self.byte_pos += advance as u32;
          Some(parse_component(
 diff --git a/time/tests/integration/parse_format_description.rs b/time/tests/integration/parse_format_description.rs
-index 8e99b42..3bb82bf 100644
+index 8e99b42..238a840 100644
 --- a/time/tests/integration/parse_format_description.rs
 +++ b/time/tests/integration/parse_format_description.rs
-@@ -1090,3 +1090,29 @@ fn strftime_compound_equivalence(#[case] strftime: &str, #[case] custom: &str) -
- 
-     Ok(())
+@@ -1019,8 +1019,40 @@ fn rfc_3339() {
+     );
  }
-+
+ 
 +#[rstest]
 +#[case("%_", 2)]
 +#[case("%-", 2)]
 +#[case("%0", 2)]
-+#[case("prefix %_", 9)]
-+#[case("prefix %-", 9)]
-+#[case("prefix %0", 9)]
++#[case("foo%_", 5)]
++#[case("foo%-", 5)]
++#[case("foo%0", 5)]
 +#[case("é%_", 4)]
-+#[case("%Y%_", 4)]
++#[case("%Y%0", 4)]
 +#[case("%", 0)]
-+fn strftime_missing_component(#[case] input: &str, #[case] index: usize) {
-+    for error in [
-+        format_description::parse_strftime_borrowed(input).unwrap_err(),
-+        format_description::parse_strftime_owned(input).unwrap_err(),
-+    ] {
-+        assert!(matches!(
-+            error,
-+            InvalidFormatDescription::Expected {
-+                what: "valid escape sequence",
-+                index: actual_index,
-+                ..
-+            } if actual_index == index
-+        ));
-+    }
++fn strftime_incomplete_escape(#[case] input: &str, #[case] expected_index: usize) {
++    assert!(matches!(
++        format_description::parse_strftime_borrowed(input),
++        Err(InvalidFormatDescription::Expected {
++            what: "valid escape sequence",
++            index,
++            ..
++        }) if index == expected_index
++    ));
++    assert!(matches!(
++        format_description::parse_strftime_owned(input),
++        Err(InvalidFormatDescription::Expected {
++            what: "valid escape sequence",
++            index,
++            ..
++        }) if index == expected_index
++    ));
 +}
++
+ #[rstest]
+ #[case("foo", format_description!("foo"))]
++#[case("%_d", format_description!("[day padding:space]"))]
++#[case("%-d", format_description!("[day padding:none]"))]
++#[case("%0d", format_description!("[day padding:zero]"))]
+ #[case("%a", format_description!("[weekday repr:short]"))]
+ #[case("%A", format_description!("[weekday]"))]
+ #[case("%b", format_description!("[month repr:short]"))]

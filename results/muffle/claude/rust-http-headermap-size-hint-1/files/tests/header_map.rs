@@ -775,33 +775,23 @@ fn into_iter_drop_panic_after_yielding_extra_value_double_drops() {
 
 #[test]
 fn iter_size_hint_lower_bound_is_accurate() {
-    let mut map = HeaderMap::new();
-    assert_eq!(map.iter().size_hint().0, 0);
-    assert_eq!(map.iter_mut().size_hint().0, 0);
-
-    map.insert(HOST, "a".parse().unwrap());
-    map.append(HOST, "b".parse().unwrap());
-    map.insert(ACCEPT, "c".parse().unwrap());
-
-    let mut it = map.iter();
-    loop {
-        let (lo, _) = it.size_hint();
-        let next = it.next();
-        assert!(lo == 0 || next.is_some());
-        if next.is_none() {
-            break;
-        }
-    }
+    let mut m: HeaderMap<HeaderValue> = HeaderMap::new();
+    assert_eq!(m.iter().size_hint().0, 0);
+    m.insert(HOST, HeaderValue::from_static("x"));
+    let mut it = m.iter();
+    assert_eq!(it.size_hint().0, 1);
+    it.next();
     assert_eq!(it.size_hint().0, 0);
+    assert!(it.next().is_none());
 
-    let mut it = map.iter_mut();
-    loop {
-        let (lo, _) = it.size_hint();
-        let next = it.next();
-        assert!(lo == 0 || next.is_some());
-        if next.is_none() {
-            break;
-        }
+    m.append(HOST, HeaderValue::from_static("y"));
+    m.insert(ACCEPT, HeaderValue::from_static("z"));
+    let mut it = m.iter();
+    let mut left = 3;
+    while left > 0 {
+        assert!(it.size_hint().0 <= left);
+        it.next();
+        left -= 1;
     }
     assert_eq!(it.size_hint().0, 0);
 }

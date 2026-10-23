@@ -92,6 +92,18 @@ pub use std::iter as __std_iter;
 
 /// The concrete iterator types.
 pub mod structs {
+    /// A failed comparison from [`Itertools::strip_prefix`](crate::Itertools::strip_prefix)
+    /// or [`Itertools::strip_prefix_by`](crate::Itertools::strip_prefix_by).
+    #[derive(Debug)]
+    pub struct StripPrefixError<I: Iterator, P: Iterator> {
+        /// The input iterator, after the mismatching item or its first `None`.
+        pub iterator: I,
+        /// The prefix iterator, after the mismatching prefix item.
+        pub prefix: P,
+        /// The input item (or `None` if exhausted) and the mismatching prefix item.
+        pub mismatch: (Option<I::Item>, P::Item),
+    }
+
     #[cfg(feature = "use_alloc")]
     pub use crate::adaptors::MultiProduct;
     pub use crate::adaptors::{
@@ -140,7 +152,6 @@ pub mod structs {
     pub use crate::repeatn::RepeatN;
     #[allow(deprecated)]
     pub use crate::sources::{Iterate, Unfold};
-    pub use crate::strip_prefix::StripPrefixError;
     pub use crate::take_while_inclusive::TakeWhileInclusive;
     #[cfg(feature = "use_alloc")]
     pub use crate::tee::Tee;
@@ -236,7 +247,6 @@ mod rciter_impl;
 mod repeatn;
 mod size_hint;
 mod sources;
-mod strip_prefix;
 mod take_while_inclusive;
 #[cfg(feature = "use_alloc")]
 mod tee;
@@ -1776,67 +1786,6 @@ pub trait Itertools: Iterator {
         unique_impl::unique_by_with_hasher(self, f, hash_builder)
     }
 
-    /// Remove the items of `prefix` from the start of this iterator.
-    ///
-    /// Return the remaining iterator on success, or a [`StripPrefixError`]
-    /// containing both iterators and the mismatching items on failure.
-    /// An empty prefix leaves this iterator untouched.
-    ///
-    /// ```
-    /// use itertools::Itertools;
-    ///
-    /// let rest = (1..6).strip_prefix([1, 2]).unwrap();
-    /// assert_eq!(rest.collect_vec(), vec![3, 4, 5]);
-    /// ```
-    fn strip_prefix<P>(self, prefix: P) -> Result<Self, StripPrefixError<Self, P::IntoIter>>
-    where
-        Self: Sized,
-        P: IntoIterator,
-        Self::Item: PartialEq<P::Item>,
-    {
-        self.strip_prefix_by(prefix, PartialEq::eq)
-    }
-
-    /// Remove the items of `prefix` from the start of this iterator using `eq`.
-    ///
-    /// The comparison receives the iterator item first and the prefix item second.
-    /// Return the remaining iterator on success. On failure, both iterators are
-    /// advanced past the mismatching items and returned in [`StripPrefixError`].
-    /// If this iterator ends first, the mismatching iterator item is `None`.
-    /// An empty prefix leaves this iterator untouched and never calls `eq`.
-    ///
-    /// ```
-    /// use itertools::Itertools;
-    ///
-    /// let rest = vec!["one", "two", "three"].into_iter()
-    ///     .strip_prefix_by([3, 3], |word, len| word.len() == *len)
-    ///     .unwrap();
-    /// assert_eq!(rest.collect_vec(), vec!["three"]);
-    /// ```
-    fn strip_prefix_by<P, F>(
-        mut self,
-        prefix: P,
-        mut eq: F,
-    ) -> Result<Self, StripPrefixError<Self, P::IntoIter>>
-    where
-        Self: Sized,
-        P: IntoIterator,
-        F: FnMut(&Self::Item, &P::Item) -> bool,
-    {
-        let mut prefix = prefix.into_iter();
-        while let Some(expected) = prefix.next() {
-            let item = self.next();
-            if !item.as_ref().map_or(false, |item| eq(item, &expected)) {
-                return Err(StripPrefixError {
-                    iterator: self,
-                    prefix,
-                    mismatch: (item, expected),
-                });
-            }
-        }
-        Ok(self)
-    }
-
     /// Return an iterator adaptor that borrows from this iterator and
     /// takes items while the closure `accept` returns `true`.
     ///
@@ -2565,6 +2514,69 @@ pub trait Itertools: Iterator {
         Q: PartialEq + ?Sized,
     {
         self.any(|x| x.borrow() == query)
+    }
+
+    /// Remove a matching prefix, returning the remaining iterator.
+    ///
+    /// An empty prefix leaves the iterator untouched. On a mismatch, the error
+    /// contains both remaining iterators and the items that failed to match.
+    ///
+    /// ```
+    /// use itertools::Itertools;
+    ///
+    /// let rest = (1..6).strip_prefix([1, 2]).unwrap().collect_vec();
+    /// assert_eq!(rest, [3, 4, 5]);
+    ///
+    /// let err = (1..6).strip_prefix([1, 2, 9, 4]).unwrap_err();
+    /// assert_eq!(err.mismatch, (Some(3), 9));
+    /// assert_eq!(err.prefix.collect_vec(), [4]);
+    /// assert_eq!(err.iterator.collect_vec(), [4, 5]);
+    /// ```
+    fn strip_prefix<P>(self, prefix: P) -> Result<Self, StripPrefixError<Self, P::IntoIter>>
+    where
+        Self: Sized,
+        P: IntoIterator,
+        Self::Item: PartialEq<P::Item>,
+    {
+        self.strip_prefix_by(prefix, PartialEq::eq)
+    }
+
+    /// Remove a prefix whose items match using `eq`, returning the remaining iterator.
+    ///
+    /// `eq` receives the input item first and the prefix item second. An empty
+    /// prefix leaves the iterator untouched. On a mismatch or input exhaustion,
+    /// both iterators stop immediately after the items stored in `mismatch`.
+    ///
+    /// ```
+    /// use itertools::Itertools;
+    ///
+    /// let rest = (1..6).strip_prefix_by(["1", "2"], |item, prefix| {
+    ///     item.to_string() == *prefix
+    /// }).unwrap().collect_vec();
+    /// assert_eq!(rest, [3, 4, 5]);
+    /// ```
+    fn strip_prefix_by<P, F>(
+        mut self,
+        prefix: P,
+        mut eq: F,
+    ) -> Result<Self, StripPrefixError<Self, P::IntoIter>>
+    where
+        Self: Sized,
+        P: IntoIterator,
+        F: FnMut(&Self::Item, &P::Item) -> bool,
+    {
+        let mut prefix = prefix.into_iter();
+        while let Some(prefix_item) = prefix.next() {
+            let item = self.next();
+            if !item.as_ref().map_or(false, |item| eq(item, &prefix_item)) {
+                return Err(StripPrefixError {
+                    iterator: self,
+                    prefix,
+                    mismatch: (item, prefix_item),
+                });
+            }
+        }
+        Ok(self)
     }
 
     /// Check whether all elements compare equal.

@@ -3854,12 +3854,12 @@ func TestSetNullValue(t *testing.T) {
 	}
 }
 
-func TestDecoder_IntKeyToStringMapKey(t *testing.T) {
-	var d map[string]any
-	if err := yaml.Unmarshal([]byte("42: 100\n"), &d); err != nil {
+func TestDecoder_IntegerKeyToStringMap(t *testing.T) {
+	var got map[string]any
+	if err := yaml.Unmarshal([]byte("42: 100\n"), &got); err != nil {
 		t.Fatal(err)
 	}
-	if v, ok := d["42"]; !ok || v != uint64(100) {
-		t.Fatalf("unexpected result: %v", d)
+	if v, ok := got["42"]; !ok || v != uint64(100) {
+		t.Fatalf("unexpected result: %v", got)
 	}
 }

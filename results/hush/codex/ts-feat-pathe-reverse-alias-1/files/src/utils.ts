@@ -75,31 +75,25 @@ export function resolveAlias(path: string, aliases: Record<string, string>) {
 }
 
 /**
- * Returns all alias forms of a path, sorted from longest to shortest.
+ * Returns every alias form of a path, sorted by descending length.
+ *
+ * @param path - The real path to resolve back to aliases.
+ * @param aliases - The alias mappings used for resolution.
+ * @returns matching aliased paths, or an empty array if none match.
  */
 export function reverseResolveAlias(
   path: string,
   aliases: Record<string, string>,
 ): string[] {
   const _path = normalizeWindowsPath(path);
-  aliases = normalizeAliases(aliases);
   const matches: string[] = [];
 
-  for (const [alias, to] of Object.entries(aliases)) {
-    const target = normalizeWindowsPath(to).replace(/\/+$/, "");
-    if (
-      !_path.startsWith(target) ||
-      !pathSeparators.has(_path[target.length])
-    ) {
-      continue;
+  for (const [alias, to] of Object.entries(normalizeAliases(aliases))) {
+    const target = normalizeWindowsPath(to).replace(/\/$/, "");
+    if (_path.startsWith(target) && pathSeparators.has(_path[target.length])) {
+      const suffix = _path.slice(target.length);
+      matches.push(suffix ? join(alias, suffix) : alias);
     }
-
-    const suffix = _path.slice(target.length);
-    matches.push(
-      suffix && hasTrailingSlash(alias)
-        ? alias + suffix.slice(1)
-        : alias + suffix,
-    );
   }
 
   return matches.sort((a, b) => b.length - a.length);

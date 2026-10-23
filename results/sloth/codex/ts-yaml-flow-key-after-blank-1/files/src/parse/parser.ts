@@ -698,7 +698,7 @@ export class Parser {
                 })
                 return
               }
-            } else if (atNextItem || it.value) {
+            } else if (atNextItem) {
               map.items.push({ start })
             }
             this.stack.push(bv)

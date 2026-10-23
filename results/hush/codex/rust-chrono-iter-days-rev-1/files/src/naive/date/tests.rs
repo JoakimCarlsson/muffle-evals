@@ -730,53 +730,50 @@ fn test_date_parse_from_str() {
 
 #[test]
 fn test_date_iterators() {
-    fn check(mut iter: impl DoubleEndedIterator<Item = NaiveDate> + ExactSizeIterator) {
-        let initial_len = iter.len();
-        let first = iter.next().unwrap();
-        assert_eq!(iter.len(), initial_len - 1);
-        let last = iter.next_back().unwrap();
-        assert!(last >= first);
-        assert_eq!(iter.len(), initial_len - 2);
-        let remaining: Vec<_> = iter.by_ref().collect();
-        assert_eq!(remaining.len(), initial_len - 2);
-        assert_eq!(iter.len(), 0);
-        assert_eq!(iter.next(), None);
-        assert_eq!(iter.next_back(), None);
-    }
-
     let start = NaiveDate::from_ymd_opt(2025, 10, 10).unwrap();
-    for weeks in [false, true] {
-        let step = if weeks { 7 } else { 1 };
-        let expected: Vec<_> =
-            (0..7).rev().map(|i| start.checked_add_days(Days::new(i * step)).unwrap()).collect();
-        if weeks {
-            assert_eq!(start.iter_weeks().take(7).rev().collect::<Vec<_>>(), expected);
-            check(start.iter_weeks().take(7));
+    for step in [1, 7] {
+        let check = |mut iter: Box<dyn DoubleEndedIterator<Item = NaiveDate>>| {
+            assert_eq!(iter.next(), Some(start));
+            assert_eq!(iter.next_back(), Some(start + Days::new(step * 2)));
+            assert_eq!(iter.next_back(), Some(start + Days::new(step)));
+            assert_eq!(iter.next(), None);
+            assert_eq!(iter.next_back(), None);
+        };
+        if step == 1 {
+            check(Box::new(start.iter_days().take(3)));
         } else {
-            assert_eq!(start.iter_days().take(7).rev().collect::<Vec<_>>(), expected);
-            assert_eq!(start.iter_days().next_back(), Some(NaiveDate::MAX));
-            check(start.iter_days().take(7));
+            check(Box::new(start.iter_weeks().take(3)));
         }
     }
+    let mut expected: Vec<_> = start.iter_days().take(7).collect();
+    expected.reverse();
+    assert_eq!(expected, start.iter_days().take(7).rev().collect::<Vec<_>>());
+    let mut expected: Vec<_> = start.iter_weeks().take(7).collect();
+    expected.reverse();
+    assert_eq!(expected, start.iter_weeks().take(7).rev().collect::<Vec<_>>());
+
     for offset in 0..15 {
-        let start = NaiveDate::MAX.checked_sub_days(Days::new(offset)).unwrap();
-        let days: Vec<_> = start.iter_days().collect();
+        let start = NaiveDate::MAX - Days::new(offset);
+        let mut days = start.iter_days();
         assert_eq!(days.len(), offset as usize + 1);
-        assert_eq!(days.last(), Some(&NaiveDate::MAX));
-        assert_eq!(
-            start.iter_days().rev().collect::<Vec<_>>(),
-            days.into_iter().rev().collect::<Vec<_>>()
-        );
-        let weeks: Vec<_> = start.iter_weeks().collect();
+        assert_eq!(days.next_back(), Some(NaiveDate::MAX));
+        assert_eq!(days.len(), offset as usize);
+        assert_eq!(days.count(), offset as usize);
+        let mut weeks = start.iter_weeks();
         assert_eq!(weeks.len(), offset as usize / 7 + 1);
-        assert_eq!(start.iter_weeks().len(), weeks.len());
-        assert_eq!(
-            start.iter_weeks().rev().collect::<Vec<_>>(),
-            weeks.into_iter().rev().collect::<Vec<_>>()
-        );
+        assert_eq!(weeks.next_back(), Some(start + Days::new(offset / 7 * 7)));
+        assert_eq!(weeks.len(), offset as usize / 7);
+        assert_eq!(weeks.count(), offset as usize / 7);
     }
-    assert_eq!(NaiveDate::MIN.iter_days().next(), Some(NaiveDate::MIN));
-    assert_eq!(NaiveDate::MIN.iter_weeks().next(), Some(NaiveDate::MIN));
+    let mut days = NaiveDate::MIN.iter_days();
+    assert_eq!(days.next(), Some(NaiveDate::MIN));
+    assert_eq!(days.next_back(), Some(NaiveDate::MAX));
+    assert_eq!(days.nth(usize::MAX), None);
+    assert_eq!(days.next_back(), None);
+    let mut weeks = NaiveDate::MIN.iter_weeks();
+    assert_eq!(weeks.next(), Some(NaiveDate::MIN));
+    assert_eq!(weeks.nth_back(usize::MAX), None);
+    assert_eq!(weeks.next(), None);
 }
 
 #[test]

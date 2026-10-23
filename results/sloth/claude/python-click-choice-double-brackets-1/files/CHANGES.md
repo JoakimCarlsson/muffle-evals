@@ -2,6 +2,8 @@
 
 Unreleased
 
+- Optional arguments of type {class}`Choice` or {class}`DateTime` no longer
+  show doubled square brackets in the usage help.
 - Fix Fish shell completion broken in `8.4.0` by {pr}`3126`. Newlines and
   tabs in option help text are now escaped, keeping the original completion
   format while still supporting multi-line help. {issue}`3502`
@@ -11,8 +13,6 @@ Unreleased
 - A {class}`Group` with `invoke_without_command=True` marks its subcommand as
   optional in the usage help, showing `[COMMAND]` instead of `COMMAND`.
   {issue}`3059` {pr}`3507`
-- An optional argument of type {class}`Choice` or {class}`DateTime` no longer
-  shows double square brackets in the usage help.
 - `echo_via_pager` flushes after each write, so passing a generator streams
   output to the pager incrementally instead of staying hidden until the pipe
   buffer fills. {issue}`3242` {issue}`2542` {pr}`3534`

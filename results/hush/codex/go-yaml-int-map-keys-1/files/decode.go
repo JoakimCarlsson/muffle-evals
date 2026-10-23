@@ -1755,7 +1755,7 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
 				return err
 			}
 			k = reflect.ValueOf(keyVal)
-			if k.IsValid() && (keyType.Kind() == reflect.String || k.Type().ConvertibleTo(keyType)) {
+			if k.IsValid() && k.Type().ConvertibleTo(keyType) {
 				k, err = d.convertValue(k, keyType, key)
 				if err != nil {
 					return err

@@ -1,9 +1,11 @@
-I’ll check the shared path encode set and its callers, make the smallest fix, then build and run the existing tests.
+I’ll check the shared path encoding set and its callers, add a focused regression test, then build and run the existing tests.
 
-The shared `PATH` set covers parsing, relative URL resolution, path setters, and file-path conversion. Existing fixtures already expect `%5E`; three entries mark those cases as known failures. I’ll add the caret to `PATH` and remove those entries. No new APIs, dependencies, or tests are needed.
+The shared `PATH` set covers parsing, relative joins, path setters, segment mutation, and file URL construction. Adding `^` there fixes those callers together. The existing WHATWG fixtures already expect `%5E`, so no fixture, config, or export changes are needed. I’ll add one regression test covering the reported URL, path boundaries, and those mutation APIs; query, fragment, and opaque-path behavior should stay unchanged.
 
-Fixed the shared path percent-encode set to include `^`, so `http://localhost/a^b` becomes `http://localhost/a%5Eb`.
+The build and unit tests pass. Three WHATWG cases now pass too, but the harness flags them because they’re still listed as expected failures. I’ll remove those three entries and rerun the suite.
 
-Removed three known-failure entries for existing tests that now pass.
+Fixed the shared path encoding set to encode `^` as `%5E`. Parsing `"http://localhost/a^b"` now produces `"http://localhost/a%5Eb"`.
 
-Validation: workspace build and tests passed; `git diff --check` passed.
+Added regression coverage and removed three obsolete WHATWG expected-failure entries.
+
+Validation passed: build, formatting, and all `url` tests, including WHATWG tests and doctests.

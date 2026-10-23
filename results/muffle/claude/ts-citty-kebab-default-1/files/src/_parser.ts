@@ -174,10 +174,9 @@ export function parseRawArgs<T = Record<string, any>>(
   };
   propagate();
 
-  // Apply defaults only after aliases are resolved, so a value passed via any
-  // alias (e.g. kebab-case) is not shadowed by the default of the main name
+  // Apply defaults last so a value given under any alias wins over them
   for (const [name, value] of Object.entries(defaults)) {
-    if (value !== undefined && (out as any)[name] === undefined) {
+    if ((out as any)[name] === undefined) {
       (out as any)[name] = value;
     }
   }

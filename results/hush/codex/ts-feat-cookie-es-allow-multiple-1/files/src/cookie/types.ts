@@ -7,9 +7,8 @@
  */
 export interface CookieParseOptions {
   /**
-   * Preserve duplicate cookie values in order as an array.
-   * Cookies that appear once remain strings.
-   *
+   * Collect duplicate cookie values in an array, preserving their order.
+   * Names that appear once keep a single string value.
    * @default false
    */
   allowMultiple?: boolean;
@@ -38,7 +37,7 @@ export interface CookieParseOptions {
  */
 export type Cookies<AllowMultiple extends boolean = false> = Record<
   string,
-  string | undefined | (true extends AllowMultiple ? (string | undefined)[] : never)
+  string | undefined | (AllowMultiple extends true ? string[] : never)
 >;
 
 /**

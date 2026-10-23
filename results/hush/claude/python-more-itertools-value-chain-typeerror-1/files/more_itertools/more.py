@@ -4414,11 +4414,11 @@ def value_chain(*args):
             yield value
             continue
         try:
-            it = iter(value)
+            iterator = iter(value)
         except TypeError:
             yield value
         else:
-            yield from it
+            yield from iterator
 
 
 def product_index(element, *iterables, repeat=1):

@@ -2074,9 +2074,8 @@ class Constant(Field[_ContantT]):
     _CHECK_ATTRIBUTE = False
 
     def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
-        # ``required`` is applied after init, since the base class forbids it
-        # together with ``load_default``. A required Constant is still always
-        # loaded as the constant, whether the input is missing or not.
+        # A required Constant is still always loaded as the constant, so
+        # ``required`` is only kept as a flag (e.g. for OpenAPI generation).
         required = kwargs.pop("required", False)
         kwargs["load_default"] = constant
         kwargs["dump_default"] = constant
@@ -2085,6 +2084,7 @@ class Constant(Field[_ContantT]):
         self.constant = constant
 
     def _validate_missing(self, value) -> None:
+        # A missing value is never an error: the constant is used instead.
         if value is missing_:
             return
         super()._validate_missing(value)

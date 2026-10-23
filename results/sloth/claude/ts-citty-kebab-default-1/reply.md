@@ -1,12 +1,5 @@
-You've hit your session limit · resets 11:30am (Europe/Stockholm)
+`--foo-bar one` now sets `fooBar` to `"one"`, and `"foo-bar"` is `"one"` too. I added a test for your exact case in `test/args.test.ts`. The full suite passes (64 tests) and there are no type errors.
 
-Quick check of the reported case:
+The default was being handed to `node:util`'s `parseArgs` under the camelCase name. `fooBar` therefore always had a value, and the later step that copies a value between the `fooBar` and `foo-bar` names saw `fooBar` as already set and skipped it. In `src/_parser.ts` I now apply defaults after that copy step, so a value passed under any spelling takes priority. The default is then copied to the other spellings only where they're still unset.
 
-`--foo-bar one` now gives `fooBar: "one"` and `"foo-bar": "one"`. With no flag, `fooBar` is still `"two"`.
-
-The cause was in `src/_parser.ts`. Defaults were handed to `node:util`'s `parseArgs`, which filled in `fooBar: "two"` before alias propagation ran. Propagation only copies a value to an alias that is still unset, so `foo-bar: "one"` never replaced the default.
-
-The fix registers options without defaults, resolves aliases, and then applies each default only if the argument is still unset. It then propagates aliases once more so the default reaches every alias name.
-
-- **Checks:** the existing suite passes (63 tests, no type errors). I also ran your exact case in a throwaway test, which passed, and deleted it afterwards. I didn't add a permanent regression test since you didn't ask for one.
-- **Tool timeout:** my first test run hit the tool timeout and was killed. The rerun finished fine.
+I haven't committed anything.

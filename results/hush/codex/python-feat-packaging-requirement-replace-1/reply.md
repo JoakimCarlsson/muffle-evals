@@ -1,2 +1,2 @@
 Done.
-Added validated `Requirement.__replace__`, independent mutable copies, prerelease preservation, subclass support, docs. 7,410 tests passed; lint passed.
+Added `Requirement.__replace__`, validation, independent specifiers, subclass support, docs. All 5,369 requirement tests, Ruff, and mypy passed.

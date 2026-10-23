@@ -1,7 +1,7 @@
-I’ll check the base-matching logic, fix the path boundary check, and add regression tests for these cases.
+I’ll check the base-matching logic, add regression tests for the prefix collision, and run the relevant checks.
 
 Fixed both functions to require a boundary after the base: end of input, `/`, `?`, or `#`.
 
-Added regression coverage for prefix collisions, trailing slashes, queries, and fragments. Your `/admin-dashboard` examples now return the expected results.
+`/admin-dashboard` now stays unchanged with `withoutBase` and becomes `/admin/admin-dashboard` with `withBase`. Existing base-path behavior is preserved.
 
-Validation passed: lint, formatting, all 507 tests, and type checking.
+Added regression coverage. All 495 tests, type checks, lint, and formatting passed.

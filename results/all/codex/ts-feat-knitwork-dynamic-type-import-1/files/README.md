@@ -68,7 +68,7 @@ Generate an ESM dynamic `import()` statement.
 
 ### `genDynamicTypeImport(specifier, name?, options)`
 
-Generate a `typeof import()` type expression with an optional export name.
+Generate a TypeScript `typeof import()` expression with an optional export name.
 
 ### `genExport(specifier, exports?, options)`
 

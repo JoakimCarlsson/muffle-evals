@@ -1,5 +1,5 @@
-Iterator bounds need inspection; reverse traversal must share forward range.
+Iterator ends must share one range. Checking day/week bounds and reverse tests.
 
 
 Done.
-Fixed both iterators’ reverse bounds, lengths, exhaustion, endpoint inclusion; added regression tests. 290 unit tests passed; three unrelated doctests failed on deprecated `std::i32::MAX`.
+Fixed day/week reverse ranges, lengths, exhaustion; included endpoints. 290 tests passed; no-default-features check passed. Three unrelated doctests fail on deprecated constants.

@@ -51,6 +51,7 @@ export function parseRawArgs<T = Record<string, any>>(
     {
       type: "boolean" | "string";
       short?: string;
+      default?: any;
       multiple?: boolean;
     }
   > = {};
@@ -162,11 +163,8 @@ export function parseRawArgs<T = Record<string, any>>(
 
   // Apply defaults only when neither the option nor its aliases were supplied.
   for (const [name, value] of Object.entries(defaults)) {
-    const aliases = mainToAliases.get(name) || [];
-    if (
-      (out as any)[name] === undefined &&
-      aliases.every((alias) => (out as any)[alias] === undefined)
-    ) {
+    const names = [name, ...(mainToAliases.get(name) || [])];
+    if (names.every((key) => (out as any)[key] === undefined)) {
       (out as any)[name] = value;
     }
   }

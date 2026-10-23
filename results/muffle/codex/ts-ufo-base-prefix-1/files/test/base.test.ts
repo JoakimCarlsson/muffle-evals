@@ -1,38 +1,30 @@
 import { describe, expect, test } from "vitest";
 import { withBase, withoutBase } from "../src";
 
+describe("base boundaries", () => {
+  for (const base of ["/admin", "/admin/"]) {
+    for (const suffix of ["-dashboard", "istrator", ".html", "%2Fdashboard"]) {
+      const input = `/admin${suffix}`;
+      test(`${base} does not match ${input}`, () => {
+        expect(withoutBase(input, base)).toBe(input);
+        expect(withBase(input, base)).toBe(`/admin${input}`);
+      });
+    }
+
+    for (const suffix of ["", "/dashboard", "?x", "#section"]) {
+      const input = `/admin${suffix}`;
+      test(`${base} matches ${input}`, () => {
+        expect(withoutBase(input, base)).toBe(
+          suffix.startsWith("/") ? suffix : `/${suffix}`,
+        );
+        expect(withBase(input, base)).toBe(input);
+      });
+    }
+  }
+});
+
 describe("withBase", () => {
   const tests = [
-    {
-      base: "/admin",
-      input: "/admin-dashboard",
-      out: "/admin/admin-dashboard",
-    },
-    { base: "/admin", input: "/administrator", out: "/admin/administrator" },
-    {
-      base: "/admin",
-      input: "/admin%2Fdashboard",
-      out: "/admin/admin%2Fdashboard",
-    },
-    { base: "/admin", input: "/admin", out: "/admin" },
-    { base: "/admin", input: "/admin/dashboard", out: "/admin/dashboard" },
-    { base: "/admin", input: "/admin?x", out: "/admin?x" },
-    { base: "/admin", input: "/admin#section", out: "/admin#section" },
-    {
-      base: "/admin/",
-      input: "/admin-dashboard",
-      out: "/admin/admin-dashboard",
-    },
-    { base: "/admin/", input: "/administrator", out: "/admin/administrator" },
-    {
-      base: "/admin/",
-      input: "/admin%2Fdashboard",
-      out: "/admin/admin%2Fdashboard",
-    },
-    { base: "/admin/", input: "/admin", out: "/admin" },
-    { base: "/admin/", input: "/admin/dashboard", out: "/admin/dashboard" },
-    { base: "/admin/", input: "/admin?x", out: "/admin?x" },
-    { base: "/admin/", input: "/admin#section", out: "/admin#section" },
     { base: "/", input: "/", out: "/" },
     { base: "/foo", input: "", out: "/foo" },
     { base: "/foo/", input: "/", out: "/foo" },
@@ -54,20 +46,6 @@ describe("withBase", () => {
 
 describe("withoutBase", () => {
   const tests = [
-    { base: "/admin", input: "/admin-dashboard", out: "/admin-dashboard" },
-    { base: "/admin", input: "/administrator", out: "/administrator" },
-    { base: "/admin", input: "/admin%2Fdashboard", out: "/admin%2Fdashboard" },
-    { base: "/admin", input: "/admin", out: "/" },
-    { base: "/admin", input: "/admin/dashboard", out: "/dashboard" },
-    { base: "/admin", input: "/admin?x", out: "/?x" },
-    { base: "/admin", input: "/admin#section", out: "/#section" },
-    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
-    { base: "/admin/", input: "/administrator", out: "/administrator" },
-    { base: "/admin/", input: "/admin%2Fdashboard", out: "/admin%2Fdashboard" },
-    { base: "/admin/", input: "/admin", out: "/" },
-    { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
-    { base: "/admin/", input: "/admin?x", out: "/?x" },
-    { base: "/admin/", input: "/admin#section", out: "/#section" },
     { base: "/", input: "/", out: "/" },
     { base: "/foo", input: "/", out: "/" },
     { base: "/foo/", input: "/", out: "/" },

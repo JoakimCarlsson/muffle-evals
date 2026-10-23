@@ -1,14 +1,13 @@
-Builds. Now updating the doc examples and tests that relied on the old cursor-style `rev()`.
+Running the tests again; `--all-features` clashes with rkyv's size features, so I'm using the default features.
 
-`NaiveDate::iter_days` and `iter_weeks` now iterate correctly from both ends. Your example passes: `start.iter_days().take(7).rev()` gives the same dates as collecting forward and reversing. The unit tests pass (292), but three doctests fail: `checked_sub_months`, and `checked_add_months` and `checked_sub_months` on `NaiveDateTime`. They fail on a deprecated `std::i32::MAX` and don't touch the iterators. I didn't run with `--all-features`, because that build fails on mutually exclusive `rkyv` size features.
+Doc tests were filtered out; running them too.
 
-**Cause:** each iterator was a single cursor. `next` moved it up and `next_back` moved it down from the same date, so `.rev()` walked towards `NaiveDate::MIN`. That also explains the `[-258092-07-28]` in your output.
+I fixed it. `iter_days` and `iter_weeks` now keep a front and a back end, so both ends work on the same range and stop when they meet. Your example now passes. The date tests and the two `iter_*` doc tests pass. I didn't run the rest of the suite, and `--all-features` doesn't build here because rkyv's `size_*` features conflict.
 
-**Fix (`src/naive/date/mod.rs`):** each iterator now stores its start date and how many dates remain up to `NaiveDate::MAX`. `next` and `next_back` each take from their own end and stop when the two meet. `len()` is exact and matches what you actually get.
+**Behaviour change:** `.rev()` used to walk backward from the start date, and the old docs and tests relied on that. It now starts at the end of the range, which matches the `DoubleEndedIterator` docs. If you want a backward walk from a date, use `successors` or an explicit loop. I rewrote the doc examples and the old `rev()` test cases to match.
 
-**Behaviour changes:**
-- `iter_days` now yields `NaiveDate::MAX` and `len()` is one higher. Before, it never yielded `MAX`.
-- `iter_weeks` now yields the last date reachable in 7-day steps from the start. It also counts one more date than before.
-- `.rev()` on its own now starts at the far end, so `date.iter_days().rev()` begins at `NaiveDate::MAX`. Code that used `.rev()` to walk backwards from `date` must now use `.take(n).rev()`.
+**`NaiveDate::MAX` is still excluded.** The old forward iteration never yielded it, and `len()` already counted only the dates before it. So `start.iter_days().next_back()` is `NaiveDate::MAX.pred_opt()`, not `MAX`. Including `MAX` would need a different representation, so I left it out.
 
-I changed the `iter_days` and `iter_weeks` doc examples to use `.take(4).rev()`. I replaced the old limit tests with new ones, and added a test that reverse matches forward for days, weeks and the `MAX` boundary.
+The change is in `src/naive/date/mod.rs`, with new cases in `test_day_iterator_limit` and `test_week_iterator_limit` in `src/naive/date/tests.rs`. They cover your reverse-equals-reversed-forward example, the meeting of both ends near `MAX_YEAR`, and exhaustion.
+
+I haven't committed anything.

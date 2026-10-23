@@ -72,28 +72,16 @@ Usage
 Reference
 ---------
 
-Use ``Requirement.__replace__`` to copy a requirement with selected fields
-changed. On Python 3.13 and later, ``copy.replace`` also supports requirements.
-Accepted keywords are ``name``, ``url``, ``extras``, ``specifier``, and ``marker``;
-values use the same types as the corresponding attributes. Omitted fields are
-preserved, and the original requirement is unchanged. Mutable fields are copied,
-including specifier sets and their individual specifiers, preserving prerelease
-overrides. Subclasses are constructed through their own initializer.
-
-.. doctest::
-
-    >>> from packaging.specifiers import SpecifierSet
-    >>> req = Requirement('requests[security]>=2; python_version >= "3"')
-    >>> req.__replace__(name="flask")
-    <Requirement('flask[security]>=2; python_version >= "3"')>
-    >>> req.__replace__(specifier=SpecifierSet(">=3"))
-    <Requirement('requests[security]>=3; python_version >= "3"')>
-
-Unknown keywords raise :class:`TypeError`. Invalid values or combinations,
-including values that would parse back into different fields, raise
-:class:`InvalidRequirement`. Returned fields are normalized by parsing.
+Use ``req.__replace__(name="other")`` to create an independent requirement
+with selected fields changed. On Python 3.13+, ``copy.replace(req, name="other")``
+also works. Supported fields are ``name``, ``url``, ``extras``, ``specifier``, and
+``marker``, using the same types as the attributes. Pass ``None`` to remove a URL
+or marker, an empty set to remove extras, or an empty ``SpecifierSet`` to remove
+version constraints. Invalid values raise :class:`InvalidRequirement`, and
+unknown fields raise :class:`TypeError`. Specifier prerelease settings are
+preserved without sharing mutable specifiers. Subclasses retain their type and
+run their initializer.
 
 .. automodule:: packaging.requirements
     :members:
     :exclude-members: __init__, __new__
-    :special-members: __replace__

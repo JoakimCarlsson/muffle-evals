@@ -1,5 +1,5 @@
-Fix coefficient digit count; inspect implementation and tests.
+`NumDigits` should return exact coefficient digits. Checking implementation and tests.
 
 
 Done.
-`NumDigits` uses exact integer counting. Added regression tests for reported inputs, signed power boundaries, and int64 limits. `go test ./...` passed.
+`NumDigits` uses exact integer counting. Added regression tests for powers of ten, signs, exponents, and integer limits. `go test ./...` passed.

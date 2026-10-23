@@ -2081,16 +2081,15 @@ class Constant(Field[_ContantT]):
         self.required = required
         self.constant = constant
 
+    def _validate_missing(self, value) -> None:
+        if value is not missing_:
+            super()._validate_missing(value)
+
     def _serialize(self, value, *args, **kwargs) -> _ContantT:
         return self.constant
 
     def _deserialize(self, value, *args, **kwargs) -> _ContantT:
         return self.constant
-
-    def _validate_missing(self, value: typing.Any) -> None:
-        """A missing constant is never an error; ``required`` only marks the field."""
-        if value is not missing_:
-            super()._validate_missing(value)
 
 
 # Aliases

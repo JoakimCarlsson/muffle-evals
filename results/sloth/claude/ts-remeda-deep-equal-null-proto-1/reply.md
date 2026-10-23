@@ -1,14 +1,7 @@
-`isDeepEqual` now treats a `null`-prototype object like a plain object, so your two examples return `true`. The existing `isDeepEqual` tests pass, along with a throwaway test I wrote and then deleted. It covered both argument orders, a nested case, and a `null`-prototype object against a class instance (still `false`). The `tsc` and `eslint` runs printed only `npx` notices, no errors, but I didn't confirm their exit codes.
+`isDeepEqual` now treats a null-prototype object like a plain object. The existing tests and the new one pass, and vitest's type check reports no errors. Prettier skipped the test file ("No files matching the pattern"), so I couldn't confirm it matches the repo's formatting. The standalone `tsc` run also failed because there's no tsconfig at that path.
 
-The change is in `packages/remeda/src/isDeepEqual.ts`. The prototype check now maps a `null` prototype to `Object.prototype` before comparing. Objects of different classes still compare as unequal.
+The fix is in `packages/remeda/src/isDeepEqual.ts`. The prototype check now maps a `null` prototype to `Object.prototype` before comparing. Your `querystring.parse` and `Object.create(null)` examples both return `true`, in either argument order and when nested. Two null-prototype objects compare equal to each other as well.
 
-I also changed the key check from `key in other` to `Object.hasOwn(other, key)`. Without that, a `null`-prototype object with an own key like `toString` could wrongly match a plain object that only inherits `toString`. Plain-versus-plain comparisons are affected the same way: an inherited key no longer counts as a match for an own key.
+Instances of different classes still compare as unequal. A null-prototype object also still doesn't equal an array or a class instance.
 
-I didn't add a permanent test, since you didn't ask for one. Nothing is committed.
-
-The background command from my first attempt was stopped after it hit its time limit. It ran the file edit, then `vitest`, `tsc` and `eslint` in one chain. The edit had already been applied, and I'd reran the tests separately, so nothing needs restarting.
-
-- **Tests:** the separate `vitest` run passed (67 tests, no type errors).
-- **`tsc` and `eslint`:** in my later re-run these printed only `npx` notices and no errors. That output doesn't prove they passed, since I didn't confirm exit codes. If you want certainty, run `npx tsc --noEmit` and `npx eslint src/isDeepEqual.ts` in `packages/remeda`.
-
-The fix in `packages/remeda/src/isDeepEqual.ts` is unchanged, and nothing is committed.
+I added a test, "null-prototype objects equal plain objects", to `isDeepEqual.test.ts`. It covers both argument orders, nesting, a differing value, an array, and a class instance.

@@ -361,9 +361,7 @@ func (t *threadSafeSet[T]) Value() (driver.Value, error) {
 	return t.uss.Value()
 }
 
-// Scan implements sql.Scanner. It replaces the set contents with the JSON
-// array in src (string or []byte); nil empties the set. On error the set
-// is unchanged.
+// Scan implements sql.Scanner. See threadUnsafeSet.Scan.
 func (t *threadSafeSet[T]) Scan(src any) error {
 	t.Lock()
 	defer t.Unlock()

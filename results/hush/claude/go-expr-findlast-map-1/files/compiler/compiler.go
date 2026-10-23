@@ -1220,7 +1220,7 @@ func (c *compiler) emitLoopBackwards(body func()) {
 	c.emit(OpDecrementIndex)
 	c.emit(OpJumpBackward, c.calcBackwardJump(begin))
 	c.patchJump(end)
-	c.emit(OpPop)
+	c.emit(OpPop) // condition left by the failed bounds check
 }
 
 func (c *compiler) PredicateNode(node *ast.PredicateNode) {

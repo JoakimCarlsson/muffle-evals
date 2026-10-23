@@ -1,16 +1,16 @@
 diff --git a/CHANGES.md b/CHANGES.md
-index 8991e82..07f15ac 100644
+index 8991e82..706bdc8 100644
 --- a/CHANGES.md
 +++ b/CHANGES.md
-@@ -11,6 +11,8 @@ Unreleased
- - A {class}`Group` with `invoke_without_command=True` marks its subcommand as
-   optional in the usage help, showing `[COMMAND]` instead of `COMMAND`.
-   {issue}`3059` {pr}`3507`
-+- An optional argument of type {class}`Choice` or {class}`DateTime` no longer
-+  shows double square brackets in the usage help.
- - `echo_via_pager` flushes after each write, so passing a generator streams
-   output to the pager incrementally instead of staying hidden until the pipe
-   buffer fills. {issue}`3242` {issue}`2542` {pr}`3534`
+@@ -2,6 +2,8 @@
+ 
+ Unreleased
+ 
++- Optional arguments of type {class}`Choice` or {class}`DateTime` no longer
++  show doubled square brackets in the usage help.
+ - Fix Fish shell completion broken in `8.4.0` by {pr}`3126`. Newlines and
+   tabs in option help text are now escaped, keeping the original completion
+   format while still supporting multi-line help. {issue}`3502`
 diff --git a/src/click/core.py b/src/click/core.py
 index d2db291..cd642b5 100644
 --- a/src/click/core.py
@@ -24,3 +24,34 @@ index d2db291..cd642b5 100644
              var = f"[{var}]"
          if self.nargs != 1:
              var += "..."
+diff --git a/tests/test_arguments.py b/tests/test_arguments.py
+index 6015282..ddca817 100644
+--- a/tests/test_arguments.py
++++ b/tests/test_arguments.py
+@@ -306,6 +306,26 @@ def test_deprecated_usage(runner):
+     assert "[F!]" in result.output
+ 
+ 
++@pytest.mark.parametrize(
++    ("type", "kwargs", "expected"),
++    [
++        (click.Choice(["a", "b"]), {"required": False}, "[a|b]"),
++        (click.Choice(["a", "b"]), {"nargs": -1}, "[a|b]..."),
++        (click.Choice(["a", "b"]), {"required": True}, "{a|b}"),
++        (click.DateTime(formats=["%Y-%m-%d"]), {"required": False}, "[%Y-%m-%d]"),
++    ],
++)
++def test_argument_metavar_no_double_brackets(runner, type, kwargs, expected):
++    @click.command()
++    @click.argument("foo", type=type, **kwargs)
++    def cli(foo):
++        pass
++
++    result = runner.invoke(cli, ["--help"])
++    assert f"[OPTIONS] {expected}" in result.output
++    assert f"[{expected}]" not in result.output
++
++
+ @pytest.mark.parametrize(
+     ("kwargs", "expected"),
+     [

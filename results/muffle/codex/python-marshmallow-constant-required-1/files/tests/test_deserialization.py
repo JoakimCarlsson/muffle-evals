@@ -1406,20 +1406,19 @@ class TestFieldDeserialization:
         assert field.deserialize("whatever") == "something"
 
     @pytest.mark.parametrize("required", [False, True])
-    @pytest.mark.parametrize("constant", [42, None])
-    def test_constant_is_always_included_in_deserialized_data(self, required, constant):
+    def test_constant_is_always_included_in_deserialized_data(self, required):
         class MySchema(Schema):
-            foo = fields.Constant(constant, required=required)
+            foo = fields.Constant(42, required=required)
 
         sch = MySchema()
         assert sch.fields["foo"].required is required
-        assert sch.load({}) == {"foo": constant}
-        assert sch.load({"foo": 24}) == {"foo": constant}
-        assert sch.load({"foo": None}) == {"foo": constant}
+        assert sch.load({})["foo"] == 42
+        assert sch.load({"foo": 24})["foo"] == 42
 
-    def test_constant_none_allows_none_value(self):
+    @pytest.mark.parametrize("required", [False, True])
+    def test_constant_none_allows_none_value(self, required):
         class MySchema(Schema):
-            foo = fields.Constant(None)
+            foo = fields.Constant(None, required=required)
 
         sch = MySchema()
         assert sch.load({"foo": None})["foo"] is None

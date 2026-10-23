@@ -2074,18 +2074,20 @@ class Constant(Field[_ContantT]):
     _CHECK_ATTRIBUTE = False
 
     def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
+        # A required Constant is still always loaded as the constant, so
+        # ``required`` is set after init to bypass the load_default check.
         required = kwargs.pop("required", False)
         kwargs["load_default"] = constant
         kwargs["dump_default"] = constant
         super().__init__(**kwargs)
-        # Set after init: the constant is the load default, which required
-        # fields normally forbid. Useful for marking the field required in schema specs.
         self.required = required
         self.constant = constant
 
     def _validate_missing(self, value) -> None:
-        # Loading always yields the constant, so nothing can be missing or invalid
-        pass
+        # A missing value is never an error: the constant is used instead.
+        if value is missing_:
+            return
+        super()._validate_missing(value)
 
     def _serialize(self, value, *args, **kwargs) -> _ContantT:
         return self.constant

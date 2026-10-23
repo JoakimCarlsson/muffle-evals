@@ -1,14 +1,14 @@
-diff --git a/releasenotes/notes/add-wait-exception-3f1c9a7d2b6e4a58.yaml b/releasenotes/notes/add-wait-exception-3f1c9a7d2b6e4a58.yaml
+diff --git a/releasenotes/notes/wait-exception-3f1c9a7d2b64e850.yaml b/releasenotes/notes/wait-exception-3f1c9a7d2b64e850.yaml
 new file mode 100644
-index 0000000..25a75b2
+index 0000000..e92ca68
 --- /dev/null
-+++ b/releasenotes/notes/add-wait-exception-3f1c9a7d2b6e4a58.yaml
++++ b/releasenotes/notes/wait-exception-3f1c9a7d2b64e850.yaml
 @@ -0,0 +1,5 @@
 +---
 +features:
 +  - |
 +    Add ``wait_exception``, a wait strategy that waits the number of seconds
-+    returned by a function called with the exception raised by the last attempt.
++    returned by a function called with the exception of the last attempt.
 diff --git a/tenacity/__init__.py b/tenacity/__init__.py
 index e93793c..b0b4794 100644
 --- a/tenacity/__init__.py
@@ -30,32 +30,58 @@ index e93793c..b0b4794 100644
      "wait_fixed",
      "wait_incrementing",
 diff --git a/tenacity/wait.py b/tenacity/wait.py
-index dc3c850..f68d53b 100644
+index dc3c850..40ea98f 100644
 --- a/tenacity/wait.py
 +++ b/tenacity/wait.py
-@@ -88,6 +88,25 @@ class wait_combine(wait_base):
-         return sum(x(retry_state=retry_state) for x in self.wait_funcs)
+@@ -78,6 +78,30 @@ class wait_random(wait_base):
+         )
  
  
 +class wait_exception(wait_base):
-+    """Wait strategy that waits the amount of time returned by a function
-+    called with the exception raised by the last attempt.
++    """Wait strategy that waits the time returned by a function of the last exception.
 +
-+    Raises RuntimeError if the last attempt did not fail with an exception.
++    Raises RuntimeError if the last attempt did not raise an exception.
++
++    For example::
++
++        @retry(wait=wait_exception(lambda e: 60.0))
++        def fn():
++            ...
 +    """
 +
 +    def __init__(self, predicate: typing.Callable[[BaseException], float]) -> None:
 +        self.predicate = predicate
 +
 +    def __call__(self, retry_state: "RetryCallState") -> float:
-+        exception = retry_state.outcome.exception() if retry_state.outcome else None
++        if retry_state.outcome is None:
++            raise RuntimeError("__call__() called before outcome was set")
++        exception = retry_state.outcome.exception()
 +        if exception is None:
-+            raise RuntimeError(
-+                "wait_exception requires the last attempt to fail with an exception"
-+            )
++            raise RuntimeError("wait_exception: last attempt did not raise")
 +        return self.predicate(exception)
 +
 +
- class wait_chain(wait_base):
-     """Chain two or more waiting strategies.
+ class wait_combine(wait_base):
+     """Combine several waiting strategies."""
  
+diff --git a/tests/test_tenacity.py b/tests/test_tenacity.py
+index b76fec2..30e03a2 100644
+--- a/tests/test_tenacity.py
++++ b/tests/test_tenacity.py
+@@ -418,6 +418,16 @@ class TestWaitConditions(unittest.TestCase):
+         self.assertLessEqual(wait, target + epsilon)
+         self.assertGreaterEqual(wait, target - epsilon)
+ 
++    def test_wait_exception(self):
++        r = Retrying(
++            wait=tenacity.wait_exception(lambda e: 5.0 if isinstance(e, KeyError) else 9)
++        )
++        for exc, expected in ((KeyError(), 5.0), (ValueError(), 9)):
++            fut = tenacity.Future(1)
++            fut.set_exception(exc)
++            self.assertEqual(expected, r.wait(make_retry_state(1, 0, fut)))
++        self.assertRaises(RuntimeError, r.wait, make_retry_state(1, 0))
++
+     def test_wait_chain(self):
+         r = Retrying(
+             wait=tenacity.wait_chain(

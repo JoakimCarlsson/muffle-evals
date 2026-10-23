@@ -3,7 +3,7 @@
 # for complete details.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ._parser import parse_requirement as _parse_requirement
 from ._tokenizer import ParserSyntaxError
@@ -14,15 +14,10 @@ from .utils import canonicalize_name
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from typing_extensions import Self
-
 __all__ = [
     "InvalidRequirement",
     "Requirement",
 ]
-
-
-_UNSET: Any = object()
 
 
 def __dir__() -> list[str]:
@@ -111,52 +106,41 @@ class Requirement:
             self.marker = Marker.__new__(Marker)
             self.marker._markers = _normalize_extra_values(parsed.marker)
 
-    def __replace__(
-        self,
-        *,
-        name: str = _UNSET,
-        url: str | None = _UNSET,
-        extras: set[str] = _UNSET,
-        specifier: SpecifierSet = _UNSET,
-        marker: Marker | None = _UNSET,
-    ) -> Self:
-        """Return a new requirement with the specified fields replaced.
+    def __replace__(self, **changes: object) -> Requirement:
+        """Return a validated copy with the given requirement fields replaced.
 
-        Omitted fields are retained. The result is validated and normalized
-        by parsing, and mutable fields are copied. Specifier prerelease
-        overrides are preserved on both the set and its individual specifiers.
-
-        Supports :func:`copy.replace` on Python 3.13 and later, and can be
-        called directly on earlier Python versions.
-
-        :raises InvalidRequirement: If the fields do not form a valid
-            requirement or parsing would change the requested fields.
-
-        .. versionadded:: 26.4
+        Only ``name``, ``url``, ``extras``, ``specifier``, and ``marker`` may
+        be supplied. Invalid or reinterpreted fields raise InvalidRequirement.
+        Specifier prerelease overrides are preserved without sharing objects.
         """
+        fields = {
+            "name": (str,),
+            "url": (str, type(None)),
+            "extras": (set,),
+            "specifier": (SpecifierSet,),
+            "marker": (Marker, type(None)),
+        }
+        for field in changes:
+            if field not in fields:
+                raise TypeError(f"Unexpected field name: {field!r}")
+
         candidate = Requirement.__new__(Requirement)
-        candidate.name = self.name if name is _UNSET else name
-        candidate.url = self.url if url is _UNSET else url
-        candidate.extras = self.extras if extras is _UNSET else extras
-        source_specifier = self.specifier if specifier is _UNSET else specifier
-        candidate.specifier = SpecifierSet(
-            (Specifier(str(s), prereleases=s._prereleases) for s in source_specifier),
-            prereleases=source_specifier._prereleases,
-        )
-        source_marker = self.marker if marker is _UNSET else marker
-        candidate.marker = (
-            Marker(str(source_marker)) if source_marker is not None else None
-        )
-        result = self.__class__(str(candidate))
-        if (
-            result.name != candidate.name
-            or result.url != candidate.url
-            or result.extras != candidate.extras
-            or result.specifier != candidate.specifier
-            or result.marker != candidate.marker
-        ):
-            raise InvalidRequirement("Replacement fields change meaning when parsed")
-        result.specifier = candidate.specifier
+        for field, types in fields.items():
+            value = changes.get(field, getattr(self, field))
+            if not isinstance(value, types):
+                raise InvalidRequirement(f"Invalid {field}: {value!r}")
+            setattr(candidate, field, value)
+        if any(not isinstance(extra, str) for extra in candidate.extras):
+            raise InvalidRequirement(f"Invalid extras: {candidate.extras!r}")
+        specifier = candidate.specifier
+        specs = [Specifier(str(s), prereleases=s._prereleases) for s in specifier]
+        candidate.specifier = SpecifierSet(specs, prereleases=specifier._prereleases)
+        result = type(self)(str(candidate))
+        for field in ("name", "url", "extras", "specifier"):
+            value = getattr(candidate, field)
+            if getattr(result, field) != value:
+                raise InvalidRequirement(f"Invalid {field}: {value!r}")
+        result.specifier = SpecifierSet(specs, prereleases=specifier._prereleases)
         return result
 
     def _iter_parts(self, name: str) -> Iterator[str]:

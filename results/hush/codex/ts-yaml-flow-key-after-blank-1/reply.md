@@ -1,2 +1,2 @@
 Done.
-Fixed flow keys after blank/comment lines; added regressions. 959 tests, types, lint passed. Two suites blocked by missing fixtures.
+Flow keys reuse pending map items, preserving blanks/comments. Regression tests, types, lint pass. Full suite blocked by missing fixtures; 958 tests passed.

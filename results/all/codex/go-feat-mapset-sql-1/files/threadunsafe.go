@@ -371,8 +371,21 @@ func (s threadUnsafeSet[T]) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s.ToSlice())
 }
 
-// Value returns the set as a JSON array for a database column.
-func (s threadUnsafeSet[T]) Value() (driver.Value, error) {
+// UnmarshalJSON recreates a set from a JSON array, it only decodes
+// primitive types. Numbers are decoded as json.Number.
+func (s *threadUnsafeSet[T]) UnmarshalJSON(b []byte) error {
+	var i []T
+	err := json.Unmarshal(b, &i)
+	if err != nil {
+		return err
+	}
+	s.append(i...)
+
+	return nil
+}
+
+// Value returns the set as a JSON array for database storage.
+func (s *threadUnsafeSet[T]) Value() (driver.Value, error) {
 	return s.MarshalJSON()
 }
 
@@ -389,26 +402,12 @@ func (s *threadUnsafeSet[T]) Scan(src any) error {
 	case []byte:
 		data = v
 	default:
-		return fmt.Errorf("mapset: cannot scan %T into a set", src)
+		return fmt.Errorf("mapset: cannot scan %T", src)
 	}
-
 	replacement := newThreadUnsafeSet[T]()
 	if err := replacement.UnmarshalJSON(data); err != nil {
 		return err
 	}
 	*s = *replacement
-	return nil
-}
-
-// UnmarshalJSON recreates a set from a JSON array, it only decodes
-// primitive types. Numbers are decoded as json.Number.
-func (s *threadUnsafeSet[T]) UnmarshalJSON(b []byte) error {
-	var i []T
-	err := json.Unmarshal(b, &i)
-	if err != nil {
-		return err
-	}
-	s.append(i...)
-
 	return nil
 }

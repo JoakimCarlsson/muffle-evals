@@ -76,25 +76,21 @@ impl<'input> Iterator for Tokenizer<'input> {
         }
 
         let (padding, component, advance) = match self.input.get(1) {
-            Some(&modifier @ (b'_' | b'-' | b'0')) => {
-                let Some(&component) = self.input.get(2) else {
-                    return Some(Err(error_expected_end(Location {
-                        byte: self.byte_pos + 2,
-                    })));
-                };
-                let padding = match modifier {
-                    b'_' => Padding::Space,
-                    b'-' => Padding::None,
-                    _ => Padding::Zero,
-                };
-                (Some(padding), component, 3)
-            }
-            Some(&component) => (None, component, 2),
+            Some(&b'_') => (Some(Padding::Space), self.input.get(2), 3),
+            Some(&b'-') => (Some(Padding::None), self.input.get(2), 3),
+            Some(&b'0') => (Some(Padding::Zero), self.input.get(2), 3),
+            Some(_) => (None, self.input.get(1), 2),
             _ => {
                 return Some(Err(error_expected_end(Location {
                     byte: self.byte_pos,
                 })));
             }
+        };
+
+        let Some(&component) = component else {
+            return Some(Err(error_expected_end(Location {
+                byte: self.byte_pos + (advance - 1) as u32,
+            })));
         };
 
         let component_loc = Location {

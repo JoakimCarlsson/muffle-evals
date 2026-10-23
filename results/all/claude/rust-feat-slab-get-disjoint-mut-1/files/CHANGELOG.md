@@ -1,6 +1,7 @@
 # Unreleased
 
-* Add `Slab::get_disjoint_mut` and `GetDisjointMutError` (MSRV is now 1.51)
+* Add `Slab::get_disjoint_mut` and `GetDisjointMutError`
+* Raise MSRV to 1.55
 
 # 0.4.9 (August 22, 2023)
 

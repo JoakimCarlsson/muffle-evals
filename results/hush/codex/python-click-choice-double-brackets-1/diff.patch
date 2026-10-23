@@ -1,49 +1,54 @@
 diff --git a/src/click/core.py b/src/click/core.py
-index d2db291..9de0838 100644
+index d2db291..cd642b5 100644
 --- a/src/click/core.py
 +++ b/src/click/core.py
-@@ -3571,6 +3571,8 @@ class Argument(Parameter):
-         var = self.type.get_metavar(param=self, ctx=ctx)
-         if not var:
+@@ -3573,7 +3573,7 @@ class Argument(Parameter):
              var = self.name.upper()
-+        if not self.required and var.startswith("[") and var.endswith("]"):
-+            var = var[1:-1]
          if self.deprecated:
              var += "!"
-         if not self.required:
+-        if not self.required:
++        if not self.required and not (var.startswith("[") and var.endswith("]")):
+             var = f"[{var}]"
+         if self.nargs != 1:
+             var += "..."
 diff --git a/tests/test_arguments.py b/tests/test_arguments.py
-index 6015282..94c7ffe 100644
+index 6015282..ee6adbf 100644
 --- a/tests/test_arguments.py
 +++ b/tests/test_arguments.py
-@@ -319,16 +319,29 @@ def test_deprecated_usage(runner):
-         ({"nargs": 2, "required": False}, "[FOO]..."),
-     ],
- )
--def test_argument_metavar_marks_optional(runner, kwargs, expected):
-+@pytest.mark.parametrize(
-+    ("type", "required_metavar", "optional_metavar"),
-+    [
-+        (None, "FOO", "FOO"),
-+        (click.Choice(["foo", "bar", "baz"]), "{foo|bar|baz}", "foo|bar|baz"),
-+        (click.DateTime(formats=["%Y-%m-%d"]), "[%Y-%m-%d]", "%Y-%m-%d"),
-+    ],
-+)
-+def test_argument_metavar_marks_optional(
-+    runner, kwargs, expected, type, required_metavar, optional_metavar
-+):
-     """An argument is bracketed in the usage line only when it is optional."""
- 
-     @click.command()
--    @click.argument("foo", **kwargs)
-+    @click.argument("foo", type=type, **kwargs)
-     def cli(foo):
-         pass
- 
-     result = runner.invoke(cli, ["--help"])
-     assert result.exit_code == 0
-+    expected = expected.replace(
-+        "FOO", optional_metavar if expected.startswith("[") else required_metavar
-+    )
+@@ -332,6 +332,36 @@ def test_argument_metavar_marks_optional(runner, kwargs, expected):
      assert result.output.splitlines()[0] == f"Usage: cli [OPTIONS] {expected}"
  
  
++@pytest.mark.parametrize(
++    ("type", "metavar", "required_metavar"),
++    [
++        (click.Choice(["foo", "bar", "baz"]), "[foo|bar|baz]", "{foo|bar|baz}"),
++        (click.DateTime(formats=["%Y-%m-%d"]), "[%Y-%m-%d]", "[%Y-%m-%d]"),
++    ],
++)
++@pytest.mark.parametrize(
++    ("kwargs", "required", "suffix"),
++    [
++        ({"required": False}, False, ""),
++        ({"nargs": -1}, False, "..."),
++        ({"required": True}, True, ""),
++        ({"required": True, "nargs": -1}, True, "..."),
++    ],
++)
++def test_argument_bracketed_metavar(
++    runner, type, metavar, required_metavar, kwargs, required, suffix
++):
++    @click.command()
++    @click.argument("value", type=type, **kwargs)
++    def cli(value):
++        pass
++
++    result = runner.invoke(cli, ["--help"])
++    assert result.exit_code == 0
++    expected = required_metavar if required else metavar
++    assert result.output.splitlines()[0] == f"Usage: cli [OPTIONS] {expected}{suffix}"
++
++
+ @pytest.mark.parametrize("deprecated", [True, "USE B INSTEAD"])
+ def test_deprecated_warning(runner, deprecated):
+     @click.command()

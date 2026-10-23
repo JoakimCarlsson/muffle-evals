@@ -1,2 +1,2 @@
 Done.
-Fixed datetime deserialization from `Value`; JSON strings preserved. Regression coverage added; 12 tests passed. Formatting applied.
+Fixed datetime deserialization from `Value`; JSON strings preserved. Added regression coverage; 12 tests and formatting check passed.

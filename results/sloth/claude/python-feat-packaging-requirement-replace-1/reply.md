@@ -1,14 +1,16 @@
-I added `Requirement.__replace__` in `src/packaging/requirements.py`, plus a changelog entry. It works on any Python version, and `copy.replace()` calls it on 3.13+. The existing `tests/test_requirements.py` passes. I also ran a few checks by hand and they gave the results below. I didn't add tests to the repo, since you didn't ask for them.
+Adding `Requirement.__replace__` now, then a test and a changelog entry.
 
-- **Keywords:** it accepts only `name`, `url`, `extras`, `specifier` and `marker`. Any other keyword raises `TypeError`.
-- **Result:** it returns a new requirement and leaves the original untouched. Calling it with no arguments gives an equal but distinct object.
-- **Validation:** it builds the requirement string and parses it, which raises `InvalidRequirement` for invalid values. It then compares the parsed `name`, `url`, `extras` and `specifier` with what you passed. So `name="foo[bar]"`, `extras={"a,b"}` and a URL containing `; marker` raise instead of silently changing other fields.
-- **Normalization:** `marker=Marker('extra == "Foo_Bar"')` comes out as `extra == "foo-bar"`.
-- **Specifier:** the result gets a new `SpecifierSet` holding new `Specifier` objects. The `prereleases` settings carry over on both the set and each specifier. The specifier objects are not shared with the input. I confirmed this with a set that had `prereleases=False` and a specifier with `prereleases=True`.
-- **Subclasses:** the result is built with `type(self)(string)`, so a subclass gets its own class and its `__init__` runs. A subclass whose `__init__` takes anything other than the requirement string would need its own `__replace__`.
+Tests are importing an installed copy, not `src`. Running against `src`.
 
-Setting a `url` on a requirement that has a specifier, as in your `requests>=2.0` example, raises `InvalidRequirement`. A requirement can't have both a URL and a specifier. To add a URL, clear the specifier in the same call: `specifier=SpecifierSet()`.
+Only my test's assumption about spec order was wrong (the set sorts them). Fixing the test and tidying a stray `, )`.
 
-The changelog entry and the `versionchanged:: 26.4` note in the class docstring assume the next release is 26.4. I guessed that number, so please check it.
+`Requirement.__replace__` is added in `src/packaging/requirements.py`. The requirement tests pass, and ruff and mypy are clean. I haven't run the rest of the suite.
 
-I haven't committed anything.
+- **How it works:** it takes keyword-only `name`, `url`, `extras`, `specifier` and `marker`, and an unknown keyword raises `TypeError`. It builds the new object with `self.__class__(str(self))`, so subclasses get their own class with their `__init__` run. It then sets the replaced fields and re-parses the resulting string.
+- **Validation:** if the re-parse fails, or `name`, `url` or `extras` don't come back as given, it raises `InvalidRequirement`. That catches `name="not a name!"`, `name="foo[bar]"` and `extras={"a,b"}`. The marker comes from the re-parse, so `extra == "Foo_Bar"` ends up as `extra == "foo-bar"`.
+- **Specifier:** the result gets a fresh `SpecifierSet` built from fresh `Specifier`s. The `prereleases` setting is kept on the set and on each specifier, and nothing is shared with the input.
+- **Added alongside:**
+  - tests in `TestRequirementReplace` in `tests/test_requirements.py`
+  - an "unreleased" entry in `CHANGELOG.rst`. I put `versionadded:: 26.4` in the docstring to match the other docs, but I guessed that version number.
+- **Test setup:** the venv has an installed `packaging` that shadows `src`, so run the tests with `PYTHONPATH=src`. Without it they import the installed copy and fail. Even then, the `copy.replace` test only runs on 3.13+; on 3.14 here it ran and passed.
+- **Not covered:** `url=""` is treated as `None`, and a `specifier` that isn't a `SpecifierSet` isn't checked.

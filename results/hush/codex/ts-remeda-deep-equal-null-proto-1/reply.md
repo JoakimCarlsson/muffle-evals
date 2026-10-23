@@ -1,2 +1,2 @@
 Done.
-`isDeepEqual` matches null-prototype/plain objects both ways, including nested values; preserves class checks. 83 tests, lint, type check passed.
+`isDeepEqual` handles null-prototype objects symmetrically and recursively; class distinctions preserved. 74 tests, typecheck, lint passed. Full suite not run.

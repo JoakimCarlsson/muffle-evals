@@ -1,9 +1,9 @@
-I’ll check `NumDigits`, fix the digit count, and add regression coverage for the reported values.
+I’ll check `NumDigits`, fix the incorrect count, and add regression coverage.
 
-The error comes from the floating-point logarithm in the fast path. I replaced it with integer division and added checks around powers of ten for both signs, including large coefficients and the `int64` limits. The test suite is running.
+The floating-point logarithm in the fast path rounds some exact powers of ten incorrectly. I’ll replace it with integer division and test values on both sides of powers of ten, including negative coefficients.
 
-Fixed `Decimal.NumDigits` by replacing the floating-point fast path with exact integer division. Your second example now returns `16`.
+Fixed `NumDigits` by replacing the floating-point logarithm fast path with exact integer division.
 
-Added regression tests for the reported examples, powers-of-ten boundaries, negative coefficients, and `int64` limits.
+Added regression coverage for your examples, values around powers of ten, negative coefficients, and int64 boundaries.
 
 Validation: `go test ./...` passes.

@@ -1,63 +1,58 @@
 package mapset
 
 import (
+	"database/sql"
 	"database/sql/driver"
-	"encoding/json"
 	"fmt"
 )
 
+var (
+	_ driver.Valuer = (*threadUnsafeSet[int])(nil)
+	_ sql.Scanner   = (*threadUnsafeSet[int])(nil)
+	_ driver.Valuer = (*threadSafeSet[int])(nil)
+	_ sql.Scanner   = (*threadSafeSet[int])(nil)
+)
+
 // Value returns the set as a JSON array for storage in a database column.
-func (s *threadUnsafeSet[T]) Value() (driver.Value, error) {
+func (s threadUnsafeSet[T]) Value() (driver.Value, error) {
 	return s.MarshalJSON()
 }
 
-// Scan replaces the set with a JSON array from a database column.
-// A SQL NULL clears the set. Errors leave the set unchanged.
+// Scan replaces the set with a JSON array from a string or byte slice.
+// A nil source empties the set. On error, the set is unchanged.
 func (s *threadUnsafeSet[T]) Scan(src any) error {
-	replacement, err := scanSet[T](src)
-	if err != nil {
+	var data []byte
+	switch v := src.(type) {
+	case nil:
+		*s = make(threadUnsafeSet[T])
+		return nil
+	case string:
+		data = []byte(v)
+	case []byte:
+		data = v
+	default:
+		return fmt.Errorf("mapset: cannot scan %T into a set", src)
+	}
+
+	replacement := newThreadUnsafeSet[T]()
+	if err := replacement.UnmarshalJSON(data); err != nil {
 		return err
 	}
-	*s = replacement
+	*s = *replacement
 	return nil
 }
 
 // Value returns the set as a JSON array for storage in a database column.
 func (t *threadSafeSet[T]) Value() (driver.Value, error) {
-	return t.MarshalJSON()
+	t.RLock()
+	defer t.RUnlock()
+	return t.uss.Value()
 }
 
-// Scan replaces the set with a JSON array from a database column.
-// A SQL NULL clears the set. Errors leave the set unchanged.
+// Scan replaces the set with a JSON array from a string or byte slice.
+// A nil source empties the set. On error, the set is unchanged.
 func (t *threadSafeSet[T]) Scan(src any) error {
-	replacement, err := scanSet[T](src)
-	if err != nil {
-		return err
-	}
 	t.Lock()
-	*t.uss = replacement
-	t.Unlock()
-	return nil
-}
-
-func scanSet[T comparable](src any) (threadUnsafeSet[T], error) {
-	var data []byte
-	switch value := src.(type) {
-	case nil:
-		return make(threadUnsafeSet[T]), nil
-	case string:
-		data = []byte(value)
-	case []byte:
-		data = value
-	default:
-		return nil, fmt.Errorf("mapset: cannot scan %T into a set", src)
-	}
-
-	var values []T
-	if err := json.Unmarshal(data, &values); err != nil {
-		return nil, err
-	}
-	replacement := make(threadUnsafeSet[T], len(values))
-	replacement.append(values...)
-	return replacement, nil
+	defer t.Unlock()
+	return t.uss.Scan(src)
 }

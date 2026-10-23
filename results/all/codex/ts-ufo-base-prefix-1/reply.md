@@ -1,2 +1,2 @@
 Done.
-`withBase` and `withoutBase` require path boundaries. Build, lint, 479 tests, typecheck, and reported-case checks passed.
+`withBase` and `withoutBase` now respect path boundaries. Added regression cases; 507 tests, type checks, lint, and build passed.

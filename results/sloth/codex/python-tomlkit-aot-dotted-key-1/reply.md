@@ -1,7 +1,9 @@
-I’ll trace how replacement affects dotted-key serialization, fix the shared logic, and run the existing tests.
+I’ll trace the replacement and rendering paths, add a regression test, and run the relevant checks.
 
-The replacement logic already moves ordinary tables past following dotted keys, but its condition excludes arrays of tables. I’ll extend that condition to include them. Assignment and table merging share this path; no caller, fixture, config, or export changes are needed.
+The shared replacement code already moves ordinary tables past following dotted keys, but excludes arrays of tables. I’ll extend that rule to arrays of tables and test round-tripping with following values, dotted keys, and table headers. No API, fixture, config, or export changes are needed.
 
-Fixed the shared replacement logic in [container.py](tomlkit/container.py) so arrays of tables move past following dotted keys, preserving top-level `c`.
+Fixed the shared replacement logic so arrays of tables move past following top-level values and dotted keys, preserving their scope.
 
-Validation: 360 existing tests passed, plus manual round-trip checks. The conformance suite is blocked by missing fixtures; building is blocked by missing build tooling.
+Added regression coverage for one or multiple array entries and following siblings.
+
+Validation: 368 tests passed. Full-suite collection requires missing `toml-test` fixtures. Build and lint checks were blocked by unavailable tools.

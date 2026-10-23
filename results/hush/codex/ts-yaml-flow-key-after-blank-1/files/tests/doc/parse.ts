@@ -172,42 +172,6 @@ test('long scalar value in flow map (#36)', () => {
 })
 
 describe('flow collection keys', () => {
-  test.each(['', '\n', '# comment\n', '\n# comment\n'])(
-    'flow keys after separator %j',
-    separator => {
-      for (const key of ['[3]', '{3: 5}']) {
-        const src = `1: 2\n${separator}${key}: 4\n`
-        const doc = YAML.parseDocument<YAML.YAMLMap>(src)
-        expect(doc.errors).toHaveLength(0)
-        expect(doc.value?.size).toBe(2)
-        expect(doc.toJS({ mapAsMap: true })).toEqual(
-          new Map<unknown, number>([
-            [1, 2],
-            [key === '[3]' ? [3] : new Map([[3, 5]]), 4]
-          ])
-        )
-        expect(String(doc)).toContain(`1: 2\n${separator}? `)
-      }
-    }
-  )
-
-  test('mapping between sequences with a blank line', () => {
-    const src =
-      '? - Detroit Tigers\n  - Chicago cubs\n: - 2001-07-23\n\n' +
-      '[New York Yankees, Atlanta Braves]: [2001-07-02, 2001-08-12, 2001-08-14]\n'
-    const doc = YAML.parseDocument(src)
-    expect(doc.errors).toHaveLength(0)
-    expect(doc.toJS({ mapAsMap: true })).toEqual(
-      new Map([
-        [['Detroit Tigers', 'Chicago cubs'], ['2001-07-23']],
-        [
-          ['New York Yankees', 'Atlanta Braves'],
-          ['2001-07-02', '2001-08-12', '2001-08-14']
-        ]
-      ])
-    )
-  })
-
   test('block map with flow collection key as explicit key', () => {
     const doc = YAML.parseDocument<YAML.YAMLMap<YAML.YAMLMap, null>>(`? []: x`)
     expect(doc.errors).toHaveLength(0)
@@ -646,6 +610,49 @@ describe('handling complex keys', () => {
   })
   beforeEach(() => mockWarn.mockReset().mockImplementation(() => {}))
   afterAll(() => mockWarn.mockRestore())
+
+  test.each(['\n', '\n\n', '\n# comment\n', '\n\n# comment\n'])(
+    'flow keys after %j',
+    separator => {
+      for (const key of ['[3]', '{3: 4}']) {
+        const doc = YAML.parseDocument(`1: 2${separator}${key}: 5`)
+        expect(doc.errors).toEqual([])
+        expect(doc.toJS({ mapAsMap: true })).toEqual(
+          new Map<unknown, number>([
+            [1, 2],
+            [key === '[3]' ? [3] : new Map([[3, 4]]), 5]
+          ])
+        )
+        const node = doc.value as YAML.YAMLMap
+        const keyNode = Array.from(node.values.values())[1].key as YAML.Node
+        expect(keyNode.spaceBefore).toBe(
+          separator.startsWith('\n\n') || undefined
+        )
+        expect(keyNode.commentBefore).toBe(
+          separator.includes('#') ? ' comment' : undefined
+        )
+      }
+    }
+  )
+
+  test('mapping between sequences with a blank line', () => {
+    const src = source`
+      ? - Detroit Tigers
+        - Chicago cubs
+      : - 2001-07-23
+
+      [New York Yankees, Atlanta Braves]: [2001-07-02, 2001-08-12, 2001-08-14]
+    `
+    expect(YAML.parse(src, { mapAsMap: true })).toEqual(
+      new Map([
+        [['Detroit Tigers', 'Chicago cubs'], ['2001-07-23']],
+        [
+          ['New York Yankees', 'Atlanta Braves'],
+          ['2001-07-02', '2001-08-12', '2001-08-14']
+        ]
+      ])
+    )
+  })
 
   test('emit warning when casting key in collection to string as JS Object key', () => {
     const doc = YAML.parseDocument('[foo]: bar', { prettyErrors: false })

@@ -43,24 +43,6 @@ func WithJitter(j time.Duration, next Backoff) Backoff {
 	})
 }
 
-// WithFullJitter wraps a backoff function and returns a random duration in
-// [0, base), where base is the wrapped duration. Nonpositive durations are
-// returned unchanged.
-func WithFullJitter(next Backoff) Backoff {
-	return BackoffFunc(func() (time.Duration, bool) {
-		val, stop := next.Next()
-		if stop {
-			return 0, true
-		}
-
-		if val <= 0 {
-			return val, false
-		}
-
-		return time.Duration(rand.Int64N(int64(val))), false
-	})
-}
-
 // WithJitterPercent wraps a backoff function and adds the specified jitter
 // percentage. j can be interpreted as "+/- j%". For example, if j were 5 and
 // the backoff returned 20s, the value could be between 19 and 21 seconds. The
@@ -82,6 +64,22 @@ func WithJitterPercent(j uint64, next Backoff) Backoff {
 
 		val = max(time.Duration(float64(val)*pct), 0)
 		return val, false
+	})
+}
+
+// WithFullJitter wraps a backoff and returns a random duration in [0, base),
+// where base is the wrapped backoff's next duration. Non-positive durations are
+// returned unchanged.
+func WithFullJitter(next Backoff) Backoff {
+	return BackoffFunc(func() (time.Duration, bool) {
+		val, stop := next.Next()
+		if stop {
+			return 0, true
+		}
+		if val <= 0 {
+			return val, false
+		}
+		return time.Duration(rand.Int64N(int64(val))), false
 	})
 }
 

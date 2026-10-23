@@ -61,7 +61,7 @@ import functools
 import itertools
 import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from numbers import Number
 from re import Match
 from typing import (
@@ -3930,28 +3930,31 @@ class engine:
     def _get_sign(num):
         return {'+': 'plus', '-': 'minus'}.get(num.lstrip()[0], '')
 
+    @typechecked
     def number_to_currency(
         self, num: int | float | Decimal | str, andword: str = "and"
     ) -> str:
         """Return an amount in words with cents as a fraction of one hundred.
 
-        Round the decimal representation half up to the nearest cent.
-        ``andword`` controls conjunctions in the whole amount; the cents
-        always follow the word "and".
+        Round half up using the decimal representation of the amount.
+        ``andword`` controls conjunctions within the whole amount only.
+
+        >>> engine().number_to_currency(100_020.56)
+        'one hundred thousand and twenty and 56/100'
+        >>> engine().number_to_currency(101.01, andword="")
+        'one hundred one and 01/100'
         """
         try:
             amount = Decimal(str(num))
             if not amount.is_finite():
                 raise BadNumValueError
-            with localcontext() as context:
-                context.prec = max(28, amount.adjusted() + 4)
+            with localcontext() as ctx:
+                ctx.prec = max(28, amount.adjusted() + 4)
                 rounded = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        except (InvalidOperation, ValueError, TypeError) as error:
-            raise BadNumValueError from error
+        except (InvalidOperation, ValueError) as err:
+            raise BadNumValueError from err
 
-        whole, cents = format(rounded.copy_abs(), "f").split(".")
-        if rounded < 0:
-            whole = "-" + whole
+        whole, cents = format(rounded, "f").split(".")
         words = self.number_to_words(whole, andword=andword)
         return f"{words} and {cents}/100"
 

@@ -1320,7 +1320,7 @@ impl NaiveDate {
         self.format_localized_with_items(StrftimeItems::new_with_locale(fmt, locale), locale)
     }
 
-    /// Returns an iterator that steps by days from this date through [`NaiveDate::MAX`].
+    /// Returns an iterator that steps by days from this date through [`NaiveDate::MAX`], inclusive.
     ///
     /// # Example
     ///
@@ -1355,7 +1355,7 @@ impl NaiveDate {
     }
 
     /// Returns an iterator that steps by weeks from this date through the last representable date
-    /// with the same weekday.
+    /// on the same weekly step sequence, inclusive.
     ///
     /// # Example
     ///
@@ -2220,6 +2220,7 @@ impl From<NaiveDateTime> for NaiveDate {
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Eq, Ord)]
 pub struct NaiveDateDaysIterator {
     value: NaiveDate,
+    // Number of dates left, starting at `value` and separated by the step size.
     remaining: usize,
 }
 
@@ -2235,7 +2236,7 @@ impl Iterator for NaiveDateDaysIterator {
             self.remaining = 0;
             return None;
         }
-        let current = self.value.checked_add_days(Days::new(n as u64 * 1)).unwrap();
+        let current = self.value.checked_add_days(Days::new(n as u64)).unwrap();
         self.remaining -= n + 1;
         if self.remaining > 0 {
             self.value = current.checked_add_days(Days::new(1)).unwrap();
@@ -2261,7 +2262,7 @@ impl DoubleEndedIterator for NaiveDateDaysIterator {
             return None;
         }
         self.remaining -= n + 1;
-        self.value.checked_add_days(Days::new(self.remaining as u64 * 1))
+        self.value.checked_add_days(Days::new(self.remaining as u64))
     }
 }
 
@@ -2271,6 +2272,7 @@ impl FusedIterator for NaiveDateDaysIterator {}
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Eq, Ord)]
 pub struct NaiveDateWeeksIterator {
     value: NaiveDate,
+    // Number of dates left, starting at `value` and separated by the step size.
     remaining: usize,
 }
 

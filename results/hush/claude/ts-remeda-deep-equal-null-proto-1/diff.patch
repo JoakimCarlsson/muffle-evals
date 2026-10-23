@@ -1,33 +1,30 @@
 diff --git a/packages/remeda/src/isDeepEqual.test.ts b/packages/remeda/src/isDeepEqual.test.ts
-index 8c50b5e..257c085 100644
+index 8c50b5e..6f60c8f 100644
 --- a/packages/remeda/src/isDeepEqual.test.ts
 +++ b/packages/remeda/src/isDeepEqual.test.ts
-@@ -151,6 +151,45 @@ describe("objects", () => {
+@@ -151,6 +151,39 @@ describe("objects", () => {
    test("undefined and empty object are not equal", () => {
      expect(isDeepEqual(undefined as unknown, {})).toBe(false);
    });
 +
-+  describe("null-prototype objects", () => {
-+    const nullProto = (obj: object): unknown =>
-+      Object.assign(Object.create(null), obj);
++  describe("null prototype", () => {
++    const nullProto = (obj: object) => Object.assign(Object.create(null), obj);
 +
-+    test("equal to plain object", () => {
++    test("equals a plain object", () => {
 +      expect(isDeepEqual(nullProto({ a: 1 }), { a: 1 })).toBe(true);
 +    });
 +
-+    test("equal to plain object, reversed", () => {
-+      expect(isDeepEqual({ a: 1 } as unknown, nullProto({ a: 1 }))).toBe(true);
++    test("equals a plain object (reversed)", () => {
++      expect(isDeepEqual({ a: 1 }, nullProto({ a: 1 }))).toBe(true);
 +    });
 +
-+    test("equal to each other", () => {
++    test("equals a null prototype object", () => {
 +      expect(isDeepEqual(nullProto({ a: 1 }), nullProto({ a: 1 }))).toBe(true);
 +    });
 +
 +    test("nested", () => {
 +      expect(
-+        isDeepEqual({ x: [nullProto({ a: 1 })] } as unknown, {
-+          x: [{ a: 1 }],
-+        }),
++        isDeepEqual({ x: [nullProto({ a: 1 })] }, { x: [{ a: 1 }] }),
 +      ).toBe(true);
 +    });
 +
@@ -35,21 +32,18 @@ index 8c50b5e..257c085 100644
 +      expect(isDeepEqual(nullProto({ a: 1 }), { a: 2 })).toBe(false);
 +    });
 +
-+    test("not equal to class instances", () => {
-+      class Foo {
-+        public a = 1;
++    test("class instances are still not equal", () => {
++      class A {
++        a = 1;
 +      }
-+      expect(isDeepEqual(nullProto({ a: 1 }), new Foo())).toBe(false);
-+      expect(isDeepEqual(new Foo() as unknown, nullProto({ a: 1 }))).toBe(
-+        false,
-+      );
++      expect(isDeepEqual(nullProto({ a: 1 }), new A())).toBe(false);
 +    });
 +  });
  });
  
  describe("sets", () => {
 diff --git a/packages/remeda/src/isDeepEqual.ts b/packages/remeda/src/isDeepEqual.ts
-index 4e7a239..bead25f 100644
+index 4e7a239..a09a74c 100644
 --- a/packages/remeda/src/isDeepEqual.ts
 +++ b/packages/remeda/src/isDeepEqual.ts
 @@ -99,7 +99,7 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
@@ -57,18 +51,19 @@ index 4e7a239..bead25f 100644
    }
  
 -  if (Object.getPrototypeOf(data) !== Object.getPrototypeOf(other)) {
-+  if (getComparablePrototype(data) !== getComparablePrototype(other)) {
++  if (getPrototype(data) !== getPrototype(other)) {
      // If the objects don't share a prototype it's unlikely that they are
      // semantically equal. It is technically possible to build 2 prototypes that
      // act the same but are not equal (at the reference level, checked via
-@@ -159,6 +159,12 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
+@@ -159,6 +159,13 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
    return true;
  }
  
-+// Objects with a `null` prototype (e.g. from `querystring.parse`) are plain
-+// objects for all practical purposes, so they are compared as such.
-+function getComparablePrototype(value: object): object {
-+  return (Object.getPrototypeOf(value) as object | null) ?? Object.prototype;
++// Objects with a `null` prototype (e.g. the result of `querystring.parse` or
++// `Object.create(null)`) are plain objects for all practical purposes, so we
++// compare them as if they inherit from `Object.prototype`.
++function getPrototype(value: object): object | null {
++  return Object.getPrototypeOf(value) ?? Object.prototype;
 +}
 +
  function isDeepEqualArrays(

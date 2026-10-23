@@ -1,5 +1,5 @@
 diff --git a/src/parse/parser.ts b/src/parse/parser.ts
-index 1443cc1..78b841b 100644
+index 1443cc1..08a2397 100644
 --- a/src/parse/parser.ts
 +++ b/src/parse/parser.ts
 @@ -698,7 +698,7 @@ export class Parser {
@@ -7,33 +7,31 @@ index 1443cc1..78b841b 100644
                  return
                }
 -            } else if (atMapIndent) {
-+            } else if (atMapIndent && (it.sep || it.value || it.explicitKey)) {
++            } else if (atMapIndent && (it.sep || it.explicitKey || it.value)) {
                map.items.push({ start })
              }
              this.stack.push(bv)
 diff --git a/tests/doc/parse.ts b/tests/doc/parse.ts
-index 1364d0a..8fccd88 100644
+index 1364d0a..5b5cdd3 100644
 --- a/tests/doc/parse.ts
 +++ b/tests/doc/parse.ts
-@@ -951,3 +951,21 @@ describe('stringKeys', () => {
-     expect(doc.errors).toMatchObject([{ code: 'NON_STRING_KEY' }])
+@@ -269,6 +269,19 @@ test('stream end after : indicator (#120)', () => {
    })
  })
-+
-+describe('flow collection key after blank or comment line', () => {
-+  for (const [name, src] of [
-+    ['blank line', '1: 2\n\n[3]: 4'],
-+    ['comment line', '1: 2\n# c\n[3]: 4']
-+  ]) {
-+    test(name, () => {
-+      const doc = YAML.parseDocument(src)
-+      expect(doc.errors).toHaveLength(0)
-+      expect(doc.toJS({ mapAsMap: true })).toEqual(
-+        new Map<unknown, unknown>([
-+          [1, 2],
-+          [[3], 4]
-+        ])
-+      )
-+    })
+ 
++test('flow collection key after blank or comment line', () => {
++  for (const src of ['1: 2\n\n[3]: 4', '1: 2\n# c\n[3]: 4']) {
++    const doc = YAML.parseDocument(src)
++    expect(doc.errors).toHaveLength(0)
++    expect(doc.toJS({ mapAsMap: true })).toEqual(
++      new Map<unknown, unknown>([
++        [1, 2],
++        [[3], 4]
++      ])
++    )
 +  }
 +})
++
+ test('comment between key & : in flow collection (#149)', () => {
+   const src1 = '{"a"\n#c\n:1}'
+   expect(YAML.parse(src1)).toEqual({ a: 1 })

@@ -1802,17 +1802,23 @@ class TestWaitException(unittest.TestCase):
         def predicate(exc):
             return 5.0 if isinstance(exc, ValueError) else 1.0
 
-        r = Retrying(wait=tenacity.wait_exception(predicate))
-        fut = tenacity.Future.construct(1, ValueError(), True)
-        rs = tenacity.RetryCallState(r, None, (), {})
-        rs.outcome = fut
-        self.assertEqual(5.0, r.wait(rs))
-        rs.outcome = tenacity.Future.construct(1, KeyError(), True)
-        self.assertEqual(1.0, r.wait(rs))
+        w = tenacity.wait_exception(predicate)
+        self.assertEqual(5.0, w(make_retry_state(1, 0, last_result=tenacity.Future.construct(1, ValueError(), True))))
+        self.assertEqual(1.0, w(make_retry_state(1, 0, last_result=tenacity.Future.construct(1, KeyError(), True))))
 
     def test_wait_exception_no_exception(self):
-        r = Retrying(wait=tenacity.wait_exception(lambda e: 1.0))
-        rs = tenacity.RetryCallState(r, None, (), {})
-        rs.outcome = tenacity.Future.construct(1, "value", False)
+        w = tenacity.wait_exception(lambda e: 1.0)
         with self.assertRaises(RuntimeError):
-            r.wait(rs)
+            w(make_retry_state(1, 0, last_result=tenacity.Future.construct(1, "ok", False)))
+
+    def test_wait_exception_retrying(self):
+        calls = []
+
+        def f():
+            calls.append(1)
+            if len(calls) < 3:
+                raise ValueError()
+
+        r = tenacity.Retrying(wait=tenacity.wait_exception(lambda e: 0), sleep=lambda s: None)
+        r(f)
+        self.assertEqual(3, len(calls))

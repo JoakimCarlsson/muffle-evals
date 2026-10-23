@@ -60,57 +60,55 @@ describe("cookie.parse(str)", () => {
 
 describe("cookie.parse(str, options)", () => {
   describe('with "allowMultiple" option', () => {
-    it("should collect duplicates in order and keep single values as strings", () => {
+    it("should collect duplicate values in order and keep single values as strings", () => {
       expect(parse("foo=a;bar=bar;foo=b;foo=c", { allowMultiple: true })).toEqual({
         foo: ["a", "b", "c"],
+        bar: "bar",
+      });
+      expect(parse("foo=;bar=bar;foo=boo", { allowMultiple: true })).toEqual({
+        foo: ["", "boo"],
         bar: "bar",
       });
       expect(parse("", { allowMultiple: true })).toEqual({});
     });
 
-    it("should preserve empty values and decode every value", () => {
-      expect(parse("foo=;bar=bar;foo=boo;foo=", { allowMultiple: true })).toEqual({
-        foo: ["", "boo", ""],
-        bar: "bar",
-      });
+    it("should decode every value and preserve malformed escapes", () => {
       expect(parse("foo=%1;foo=boo;foo=%20", { allowMultiple: true })).toEqual({
         foo: ["%1", "boo", " "],
       });
-    });
-
-    it("should respect custom decoders and filters", () => {
       expect(
-        parse("foo=a;bar=b;foo=c;bar=d", {
+        parse("foo=a;foo=b;foo=c;bar=d", {
           allowMultiple: true,
           decode: (value) => value.toUpperCase(),
           filter: (key) => key === "foo",
         }),
-      ).toEqual({ foo: ["A", "C"] });
+      ).toEqual({ foo: ["A", "B", "C"] });
+    });
+
+    it("should preserve undefined values returned by a custom decoder", () => {
       expect(
         parse("foo=a;foo=b;foo=c", {
           allowMultiple: true,
-          decode: (value) => (value === "b" ? value : undefined),
+          decode: () => undefined,
         }),
-      ).toEqual({ foo: [undefined, "b", undefined] });
+      ).toEqual({ foo: [undefined, undefined, undefined] });
     });
 
-    it("should handle names inherited by ordinary objects", () => {
+    it("should handle cookie names inherited by ordinary objects", () => {
       expect(
-        parse("__proto__=a;__proto__=b;constructor=c;constructor=d", {
-          allowMultiple: true,
-        }),
+        parse("__proto__=a;__proto__=b;constructor=c;constructor=d", { allowMultiple: true }),
       ).toEqual({ ["__proto__"]: ["a", "b"], constructor: ["c", "d"] });
     });
 
     it("should keep the first value when disabled", () => {
-      expect(parse("foo=;foo=b", { allowMultiple: false })).toEqual({ foo: "" });
+      expect(parse("foo=;foo=b;foo=c", { allowMultiple: false })).toEqual({ foo: "" });
     });
 
-    it("should infer return types from the option", () => {
+    it("should infer the return type from the option", () => {
       expectTypeOf(parse("foo=a")).toEqualTypeOf<Cookies>();
       expectTypeOf(parse("foo=a", { allowMultiple: false })).toEqualTypeOf<Cookies>();
       expectTypeOf(parse("foo=a", { allowMultiple: true })).toEqualTypeOf<Cookies<true>>();
-      const options: CookieParseOptions = { allowMultiple: true };
+      const options: CookieParseOptions = {};
       expectTypeOf(parse("foo=a", options)).toEqualTypeOf<Cookies<boolean>>();
     });
   });

@@ -387,18 +387,39 @@ export function parseTypeImport(
 }
 
 /**
+ * Checks whether an opening angle bracket starts type arguments for a call.
+ * @param {string} code - The declaration text starting at the opening bracket.
+ * @returns {boolean} Whether matching type arguments are followed by a call.
+ */
+function _isGenericCall(code: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < code.length; i++) {
+    if (code[i] === "<") {
+      depth++;
+    } else if (code[i] === ">" && code[i - 1] !== "=") {
+      if (--depth === 0) {
+        return /^\s*\(/.test(code.slice(i + 1));
+      }
+    } else if (code[i] === ";") {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
  * Extracts extra variable names from a comma-separated declaration list,
  * ignoring commas nested inside parentheses, brackets, braces, generics, or strings.
  *
  * For `export const foo = fn('a', bar), baz = 2`, only `baz` should be
  * extracted — commas inside `fn(...)` or `Handler<A, B>` are not declaration separators.
  * @param {string} extraNamesStr - The string containing the extra variable declarations to parse.
- * @param {string} remainingCode - The source starting at the same position, including trailing call syntax.
+ * @param {string} declarationTail - The remaining source, including any truncated type arguments.
  * @returns {string[]} An array of variable names extracted from the declaration list.
  */
 function _extractExtraNames(
   extraNamesStr: string,
-  remainingCode: string,
+  declarationTail: string,
 ): string[] {
   const names: string[] = [];
   let depth = 0;
@@ -409,6 +430,7 @@ function _extractExtraNames(
   for (let i = 0; i < extraNamesStr.length; i++) {
     const char = extraNamesStr[i];
 
+    // Handle string literals — skip their contents entirely
     if (inString) {
       if (char === inString) {
         let backslashCount = 0;
@@ -426,6 +448,7 @@ function _extractExtraNames(
       continue;
     }
 
+    // Track type annotations (between `:` and `=` at depth 0) for generic angle brackets
     if (char === ":" && depth === 0 && angleDepth === 0) {
       inTypeAnnotation = true;
       continue;
@@ -440,7 +463,9 @@ function _extractExtraNames(
     }
     if (
       char === "<" &&
-      (inTypeAnnotation || angleDepth > 0 || _isGenericCall(remainingCode, i))
+      (inTypeAnnotation ||
+        angleDepth > 0 ||
+        _isGenericCall(declarationTail.slice(i)))
     ) {
       angleDepth++;
       continue;
@@ -450,13 +475,16 @@ function _extractExtraNames(
       continue;
     }
 
+    // Track bracket nesting
     if (char === "(" || char === "[" || char === "{") {
       depth++;
     } else if (char === ")" || char === "]" || char === "}") {
       depth--;
     }
 
+    // A comma at depth 0 (outside generics) is a real declaration separator
     if (char === "," && depth === 0 && angleDepth === 0) {
+      // Extract the identifier that follows this comma
       const rest = extraNamesStr.slice(i + 1);
       const match = rest.match(/^\s*([\w$]+)/);
       if (match) {
@@ -466,23 +494,6 @@ function _extractExtraNames(
   }
 
   return names;
-}
-
-/** Checks whether an opening angle bracket starts type arguments for a call. */
-function _isGenericCall(code: string, start: number): boolean {
-  let depth = 0;
-  for (let i = start; i < code.length; i++) {
-    if (code[i] === "<") {
-      depth++;
-    } else if (code[i] === ">" && code[i - 1] !== "=") {
-      if (--depth === 0) {
-        return /^\s*\(/.test(code.slice(i + 1));
-      }
-    } else if (code[i] === ";") {
-      return false;
-    }
-  }
-  return false;
 }
 
 /**

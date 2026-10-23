@@ -1,1 +1,1 @@
-Done. Both set types now implement `Value` and `Scan`, with a type-assertion test in `sql_scan_test.go`. `go vet` and `go test` pass. I didn't run it against a real database driver.
+Done. Both sets now implement `driver.Valuer` and `sql.Scanner`, in `threadunsafe.go` and `threadsafe.go`. `Scan` replaces the contents, empties the set on `nil`, and leaves the set unchanged on an unsupported type or invalid JSON. I added `sql_test.go`, and `go vet` and `go test ./...` pass. I did not test against a real database driver.

@@ -1,10 +1,8 @@
-I added `ParseComma` and `ParseCommaf` to `comma.go`. Both strip the commas and hand the rest to `strconv`. It builds and the existing tests pass. I didn't write new tests because you didn't ask for any, so the round-trip and error cases are untested.
+I added `ParseComma` and `ParseCommaf` to `comma.go`, and `go test .` passes. Each one strips the commas and then calls `strconv.ParseInt` or `strconv.ParseFloat`. On any error they return `0` and the error.
 
-- **Error cases:** `""`, `"abc"`, `"123a456"`, `"1.2.3"` and `"1.5"` (for `ParseComma`) all fail in `strconv`. Both functions return `0` with the error.
-- **Range:** an out-of-range value also returns `0` and an error, instead of the clamped value `strconv` would give. `math.MinInt64` and `math.MaxInt64` fit, so they round-trip.
-- **Non-finite floats:** `ParseCommaf` accepts `"NaN"`, `"+Inf"` and `"-Inf"`, so `ParseCommaf(Commaf(f))` works for those too.
+I added `TestParseComma` and `TestParseCommaf` to `comma_test.go`:
+- **Round trips:** `ParseComma(Comma(n))` returns `n` for `0`, `10`, `1000`, `123456789`, `-834142`, `math.MinInt64` and `math.MaxInt64`. `ParseCommaf(Commaf(f))` returns `f` for `0`, `10`, `10.11`, `834142.32`, `-834142.32`, the largest and smallest float64 values, and `±Inf`.
+- **Errors:** `""`, `"abc"`, `"123a456"`, and `"1.2.3"` (for `ParseCommaf`) return `0` and an error. For `ParseComma`, `"1.5"` and `"9,223,372,036,854,775,808"` (one past `MaxInt64`) do the same.
 
-Two things are more lenient than you might expect:
-
-- **Comma placement:** it isn't checked, so `"1,2,3"` parses as `123`. Checking it would take a small extra validation step. I left it out because you didn't ask for it.
-- **`strconv` formats:** `ParseCommaf` also accepts anything else `strconv.ParseFloat` does, such as `"1e5"` and hex floats.
+- **Comma placement:** The parsers don't check where the commas are, so `"1,2,3"` parses as `123`. I left this out because you didn't ask for it. Checking would take a few more lines.
+- **`NaN`:** `ParseCommaf("NaN")` returns `NaN`, which is what `Commaf` produces for it. I didn't add a round-trip test for it, since `NaN != NaN`.

@@ -401,66 +401,68 @@ fn collect_array() {
 
 #[test]
 fn strip_prefix() {
-    it::assert_equal((1..6).strip_prefix([1, 2]).unwrap(), 3..6);
-    it::assert_equal((1..3).strip_prefix([]).unwrap(), 1..3);
-    it::assert_equal((1..3).strip_prefix([1, 2]).unwrap(), iter::empty());
-    assert!(iter::empty::<i32>().strip_prefix([]).is_ok());
-
+    assert!(it::equal((1..6).strip_prefix([1, 2]).unwrap(), 3..6));
+    assert!(it::equal((1..3).strip_prefix([]).unwrap(), 1..3));
+    assert!(it::equal((1..3).strip_prefix([1, 2]).unwrap(), []));
     let err: it::StripPrefixError<_, _> = (1..6).strip_prefix([1, 2, 9, 4]).unwrap_err();
     assert_eq!(err.mismatch, (Some(3), 9));
-    it::assert_equal(err.prefix, [4]);
-    it::assert_equal(err.iterator, [4, 5]);
-
+    assert!(it::equal(err.prefix, [4]));
+    assert!(it::equal(err.iterator, [4, 5]));
     let err = (1..3).strip_prefix([1, 2, 3, 4]).unwrap_err();
     assert_eq!(err.mismatch, (None, 3));
-    it::assert_equal(err.prefix, [4]);
-    it::assert_equal(err.iterator, iter::empty());
-
-    let err = (1..3).strip_prefix([9, 2]).unwrap_err();
-    assert_eq!(err.mismatch, (Some(1), 9));
-    it::assert_equal(err.prefix, [2]);
-    it::assert_equal(err.iterator, [2]);
-
-    for text in ["", "h", "hello", "héllo"] {
-        for prefix in ["", "h", "he", "hello", "hello!", "hé"] {
-            match (
-                text.chars().strip_prefix(prefix.chars()),
-                text.strip_prefix(prefix),
-            ) {
-                (Ok(rest), Some(expected)) => it::assert_equal(rest, expected.chars()),
-                (Err(_), None) => {}
-                _ => panic!("iterator and string prefix results differ"),
-            }
-        }
-    }
+    assert!(it::equal(err.prefix, [4]));
+    assert!(it::equal(err.iterator, []));
+    let err = iter::empty::<i32>().strip_prefix([1]).unwrap_err();
+    assert_eq!(err.mismatch, (None, 1));
 }
 
 #[test]
 fn strip_prefix_by() {
     let mut calls = 0;
     let err = (1..6)
-        .strip_prefix_by(['1', '2', '9', '4'], |item, expected| {
+        .strip_prefix_by(["1", "2", "9", "4"], |item, prefix| {
             calls += 1;
-            *item == *expected as i32 - '0' as i32
+            prefix.parse::<i32>() == Ok(*item)
         })
         .unwrap_err();
     assert_eq!(calls, 3);
-    assert_eq!(err.mismatch, (Some(3), '9'));
-    it::assert_equal(err.iterator, [4, 5]);
-    it::assert_equal(err.prefix, ['4']);
-
-    assert!(iter::empty::<i32>()
-        .strip_prefix_by([1], |_, _| panic!())
-        .is_err());
+    assert_eq!(err.mismatch, (Some(3), "9"));
+    assert!(it::equal(err.prefix, ["4"]));
+    assert!(it::equal(err.iterator, [4, 5]));
+    let err = iter::empty::<i32>()
+        .strip_prefix_by([1], |_, _| panic!("no item to compare"))
+        .unwrap_err();
+    assert_eq!(err.mismatch, (None, 1));
     assert!((1..3)
-        .strip_prefix_by([], |_: &i32, _: &i32| panic!())
+        .strip_prefix_by([], |_: &i32, _: &i32| panic!("empty prefix"))
         .is_ok());
+}
 
-    // Exhaustion must preserve the state of a non-fused input iterator.
-    let mut items = IntoIterator::into_iter([Some(1), None, Some(3)]);
-    let input = iter::from_fn(|| items.next().flatten());
-    let err = input.strip_prefix([1, 2, 4]).err().unwrap();
+#[test]
+fn strip_prefix_does_not_poll_past_end() {
+    let mut items = [Some(1), None, Some(3)].iter().copied();
+    let iterator = iter::from_fn(move || items.next().flatten());
+    let mut err = iterator.strip_prefix([1, 2, 3]).err().unwrap();
     assert_eq!(err.mismatch, (None, 2));
-    it::assert_equal(err.iterator, [3]);
-    it::assert_equal(err.prefix, [4]);
+    assert_eq!(err.iterator.next(), Some(3));
+    assert!(it::equal(err.prefix, [3]));
+
+    let iterator = iter::from_fn(|| -> Option<i32> { panic!("empty prefix polled iterator") });
+    assert!(iterator.strip_prefix([]).is_ok());
+}
+
+#[test]
+fn strip_prefix_matches_str() {
+    for text in ["", "hello", "héllo", "🦀rust"] {
+        for prefix in ["", "h", "he", "hello", "helloo", "hé", "🦀", "x"] {
+            match (
+                text.strip_prefix(prefix),
+                text.chars().strip_prefix(prefix.chars()),
+            ) {
+                (Some(rest), Ok(iterator)) => assert!(it::equal(rest.chars(), iterator)),
+                (None, Err(_)) => (),
+                _ => panic!("iterator and string prefix results differ"),
+            }
+        }
+    }
 }

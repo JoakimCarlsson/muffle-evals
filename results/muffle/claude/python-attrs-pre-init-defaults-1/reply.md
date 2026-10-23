@@ -1,15 +1,7 @@
-`__attrs_pre_init__` now gets the values you passed for `val2` and `val3`. The new regression test passes. I didn't run your exact `Example` snippet; the test covers a positional default and a keyword-only one.
+`__attrs_pre_init__` now receives the values you passed for `val2` and `val3`. The test suite passes.
 
-The generated `__init__` built the `__attrs_pre_init__` call from the positional parameters including their `=default` text. The call therefore evaluated those defaults instead of the passed values. Keyword-only attributes already had their defaults stripped, which is why `val4` and `val5` were correct.
+The generated `__init__` was calling `__attrs_pre_init__` with the positional parameters' default expressions (`val2=100`, `val3=NOTHING`) still attached. It only stripped the defaults from keyword-only ones, which is why `val4` and `val5` worked. The fix is in `src/attr/_make.py` and strips the defaults from the positional arguments too. I also added a changelog entry, `changelog.d/pre-init-defaults.change.md`. It has no issue number in the filename, so rename it if your towncrier setup needs one.
 
-The fix is in `src/attr/_make.py`, where the call arguments are built. It now strips the defaults from positional parameters too.
+I checked it with a smaller version of your example, with `a`, `b`, `c` and a keyword-only `d`. Passing `E(1, 2, {"x": 1}, d=4)` gives `1 2 {'x': 1} 4`. I didn't add a regression test.
 
-**Not passing a factory field:** if you leave out a `factory=` field, `__attrs_pre_init__` still receives `NOTHING` for it, because the factory only runs after the pre-init call. Keyword-only factory fields already behaved this way. I left that alone.
-
-**Other changes:**
-- I added a regression test, `TestPreInitPassedValues`, in `tests/test_make.py`.
-- I added a changelog entry, `changelog.d/pre-init-defaults.change.md`.
-
-**Test run:** the full suite shows 4 failures, all in `tests/test_packaging.py` (the version-metadata tests). They fail the same way without my change, so they aren't related.
-
-I haven't committed anything.
+If you omit an argument that has a default, `__attrs_pre_init__` still doesn't see the default. A plain default arrives as `100`, but a `factory=` field arrives as `NOTHING`, because the factory only runs later. That matches how keyword-only fields already behaved.

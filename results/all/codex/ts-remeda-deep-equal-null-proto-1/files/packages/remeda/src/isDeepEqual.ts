@@ -4,7 +4,8 @@ import { purry } from "./purry";
  * Performs a *deep structural* comparison between two values to determine if
  * they are equivalent. For primitive values this is equivalent to `===`, for
  * arrays the check would be performed on every item recursively, in order, and
- * for objects all props will be compared recursively.
+ * for objects all props will be compared recursively. Plain objects and objects
+ * with a null prototype are compared by their contents.
  *
  * The built-in Date and RegExp are special-cased and will be compared by their
  * values.
@@ -43,7 +44,8 @@ export function isDeepEqual<T>(data: T, other: T): boolean;
  * Performs a *deep structural* comparison between two values to determine if
  * they are equivalent. For primitive values this is equivalent to `===`, for
  * arrays the check would be performed on every item recursively, in order, and
- * for objects all props will be compared recursively.
+ * for objects all props will be compared recursively. Plain objects and objects
+ * with a null prototype are compared by their contents.
  *
  * The built-in Date and RegExp are special-cased and will be compared by their
  * values.
@@ -126,8 +128,8 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
     return data.toString() === (other as unknown as RegExp).toString();
   }
 
-  // At this point the objects have compatible prototypes and are not any of
-  // the previous types. They could be plain objects (Object.prototype or null),
+  // At this point we only know that the 2 objects have compatible prototypes and are not
+  // any of the previous types. They could be plain objects (Object.prototype),
   // they could be classes, they could be other built-ins, or they could be
   // something weird. We assume that comparing values by keys is enough to judge
   // their equality.
@@ -137,7 +139,7 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
   }
 
   for (const [key, value] of Object.entries(data)) {
-    if (!(key in other)) {
+    if (!Object.hasOwn(other, key)) {
       return false;
     }
 

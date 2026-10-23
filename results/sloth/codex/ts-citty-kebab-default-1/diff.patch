@@ -43,3 +43,48 @@ index 992c23d..d0015ed 100644
    // Propagate values between aliases
    for (const [alias, main] of aliasToMain.entries()) {
      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
+diff --git a/test/args.test.ts b/test/args.test.ts
+index 732572c..7864da5 100644
+--- a/test/args.test.ts
++++ b/test/args.test.ts
+@@ -68,6 +68,11 @@ describe("args", () => {
+       { value: { type: "enum", options: ["one", "two"] } },
+       "Invalid value for argument: --value (three). Expected one of: one, two.",
+     ],
++    [
++      ["--foo-bar", "three"],
++      { fooBar: { type: "enum", options: ["one", "two"], default: "two" } },
++      "Invalid value for argument: --fooBar (three). Expected one of: one, two.",
++    ],
+   ])("should throw error with %o (%o)", (rawArgs, definition, result) => {
+     // TODO: should check for exact match
+     // https://github.com/vitest-dev/vitest/discussions/6048
+@@ -99,4 +104,28 @@ describe("args", () => {
+     expect(parsed.userName).toBe("Jane");
+     expect(parsed._).toEqual([]);
+   });
++
++  it.each<[string[], ArgsDef, string | boolean]>([
++    [
++      ["--foo-bar", "one"],
++      { fooBar: { type: "enum", options: ["one", "two"], default: "two" } },
++      "one",
++    ],
++    [
++      ["--fooBar", "one"],
++      { "foo-bar": { type: "enum", options: ["one", "two"], default: "two" } },
++      "one",
++    ],
++    [[], { fooBar: { type: "enum", options: ["one", "two"], default: "two" } }, "two"],
++    [["--foo-bar", ""], { fooBar: { type: "string", default: "two" } }, ""],
++    [["--foo-bar"], { fooBar: { type: "boolean", default: false } }, true],
++    [["--no-foo-bar"], { fooBar: { type: "boolean", default: true } }, false],
++    [["-f", "one"], { fooBar: { type: "string", alias: "f", default: "two" } }, "one"],
++  ])("should resolve aliases before defaults with %o (%o)", (rawArgs, definition, value) => {
++    const parsed = parseArgs(rawArgs, definition);
++
++    expect(parsed.fooBar).toBe(value);
++    expect(parsed["foo-bar"]).toBe(value);
++    expect(parsed._).toEqual([]);
++  });
+ });

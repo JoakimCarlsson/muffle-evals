@@ -6,7 +6,7 @@ export type {
   CookieSerializeOptions,
   CookieStringifyOptions,
   Cookies,
-  MultiCookies,
+  CookiesMultiple,
   SetCookie,
 } from "./cookie/types.ts";
 

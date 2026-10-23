@@ -1027,6 +1027,9 @@ fn rfc_3339() {
 #[case("%B", format_description!("[month repr:long]"))]
 #[case("%C", format_description!("[year repr:century]"))]
 #[case("%d", format_description!("[day]"))]
+#[case("%_d", format_description!("[day padding:space]"))]
+#[case("%-d", format_description!("[day padding:none]"))]
+#[case("%0d", format_description!("[day padding:zero]"))]
 #[case("%e", format_description!("[day padding:space]"))]
 #[case("%g", format_description!("[year repr:last_two base:iso_week]"))]
 #[case("%G", format_description!("[year base:iso_week]"))]
@@ -1099,22 +1102,20 @@ fn strftime_compound_equivalence(#[case] strftime: &str, #[case] custom: &str) -
 #[case("prefix %-", 9)]
 #[case("prefix %0", 9)]
 #[case("é%_", 4)]
-#[case("%Y%_", 4)]
-fn strftime_missing_component(#[case] input: &str, #[case] expected_index: usize) {
-    assert!(matches!(
-        format_description::parse_strftime_borrowed(input),
-        Err(InvalidFormatDescription::Expected {
-            what: "valid escape sequence",
-            index,
-            ..
-        }) if index == expected_index
-    ));
-    assert!(matches!(
-        format_description::parse_strftime_owned(input),
-        Err(InvalidFormatDescription::Expected {
-            what: "valid escape sequence",
-            index,
-            ..
-        }) if index == expected_index
-    ));
+#[case("%Y%0", 4)]
+#[case("%", 0)]
+fn strftime_escape_error(#[case] input: &str, #[case] expected_index: usize) {
+    for error in [
+        format_description::parse_strftime_borrowed(input).unwrap_err(),
+        format_description::parse_strftime_owned(input).unwrap_err(),
+    ] {
+        assert!(matches!(
+            error,
+            InvalidFormatDescription::Expected {
+                what: "valid escape sequence",
+                index,
+                ..
+            } if index == expected_index
+        ));
+    }
 }

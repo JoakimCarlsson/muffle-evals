@@ -1,5 +1,5 @@
-Adding `reverseResolveAlias` beside `resolveAlias`; checking normalization, exports, existing tests, and build.
+`reverseResolveAlias` needs matching, export, and test checks before changes.
 
 
 Done.
-Added `reverseResolveAlias` in `src/utils.ts`. Normalization, boundaries, trailing slashes, longest-first sorting handled. Build, lint, types, 362 existing tests, example checks passed.
+Added `reverseResolveAlias`, docs, edge-case tests. All 363 tests, lint, types, build passed.

@@ -2078,12 +2078,13 @@ class Constant(Field[_ContantT]):
         kwargs["load_default"] = constant
         kwargs["dump_default"] = constant
         super().__init__(**kwargs)
+        # Set after init: a required constant still loads as the constant when missing,
+        # ``required`` only marks the field as required for e.g. OpenAPI export.
         self.required = required
         self.constant = constant
 
     def _validate_missing(self, value) -> None:
-        if value is not missing_:
-            super()._validate_missing(value)
+        """A missing value is always valid: it loads as the constant."""
 
     def _serialize(self, value, *args, **kwargs) -> _ContantT:
         return self.constant

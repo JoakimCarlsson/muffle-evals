@@ -1,9 +1,9 @@
-I’ll check the existing wait strategies and tests, then add `wait_exception` with a top-level export and coverage for exception and result-based retries.
+I’ll check the existing wait strategies and tests, then add `wait_exception`, its public export, and coverage for both exception and result-based retries.
 
-The new tests pass, including exact delays, composition with another wait strategy, and `RuntimeError` for rejected results. The full suite is blocked by a missing Tornado dependency; I’ll run the remaining tests. Ruff is also unavailable in this environment.
+The strategy is implemented, exported, and documented. All tests pass, including checks that the callback receives the original exception and that result-based retries raise `RuntimeError`. I’m finishing verification; the repository-wide lint check reports existing issues, and mypy is unavailable in this environment.
 
-Added `tenacity.wait_exception(predicate)` and its top-level export.
+Added `tenacity.wait_exception(predicate)` with public export, documentation, and a release note.
 
-It passes the last attempt’s exception to the callback and returns its delay unchanged. It supports wait composition and raises `RuntimeError` when no exception is available.
+It passes the last exception to the callback and returns its wait time unchanged. It raises `RuntimeError` when no exception is available and supports composition with other wait strategies.
 
-Added tests, documentation, and a release note. Validation: 123 tests passed, 1 skipped. Tornado tests and Ruff checks were blocked by missing dependencies.
+Validation: 126 tests passed, 1 skipped; documentation doctests and formatting passed. Lint reports existing issues; mypy is unavailable.

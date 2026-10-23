@@ -1,11 +1,11 @@
-Add a `deserialize_struct` override and remove `struct` from the forwarded list.
+Fix is in; now adding a test and building.
 
-Deserializing a `toml::Value` into a struct with a `Datetime` field should now work. I didn't run your example, and I didn't add a test for it. The existing `toml` crate tests pass.
+Deserializing a `toml::Value` datetime into a struct field of type `toml::value::Datetime` now works, including through `value.try_into::<Datetime>()`. The full `toml` crate test suite passes, including the new test.
 
-**Cause:** `Value`'s `Deserializer` turned every datetime into a string. `Datetime`'s `Deserialize` impl expects the special map form, so you got "expected a TOML datetime".
+**Cause:** `Value`'s deserializer always handed a datetime to the visitor as a plain string. `Datetime`'s `Deserialize` impl expects the special map form that `toml::from_str` produces, so it rejected the string.
 
-**Fix:** I added a `deserialize_struct` override in `crates/toml/src/value.rs`. When the target type is `Datetime` and the value is a datetime, it now hands over the datetime in that map form. `try_into::<Datetime>()` goes through the same path, so it is fixed too.
+**Fix** (`crates/toml/src/value.rs`): `Value` now has its own `deserialize_struct`. When the target is `Datetime` and the value is a datetime, it uses `toml_datetime::de::DatetimeDeserializer`, as `toml::from_str` does. `deserialize_any` is unchanged, so conversions to other formats such as `serde_json::Value` still give a string.
 
-**Other formats:** `deserialize_any` still produces a string, so converting to `serde_json::Value` still gives a plain string.
+**Test** (`crates/toml/tests/testsuite/value.rs`): `datetime_try_into` checks the `try_into` conversion to a struct and that the `serde_json::Value` conversion still yields the string. I didn't run your exact snippet. The test covers the same struct-from-`Value` path.
 
-`Table`'s deserializer wraps `Value`'s, so I didn't touch it.
+I haven't committed anything.

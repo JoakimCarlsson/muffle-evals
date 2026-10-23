@@ -1,38 +1,36 @@
 diff --git a/src/cookie/parse.ts b/src/cookie/parse.ts
-index c80c0f9..943d3cf 100644
+index c80c0f9..f418213 100644
 --- a/src/cookie/parse.ts
 +++ b/src/cookie/parse.ts
-@@ -3,7 +3,7 @@
+@@ -3,7 +3,13 @@
  // Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
  // Last sync: v1.1.1 (e264dfa)
  
 -import type { CookieParseOptions, Cookies, SetCookie } from "./types.ts";
-+import type { CookieParseOptions, Cookies, MultiCookies, SetCookie } from "./types.ts";
++import type {
++  CookieParseMultipleOptions,
++  CookieParseOptions,
++  Cookies,
++  MultiCookies,
++  SetCookie,
++} from "./types.ts";
  
  /**
   * RegExp to match max-age-value in RFC 6265 sec 5.6.2
-@@ -20,10 +20,17 @@ const NullObject = /* @__PURE__ */ (() => {
-  * Parse a `Cookie` header.
-  *
+@@ -22,8 +28,10 @@ const NullObject = /* @__PURE__ */ (() => {
   * Parse the given cookie header string into an object
-- * The object has the various cookies as keys(names) => values
-+ * The object has the various cookies as keys(names) => values.
-+ * By default the first value of a repeated name wins; with `allowMultiple`
-+ * repeated names map to an array of all their values in order.
+  * The object has the various cookies as keys(names) => values
   */
 -export function parse(str: string, options?: CookieParseOptions): Cookies {
 -  const obj: Cookies = new NullObject();
-+export function parse(
-+  str: string,
-+  options: CookieParseOptions & { allowMultiple: true },
-+): MultiCookies;
++export function parse(str: string, options: CookieParseMultipleOptions): MultiCookies;
 +export function parse(str: string, options?: CookieParseOptions): Cookies;
 +export function parse(str: string, options?: CookieParseOptions): Cookies | MultiCookies {
 +  const obj: MultiCookies = new NullObject();
    const len = str.length;
    // RFC 6265 sec 4.1.1, RFC 2616 2.2 defines a cookie name consists of one char minimum, plus '='.
    if (len < 2) return obj;
-@@ -50,9 +57,13 @@ export function parse(str: string, options?: CookieParseOptions): Cookies {
+@@ -50,9 +58,13 @@ export function parse(str: string, options?: CookieParseOptions): Cookies {
        continue;
      }
  
@@ -49,41 +47,53 @@ index c80c0f9..943d3cf 100644
  
      index = endIdx + 1;
 diff --git a/src/cookie/types.ts b/src/cookie/types.ts
-index 51b39f5..51caeac 100644
+index 51b39f5..222bb53 100644
 --- a/src/cookie/types.ts
 +++ b/src/cookie/types.ts
-@@ -23,6 +23,14 @@ export interface CookieParseOptions {
-    * Custom function to filter parsing specific keys.
+@@ -19,6 +19,14 @@ export interface CookieParseOptions {
     */
-   filter?(key: string): boolean;
-+
+   decode?: (str: string) => string | undefined;
+ 
 +  /**
-+   * When `true`, a cookie name that appears more than once maps to an array of all its values (in order).
-+   * Names that appear once stay plain strings. By default only the first value is kept.
++   * When a cookie name appears more than once, collect all of its values (in order) into an array
++   * instead of keeping only the first. Names that appear once stay plain strings.
 +   *
 +   * @default false
 +   */
 +  allowMultiple?: boolean;
- }
- 
- /**
-@@ -30,6 +38,11 @@ export interface CookieParseOptions {
++
+   /**
+    * Custom function to filter parsing specific keys.
+    */
+@@ -30,6 +38,18 @@ export interface CookieParseOptions {
   */
  export type Cookies = Record<string, string | undefined>;
  
 +/**
-+ * Cookies object where repeated names may map to an array of values (`allowMultiple`).
++ * Cookies object where a name that appears more than once maps to an array of its values.
 + */
 +export type MultiCookies = Record<string, string | string[] | undefined>;
++
++/**
++ * Parse options with `allowMultiple` enabled.
++ */
++export interface CookieParseMultipleOptions extends CookieParseOptions {
++  allowMultiple: true;
++}
 +
  /**
   * Stringify options.
   */
 diff --git a/src/index.ts b/src/index.ts
-index bbb51ce..3387c23 100644
+index bbb51ce..26c659a 100644
 --- a/src/index.ts
 +++ b/src/index.ts
-@@ -6,6 +6,7 @@ export type {
+@@ -2,10 +2,12 @@
+ export { parse, parseSetCookie } from "./cookie/parse.ts";
+ export { serialize, stringifyCookie } from "./cookie/serialize.ts";
+ export type {
++  CookieParseMultipleOptions,
+   CookieParseOptions,
    CookieSerializeOptions,
    CookieStringifyOptions,
    Cookies,
@@ -92,21 +102,34 @@ index bbb51ce..3387c23 100644
  } from "./cookie/types.ts";
  
 diff --git a/test/cookie-parse.test.ts b/test/cookie-parse.test.ts
-index 30228ee..d0ba65f 100644
+index 30228ee..c45285e 100644
 --- a/test/cookie-parse.test.ts
 +++ b/test/cookie-parse.test.ts
-@@ -69,6 +69,14 @@ describe("cookie.parse(str, options)", () => {
-       ).toMatchObject({ foo: "bar" });
-     });
+@@ -58,6 +58,27 @@ describe("cookie.parse(str)", () => {
+ });
  
-+    it("allowMultiple collects repeated names", () => {
-+      const o = { allowMultiple: true } as const;
-+      expect(parse("foo=a;bar=bar;foo=b;foo=c", o)).toEqual({ foo: ["a", "b", "c"], bar: "bar" });
-+      expect(parse("foo=;bar=bar;foo=boo", o)).toEqual({ foo: ["", "boo"], bar: "bar" });
-+      expect(parse("foo=%1;foo=boo", o)).toEqual({ foo: ["%1", "boo"] });
-+      expect(parse("foo=a;foo=b")).toEqual({ foo: "a" });
+ describe("cookie.parse(str, options)", () => {
++  describe('with "allowMultiple" option', () => {
++    it("should collect duplicate names into arrays in order", () => {
++      expect(parse("foo=a;bar=bar;foo=b;foo=c", { allowMultiple: true })).toEqual({
++        foo: ["a", "b", "c"],
++        bar: "bar",
++      });
++      expect(parse("foo=;bar=bar;foo=boo", { allowMultiple: true })).toEqual({
++        foo: ["", "boo"],
++        bar: "bar",
++      });
 +    });
 +
-     it("parse filter key", () => {
++    it("should decode values", () => {
++      expect(parse("foo=%1;foo=boo", { allowMultiple: true })).toEqual({ foo: ["%1", "boo"] });
++    });
++
++    it("should keep first value by default", () => {
++      expect(parse("foo=a;foo=b")).toEqual({ foo: "a" });
++    });
++  });
++
+   describe('with "decode" option', () => {
+     it("should specify alternative value decoder", () => {
        expect(
-         parse("a=1;b=2", {

@@ -1,13 +1,13 @@
-Fix is in; now re-running the check and tests with `src` on the path.
+Setting `required` alone isn't enough: `deserialize` would still raise "required" on a missing value. I'm overriding `_validate_missing` on `Constant` to skip that check, then adding the test.
 
-`fields.Constant(42, required=True)` now works: the field keeps `required=True` for your OpenAPI export, and loading always gives the constant.
+`fields.Constant(42, required=True)` now defines without error. The full suite passes (1137 tests), including a new one for this case.
 
-I checked it by hand:
-- `MySchema().load({})` and `MySchema().load({"foo": 99})` both return `{"foo": 42}`.
-- `Constant(None, required=True)` loads to `{"foo": None}` in both cases.
+- **Cause:** `Constant` always passes `load_default=constant` to `Field.__init__`. The base class rejects `required=True` together with a `load_default`.
+- **Fix, in `src/marshmallow/fields.py`:**
+  - `Constant` now sets `required` after the base init, so the check no longer fires. `field.required` stays `True`, which is what your OpenAPI export reads.
+  - It also overrides `_validate_missing` as a no-op. Without that, loading `{}` would have raised a "required" error.
+- **Behavior:** `MySchema().load({})` and `MySchema().load({"foo": 99})` both return `{"foo": 42}`. `Constant(None, required=True)` loads as `None` in both cases, and a plain `Constant(None)` still works.
+- **Test:** `test_required_constant_is_always_included_in_deserialized_data` in `tests/test_deserialization.py` covers the required constant and the required `None` constant.
+- **Changelog:** I added a line to `CHANGELOG.rst`.
 
-The existing test suite passes (1136 tests). I didn't add a test for the required case, since you didn't ask for one.
-
-The change is in `Constant.__init__` in `src/marshmallow/fields.py`. It no longer passes `required` up to `Field`, whose check was what raised the error. It sets `self.required` afterwards, and the "required" check is skipped when the field is missing from the input.
-
-I haven't committed anything.
+I had to set `PYTHONPATH=src` to run the tests, because `marshmallow` isn't installed in the environment. I haven't committed anything.

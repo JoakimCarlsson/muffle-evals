@@ -1,77 +1,19 @@
 diff --git a/src/analyze.ts b/src/analyze.ts
-index 52caecb..7b420b5 100644
+index 52caecb..944c529 100644
 --- a/src/analyze.ts
 +++ b/src/analyze.ts
-@@ -393,9 +393,13 @@ export function parseTypeImport(
-  * For `export const foo = fn('a', bar), baz = 2`, only `baz` should be
-  * extracted — commas inside `fn(...)` or `Handler<A, B>` are not declaration separators.
-  * @param {string} extraNamesStr - The string containing the extra variable declarations to parse.
-+ * @param {string} remainingCode - The source starting at the same position, including trailing call syntax.
-  * @returns {string[]} An array of variable names extracted from the declaration list.
-  */
--function _extractExtraNames(extraNamesStr: string): string[] {
-+function _extractExtraNames(
-+  extraNamesStr: string,
-+  remainingCode: string,
-+): string[] {
-   const names: string[] = [];
-   let depth = 0;
-   let angleDepth = 0;
-@@ -405,7 +409,6 @@ function _extractExtraNames(extraNamesStr: string): string[] {
-   for (let i = 0; i < extraNamesStr.length; i++) {
-     const char = extraNamesStr[i];
- 
--    // Handle string literals — skip their contents entirely
-     if (inString) {
-       if (char === inString) {
-         let backslashCount = 0;
-@@ -423,7 +426,6 @@ function _extractExtraNames(extraNamesStr: string): string[] {
-       continue;
-     }
- 
--    // Track type annotations (between `:` and `=` at depth 0) for generic angle brackets
-     if (char === ":" && depth === 0 && angleDepth === 0) {
-       inTypeAnnotation = true;
-       continue;
-@@ -436,25 +438,25 @@ function _extractExtraNames(extraNamesStr: string): string[] {
-     ) {
-       inTypeAnnotation = false;
-     }
--    if (inTypeAnnotation && char === "<") {
-+    if (
-+      char === "<" &&
-+      (inTypeAnnotation || angleDepth > 0 || _isGenericCall(remainingCode, i))
-+    ) {
-       angleDepth++;
-       continue;
-     }
--    if (inTypeAnnotation && char === ">" && angleDepth > 0) {
-+    if (char === ">" && extraNamesStr[i - 1] !== "=" && angleDepth > 0) {
-       angleDepth--;
-       continue;
-     }
- 
--    // Track bracket nesting
-     if (char === "(" || char === "[" || char === "{") {
-       depth++;
-     } else if (char === ")" || char === "]" || char === "}") {
-       depth--;
-     }
- 
--    // A comma at depth 0 (outside generics) is a real declaration separator
-     if (char === "," && depth === 0 && angleDepth === 0) {
--      // Extract the identifier that follows this comma
-       const rest = extraNamesStr.slice(i + 1);
-       const match = rest.match(/^\s*([\w$]+)/);
-       if (match) {
-@@ -466,6 +468,23 @@ function _extractExtraNames(extraNamesStr: string): string[] {
-   return names;
+@@ -386,6 +386,27 @@ export function parseTypeImport(
+   } as ParsedStaticImport;
  }
  
-+/** Checks whether an opening angle bracket starts type arguments for a call. */
-+function _isGenericCall(code: string, start: number): boolean {
++/**
++ * Checks whether an opening angle bracket starts type arguments for a call.
++ * @param {string} code - The declaration text starting at the opening bracket.
++ * @returns {boolean} Whether matching type arguments are followed by a call.
++ */
++function _isGenericCall(code: string): boolean {
 +  let depth = 0;
-+  for (let i = start; i < code.length; i++) {
++  for (let i = 0; i < code.length; i++) {
 +    if (code[i] === "<") {
 +      depth++;
 +    } else if (code[i] === ">" && code[i - 1] !== "=") {
@@ -86,9 +28,43 @@ index 52caecb..7b420b5 100644
 +}
 +
  /**
-  * Identifies all export statements in the supplied source code and categorises them into different types such as declarations, named, default and star exports.
-  * This function processes the code to capture different forms of export statements and normalise their representation for further processing.
-@@ -488,7 +507,10 @@ export function findExports(code: string): ESMExport[] {
+  * Extracts extra variable names from a comma-separated declaration list,
+  * ignoring commas nested inside parentheses, brackets, braces, generics, or strings.
+@@ -393,9 +414,13 @@ export function parseTypeImport(
+  * For `export const foo = fn('a', bar), baz = 2`, only `baz` should be
+  * extracted — commas inside `fn(...)` or `Handler<A, B>` are not declaration separators.
+  * @param {string} extraNamesStr - The string containing the extra variable declarations to parse.
++ * @param {string} declarationTail - The remaining source, including any truncated type arguments.
+  * @returns {string[]} An array of variable names extracted from the declaration list.
+  */
+-function _extractExtraNames(extraNamesStr: string): string[] {
++function _extractExtraNames(
++  extraNamesStr: string,
++  declarationTail: string,
++): string[] {
+   const names: string[] = [];
+   let depth = 0;
+   let angleDepth = 0;
+@@ -436,11 +461,16 @@ function _extractExtraNames(extraNamesStr: string): string[] {
+     ) {
+       inTypeAnnotation = false;
+     }
+-    if (inTypeAnnotation && char === "<") {
++    if (
++      char === "<" &&
++      (inTypeAnnotation ||
++        angleDepth > 0 ||
++        _isGenericCall(declarationTail.slice(i)))
++    ) {
+       angleDepth++;
+       continue;
+     }
+-    if (inTypeAnnotation && char === ">" && angleDepth > 0) {
++    if (char === ">" && extraNamesStr[i - 1] !== "=" && angleDepth > 0) {
+       angleDepth--;
+       continue;
+     }
+@@ -488,7 +518,10 @@ export function findExports(code: string): ESMExport[] {
        | string
        | undefined;
      if (extraNamesStr) {
@@ -100,3 +76,42 @@ index 52caecb..7b420b5 100644
        if (extraNames.length > 0) {
          declaredExport.names = [declaredExport.name, ...extraNames];
        }
+diff --git a/test/exports.test.ts b/test/exports.test.ts
+index baf98d7..13c8ce2 100644
+--- a/test/exports.test.ts
++++ b/test/exports.test.ts
+@@ -126,6 +126,34 @@ describe("findExports", () => {
+       type: "declaration",
+       names: ["a", "b"],
+     },
++    "export const APP_MODE_MAP = new Map<string, IAppMode>()": {
++      type: "declaration",
++      names: ["APP_MODE_MAP"],
++    },
++    "export const result = foo<Bar, Baz>(arg1, arg2)": {
++      type: "declaration",
++      names: ["result"],
++    },
++    "export const a = new Set<string>(), b = new Map<string, number>()": {
++      type: "declaration",
++      names: ["a", "b"],
++    },
++    "export const a = 1<2, b = 3": {
++      type: "declaration",
++      names: ["a", "b"],
++    },
++    "export const a = 2>1, b = 3": {
++      type: "declaration",
++      names: ["a", "b"],
++    },
++    "export const a: Map<string, (x: string) => void> = new Map(), b = 1": {
++      type: "declaration",
++      names: ["a", "b"],
++    },
++    "export const a = foo<Map<string, number>, (x: string) => void>(), b = 1": {
++      type: "declaration",
++      names: ["a", "b"],
++    },
+     "export const foo: Handler<string, number> = function foo(){}": {
+       type: "declaration",
+       name: "foo",

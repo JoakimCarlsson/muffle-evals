@@ -1756,7 +1756,7 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
 			}
 			k = reflect.ValueOf(keyVal)
 			if k.IsValid() && keyType.Kind() == reflect.String && k.Kind() != reflect.String {
-				// reflect would convert an integer to the rune it represents
+				// avoid integer to string conversion yielding a rune
 				k = reflect.ValueOf(fmt.Sprint(keyVal)).Convert(keyType)
 			} else if k.IsValid() && k.Type().ConvertibleTo(keyType) {
 				k = k.Convert(keyType)

@@ -1,3 +1,3 @@
-Dedupe in the handler (also covers map-order nondeterminism not at all, but fixes duplicates).
+Dedupe in the handler.
 
-Done. `methodNotAllowedHandler` in `mux.go` now skips repeated methods, so `Allow` lists each once. Existing tests pass. I didn't add a regression test or run your exact example.
+Done. `methodNotAllowedHandler` in `mux.go` now skips methods it already added to `Allow`. Existing tests pass. I didn't add a test for your repro or run the repro itself.

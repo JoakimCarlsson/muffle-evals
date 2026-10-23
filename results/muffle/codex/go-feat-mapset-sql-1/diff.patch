@@ -1,78 +1,73 @@
 diff --git a/sql.go b/sql.go
 new file mode 100644
-index 0000000..f224530
+index 0000000..bc21692
 --- /dev/null
 +++ b/sql.go
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,58 @@
 +package mapset
 +
 +import (
++	"database/sql"
 +	"database/sql/driver"
-+	"encoding/json"
 +	"fmt"
 +)
 +
++var (
++	_ driver.Valuer = (*threadUnsafeSet[int])(nil)
++	_ sql.Scanner   = (*threadUnsafeSet[int])(nil)
++	_ driver.Valuer = (*threadSafeSet[int])(nil)
++	_ sql.Scanner   = (*threadSafeSet[int])(nil)
++)
++
 +// Value returns the set as a JSON array for storage in a database column.
-+func (s *threadUnsafeSet[T]) Value() (driver.Value, error) {
++func (s threadUnsafeSet[T]) Value() (driver.Value, error) {
 +	return s.MarshalJSON()
 +}
 +
-+// Scan replaces the set with a JSON array from a database column.
-+// A SQL NULL clears the set. Errors leave the set unchanged.
++// Scan replaces the set with a JSON array from a string or byte slice.
++// A nil source empties the set. On error, the set is unchanged.
 +func (s *threadUnsafeSet[T]) Scan(src any) error {
-+	replacement, err := scanSet[T](src)
-+	if err != nil {
++	var data []byte
++	switch v := src.(type) {
++	case nil:
++		*s = make(threadUnsafeSet[T])
++		return nil
++	case string:
++		data = []byte(v)
++	case []byte:
++		data = v
++	default:
++		return fmt.Errorf("mapset: cannot scan %T into a set", src)
++	}
++
++	replacement := newThreadUnsafeSet[T]()
++	if err := replacement.UnmarshalJSON(data); err != nil {
 +		return err
 +	}
-+	*s = replacement
++	*s = *replacement
 +	return nil
 +}
 +
 +// Value returns the set as a JSON array for storage in a database column.
 +func (t *threadSafeSet[T]) Value() (driver.Value, error) {
-+	return t.MarshalJSON()
++	t.RLock()
++	defer t.RUnlock()
++	return t.uss.Value()
 +}
 +
-+// Scan replaces the set with a JSON array from a database column.
-+// A SQL NULL clears the set. Errors leave the set unchanged.
++// Scan replaces the set with a JSON array from a string or byte slice.
++// A nil source empties the set. On error, the set is unchanged.
 +func (t *threadSafeSet[T]) Scan(src any) error {
-+	replacement, err := scanSet[T](src)
-+	if err != nil {
-+		return err
-+	}
 +	t.Lock()
-+	*t.uss = replacement
-+	t.Unlock()
-+	return nil
-+}
-+
-+func scanSet[T comparable](src any) (threadUnsafeSet[T], error) {
-+	var data []byte
-+	switch value := src.(type) {
-+	case nil:
-+		return make(threadUnsafeSet[T]), nil
-+	case string:
-+		data = []byte(value)
-+	case []byte:
-+		data = value
-+	default:
-+		return nil, fmt.Errorf("mapset: cannot scan %T into a set", src)
-+	}
-+
-+	var values []T
-+	if err := json.Unmarshal(data, &values); err != nil {
-+		return nil, err
-+	}
-+	replacement := make(threadUnsafeSet[T], len(values))
-+	replacement.append(values...)
-+	return replacement, nil
++	defer t.Unlock()
++	return t.uss.Scan(src)
 +}
 diff --git a/sql_test.go b/sql_test.go
 new file mode 100644
-index 0000000..82b6667
+index 0000000..d7746a2
 --- /dev/null
 +++ b/sql_test.go
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,82 @@
 +package mapset
 +
 +import (
@@ -83,24 +78,18 @@ index 0000000..82b6667
 +	"testing"
 +)
 +
-+func testSQLSet[T comparable](t *testing.T, newSet func(...T) Set[T], initial T, input string, expected ...T) {
++func testSQLSet[T comparable](t *testing.T, newSet func(...T) Set[T], original T, values []T, encoded string) {
 +	t.Helper()
-+	s := newSet(initial)
-+	scanner, ok := s.(sql.Scanner)
-+	if !ok {
-+		t.Fatal("set does not implement sql.Scanner")
-+	}
-+	valuer, ok := s.(driver.Valuer)
-+	if !ok {
-+		t.Fatal("set does not implement driver.Valuer")
-+	}
-+	for _, src := range []any{input, []byte(input)} {
-+		s.Add(initial)
++	s := newSet(original)
++	scanner := s.(sql.Scanner)
++	valuer := s.(driver.Valuer)
++	for _, src := range []any{encoded, []byte(encoded)} {
++		s.Add(original)
 +		if err := scanner.Scan(src); err != nil {
 +			t.Fatal(err)
 +		}
-+		if s.Cardinality() != len(expected) || !s.Contains(expected...) {
-+			t.Fatalf("unexpected contents: %v", s)
++		if !s.Equal(newSet(values...)) {
++			t.Fatalf("Scan(%v) produced %v", src, s)
 +		}
 +		value, err := valuer.Value()
 +		if err != nil {
@@ -114,52 +103,50 @@ index 0000000..82b6667
 +		if err := json.Unmarshal(data, &decoded); err != nil {
 +			t.Fatal(err)
 +		}
-+		if len(decoded) != len(expected) || !s.Contains(decoded...) {
-+			t.Fatalf("unexpected JSON: %s", data)
++		if !newSet(decoded...).Equal(s) {
++			t.Fatalf("Value round trip produced %v", decoded)
 +		}
 +	}
-+	for _, src := range []any{42, true, []string{}, "", "[", "{}", "true", "[1,", `[1,"wrong"]`, []byte(`{"x":1}`)} {
++	for _, src := range []any{42, true, struct{}{}, "", "[", "{}", "[true]", encoded + " trailing", []byte(nil)} {
 +		before := s.Clone()
 +		if err := scanner.Scan(src); err == nil {
-+			t.Fatalf("Scan(%#v) succeeded", src)
++			t.Errorf("Scan(%v) should fail", src)
 +		}
 +		if !s.Equal(before) {
-+			t.Fatalf("Scan(%#v) changed contents", src)
++			t.Fatalf("Scan(%v) changed the set on error", src)
 +		}
 +	}
 +	for _, src := range []any{nil, "[]", []byte("[]")} {
-+		s.Add(initial)
-+		if err := scanner.Scan(src); err != nil {
-+			t.Fatal(err)
-+		}
-+		if !s.IsEmpty() {
-+			t.Fatalf("Scan(%#v) did not empty the set", src)
++		s.Add(original)
++		if err := scanner.Scan(src); err != nil || !s.IsEmpty() {
++			t.Fatalf("Scan(%v): set=%v, error=%v", src, s, err)
 +		}
 +		value, err := valuer.Value()
-+		if err != nil {
-+			t.Fatal(err)
-+		}
-+		if string(value.([]byte)) != "[]" {
-+			t.Fatalf("empty set encoded as %s", value)
-+		}
-+		s.Add(initial)
-+		if !s.Contains(initial) {
-+			t.Fatal("cannot add after clearing")
++		if err != nil || string(value.([]byte)) != "[]" {
++			t.Fatalf("empty Value: %s, %v", value, err)
 +		}
 +	}
 +}
 +
 +func TestSQLSet(t *testing.T) {
-+	t.Run("safe/int", func(t *testing.T) { testSQLSet(t, NewSet[int], 99, "[1,2,2,3]", 1, 2, 3) })
-+	t.Run("unsafe/int", func(t *testing.T) { testSQLSet(t, NewThreadUnsafeSet[int], 99, "[1,2,2,3]", 1, 2, 3) })
-+	t.Run("safe/string", func(t *testing.T) { testSQLSet(t, NewSet[string], "old", `["a","b","a"]`, "a", "b") })
-+	t.Run("unsafe/string", func(t *testing.T) { testSQLSet(t, NewThreadUnsafeSet[string], "old", `["a","b","a"]`, "a", "b") })
++	t.Run("thread-safe/int", func(t *testing.T) {
++		testSQLSet(t, NewSet[int], 99, []int{1, 2, 3}, `[1,2,2,3]`)
++	})
++	t.Run("thread-unsafe/int", func(t *testing.T) {
++		testSQLSet(t, NewThreadUnsafeSet[int], 99, []int{1, 2, 3}, `[1,2,2,3]`)
++	})
++	t.Run("thread-safe/string", func(t *testing.T) {
++		testSQLSet(t, NewSet[string], "old", []string{"a", "b"}, `["a","b","a"]`)
++	})
++	t.Run("thread-unsafe/string", func(t *testing.T) {
++		testSQLSet(t, NewThreadUnsafeSet[string], "old", []string{"a", "b"}, `["a","b","a"]`)
++	})
 +}
 +
 +func TestSQLValueError(t *testing.T) {
 +	for _, s := range []Set[float64]{NewSet(math.Inf(1)), NewThreadUnsafeSet(math.Inf(1))} {
 +		if _, err := s.(driver.Valuer).Value(); err == nil {
-+			t.Fatal("Value should fail for infinity")
++			t.Error("Value should report JSON encoding errors")
 +		}
 +	}
 +}

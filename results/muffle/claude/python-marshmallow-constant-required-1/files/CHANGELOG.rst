@@ -6,8 +6,8 @@ Changelog
 
 Bug fixes:
 
-- Fix `marshmallow.fields.Constant` raising ``ValueError`` when ``required=True``.
-  A required ``Constant`` always loads as the constant, even if missing from the input.
+- Allow ``required=True`` on `marshmallow.fields.Constant`. The constant is still
+  loaded when the field is missing.
 - Make `marshmallow.fields.Number` and `marshmallow.fields.Mapping` abstract base classes to
   prevent using them within Schemas (:issue:`2924`). Thanks :user:`MartingaleCoda` for reporting.
 

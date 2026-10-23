@@ -1754,12 +1754,15 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
 			if err != nil {
 				return err
 			}
-			if _, isStr := keyVal.(string); keyVal != nil && !isStr && keyType.Kind() == reflect.String {
-				// avoid integer -> string rune conversion (42 -> "*")
-				keyVal = fmt.Sprint(keyVal)
-			}
 			k = reflect.ValueOf(keyVal)
-			if k.IsValid() && k.Type().ConvertibleTo(keyType) {
+			if k.IsValid() && keyType.Kind() == reflect.String && k.Kind() != reflect.String {
+				// integer -> string conversion would yield a rune; use the textual form
+				keyStr, err := d.mapKeyNodeToString(ctx, key)
+				if err != nil {
+					return err
+				}
+				k = reflect.ValueOf(keyStr).Convert(keyType)
+			} else if k.IsValid() && k.Type().ConvertibleTo(keyType) {
 				k = k.Convert(keyType)
 			}
 		}

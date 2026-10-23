@@ -1,7 +1,9 @@
-I’ll check the parser and existing tests, fix the bounds check, and add regression coverage for all three modifiers.
+I’ll check how the parser handles padding modifiers, add a regression test, and make the malformed inputs return an error.
 
-Fixed the bounds check. Trailing `%_`, `%-`, and `%0` now return `InvalidFormatDescription::Expected` for a valid escape sequence at the missing component’s byte position.
+The parser now checks for a component after the padding modifier and returns `Expected { what: "valid escape sequence", index: 2 }` for each reported input. Regression tests cover both parsing APIs, byte offsets after prefixes, and valid padded formats. The focused test run is still running.
 
-Added regression tests for borrowed and owned parsing, including prefixed and UTF-8 inputs. All format-description tests pass.
+Fixed both borrowed and owned strftime parsers. `"%_"`, `"%-"`, and `"%0"` now return `InvalidFormatDescription::Expected` with `"valid escape sequence"` at byte index 2 instead of panicking.
 
-Formatting checks found only pre-existing issues in unrelated files.
+Added regression coverage for all three modifiers, prefixed inputs, Unicode byte offsets, and valid padding.
+
+Validation: all 53 strftime tests passed; `git diff --check` passed.

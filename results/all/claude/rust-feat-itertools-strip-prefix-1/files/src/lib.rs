@@ -2535,14 +2535,14 @@ pub trait Itertools: Iterator {
 
     /// Remove `prefix` from the start of the iterator, like [`str::strip_prefix`].
     ///
-    /// Returns the iterator advanced past the prefix. If the items differ or the iterator
-    /// ends early, returns a [`StripPrefixError`] holding what was consumed.
+    /// Returns the iterator advanced past the prefix. On mismatch, returns a
+    /// [`StripPrefixError`] holding what was consumed.
     ///
     /// ```
     /// use itertools::Itertools;
     ///
-    /// let rest = (1..6).strip_prefix([1, 2]).unwrap().collect_vec();
-    /// assert_eq!(rest, [3, 4, 5]);
+    /// assert_eq!((1..6).strip_prefix([1, 2]).unwrap().collect_vec(), [3, 4, 5]);
+    /// assert_eq!((1..3).strip_prefix([]).unwrap().collect_vec(), [1, 2]);
     ///
     /// let err = (1..6).strip_prefix([1, 2, 9, 4]).unwrap_err();
     /// assert_eq!(err.mismatch, (Some(3), 9));
@@ -2554,14 +2554,11 @@ pub trait Itertools: Iterator {
     /// assert_eq!(err.iterator.count(), 0);
     /// ```
     #[allow(clippy::type_complexity)]
-    fn strip_prefix<P>(
-        self,
-        prefix: P,
-    ) -> Result<Self, StripPrefixError<Self, <P as IntoIterator>::IntoIter>>
+    fn strip_prefix<J>(self, prefix: J) -> Result<Self, StripPrefixError<Self, J::IntoIter>>
     where
         Self: Sized,
-        P: IntoIterator,
-        Self::Item: PartialEq<P::Item>,
+        J: IntoIterator,
+        Self::Item: PartialEq<J::Item>,
     {
         self.strip_prefix_by(prefix, |a, b| a == b)
     }
@@ -2571,29 +2568,32 @@ pub trait Itertools: Iterator {
     /// ```
     /// use itertools::Itertools;
     ///
-    /// let rest = "hello".chars().strip_prefix_by([b'h', b'e'], |&c, &b| c == b as char);
-    /// assert_eq!(rest.unwrap().collect::<String>(), "llo");
+    /// let rest = ["a", "b", "c"].iter().strip_prefix_by([1, 2], |s, n| s.len() == *n).unwrap_err();
+    /// assert_eq!(rest.mismatch, (Some(&"b"), 2));
+    ///
+    /// let rest = (1..6).strip_prefix_by(["1", "2"], |n, s| n.to_string() == *s).unwrap();
+    /// assert_eq!(rest.collect_vec(), [3, 4, 5]);
     /// ```
     #[allow(clippy::type_complexity)]
-    fn strip_prefix_by<P, F>(
+    fn strip_prefix_by<J, F>(
         mut self,
-        prefix: P,
+        prefix: J,
         mut eq: F,
-    ) -> Result<Self, StripPrefixError<Self, <P as IntoIterator>::IntoIter>>
+    ) -> Result<Self, StripPrefixError<Self, J::IntoIter>>
     where
         Self: Sized,
-        P: IntoIterator,
-        F: FnMut(&Self::Item, &P::Item) -> bool,
+        J: IntoIterator,
+        F: FnMut(&Self::Item, &J::Item) -> bool,
     {
         let mut prefix = prefix.into_iter();
         while let Some(expected) = prefix.next() {
             match self.next() {
                 Some(item) if eq(&item, &expected) => {}
-                found => {
+                item => {
                     return Err(StripPrefixError {
                         iterator: self,
                         prefix,
-                        mismatch: (found, expected),
+                        mismatch: (item, expected),
                     })
                 }
             }

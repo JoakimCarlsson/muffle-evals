@@ -7,7 +7,8 @@
  */
 export interface CookieParseOptions {
   /**
-   * Collect duplicate cookie values in order. Single values remain strings.
+   * Collect duplicate cookie values in an array, in header order.
+   * Cookies that appear once remain strings.
    *
    * @default false
    */

@@ -1,1 +1,1 @@
-Done. `reverseResolveAlias` added in `src/utils.ts` after `resolveAlias`. All five of your examples pass in a throwaway test, which I deleted. The existing tests, eslint and tsc are clean. I added no permanent tests or README entry.
+Done. `reverseResolveAlias` is added in `src/utils.ts` after `resolveAlias`, with tests in `test/utils.spec.ts`. Vitest passes (366 tests), and all your examples are covered. I didn't get a type check: `npx tsc` didn't run. I didn't touch the README.

@@ -353,13 +353,13 @@ func (t *threadSafeSet[T]) UnmarshalJSON(p []byte) error {
 	return err
 }
 
-// Value returns the set as a JSON array for storage in a database column.
+// Value returns the set as a JSON array for database storage.
 func (t *threadSafeSet[T]) Value() (driver.Value, error) {
 	return t.MarshalJSON()
 }
 
-// Scan replaces the set with a JSON array from a string or byte slice.
-// A nil source empties the set; errors leave its contents unchanged.
+// Scan replaces the set with a JSON array or clears it for SQL NULL.
+// Unsupported source types and decoding errors leave the set unchanged.
 func (t *threadSafeSet[T]) Scan(src any) error {
 	t.Lock()
 	defer t.Unlock()

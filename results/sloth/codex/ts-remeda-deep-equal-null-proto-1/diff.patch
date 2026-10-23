@@ -1,5 +1,74 @@
+diff --git a/packages/remeda/src/isDeepEqual.test.ts b/packages/remeda/src/isDeepEqual.test.ts
+index 8c50b5e..0555c94 100644
+--- a/packages/remeda/src/isDeepEqual.test.ts
++++ b/packages/remeda/src/isDeepEqual.test.ts
+@@ -1,3 +1,4 @@
++import { parse } from "node:querystring";
+ import { describe, expect, test } from "vitest";
+ import { isDeepEqual } from "./isDeepEqual";
+ 
+@@ -76,6 +77,59 @@ describe("scalars", () => {
+ });
+ 
+ describe("objects", () => {
++  test("null-prototype objects compare like plain objects", () => {
++    const empty = Object.create(null) as object;
++    const record = Object.assign(Object.create(null) as object, { a: 1 });
++    const cases: [unknown, unknown, boolean][] = [
++      [parse("a=1&b=2"), { a: "1", b: "2" }, true],
++      [record, { a: 1 }, true],
++      [empty, {}, true],
++      [record, Object.assign(Object.create(null) as object, { a: 1 }), true],
++      [{ nested: [record] }, { nested: [{ a: 1 }] }, true],
++      [new Map([["a", record]]), new Map([["a", { a: 1 }]]), true],
++      [new Set([record]), new Set([{ a: 1 }]), true],
++      [record, { a: 2 }, false],
++      [record, {}, false],
++      [record, { b: 1 }, false],
++      [record, { a: 1, b: 2 }, false],
++      [empty, [], false],
++      [empty, new Date(0), false],
++      [empty, /a/u, false],
++      [empty, new Map(), false],
++      [empty, new Set(), false],
++      [
++        empty,
++        new (class {
++          public a = 1;
++        })(),
++        false,
++      ],
++      [
++        {},
++        new (class {
++          public a = 1;
++        })(),
++        false,
++      ],
++      [
++        new (class {
++          public a = 1;
++        })(),
++        new (class {
++          public a = 1;
++        })(),
++        false,
++      ],
++    ];
++
++    for (const [data, other, expected] of cases) {
++      expect(isDeepEqual(data, other)).toBe(expected);
++      expect(isDeepEqual(other, data)).toBe(expected);
++      expect(isDeepEqual(other)(data)).toBe(expected);
++      expect(isDeepEqual(data)(other)).toBe(expected);
++    }
++  });
++
+   test("empty objects are equal", () => {
+     expect(isDeepEqual({}, {})).toBe(true);
+   });
 diff --git a/packages/remeda/src/isDeepEqual.ts b/packages/remeda/src/isDeepEqual.ts
-index 4e7a239..c9dc533 100644
+index 4e7a239..8f2c8cd 100644
 --- a/packages/remeda/src/isDeepEqual.ts
 +++ b/packages/remeda/src/isDeepEqual.ts
 @@ -99,14 +99,10 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
@@ -21,12 +90,15 @@ index 4e7a239..c9dc533 100644
      return false;
    }
  
-@@ -130,7 +126,7 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
+@@ -130,8 +126,9 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
      return data.toString() === (other as unknown as RegExp).toString();
    }
  
 -  // At this point we only know that the 2 objects share a prototype and are not
-+  // At this point we only know that the 2 objects have compatible prototypes and are not
-   // any of the previous types. They could be plain objects (Object.prototype),
+-  // any of the previous types. They could be plain objects (Object.prototype),
++  // At this point we only know that the 2 objects share a prototype (treating
++  // null as Object.prototype) and are not any of the previous types. They could
++  // be plain objects (Object.prototype),
    // they could be classes, they could be other built-ins, or they could be
    // something weird. We assume that comparing values by keys is enough to judge
+   // their equality.

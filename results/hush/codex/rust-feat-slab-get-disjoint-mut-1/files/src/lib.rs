@@ -130,7 +130,7 @@ use core::{fmt, mem, ops, slice};
 /// An error returned by [`Slab::get_disjoint_mut`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GetDisjointMutError {
-    /// The same key appears more than once.
+    /// A key occurs more than once.
     OverlappingIndices,
     /// A key is past the end of the slab's slots.
     IndexOutOfBounds,
@@ -736,15 +736,14 @@ impl<T> Slab<T> {
         }
     }
 
-    /// Return mutable references to several values in the order of `keys`.
+    /// Return mutable references to several values, in the order of `keys`.
     ///
-    /// Duplicate keys return [`GetDisjointMutError::OverlappingIndices`] before
-    /// any slots are checked. Otherwise, keys are checked in order: the first
-    /// out-of-bounds or vacant slot returns [`GetDisjointMutError::IndexOutOfBounds`]
-    /// or [`GetDisjointMutError::IndexVacant`], respectively.
-    /// An empty array returns `Ok([])`.
-    ///
-    /// This method takes O(N²) time to check for duplicate keys.
+    /// Duplicate keys return [`GetDisjointMutError::OverlappingIndices`]
+    /// before any slots are checked. Otherwise, keys are checked in order:
+    /// a key past the end of the slots returns
+    /// [`GetDisjointMutError::IndexOutOfBounds`], and a vacant slot returns
+    /// [`GetDisjointMutError::IndexVacant`]. An empty array returns `Ok([])`.
+    /// Duplicate checking takes O(N²) time. This method does not allocate.
     ///
     /// # Examples
     ///
@@ -755,7 +754,7 @@ impl<T> Slab<T> {
     /// let a = slab.insert(1);
     /// let b = slab.insert(2);
     /// let [x, y] = slab.get_disjoint_mut([a, b]).unwrap();
-    /// core::mem::swap(x, y);
+    /// std::mem::swap(x, y);
     /// assert_eq!((slab[a], slab[b]), (2, 1));
     /// ```
     pub fn get_disjoint_mut<const N: usize>(
@@ -767,7 +766,6 @@ impl<T> Slab<T> {
                 return Err(GetDisjointMutError::OverlappingIndices);
             }
         }
-
         for &key in &keys {
             match self.entries.get(key) {
                 None => return Err(GetDisjointMutError::IndexOutOfBounds),
@@ -776,21 +774,21 @@ impl<T> Slab<T> {
             }
         }
 
-        let entries = self.entries.as_mut_ptr();
         let mut result = mem::MaybeUninit::<[&mut T; N]>::uninit();
-        let output = result.as_mut_ptr().cast::<&mut T>();
+        let output = result.as_mut_ptr() as *mut &mut T;
+        let entries = self.entries.as_mut_ptr();
         for (i, &key) in keys.iter().enumerate() {
-            // SAFETY: All keys are in bounds, occupied, and distinct. Each
-            // reference borrows a separate entry, and the slab remains exclusively
-            // borrowed for the lifetime of the returned references. Each output
-            // slot is written exactly once, without reading uninitialized memory.
+            // SAFETY: Every key is in bounds and occupied, and all keys are
+            // distinct. Each reference therefore points to a separate entry.
+            // The slab is exclusively borrowed for the returned lifetime.
             unsafe {
-                if let Entry::Occupied(value) = &mut *entries.add(key) {
-                    output.add(i).write(value);
+                match &mut *entries.add(key) {
+                    Entry::Occupied(value) => output.add(i).write(value),
+                    Entry::Vacant(_) => unreachable!(),
                 }
             }
         }
-        // SAFETY: Every array element was initialized above (also valid for N = 0).
+        // SAFETY: All N elements have been initialized, including when N is zero.
         Ok(unsafe { result.assume_init() })
     }
 

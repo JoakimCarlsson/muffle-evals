@@ -21,13 +21,15 @@ const NullObject = /* @__PURE__ */ (() => {
  *
  * Parse the given cookie header string into an object
  * The object has the various cookies as keys(names) => values
+ *
+ * With `allowMultiple`, a name that appears more than once maps to an array of all its values.
  */
 export function parse(
   str: string,
   options: CookieParseOptions & { allowMultiple: true },
 ): MultiCookies;
 export function parse(str: string, options?: CookieParseOptions): Cookies;
-export function parse(str: string, options?: CookieParseOptions): MultiCookies {
+export function parse(str: string, options?: CookieParseOptions): Cookies | MultiCookies {
   const obj: MultiCookies = new NullObject();
   const len = str.length;
   // RFC 6265 sec 4.1.1, RFC 2616 2.2 defines a cookie name consists of one char minimum, plus '='.
@@ -55,11 +57,11 @@ export function parse(str: string, options?: CookieParseOptions): MultiCookies {
       continue;
     }
 
+    const value = dec(valueSlice(str, eqIdx + 1, endIdx));
     const existing = obj[key];
     if (existing === undefined) {
-      obj[key] = dec(valueSlice(str, eqIdx + 1, endIdx));
-    } else if (options?.allowMultiple) {
-      const value = dec(valueSlice(str, eqIdx + 1, endIdx));
+      obj[key] = value;
+    } else if (options?.allowMultiple && value !== undefined) {
       if (Array.isArray(existing)) existing.push(value);
       else obj[key] = [existing, value];
     }

@@ -116,7 +116,7 @@ export function genDynamicImport(
 }
 
 /**
- * Generate a `typeof import()` type expression with an optional export name.
+ * Generate a TypeScript `typeof import()` expression with an optional export name.
  *
  * @group ESM
  */
@@ -125,17 +125,17 @@ export function genDynamicTypeImport(
   name?: string,
   options: Omit<DynamicImportOptions, "wrapper" | "interopDefault"> = {},
 ) {
-  const importString = `typeof ${genDynamicImport(specifier, {
+  let property = "";
+  if (name !== undefined) {
+    property = /^[$_\p{ID_Start}][$\u200C\u200D\p{ID_Continue}]*$/u.test(name)
+      ? `.${name}`
+      : `[${genString(name, options)}]`;
+  }
+  return `typeof ${genDynamicImport(specifier, {
     ...options,
     wrapper: false,
     interopDefault: false,
-  })}`;
-  if (name === undefined) {
-    return importString;
-  }
-  return /^[$_\p{ID_Start}][$\u200C\u200D\p{ID_Continue}]*$/u.test(name)
-    ? `${importString}.${name}`
-    : `${importString}[${genString(name, options)}]`;
+  })}${property}`;
 }
 
 // --- internal ---

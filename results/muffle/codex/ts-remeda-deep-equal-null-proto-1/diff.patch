@@ -1,5 +1,5 @@
 diff --git a/packages/remeda/src/isDeepEqual.test.ts b/packages/remeda/src/isDeepEqual.test.ts
-index 8c50b5e..3f637ca 100644
+index 8c50b5e..533e4ce 100644
 --- a/packages/remeda/src/isDeepEqual.test.ts
 +++ b/packages/remeda/src/isDeepEqual.test.ts
 @@ -1,3 +1,4 @@
@@ -7,69 +7,63 @@ index 8c50b5e..3f637ca 100644
  import { describe, expect, test } from "vitest";
  import { isDeepEqual } from "./isDeepEqual";
  
-@@ -80,6 +81,68 @@ describe("objects", () => {
+@@ -80,6 +81,62 @@ describe("objects", () => {
      expect(isDeepEqual({}, {})).toBe(true);
    });
  
-+  describe("null prototypes", () => {
-+    test("compares querystring.parse results with plain objects", () => {
++  describe("null-prototype objects", () => {
++    test.each([
++      [{}, {}, true],
++      [{ a: 1 }, { a: 1 }, true],
++      [{ a: 1 }, { a: 2 }, false],
++      [{ a: 1 }, {}, false],
++      [{ a: undefined }, { b: undefined }, false],
++      [{ toString: undefined }, { b: undefined }, false],
++    ])(
++      "compares contents in both orders: %j and %j",
++      (data, other, expected) => {
++        const nullPrototype: unknown = Object.assign(Object.create(null), data);
++
++        expect(isDeepEqual(nullPrototype, other)).toBe(expected);
++        expect(isDeepEqual(other, nullPrototype)).toBe(expected);
++        expect(isDeepEqual(other)(nullPrototype)).toBe(expected);
++        expect(isDeepEqual(nullPrototype)(other)).toBe(expected);
++      },
++    );
++
++    test("compares querystring results, including nested values", () => {
 +      const data = parse("a=1&b=2");
 +      const other = { a: "1", b: "2" };
 +
 +      expect(isDeepEqual(data, other)).toBe(true);
 +      expect(isDeepEqual(other, data)).toBe(true);
++      expect(isDeepEqual({ items: [data] }, { items: [other] })).toBe(true);
++      expect(isDeepEqual({ items: [other] }, { items: [data] })).toBe(true);
 +    });
 +
-+    test.each([
-+      [{}, {}, true],
-+      [{ a: 1 }, { a: 1 }, true],
-+      [{ a: 1 }, { a: 2 }, false],
-+      [{ a: 1 }, { b: 1 }, false],
-+      [{ a: 1 }, {}, false],
-+      [{ constructor: Object }, { toString: Object }, false],
-+    ])("compares %j with %j as %s", (data, other, expected) => {
-+      const nullPrototype: unknown = Object.assign(Object.create(null), data);
-+
-+      expect(isDeepEqual(nullPrototype, other)).toBe(expected);
-+      expect(isDeepEqual(other, nullPrototype)).toBe(expected);
-+      expect(isDeepEqual(other)(nullPrototype)).toBe(expected);
-+      expect(isDeepEqual(nullPrototype)(other)).toBe(expected);
-+    });
-+
-+    test("compares nested objects", () => {
-+      const data = { a: [Object.assign(Object.create(null), { b: 1 })] };
-+      const other = { a: [{ b: 1 }] };
-+
-+      expect(isDeepEqual(data, other)).toBe(true);
-+      expect(isDeepEqual(other, data)).toBe(true);
-+    });
-+
-+    test.each([
-+      [],
-+      new Map(),
-+      new Set(),
-+      new Date(),
-+      /a/u,
-+      new (class {
-+        public a = 1;
-+      })(),
-+    ])("does not equate null prototypes with instances (%j)", (instance) => {
-+      const nullPrototype: unknown = Object.create(null);
-+
-+      expect(isDeepEqual(nullPrototype, instance)).toBe(false);
-+      expect(isDeepEqual(instance, nullPrototype)).toBe(false);
-+    });
-+
-+    test("preserves comparisons between different classes", () => {
-+      class First {
-+        public a = 1;
++    test("does not equate null-prototype objects with other prototypes", () => {
++      class Example {
++        public value = 1;
 +      }
-+      class Second {
-+        public a = 1;
++      class OtherExample {
++        public value = 1;
++      }
++      const data: unknown = Object.create(null);
++
++      for (const other of [
++        [],
++        new Map(),
++        new Set(),
++        new Date(),
++        /test/u,
++        new Example(),
++        Object.create({}),
++      ]) {
++        expect(isDeepEqual(data, other)).toBe(false);
++        expect(isDeepEqual(other, data)).toBe(false);
 +      }
 +
-+      expect(isDeepEqual(new First(), new Second())).toBe(false);
-+      expect(isDeepEqual(new First(), { a: 1 })).toBe(false);
++      expect(isDeepEqual(new Example(), new OtherExample())).toBe(false);
 +    });
 +  });
 +
@@ -77,7 +71,7 @@ index 8c50b5e..3f637ca 100644
      expect(isDeepEqual({ a: 1, b: "2" }, { a: 1, b: "2" })).toBe(true);
    });
 diff --git a/packages/remeda/src/isDeepEqual.ts b/packages/remeda/src/isDeepEqual.ts
-index 4e7a239..c7110a7 100644
+index 4e7a239..33f1d74 100644
 --- a/packages/remeda/src/isDeepEqual.ts
 +++ b/packages/remeda/src/isDeepEqual.ts
 @@ -99,14 +99,14 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
@@ -97,21 +91,23 @@ index 4e7a239..c7110a7 100644
 +  const otherPrototype: unknown =
 +    Object.getPrototypeOf(other) ?? Object.prototype;
 +  if (dataPrototype !== otherPrototype) {
-+    // Plain objects and null-prototype objects are compared by their contents.
-+    // All other objects must share a prototype so that classes and built-ins
++    // Null-prototype objects and plain objects compare by their contents.
++    // Otherwise, require the same prototype so different classes and built-ins
 +    // remain distinct and the type-specific comparisons below are safe.
      return false;
    }
  
-@@ -130,7 +130,7 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
+@@ -130,8 +130,8 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
      return data.toString() === (other as unknown as RegExp).toString();
    }
  
 -  // At this point we only know that the 2 objects share a prototype and are not
-+  // At this point the objects have compatible prototypes and are not
-   // any of the previous types. They could be plain objects (Object.prototype),
+-  // any of the previous types. They could be plain objects (Object.prototype),
++  // At this point the objects share a prototype (or have null/Object
++  // prototypes) and are not any of the previous types. They could be plain objects (Object.prototype),
    // they could be classes, they could be other built-ins, or they could be
    // something weird. We assume that comparing values by keys is enough to judge
+   // their equality.
 @@ -141,7 +141,7 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
    }
  

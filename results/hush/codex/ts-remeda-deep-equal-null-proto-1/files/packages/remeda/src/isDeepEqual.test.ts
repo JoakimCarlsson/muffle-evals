@@ -77,6 +77,63 @@ describe("scalars", () => {
 });
 
 describe("objects", () => {
+  test.each([
+    [{}, {}],
+    [{ a: 1 }, { a: 1 }],
+    [{ a: 1 }, { a: 2 }],
+    [{ a: 1 }, {}],
+    [{ a: undefined }, { b: undefined }],
+    [{ toString: undefined }, { b: undefined }],
+  ])(
+    "null-prototype records compare by own contents: %o, %o",
+    (data, other) => {
+      const record: unknown = Object.assign(Object.create(null), data);
+      const expected = isDeepEqual(data, other);
+
+      expect(isDeepEqual(record, other)).toBe(expected);
+      expect(isDeepEqual(other, record)).toBe(expected);
+      expect(isDeepEqual({ nested: [record] }, { nested: [other] })).toBe(
+        expected,
+      );
+      expect(isDeepEqual({ nested: [other] }, { nested: [record] })).toBe(
+        expected,
+      );
+      expect(isDeepEqual(other)(record)).toBe(expected);
+    },
+  );
+
+  test("querystring records equal plain objects", () => {
+    const record = parse("a=1&b=2");
+    const plain = { a: "1", b: "2" };
+
+    expect(isDeepEqual(record, plain)).toBe(true);
+    expect(isDeepEqual(plain, record)).toBe(true);
+  });
+
+  test("null-prototype records remain distinct from other prototypes", () => {
+    class First {
+      public value = 1;
+    }
+    class Second {
+      public value = 1;
+    }
+    const record: unknown = Object.create(null);
+
+    for (const other of [
+      new First(),
+      [],
+      new Map(),
+      new Set(),
+      new Date(),
+      /a/u,
+    ]) {
+      expect(isDeepEqual(record, other)).toBe(false);
+      expect(isDeepEqual(other, record)).toBe(false);
+    }
+
+    expect(isDeepEqual(new First(), new Second())).toBe(false);
+  });
+
   test("empty objects are equal", () => {
     expect(isDeepEqual({}, {})).toBe(true);
   });
@@ -151,52 +208,6 @@ describe("objects", () => {
 
   test("undefined and empty object are not equal", () => {
     expect(isDeepEqual(undefined as unknown, {})).toBe(false);
-  });
-});
-
-describe("null-prototype objects", () => {
-  const nullPrototype = (
-    props: Readonly<Record<string, unknown>>,
-  ): Record<string, unknown> =>
-    Object.assign(Object.create(null) as Record<string, unknown>, props);
-
-  class Example {
-    public a = 1;
-  }
-
-  test.each([
-    ["empty objects", nullPrototype({}), {}, true],
-    ["matching properties", nullPrototype({ a: 1 }), { a: 1 }, true],
-    ["query strings", parse("a=1&b=2"), { a: "1", b: "2" }, true],
-    [
-      "two null prototypes",
-      nullPrototype({ a: 1 }),
-      nullPrototype({ a: 1 }),
-      true,
-    ],
-    ["different values", nullPrototype({ a: 1 }), { a: 2 }, false],
-    ["different keys", nullPrototype({ a: 1 }), { b: 1 }, false],
-    ["extra keys", nullPrototype({ a: 1 }), { a: 1, b: 2 }, false],
-    [
-      "nested objects",
-      { nested: nullPrototype({ a: 1 }) },
-      { nested: { a: 1 } },
-      true,
-    ],
-    ["nested arrays", [nullPrototype({ a: 1 })], [{ a: 1 }], true],
-    ["class instances", nullPrototype({ a: 1 }), new Example(), false],
-    ["plain objects and classes", { a: 1 }, new Example(), false],
-    ["custom prototypes", nullPrototype({}), Object.create({}), false],
-    ["arrays", nullPrototype({}), [], false],
-    ["maps", nullPrototype({}), new Map(), false],
-    ["sets", nullPrototype({}), new Set(), false],
-    ["dates", nullPrototype({}), new Date(0), false],
-    ["regular expressions", nullPrototype({}), /a/u, false],
-  ])("%s", (_name, data, other, expected) => {
-    expect(isDeepEqual(data, other)).toBe(expected);
-    expect(isDeepEqual(other, data)).toBe(expected);
-    expect(isDeepEqual(other)(data)).toBe(expected);
-    expect(isDeepEqual(data)(other)).toBe(expected);
   });
 });
 

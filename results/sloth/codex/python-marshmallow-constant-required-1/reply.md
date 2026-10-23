@@ -1,7 +1,9 @@
-I’ll check how `Constant` handles defaults and loading, make the smallest fix, then run the existing tests.
+I’ll check how `Constant` sets its defaults and how missing values are loaded, then add a focused regression test and run the tests.
 
-The conflict comes from `Constant` setting a load default that the base field rejects with `required=True`. I’ll keep the fix inside `Constant`, preserving its `required` metadata and allowing missing input to use the constant. Schema loading and collection fields already use the shared field methods, so no callers, fixtures, config, or exports need changes. I’ll preserve the existing `None` and validation behavior and add no new options or tests.
+The conflict is in `Constant`: it supplies a load default, which the base field rejects with `required=True`. Loading also checks whether a required value is missing before applying that default.
 
-Fixed `Constant` to accept `required=True` while preserving the required metadata. Missing input returns the constant, supplied values resolve to the constant, and `Constant(None)` still works.
+I’ll handle both in `Constant`, preserving its `required` flag and the existing validation rules for other fields. The change reaches the field implementation and its deserialization tests; no callers, fixtures, configuration, or exports need changes.
 
-Verified the requested examples, all 1,136 existing tests passed, and the package built successfully.
+Fixed `Constant(required=True)` to preserve the required flag and return the constant for both missing and supplied values. `Constant(None)` continues to work.
+
+Added regression coverage for required and optional constants, including `None`. All 1,139 tests pass, and the wheel builds successfully.

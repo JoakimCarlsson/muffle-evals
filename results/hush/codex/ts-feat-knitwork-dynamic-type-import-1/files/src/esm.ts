@@ -133,9 +133,12 @@ export function genDynamicTypeImport(
   if (name === undefined) {
     return expression;
   }
-  return /^[$_\p{ID_Start}][$\u200C\u200D\p{ID_Continue}]*$/u.test(name)
-    ? `${expression}.${name}`
-    : `${expression}[${genString(name, options)}]`;
+  const accessor = /^[$_\p{ID_Start}][$\u200C\u200D\p{ID_Continue}]*$/u.test(
+    name,
+  )
+    ? `.${name}`
+    : `[${genString(name, options)}]`;
+  return expression + accessor;
 }
 
 // --- internal ---

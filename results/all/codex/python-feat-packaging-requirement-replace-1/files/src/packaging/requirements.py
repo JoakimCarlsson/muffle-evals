@@ -3,26 +3,22 @@
 # for complete details.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from copy import deepcopy
+from typing import TYPE_CHECKING
 
 from ._parser import parse_requirement as _parse_requirement
 from ._tokenizer import ParserSyntaxError
 from .markers import Marker, _normalize_extra_values
-from .specifiers import InvalidSpecifier, Specifier, SpecifierSet
+from .specifiers import InvalidSpecifier, SpecifierSet
 from .utils import canonicalize_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from typing_extensions import Self
-
 __all__ = [
     "InvalidRequirement",
     "Requirement",
 ]
-
-
-_UNSET: Any = object()
 
 
 def __dir__() -> list[str]:
@@ -111,70 +107,6 @@ class Requirement:
             self.marker = Marker.__new__(Marker)
             self.marker._markers = _normalize_extra_values(parsed.marker)
 
-    def __replace__(
-        self,
-        *,
-        name: str = _UNSET,
-        url: str | None = _UNSET,
-        extras: set[str] = _UNSET,
-        specifier: SpecifierSet = _UNSET,
-        marker: Marker | None = _UNSET,
-    ) -> Self:
-        """Return a new requirement with the given fields replaced.
-
-        Omitted fields are preserved. Passing ``None`` clears the URL or marker;
-        an empty set clears extras, and an empty :class:`SpecifierSet` clears
-        version constraints. Mutable fields are copied, including explicit
-        prerelease settings on the specifier set and its individual specifiers.
-
-        Supports :func:`copy.replace` on Python 3.13 and later, and can be called
-        directly on earlier versions.
-
-        :raises InvalidRequirement: If the resulting fields cannot be represented
-            by a requirement string without changing their meaning.
-        :raises TypeError: If an unknown keyword argument is supplied.
-
-        .. versionadded:: 26.4
-        """
-        name = self.name if name is _UNSET else name
-        url = self.url if url is _UNSET else url
-        extras = self.extras if extras is _UNSET else extras
-        specifier = self.specifier if specifier is _UNSET else specifier
-        marker = self.marker if marker is _UNSET else marker
-
-        if not all(
-            (
-                isinstance(name, str),
-                url is None or isinstance(url, str),
-                isinstance(extras, set),
-                isinstance(specifier, SpecifierSet),
-                marker is None or isinstance(marker, Marker),
-            )
-        ) or any(not isinstance(extra, str) for extra in extras):
-            raise InvalidRequirement("Invalid requirement field value")
-
-        candidate = Requirement.__new__(Requirement)
-        candidate.name = name
-        candidate.url = url
-        candidate.extras = extras
-        candidate.specifier = specifier
-        candidate.marker = Marker(str(marker)) if marker is not None else None
-        result = type(self)(str(candidate))
-        if (
-            result.name != candidate.name
-            or result.url != candidate.url
-            or result.extras != candidate.extras
-            or str(result.specifier) != str(candidate.specifier)
-            or result.marker != candidate.marker
-        ):
-            raise InvalidRequirement("Requirement fields changed when parsed")
-
-        result.specifier = SpecifierSet(
-            (Specifier(str(s), prereleases=s._prereleases) for s in specifier),
-            prereleases=specifier._prereleases,
-        )
-        return result
-
     def _iter_parts(self, name: str) -> Iterator[str]:
         yield name
 
@@ -192,6 +124,46 @@ class Requirement:
 
         if self.marker:
             yield f"; {self.marker}"
+
+    def __replace__(self, **changes: object) -> Requirement:
+        """Return a validated copy with the given fields replaced.
+
+        Accept only ``name``, ``url``, ``extras``, ``specifier``, and ``marker``.
+        Values have the same types as the corresponding attributes. Unspecified
+        fields are preserved, including specifier prerelease overrides. Mutable
+        fields are copied. Invalid or ambiguous values raise InvalidRequirement.
+        """
+        fields = {
+            "name": (str,),
+            "url": (str, type(None)),
+            "extras": (set,),
+            "specifier": (SpecifierSet,),
+            "marker": (Marker, type(None)),
+        }
+        for key, value in changes.items():
+            if key not in fields:
+                raise TypeError(
+                    "Requirement.__replace__() got an unexpected "
+                    f"keyword argument {key!r}"
+                )
+            if not isinstance(value, fields[key]):
+                raise InvalidRequirement(f"Invalid replacement field type: {key}")
+        candidate = Requirement.__new__(Requirement)
+        for key in fields:
+            setattr(candidate, key, changes.get(key, getattr(self, key)))
+        if not all(isinstance(extra, str) for extra in candidate.extras):
+            raise InvalidRequirement("Invalid replacement extra type")
+        result = type(self)(str(candidate))
+        if (
+            result.name != candidate.name
+            or result.url != candidate.url
+            or result.extras != candidate.extras
+            or str(result.specifier) != str(candidate.specifier)
+            or result.marker != candidate.marker
+        ):
+            raise InvalidRequirement("Replacement fields do not round-trip")
+        result.specifier = deepcopy(candidate.specifier)
+        return result
 
     def __getstate__(self) -> tuple[str, bool | None]:
         # Return the requirement string for compactness and stability, paired

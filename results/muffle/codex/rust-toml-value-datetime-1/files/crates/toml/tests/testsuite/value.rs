@@ -6,6 +6,64 @@ use toml::Value::{Array, Boolean, Float, Integer, String, Table};
 use toml::map::Map;
 
 #[test]
+fn deserialize_datetime() {
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Settings {
+        last_updated: toml::value::Datetime,
+        minimum_interval: i64,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Document {
+        settings: Settings,
+    }
+
+    for datetime in [
+        "2023-01-15T11:42:14-06:00",
+        "2023-01-15T11:42:14Z",
+        "2023-01-15T11:42:14.123",
+        "2023-01-15",
+        "11:42:14.123",
+    ] {
+        let input = format!("[settings]\nlast_updated = {datetime}\nminimum_interval = 3600\n");
+        let expected: Document = toml::from_str(&input).unwrap();
+        let table: toml::Table = toml::from_str(&input).unwrap();
+        let value = table.get("settings").unwrap().clone();
+        assert_eq!(
+            Settings::deserialize(value.clone()).unwrap(),
+            expected.settings
+        );
+        assert_eq!(
+            value.clone().try_into::<Settings>().unwrap(),
+            expected.settings
+        );
+
+        let datetime_value = value.get("last_updated").unwrap().clone();
+        assert_eq!(
+            datetime_value
+                .clone()
+                .try_into::<toml::value::Datetime>()
+                .unwrap(),
+            expected.settings.last_updated
+        );
+        assert_eq!(
+            serde_json::Value::deserialize(datetime_value.clone()).unwrap(),
+            serde_json::Value::String(datetime.to_owned())
+        );
+        assert_eq!(
+            std::string::String::deserialize(datetime_value).unwrap(),
+            datetime
+        );
+        assert_eq!(
+            serde_json::Value::deserialize(value).unwrap(),
+            serde_json::json!({"last_updated": datetime, "minimum_interval": 3600})
+        );
+    }
+}
+
+#[test]
 fn display() {
     assert_data_eq!(
         String("foo".to_owned()).to_string(),
@@ -23,58 +81,5 @@ fn display() {
     assert_data_eq!(
         Table(map! {"test" => Integer (2), "test2" => Integer(3)}).to_string(),
         str!["{ test = 2, test2 = 3 }"].raw()
-    );
-}
-
-#[test]
-fn deserialize_datetime() {
-    use serde::Deserialize;
-
-    #[derive(Debug, Deserialize, PartialEq)]
-    struct Settings {
-        last_updated: toml::value::Datetime,
-        minimum_interval: i64,
-    }
-
-    #[derive(Deserialize)]
-    struct Document {
-        settings: Settings,
-    }
-
-    for datetime in [
-        "2023-01-15T11:42:14-06:00",
-        "2023-01-15T11:42:14Z",
-        "2023-01-15T11:42:14.123",
-        "2023-01-15",
-        "11:42:14.123",
-    ] {
-        let input = format!("[settings]\nlast_updated = {datetime}\nminimum_interval = 3600\n");
-        let direct: Document = toml::from_str(&input).unwrap();
-        let table: toml::Table = toml::from_str(&input).unwrap();
-        let value = table.get("settings").unwrap().clone();
-        let settings = Settings::deserialize(value.clone()).unwrap();
-        assert_eq!(settings, direct.settings);
-        assert_eq!(value.clone().try_into::<Settings>().unwrap(), settings);
-        assert_eq!(
-            Settings::deserialize(value.as_table().unwrap().clone()).unwrap(),
-            settings
-        );
-
-        let value = value.get("last_updated").unwrap().clone();
-        assert_eq!(
-            value.clone().try_into::<toml::value::Datetime>().unwrap(),
-            settings.last_updated
-        );
-        assert_eq!(
-            serde_json::Value::deserialize(value.clone()).unwrap(),
-            serde_json::Value::String(datetime.to_owned())
-        );
-        assert_eq!(value.try_into::<std::string::String>().unwrap(), datetime);
-    }
-
-    assert!(
-        String("2023-01-15T11:42:14-06:00".to_owned())
-            .try_into::<toml::value::Datetime>()
-            .is_err()
     );
 }

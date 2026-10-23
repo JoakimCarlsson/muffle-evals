@@ -11,34 +11,74 @@ index e93793c..d759b98 100644
  from .wait import wait_fixed  # noqa
  from .wait import wait_incrementing  # noqa
 diff --git a/tenacity/wait.py b/tenacity/wait.py
-index dc3c850..c6be98e 100644
+index dc3c850..4dc6366 100644
 --- a/tenacity/wait.py
 +++ b/tenacity/wait.py
-@@ -56,6 +56,27 @@ class wait_fixed(wait_base):
+@@ -56,6 +56,28 @@ class wait_fixed(wait_base):
          return self.wait_fixed
  
  
 +class wait_exception(wait_base):
-+    """Wait for the seconds returned by a predicate given the last exception.
++    """Wait the number of seconds returned by a function of the last exception.
 +
 +    Raise RuntimeError if the last attempt did not raise an exception.
 +    """
 +
 +    def __init__(self, predicate: typing.Callable[[BaseException], float]) -> None:
-+        """Set the function that computes the wait from an exception."""
++        """Set the function used to compute the wait from an exception."""
 +        self.predicate = predicate
 +
 +    def __call__(self, retry_state: "RetryCallState") -> float:
-+        """Return the predicate's wait for the failed attempt's exception."""
++        """Compute the wait from the exception raised by the last attempt."""
 +        outcome = retry_state.outcome
-+        exception = outcome.exception() if outcome is not None else None
-+        if exception is None:
++        if outcome is None or not outcome.failed:
 +            raise RuntimeError(
-+                "wait_exception requires an attempt that raised an exception"
++                "wait_exception requires an exception from the last attempt"
 +            )
++        exception = outcome.exception()
++        assert exception is not None
 +        return self.predicate(exception)
 +
 +
  class wait_none(wait_fixed):
      """Wait strategy that doesn't wait at all before retrying."""
  
+diff --git a/tests/test_tenacity.py b/tests/test_tenacity.py
+index b76fec2..a53e9b8 100644
+--- a/tests/test_tenacity.py
++++ b/tests/test_tenacity.py
+@@ -214,6 +214,34 @@ class TestStopConditions(unittest.TestCase):
+ 
+ 
+ class TestWaitConditions(unittest.TestCase):
++    def test_exception_wait(self):
++        """Use each exception's delay and reject outcomes without exceptions."""
++        predicate = mock.Mock(side_effect=lambda exception: exception.args[0])
++        wait = tenacity.wait_exception(predicate=predicate)
++        for exception in (ValueError(1.5), BaseException(0)):
++            sleep = mock.Mock()
++            attempt = mock.Mock(side_effect=[exception, "success"])
++            retrying = Retrying(
++                wait=wait,
++                sleep=sleep,
++                retry=tenacity.retry_if_exception_type(BaseException),
++            )
++            self.assertEqual(retrying(attempt), "success")
++            predicate.assert_called_with(exception)
++            sleep.assert_called_once_with(exception.args[0])
++
++        state = RetryCallState(None, None, (), {})
++        predicate.reset_mock()
++        with self.assertRaises(RuntimeError):
++            wait(state)
++        state.set_result(None)
++        with self.assertRaises(RuntimeError):
++            wait(state)
++        retrying = Retrying(wait=wait, retry=tenacity.retry_if_result(lambda _: True))
++        with self.assertRaises(RuntimeError):
++            retrying(lambda: None)
++        predicate.assert_not_called()
++
+     def test_no_sleep(self):
+         r = Retrying()
+         self.assertEqual(0, r.wait(make_retry_state(18, 9879)))

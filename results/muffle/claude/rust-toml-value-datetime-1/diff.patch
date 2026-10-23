@@ -30,33 +30,47 @@ index 892d2d8..7707403 100644
          tuple ignored_any identifier
      }
  }
-diff --git a/crates/toml/tests/testsuite/value.rs b/crates/toml/tests/testsuite/value.rs
-index 46513da..a43b1ff 100644
---- a/crates/toml/tests/testsuite/value.rs
-+++ b/crates/toml/tests/testsuite/value.rs
-@@ -25,3 +25,25 @@ fn display() {
-         str!["{ test = 2, test2 = 3 }"].raw()
-     );
- }
+diff --git a/crates/toml/tests/testsuite/de_value_datetime.rs b/crates/toml/tests/testsuite/de_value_datetime.rs
+new file mode 100644
+index 0000000..9bffbbd
+--- /dev/null
++++ b/crates/toml/tests/testsuite/de_value_datetime.rs
+@@ -0,0 +1,26 @@
++use serde::Deserialize;
++
++#[derive(Deserialize, Debug)]
++struct Settings {
++    last_updated: toml::value::Datetime,
++    minimum_interval: i64,
++}
 +
 +#[test]
-+fn deserialize_datetime_from_value() {
-+    #[derive(serde::Deserialize)]
-+    struct Settings {
-+        last_updated: toml::value::Datetime,
-+        minimum_interval: i64,
-+    }
-+
-+    let v: toml::Table = toml::from_str(
++fn value_into_struct_with_datetime() {
++    let v: toml::value::Table = toml::from_str(
 +        "[settings]\nlast_updated = 2023-01-15T11:42:14-06:00\nminimum_interval = 3600\n",
 +    )
 +    .unwrap();
-+    let s = v["settings"].clone().try_into::<Settings>().unwrap();
-+    assert_eq!(s.last_updated.to_string(), "2023-01-15T11:42:14-06:00");
-+    assert_eq!(s.minimum_interval, 3600);
++    let x = v.get("settings").unwrap().clone();
++    let n = Settings::deserialize(x).unwrap();
++    assert_eq!(n.last_updated.to_string(), "2023-01-15T11:42:14-06:00");
++    assert_eq!(n.minimum_interval, 3600);
++}
 +
-+    let d = toml::Value::Datetime("1979-05-27".parse().unwrap())
-+        .try_into::<toml::value::Datetime>()
-+        .unwrap();
++#[test]
++fn value_try_into_datetime() {
++    let v: toml::Value = toml::from_str("a = 1979-05-27").unwrap();
++    let d: toml::value::Datetime = v["a"].clone().try_into().unwrap();
 +    assert_eq!(d.to_string(), "1979-05-27");
 +}
+diff --git a/crates/toml/tests/testsuite/main.rs b/crates/toml/tests/testsuite/main.rs
+index e6d3379..05f7bee 100644
+--- a/crates/toml/tests/testsuite/main.rs
++++ b/crates/toml/tests/testsuite/main.rs
+@@ -7,6 +7,7 @@ macro_rules! map( ($($k:expr => $v:expr),*) => ({
+     _m
+ }) );
+ 
++mod de_value_datetime;
+ mod macros;
+ mod table;
+ mod value;

@@ -27,23 +27,39 @@ type Child struct {
 
 type TestString string
 
+func TestDecoder_IntegerKeysToString(t *testing.T) {
+	for _, keyType := range []reflect.Type{reflect.TypeOf(""), reflect.TypeOf(TestString(""))} {
+		t.Run(keyType.String(), func(t *testing.T) {
+			for _, tt := range []struct{ source, want string }{
+				{"42", "42"},
+				{"-42", "-42"},
+				{"0", "0"},
+				{"0x2a", "42"},
+				{"-9223372036854775808", "-9223372036854775808"},
+				{"18446744073709551615", "18446744073709551615"},
+			} {
+				t.Run(tt.source, func(t *testing.T) {
+					dst := reflect.New(reflect.MapOf(keyType, reflect.TypeOf((*interface{})(nil)).Elem()))
+					if err := yaml.Unmarshal([]byte(tt.source+": 100\n"), dst.Interface()); err != nil {
+						t.Fatal(err)
+					}
+					key := reflect.ValueOf(tt.want).Convert(keyType)
+					got := dst.Elem().MapIndex(key)
+					if dst.Elem().Len() != 1 || !got.IsValid() || got.Interface() != uint64(100) {
+						t.Fatalf("expected key %q with value 100, got %v", tt.want, dst.Elem().Interface())
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestDecoder(t *testing.T) {
 	tests := []struct {
 		source string
 		value  interface{}
 		eof    bool
 	}{
-		{
-			source: "42: 100\n-42: 200\n0: 300\n9223372036854775807: 400\n18446744073709551615: 500\n",
-			value: map[string]any{
-				"42": 100, "-42": 200, "0": 300,
-				"9223372036854775807": 400, "18446744073709551615": 500,
-			},
-		},
-		{
-			source: "42: 100\n-42: 200\n",
-			value:  map[TestString]any{"42": 100, "-42": 200},
-		},
 		{
 			source: "v: hi\n",
 			value:  map[string]string{"v": "hi"},

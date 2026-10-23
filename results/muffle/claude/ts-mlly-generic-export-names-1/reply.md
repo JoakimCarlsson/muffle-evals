@@ -1,16 +1,13 @@
-You've hit your session limit · resets 11:30am (Europe/Stockholm)
+`findExports` no longer reports generic type arguments as export names. All 189 tests pass, including new cases for each example you gave.
 
-Fix works and tsc is clean; I'm now adding permanent regression tests and running lint.
+- **Cause:** the scanner in `_extractExtraNames` (`src/analyze.ts`) only tracked `<…>` inside type annotations, so `Map<string, IAppMode>` in an initializer was split at the comma. The regex capture it was fed also stopped before the closing `>`.
+- **Fix:**
+  - The scanner now gets the rest of the line instead of the truncated capture.
+  - A new `_isGenericOpen` treats `<` as a generic opener when it follows an identifier and its matching `>` is followed by `(` or a template literal.
+  - Real comparisons like `1<2` still split correctly.
+  - The scanner also stops at a top-level `;`, and `=>` is no longer mistaken for a closing `>`.
+- **Tests:** I added to `test/exports.test.ts` your five cases. These are the `APP_MODE_MAP` case, `foo<Bar, Baz>(…)`, the two-declarator `Set`/`Map` case, `1<2, b = 3`, and the arrow-function type annotation.
 
-`findExports` no longer reports generic type arguments as export names. All the cases from your report now give the expected names.
+The generic check is a heuristic. A comparison that looks like a generic call, such as `a<b, c>(d)`, would be read as a generic.
 
-The full suite passes (191 tests), and eslint and `tsc --noEmit` are clean.
-
-There were two causes, both in `src/analyze.ts`:
-- **Truncated capture:** the regex capture of the declaration tail stopped at the last identifier after a comma. For `new Map<string, IAppMode>()` that left `IAppMode` as the last thing seen, with no `>()` after it. I now scan the rest of the line from the end of the first name, and the scan stops at a top-level `;`.
-- **Generics in expressions:** the scanner only tracked `<` and `>` inside type annotations. It now also treats `<…>` as generic arguments when the matching `>` is followed by `(`, as in `new Set<string>()` or `foo<Bar, Baz>(…)`. `export const a = 1<2, b = 3` still counts as a comparison and gives `["a", "b"]`.
-- **Arrow types:** the `>` in `=>` no longer closes an angle bracket. `export const a: Map<string, (x: string) => void> = new Map(), b = 1` gives `["a", "b"]`.
-
-I added regression tests for all five cases in `test/exports.test.ts`. I didn't commit anything.
-
-The generic-call rule can misread `a<b, c>(d)` written as a comparison chain. That's the same ambiguity TypeScript resolves as a generic call, so I left it.
+I haven't committed anything.

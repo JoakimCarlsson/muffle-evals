@@ -1,3 +1,3 @@
-Done. `ParseComma` and `ParseCommaf` added to `comma.go`. Build, existing tests and a throwaway check of your cases passed. I deleted the check, so no tests were added.
+Done. Added `ParseComma` and `ParseCommaf` to `comma.go`, with tests in `comma_test.go`. Build, vet and tests pass.
 
-Both are lenient about comma placement: `ParseComma("1,2,3")` returns 123. `ParseCommaf` rejects commas after the decimal point.
+Both reject misplaced commas (`"1,23"`, `",123"`, `"1.2,345"`). `ParseCommaf` also round-trips `NaN`, `+Inf` and `-Inf`. README not updated.

@@ -1,7 +1,9 @@
-I’ll check the shared iterator code and its callers, fix the lower-bound calculation, then build and run the existing tests.
+I’ll check the shared iterator logic and existing tests, fix the lower bound, and run the build and test suite.
 
-Both `Iter` and `IterMut` count the current header after its last value has been consumed. Their `Values` and `ValuesMut` wrappers inherit the same bug. I’ll adjust both calculations to exclude that header when the cursor is empty, including for an empty map. No API, fixture, config, or export changes are needed.
+The lower bound counts the current header even after its last value has been yielded. The same bug affects `iter_mut`, and both value iterators delegate to these implementations. I’ll fix both and add one regression test covering empty maps, multiple headers, duplicate values, and exhaustion. No API, dependency, or configuration changes are needed.
 
-Fixed the lower-bound calculation in [src/header/map.rs](/home/jdaddy/.cache/muffle-evals/runs/sloth/codex/rust-http-headermap-size-hint-1/work/src/header/map.rs:2367) for both `Iter` and `IterMut`, also fixing their values wrappers. Exhausted iterators now report a lower bound of zero, including empty maps.
+Fixed the lower bound in `iter()` and `iter_mut()`, which also fixes `values()` and `values_mut()`. Exhausted iterators now report a lower bound of zero.
 
-Build succeeded; all 414 existing tests passed.
+Added regression coverage for empty maps, single headers, multiple headers, duplicate values, and exhaustion.
+
+Validation: all 415 tests passed; build and formatting checks passed.

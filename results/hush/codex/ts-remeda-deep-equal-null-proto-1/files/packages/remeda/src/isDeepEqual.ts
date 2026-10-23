@@ -99,17 +99,13 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
     return false;
   }
 
-  if (
-    (Object.getPrototypeOf(data) ?? Object.prototype) !==
-    (Object.getPrototypeOf(other) ?? Object.prototype)
-  ) {
-    // If the objects don't share a prototype it's unlikely that they are
-    // semantically equal. It is technically possible to build 2 prototypes that
-    // act the same but are not equal (at the reference level, checked via
-    // `===`) and then create 2 objects that are equal although we would fail on
-    // them. Because this is so unlikely, the optimization we gain here for the
-    // rest of the function by assuming that `other` is of the same type as
-    // `data` is more than worth it.
+  // Null-prototype records have the same semantics as plain objects. Normalize
+  // only those prototypes so class instances and built-ins remain distinct.
+  const dataPrototype: unknown =
+    Object.getPrototypeOf(data) ?? Object.prototype;
+  const otherPrototype: unknown =
+    Object.getPrototypeOf(other) ?? Object.prototype;
+  if (dataPrototype !== otherPrototype) {
     return false;
   }
 
@@ -133,8 +129,7 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
     return data.toString() === (other as unknown as RegExp).toString();
   }
 
-  // At this point the objects share a prototype (treating null prototypes as
-  // Object.prototype) and are not
+  // At this point we only know that the 2 objects share a normalized prototype and are not
   // any of the previous types. They could be plain objects (Object.prototype),
   // they could be classes, they could be other built-ins, or they could be
   // something weird. We assume that comparing values by keys is enough to judge
@@ -145,7 +140,7 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
   }
 
   for (const [key, value] of Object.entries(data)) {
-    if (!(key in other)) {
+    if (!Object.hasOwn(other, key)) {
       return false;
     }
 

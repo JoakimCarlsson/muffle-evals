@@ -1,19 +1,19 @@
 import { describe, expect, test } from "vitest";
 import { withBase, withoutBase } from "../src";
 
-describe("base path boundaries", () => {
+describe("base boundaries", () => {
   for (const base of ["/admin", "/admin/"]) {
-    for (const suffix of ["-dashboard", "istrator", "%2Fdashboard"]) {
-      const input = `/admin${suffix}`;
-      test(`${base} does not contain ${input}`, () => {
+    for (const suffix of ["-dashboard", "istrator", ".html", "%2Fdashboard"]) {
+      test(`${base} does not contain /admin${suffix}`, () => {
+        const input = `/admin${suffix}`;
         expect(withoutBase(input, base)).toBe(input);
         expect(withBase(input, base)).toBe(`/admin${input}`);
       });
     }
 
-    for (const suffix of ["", "/dashboard", "?x", "#section"]) {
-      const input = `/admin${suffix}`;
-      test(`${base} contains ${input}`, () => {
+    for (const suffix of ["", "/", "/dashboard", "?x", "#section"]) {
+      test(`${base} contains /admin${suffix}`, () => {
+        const input = `/admin${suffix}`;
         expect(withoutBase(input, base)).toBe(
           suffix.startsWith("/") ? suffix : `/${suffix}`,
         );

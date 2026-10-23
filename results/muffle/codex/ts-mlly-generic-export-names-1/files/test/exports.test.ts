@@ -145,33 +145,6 @@ describe("findExports", () => {
       name: "foo",
       names: ["foo"],
     },
-    "export const APP_MODE_MAP = new Map<string, IAppMode>()": {
-      names: ["APP_MODE_MAP"],
-    },
-    "export const result = foo<Bar, Baz>(arg1, arg2)": {
-      names: ["result"],
-    },
-    "export const a = new Set<string>(), b = new Map<string, number>()": {
-      names: ["a", "b"],
-    },
-    "export const a = new Map<string, Map<number, boolean>>(), b = 1": {
-      names: ["a", "b"],
-    },
-    "export const a = foo<string, (x: string) => void>(), b = 1": {
-      names: ["a", "b"],
-    },
-    "export const a: Map<string, (x: string) => void> = new Map(), b = 1": {
-      names: ["a", "b"],
-    },
-    "export const a = 1<2, b = 3": {
-      names: ["a", "b"],
-    },
-    "export const a = 1 < 2, b = foo<Bar, Baz>()": {
-      names: ["a", "b"],
-    },
-    "export const a = 2 > 1, b = 3": {
-      names: ["a", "b"],
-    },
   };
 
   for (const [input, test] of Object.entries(tests)) {
@@ -196,6 +169,32 @@ describe("findExports", () => {
       }
     });
   }
+  it.each([
+    [
+      "export const APP_MODE_MAP = new Map<string, IAppMode>()",
+      ["APP_MODE_MAP"],
+    ],
+    ["export const result = foo<Bar, Baz>(arg1, arg2)", ["result"]],
+    [
+      "export const a = new Set<string>(), b = new Map<string, number>()",
+      ["a", "b"],
+    ],
+    [
+      "export const a = foo<Map<string, number>, (x: string) => void>(), b = 1",
+      ["a", "b"],
+    ],
+    ["export const a = 1<2, b = 3", ["a", "b"]],
+    ["export const a = 1<2, b = foo<string, number>()", ["a", "b"]],
+    [
+      "export const a: Map<string, (x: string) => void> = new Map(), b = 1",
+      ["a", "b"],
+    ],
+    ["export const a = foo<'a>b', number>(), b = 1", ["a", "b"]],
+  ])("extracts declaration names from %s", (code, names) => {
+    expect(findExports(code)[0].names).toEqual(names);
+    expect(findExportNames(code)).toEqual(names);
+  });
+
   it("handles multiple exports", () => {
     const matches = findExports(`
           export { useTestMe1 } from "@/test/foo1";

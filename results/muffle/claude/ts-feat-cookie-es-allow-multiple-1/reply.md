@@ -1,8 +1,9 @@
-`parse()` now takes `allowMultiple`. All 98 tests pass, including a new one for the option. `tsc --noEmit` reports one error, a TS5107 deprecation warning about `esModuleInterop` in `tsconfig.json`. I didn't touch that file, so it was already there.
+`parse()` now takes `allowMultiple`. With it on, a name that appears more than once maps to an array of its decoded values in order, and names that appear once stay plain strings. Both of your examples and the `foo=%1;foo=boo` case give the results you listed. I added tests for these, and all 100 tests pass.
 
-- **With `allowMultiple: true`:** a name that appears more than once maps to an array of all its values in order, and a name that appears once stays a plain string. Your two examples and `foo=%1;foo=boo` give `["%1", "boo"]`. Values are decoded the same way as before, including with a custom `decode`.
-- **Without the option:** nothing changes, and the first value still wins.
-- **Types:** `parse(str, { allowMultiple: true })` returns a new `MultiCookies` type, where each value can be a `string` or `string[]`. Any other call still returns `Cookies`. I exported `MultiCookies` from `src/index.ts`.
-- **Where:** the changes are in `src/cookie/parse.ts` and `src/cookie/types.ts`, with the test in `test/cookie-parse.test.ts`.
+Without the option, the first value still wins. `tsc --noEmit` reports one error, a deprecation warning about `esModuleInterop` in `tsconfig.json`. I didn't touch that file, and I haven't confirmed whether the error predates my change.
 
-I didn't commit anything.
+For the return type, `parse()` has an overload. Passing `{ allowMultiple: true }` returns the new `MultiCookies` type (`Record<string, string | string[] | undefined>`). Any other call still returns `Cookies`. I exported the new `MultiCookies` and `CookieParseMultipleOptions` types from `src/index.ts`.
+
+`allowMultiple` is also accepted by `parseSetCookie()` because it shares the options type, but it has no effect there. I didn't update the README, since it doesn't mention the existing options for `parse()`.
+
+The code changes are in `src/cookie/parse.ts` and `src/cookie/types.ts`, and the tests are in `test/cookie-parse.test.ts`. I haven't committed anything.

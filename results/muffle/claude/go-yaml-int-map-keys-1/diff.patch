@@ -1,5 +1,5 @@
 diff --git a/decode.go b/decode.go
-index 43c317f..4b610cd 100644
+index 43c317f..802ced0 100644
 --- a/decode.go
 +++ b/decode.go
 @@ -1755,7 +1755,10 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
@@ -8,14 +8,14 @@ index 43c317f..4b610cd 100644
  			k = reflect.ValueOf(keyVal)
 -			if k.IsValid() && k.Type().ConvertibleTo(keyType) {
 +			if k.IsValid() && keyType.Kind() == reflect.String && k.Kind() != reflect.String {
-+				// reflect would convert an integer to the rune it represents
++				// avoid integer to string conversion yielding a rune
 +				k = reflect.ValueOf(fmt.Sprint(keyVal)).Convert(keyType)
 +			} else if k.IsValid() && k.Type().ConvertibleTo(keyType) {
  				k = k.Convert(keyType)
  			}
  		}
 diff --git a/decode_test.go b/decode_test.go
-index 2d56942..58a0904 100644
+index 2d56942..d0d9619 100644
 --- a/decode_test.go
 +++ b/decode_test.go
 @@ -3853,3 +3853,13 @@ func TestSetNullValue(t *testing.T) {
@@ -23,12 +23,12 @@ index 2d56942..58a0904 100644
  	}
  }
 +
-+func TestDecoder_IntKeyToStringMapKey(t *testing.T) {
-+	var d map[string]any
-+	if err := yaml.Unmarshal([]byte("42: 100\n"), &d); err != nil {
++func TestDecoder_IntegerKeyToStringMap(t *testing.T) {
++	var got map[string]any
++	if err := yaml.Unmarshal([]byte("42: 100\n"), &got); err != nil {
 +		t.Fatal(err)
 +	}
-+	if v, ok := d["42"]; !ok || v != uint64(100) {
-+		t.Fatalf("unexpected result: %v", d)
++	if v, ok := got["42"]; !ok || v != uint64(100) {
++		t.Fatalf("unexpected result: %v", got)
 +	}
 +}

@@ -1,12 +1,12 @@
 diff --git a/src/attr/_make.py b/src/attr/_make.py
-index e84d979..31213aa 100644
+index e84d979..b297d9a 100644
 --- a/src/attr/_make.py
 +++ b/src/attr/_make.py
 @@ -2321,8 +2321,9 @@ def _attrs_to_init_script(
  
          lines.append(f"BaseException.__init__(self, {vals})")
  
-+    # Forward parameter values, without the defaults used in the signature.
++    # Forward parameter values, without the defaults from the signature.
 +    pre_init_args = ", ".join(arg.split("=")[0] for arg in args)
      args = ", ".join(args)
 -    pre_init_args = args
@@ -14,25 +14,27 @@ index e84d979..31213aa 100644
          # leading comma & kw_only args
          args += f"{', ' if args else ''}*, {', '.join(kw_only_args)}"
 diff --git a/tests/test_make.py b/tests/test_make.py
-index 80c0066..f0517cc 100644
+index 80c0066..af7619f 100644
 --- a/tests/test_make.py
 +++ b/tests/test_make.py
-@@ -696,6 +696,49 @@ class TestAttributes:
+@@ -696,6 +696,50 @@ class TestAttributes:
  
          assert 12 == getattr(c, "z", None)
  
 +    @pytest.mark.parametrize("call_style", ["positional", "keyword", "defaults"])
 +    def test_pre_init_defaults(self, call_style):
 +        """
-+        Pre-init receives argument values for fields with defaults and factories.
++        Pre-init receives argument values, including overrides of defaults.
++        Omitted factories are passed as NOTHING before initialization.
 +        """
 +        received = []
 +
 +        @attr.define
 +        class C:
 +            required: int
-+            value: int = 100
++            _value: int = attr.field(default=100, alias="value")
 +            mapping: dict = attr.field(factory=dict)
++            ignored: int = attr.field(default=42, init=False)
 +            kw_required: int = attr.field(kw_only=True)
 +            kw_default: int = attr.field(default=100, kw_only=True)
 +
@@ -45,9 +47,9 @@ index 80c0066..f0517cc 100644
 +
 +        mapping = {"blah": "blah"}
 +        if call_style == "positional":
-+            inst = C(200, 200, mapping, kw_required=200, kw_default=200)
++            C(200, 200, mapping, kw_required=200, kw_default=200)
 +        elif call_style == "keyword":
-+            inst = C(
++            C(
 +                required=200,
 +                value=200,
 +                mapping=mapping,
@@ -56,13 +58,12 @@ index 80c0066..f0517cc 100644
 +            )
 +        else:
 +            inst = C(200, kw_required=200)
-+
-+        if call_style == "defaults":
-+            assert [(200, 100, attr.NOTHING, 200, 100)] == received
++            assert received == [(200, 100, attr.NOTHING, 200, 100)]
 +            assert inst.mapping == {}
-+        else:
-+            assert [(200, 200, mapping, 200, 200)] == received
-+            assert received[0][2] is mapping
++            return
++
++        assert received == [(200, 200, mapping, 200, 200)]
++        assert received[0][2] is mapping
 +
      @pytest.mark.usefixtures("with_and_without_validation")
      def test_pre_init_kw_only_work_with_defaults(self):

@@ -275,7 +275,7 @@ export function cleanDoubleSlashes(input = ""): string {
 /**
  * Ensures the URL or pathname starts with base.
  *
- * If input already starts with base at a path boundary, it will not be added again.
+ * If input already starts with base, it will not be added again.
  *
  * @example
  *
@@ -292,7 +292,7 @@ export function withBase(input: string, base: string) {
     return input;
   }
   const _base = withoutTrailingSlash(base);
-  if (_hasBase(input, _base)) {
+  if (input.startsWith(_base) && /^([/?#]|$)/.test(input.slice(_base.length))) {
     return input;
   }
   return joinURL(_base, input);
@@ -301,7 +301,7 @@ export function withBase(input: string, base: string) {
 /**
  * Removes the base from the URL or pathname.
  *
- * If input does not start with base at a path boundary, it will not be removed.
+ * If input does not start with base, it will not be removed.
  *
  * @example
  *
@@ -316,19 +316,14 @@ export function withoutBase(input: string, base: string) {
     return input;
   }
   const _base = withoutTrailingSlash(base);
-  if (!_hasBase(input, _base)) {
+  if (
+    !input.startsWith(_base) ||
+    !/^([/?#]|$)/.test(input.slice(_base.length))
+  ) {
     return input;
   }
   const trimmed = input.slice(_base.length);
   return trimmed[0] === "/" ? trimmed : "/" + trimmed;
-}
-
-/** Checks if input starts with base at a path boundary. */
-function _hasBase(input: string, base: string): boolean {
-  return (
-    input.startsWith(base) &&
-    (!input[base.length] || "/?#".includes(input[base.length]))
-  );
 }
 
 /**

@@ -78,6 +78,30 @@ class wait_random(wait_base):
         )
 
 
+class wait_exception(wait_base):
+    """Wait strategy that waits the time returned by a function of the last exception.
+
+    Raises RuntimeError if the last attempt did not raise an exception.
+
+    For example::
+
+        @retry(wait=wait_exception(lambda e: 60.0))
+        def fn():
+            ...
+    """
+
+    def __init__(self, predicate: typing.Callable[[BaseException], float]) -> None:
+        self.predicate = predicate
+
+    def __call__(self, retry_state: "RetryCallState") -> float:
+        if retry_state.outcome is None:
+            raise RuntimeError("__call__() called before outcome was set")
+        exception = retry_state.outcome.exception()
+        if exception is None:
+            raise RuntimeError("wait_exception: last attempt did not raise")
+        return self.predicate(exception)
+
+
 class wait_combine(wait_base):
     """Combine several waiting strategies."""
 
@@ -86,25 +110,6 @@ class wait_combine(wait_base):
 
     def __call__(self, retry_state: "RetryCallState") -> float:
         return sum(x(retry_state=retry_state) for x in self.wait_funcs)
-
-
-class wait_exception(wait_base):
-    """Wait strategy that waits the amount of time returned by a function
-    called with the exception raised by the last attempt.
-
-    Raises RuntimeError if the last attempt did not fail with an exception.
-    """
-
-    def __init__(self, predicate: typing.Callable[[BaseException], float]) -> None:
-        self.predicate = predicate
-
-    def __call__(self, retry_state: "RetryCallState") -> float:
-        exception = retry_state.outcome.exception() if retry_state.outcome else None
-        if exception is None:
-            raise RuntimeError(
-                "wait_exception requires the last attempt to fail with an exception"
-            )
-        return self.predicate(exception)
 
 
 class wait_chain(wait_base):

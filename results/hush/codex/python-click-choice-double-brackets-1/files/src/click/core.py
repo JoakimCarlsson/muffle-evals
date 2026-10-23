@@ -3571,11 +3571,9 @@ class Argument(Parameter):
         var = self.type.get_metavar(param=self, ctx=ctx)
         if not var:
             var = self.name.upper()
-        if not self.required and var.startswith("[") and var.endswith("]"):
-            var = var[1:-1]
         if self.deprecated:
             var += "!"
-        if not self.required:
+        if not self.required and not (var.startswith("[") and var.endswith("]")):
             var = f"[{var}]"
         if self.nargs != 1:
             var += "..."

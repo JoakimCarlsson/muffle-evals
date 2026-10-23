@@ -1,75 +1,41 @@
-use core::fmt;
-
 #[cfg(doc)]
 use crate::Itertools;
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 
-/// Value returned for the error case of [`Itertools::strip_prefix`]
-/// and [`Itertools::strip_prefix_by`].
-pub struct StripPrefixError<I, P>
+/// Value returned for the error case of [`Itertools::strip_prefix`] and
+/// [`Itertools::strip_prefix_by`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StripPrefixError<I, P, PrefixItem>
 where
     I: Iterator,
-    P: Iterator,
 {
-    /// The original iterator, stopped right after the item that did not match.
+    /// The original iterator, stopped right after the item that didn't match.
     pub iterator: I,
-    /// The rest of the prefix iterator, after the prefix item that did not match.
+    /// The rest of the prefix iterator, after the prefix item that didn't match.
     pub prefix: P,
     /// The iterator's item (`None` if it ran out first) and the prefix item
     /// it was compared with.
-    pub mismatch: (Option<I::Item>, P::Item),
+    pub mismatch: (Option<I::Item>, PrefixItem),
 }
 
-impl<I, P> Clone for StripPrefixError<I, P>
-where
-    I: Iterator + Clone,
-    P: Iterator + Clone,
-    I::Item: Clone,
-    P::Item: Clone,
-{
-    fn clone(&self) -> Self {
-        Self {
-            iterator: self.iterator.clone(),
-            prefix: self.prefix.clone(),
-            mismatch: self.mismatch.clone(),
-        }
-    }
-}
-
-impl<I, P> fmt::Debug for StripPrefixError<I, P>
-where
-    I: Iterator + fmt::Debug,
-    P: Iterator + fmt::Debug,
-    I::Item: fmt::Debug,
-    P::Item: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("StripPrefixError")
-            .field("iterator", &self.iterator)
-            .field("prefix", &self.prefix)
-            .field("mismatch", &self.mismatch)
-            .finish()
-    }
-}
-
-impl<I, P> fmt::Display for StripPrefixError<I, P>
+impl<I, P, PrefixItem> Display for StripPrefixError<I, P, PrefixItem>
 where
     I: Iterator,
-    P: Iterator,
 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self.mismatch.0 {
-            None => f.write_str("iterator ended before the prefix did"),
-            Some(_) => f.write_str("iterator item did not match the prefix"),
+            None => write!(f, "iterator ended before the prefix was fully matched"),
+            Some(_) => write!(f, "iterator item did not match the prefix item"),
         }
     }
 }
 
 #[cfg(feature = "use_std")]
-impl<I, P> std::error::Error for StripPrefixError<I, P>
+impl<I, P, PrefixItem> std::error::Error for StripPrefixError<I, P, PrefixItem>
 where
-    I: Iterator + fmt::Debug,
-    P: Iterator + fmt::Debug,
-    I::Item: fmt::Debug,
-    P::Item: fmt::Debug,
+    I: Iterator + Debug,
+    I::Item: Debug,
+    P: Debug,
+    PrefixItem: Debug,
 {
 }

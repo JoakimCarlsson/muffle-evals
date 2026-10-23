@@ -1,3 +1,1 @@
-Edit failed (whitespace mismatch); retrying with exact lines.
-
-Done. `decodeMap` in `decode.go` now turns non-string scalar keys into strings with `fmt.Sprint` when the map key type is string-kinded. Before, the int was converted to a rune, so 42 became `*`. I added `TestDecoder_IntKeyToStringMap`, and the full suite passes. Not committed.
+Done. `decodeMap` in `decode.go` now turns non-string keys into text for string-keyed maps, so `42: 100` gives `map[42:100]`. The old code converted the integer to a rune, which is where `*` came from. I added `TestDecoder_IntegerKeyToStringMap`, and `go test ./...` passes. Nothing committed.

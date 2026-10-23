@@ -25,8 +25,8 @@ export interface CookieParseOptions {
   filter?(key: string): boolean;
 
   /**
-   * Collect every value of a repeated cookie name into an array, in order.
-   * Names that appear once stay plain strings. By default only the first value is kept.
+   * Collect repeated cookie names into an array of all their values, in order.
+   * Names that appear once stay plain strings. By default the first value wins.
    *
    * @default false
    */
@@ -41,7 +41,7 @@ export type Cookies = Record<string, string | undefined>;
 /**
  * Cookies object where repeated names map to arrays of values.
  */
-export type MultiCookies = Record<string, string | undefined | (string | undefined)[]>;
+export type MultiCookies = Record<string, string | string[] | undefined>;
 
 /**
  * Stringify options.

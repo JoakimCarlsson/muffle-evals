@@ -6,8 +6,8 @@ Changelog
 
 Features:
 
-* Add :meth:`Requirement.__replace__() <packaging.requirements.Requirement.__replace__>`,
-  supporting :func:`copy.replace` on Python 3.13+.
+* Add ``Requirement.__replace__()``, so :func:`copy.replace` works on
+  :class:`~packaging.requirements.Requirement` on Python 3.13+.
 
 Removals:
 

@@ -1,5 +1,2 @@
-Base matching needs path boundaries. Checking helpers and tests.
-
-
 Done.
-Fixed base path boundaries; added regression tests. Lint, formatting, types, 493 tests passed via local binaries; `pnpm` unavailable.
+`withBase`/`withoutBase` now check path boundaries. Regression tests added; 497 tests, typecheck, ESLint, Prettier passed.

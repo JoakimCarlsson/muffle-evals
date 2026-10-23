@@ -17,3 +17,40 @@ index f66cf9e..6851753 100644
  }
  
  func (c *compiler) PredicateNode(node *ast.PredicateNode) {
+diff --git a/expr_test.go b/expr_test.go
+index 1bce3c8..c18257a 100644
+--- a/expr_test.go
++++ b/expr_test.go
+@@ -1464,6 +1464,32 @@ func TestExpr(t *testing.T) {
+ 	}
+ }
+ 
++// TestExpr_findLast_in_map checks reverse predicate loops preserve surrounding values.
++func TestExpr_findLast_in_map(t *testing.T) {
++	for _, builtin := range []string{"findLast", "findLastIndex"} {
++		for _, tt := range []struct {
++			args string
++			want any
++		}{
++			{`[1.0, 2.0, 3.0, 4.0, 5.0], # > 3`, map[string]any{"findLast": 5.0, "findLastIndex": 4}[builtin]},
++			{`[1.0, 2.0, 3.0, 4.0, 5.0], # < 2`, map[string]any{"findLast": 1.0, "findLastIndex": 0}[builtin]},
++			{`[1.0, 2.0, 3.0, 4.0, 5.0], # > 5`, nil},
++			{`[], # > 3`, nil},
++		} {
++			code := fmt.Sprintf(`{"r": %s(%s), "s": 42}`, builtin, tt.args)
++			t.Run(code, func(t *testing.T) {
++				for _, optimize := range []bool{false, true} {
++					program, err := expr.Compile(code, expr.Optimize(optimize))
++					require.NoError(t, err)
++					got, err := expr.Run(program, nil)
++					require.NoError(t, err)
++					assert.Equal(t, map[string]any{"r": tt.want, "s": 42}, got)
++				}
++			})
++		}
++	}
++}
++
+ func TestExpr_error(t *testing.T) {
+ 	env := mock.Env{
+ 		ArrayOfAny: []any{1, "2", 3, true},

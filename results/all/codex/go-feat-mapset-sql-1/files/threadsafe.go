@@ -345,9 +345,19 @@ func (t *threadSafeSet[T]) MarshalJSON() ([]byte, error) {
 	return b, err
 }
 
-// Value returns the set as a JSON array for a database column.
+func (t *threadSafeSet[T]) UnmarshalJSON(p []byte) error {
+	t.Lock()
+	err := t.uss.UnmarshalJSON(p)
+	t.Unlock()
+
+	return err
+}
+
+// Value returns the set as a JSON array for database storage.
 func (t *threadSafeSet[T]) Value() (driver.Value, error) {
-	return t.MarshalJSON()
+	t.RLock()
+	defer t.RUnlock()
+	return t.uss.Value()
 }
 
 // Scan replaces the set with a JSON array or clears it for SQL NULL.
@@ -356,12 +366,4 @@ func (t *threadSafeSet[T]) Scan(src any) error {
 	t.Lock()
 	defer t.Unlock()
 	return t.uss.Scan(src)
-}
-
-func (t *threadSafeSet[T]) UnmarshalJSON(p []byte) error {
-	t.Lock()
-	err := t.uss.UnmarshalJSON(p)
-	t.Unlock()
-
-	return err
 }

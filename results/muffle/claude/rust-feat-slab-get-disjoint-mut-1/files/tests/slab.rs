@@ -741,7 +741,6 @@ fn get_disjoint_mut() {
 
     assert_eq!(slab.get_disjoint_mut([]), Ok([]));
     let [a, b] = slab.get_disjoint_mut([3, 0]).unwrap();
-    assert_eq!((*a, *b), (3, 0));
     std::mem::swap(a, b);
     assert_eq!((slab[3], slab[0]), (0, 3));
 

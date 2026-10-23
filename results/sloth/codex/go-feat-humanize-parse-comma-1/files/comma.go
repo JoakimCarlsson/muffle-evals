@@ -8,6 +8,26 @@ import (
 	"strings"
 )
 
+// ParseComma parses a base-10 integer, ignoring commas.
+// It returns zero and an error if s cannot be parsed as an int64.
+func ParseComma(s string) (int64, error) {
+	v, err := strconv.ParseInt(strings.ReplaceAll(s, ",", ""), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
+// ParseCommaf parses a floating-point number, ignoring commas.
+// It returns zero and an error if s cannot be parsed as a float64.
+func ParseCommaf(s string) (float64, error) {
+	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
 // Comma produces a string form of the given number in base 10 with
 // commas after every three orders of magnitude.
 //
@@ -55,26 +75,6 @@ func Comma(v int64) string {
 		output[0] = '-'
 	}
 	return string(output)
-}
-
-// ParseComma parses a base-10 integer, ignoring commas.
-// It returns zero and an error if the input is invalid or out of range for int64.
-func ParseComma(s string) (int64, error) {
-	v, err := strconv.ParseInt(strings.ReplaceAll(s, ",", ""), 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	return v, nil
-}
-
-// ParseCommaf parses a floating-point number, ignoring commas.
-// It returns zero and an error if the input is invalid or out of range for float64.
-func ParseCommaf(s string) (float64, error) {
-	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
-	if err != nil {
-		return 0, err
-	}
-	return v, nil
 }
 
 // Commaf produces a string form of the given number in base 10 with

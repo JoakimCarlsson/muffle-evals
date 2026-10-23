@@ -1,5 +1,5 @@
 diff --git a/src/bytes_mut.rs b/src/bytes_mut.rs
-index 68c5f73..4b3b4a5 100644
+index 68c5f73..aed9505 100644
 --- a/src/bytes_mut.rs
 +++ b/src/bytes_mut.rs
 @@ -1,5 +1,5 @@
@@ -9,18 +9,17 @@ index 68c5f73..4b3b4a5 100644
  use core::ptr::{self, NonNull};
  use core::{cmp, fmt, hash, slice};
  
-@@ -884,6 +884,62 @@ impl BytesMut {
+@@ -884,6 +884,50 @@ impl BytesMut {
          }
      }
  
-+    /// Appends a copy of the bytes in `range` to this `BytesMut`.
-+    ///
-+    /// The buffer is grown as needed.
++    /// Appends a copy of the bytes in `range` to this `BytesMut`, growing the
++    /// buffer as needed.
 +    ///
 +    /// # Panics
 +    ///
-+    /// Panics if the range start is greater than its end or the range end is
-+    /// greater than the current length.
++    /// Panics if the range's start is greater than its end or if the range
++    /// is out of bounds for the current length.
 +    ///
 +    /// # Examples
 +    ///
@@ -32,11 +31,11 @@ index 68c5f73..4b3b4a5 100644
 +    /// buf.extend_from_within(3..6);
 +    /// assert_eq!(&buf[..], b"aaabbb_bbb");
 +    /// ```
++    #[inline]
 +    pub fn extend_from_within(&mut self, range: impl RangeBounds<usize>) {
 +        use core::ops::Bound;
 +
-+        let len = self.len();
-+        let begin = match range.start_bound() {
++        let start = match range.start_bound() {
 +            Bound::Included(&n) => n,
 +            Bound::Excluded(&n) => n.checked_add(1).expect("out of range"),
 +            Bound::Unbounded => 0,
@@ -44,31 +43,89 @@ index 68c5f73..4b3b4a5 100644
 +        let end = match range.end_bound() {
 +            Bound::Included(&n) => n.checked_add(1).expect("out of range"),
 +            Bound::Excluded(&n) => n,
-+            Bound::Unbounded => len,
++            Bound::Unbounded => self.len,
 +        };
++        assert!(start <= end, "range start must not be greater than end");
++        assert!(end <= self.len, "range end out of bounds");
 +
-+        assert!(
-+            begin <= end,
-+            "range start must not be greater than end: {:?} <= {:?}",
-+            begin,
-+            end,
-+        );
-+        assert!(
-+            end <= len,
-+            "range end out of bounds: {:?} <= {:?}",
-+            end,
-+            len,
-+        );
-+
-+        let cnt = end - begin;
-+        self.reserve(cnt);
++        let count = end - start;
++        self.reserve(count);
 +        unsafe {
 +            let ptr = self.ptr.as_ptr();
-+            ptr::copy_nonoverlapping(ptr.add(begin), ptr.add(len), cnt);
-+            self.advance_mut(cnt);
++            ptr::copy_nonoverlapping(ptr.add(start), ptr.add(self.len), count);
++            self.set_len(self.len + count);
 +        }
 +    }
 +
      /// Absorbs a `BytesMut` that was previously split off if they are
      /// contiguous, otherwise appends its bytes to this `BytesMut`.
      ///
+diff --git a/tests/test_bytes.rs b/tests/test_bytes.rs
+index b9bd5e1..0127ff7 100644
+--- a/tests/test_bytes.rs
++++ b/tests/test_bytes.rs
+@@ -607,6 +607,64 @@ fn extend_from_slice_mut() {
+     }
+ }
+ 
++#[test]
++/// Checks self copies across storage modes and range boundaries.
++fn extend_from_within_mut() {
++    use std::ops::Bound::{Excluded, Included, Unbounded};
++
++    let mut bytes = BytesMut::new();
++    bytes.extend_from_slice(b"aaabbb_");
++    bytes.extend_from_within(3..6);
++    assert_eq!(&bytes[..], b"aaabbb_bbb");
++
++    let bounds = [
++        Unbounded,
++        Included(0),
++        Included(3),
++        Included(7),
++        Included(8),
++        Included(usize::MAX),
++        Excluded(0),
++        Excluded(3),
++        Excluded(7),
++        Excluded(8),
++        Excluded(usize::MAX),
++    ];
++    for capacity in [7, 64] {
++        for shared in [false, true] {
++            for start in bounds {
++                for end in bounds {
++                    let mut bytes = BytesMut::with_capacity(capacity);
++                    bytes.extend_from_slice(b"aaabbb_");
++                    let prefix = if shared {
++                        Some(bytes.split_to(1))
++                    } else {
++                        None
++                    };
++                    let mut expected = bytes.to_vec();
++                    let range = (start, end);
++                    let expected_result = panic::catch_unwind(AssertUnwindSafe(|| {
++                        expected.extend_from_within(range);
++                    }));
++                    let result = panic::catch_unwind(AssertUnwindSafe(|| {
++                        bytes.extend_from_within(range);
++                    }));
++                    assert_eq!(result.is_ok(), expected_result.is_ok());
++                    assert_eq!(&bytes[..], &expected[..]);
++                    if let Some(prefix) = prefix {
++                        assert_eq!(&prefix[..], b"a");
++                    }
++                }
++            }
++        }
++    }
++
++    let mut empty = BytesMut::new();
++    empty.extend_from_within(..);
++    empty.extend_from_within(0..0);
++    assert!(empty.is_empty());
++}
++
+ #[test]
+ fn extend_mut_from_bytes() {
+     let mut bytes = BytesMut::with_capacity(0);

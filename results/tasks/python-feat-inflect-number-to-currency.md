@@ -141,15 +141,15 @@ index 0000000..f4bd0fc
 | agent | setup | hidden tests | lines +/- (code) | test lines | output tokens | cost |
 |---|---|---|---:|---:|---:|---:|
 | claude | base | pass | +31/-1 | 29 | 3,992 | $0.124 |
-| claude | muffle | pass | +34/-2 | 33 | 4,061 | $0.105 |
-| claude | hush | pass | +33/-1 | 28 | 3,362 | $0.109 |
-| claude | sloth | pass | +30/-1 | 0 | 2,634 | $0.056 |
-| claude | all | pass | +29/-3 | 0 | 2,823 | $0.092 |
+| claude | muffle | pass | +46/-2 | 33 | 5,608 | $0.149 |
+| claude | hush | pass | +35/-1 | 34 | 3,457 | $0.112 |
+| claude | sloth | pass | +31/-2 | 22 | 3,720 | $0.101 |
+| claude | all | pass | +29/-1 | 25 | 3,808 | $0.122 |
 | codex | base | pass | +48/-1 | 57 | 2,271 | - |
-| codex | muffle | pass | +46/-1 | 67 | 2,212 | - |
-| codex | hush | pass | +26/-1 | 50 | 1,453 | - |
-| codex | sloth | pass | +26/-3 | 0 | 1,570 | - |
-| codex | all | pass | +23/-3 | 0 | 1,527 | - |
+| codex | muffle | pass | +44/-3 | 69 | 2,710 | - |
+| codex | hush | pass | +44/-1 | 45 | 1,732 | - |
+| codex | sloth | pass | +42/-3 | 49 | 2,662 | - |
+| codex | all | pass | +17/-1 | 42 | 1,766 | - |
 
 ### claude, base: pass
 
@@ -277,84 +277,244 @@ I also added a test class in `tests/test_numwords.py` and a changelog entry at `
 
 ### claude, muffle: pass
 
-Files: [inflect/__init__.py](../muffle/claude/python-feat-inflect-number-to-currency-1/files/inflect/__init__.py), [newsfragments/+number-to-currency.feature.rst](../muffle/claude/python-feat-inflect-number-to-currency-1/files/newsfragments/+number-to-currency.feature.rst), [tests/test_number_to_currency.py](../muffle/claude/python-feat-inflect-number-to-currency-1/files/tests/test_number_to_currency.py)
+Files: [README.rst](../muffle/claude/python-feat-inflect-number-to-currency-1/files/README.rst), [inflect/__init__.py](../muffle/claude/python-feat-inflect-number-to-currency-1/files/inflect/__init__.py), [newsfragments/+number-to-currency.feature.rst](../muffle/claude/python-feat-inflect-number-to-currency-1/files/newsfragments/+number-to-currency.feature.rst), [tests/test_currency.py](../muffle/claude/python-feat-inflect-number-to-currency-1/files/tests/test_currency.py)
 
 <details><summary>diff</summary>
 
 ```diff
+diff --git a/README.rst b/README.rst
+index 2799b7f..14a195f 100644
+--- a/README.rst
++++ b/README.rst
+@@ -55,7 +55,7 @@ Methods
+ - ``compare``, ``compare_nouns``, ``compare_nouns``, ``compare_adjs``
+ - ``a``, ``an``
+ - ``present_participle``
+-- ``ordinal``, ``number_to_words``
++- ``ordinal``, ``number_to_words``, ``number_to_currency``
+ - ``join``
+ - ``inflect``, ``classical``, ``gender``
+ - ``defnoun``, ``defverb``, ``defadj``, ``defa``, ``defan``
+@@ -200,6 +200,18 @@ Note: This returns a single string.
+     >>> p.number_to_words(p.ordinal(1234))
+     'one thousand, two hundred and thirty-fourth'
+ 
++Amounts for Checks
++^^^^^^^^^^^^^^^^^^
++
++.. code-block:: python
++
++    >>> p.number_to_currency(100_020.56)
++    'one hundred thousand and twenty and 56/100'
++    >>> p.number_to_currency("19.99")
++    'nineteen and 99/100'
++    >>> p.number_to_currency(101.01, andword="")
++    'one hundred one and 01/100'
++
+ Retrieve Words as List of Parts
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 
 diff --git a/inflect/__init__.py b/inflect/__init__.py
-index cbe1702..b9a195b 100644
+index cbe1702..1ccc85c 100644
 --- a/inflect/__init__.py
 +++ b/inflect/__init__.py
-@@ -36,7 +36,7 @@ ARTICLES:
-     classical inflect num a an
- 
- NUMERICAL:
--    ordinal number_to_words
-+    ordinal number_to_words number_to_currency
- 
- USER_DEFINED:
-     defnoun defverb defadj defa defan
 @@ -61,7 +61,7 @@ import functools
  import itertools
  import re
  from collections.abc import Callable, Iterable, Iterator, Sequence
 -from decimal import Decimal
-+from decimal import ROUND_HALF_UP, Decimal, localcontext
++from decimal import ROUND_HALF_UP, Context, Decimal, InvalidOperation
  from numbers import Number
  from re import Match
  from typing import (
-@@ -3930,6 +3930,37 @@ class engine:
-     def _get_sign(num):
-         return {'+': 'plus', '-': 'minus'}.get(num.lstrip()[0], '')
+@@ -4050,6 +4050,37 @@ class engine:
+         )
+         return signout + valout
  
++    @typechecked
 +    def number_to_currency(self, num: Number | str, andword: str = "and") -> str:
 +        """
-+        Return an amount in words with the cents as a fraction of one hundred,
-+        as written on a check.
++        Return an amount in words, with the cents as a fraction of 100.
 +
-+        >>> p = engine()
-+        >>> p.number_to_currency(100_020.56)
-+        'one hundred thousand and twenty and 56/100'
++        e.g. 100020.56 -> "one hundred thousand and twenty and 56/100"
 +
-+        The amount is rounded half up to the nearest cent, going by the number
-+        as written. andword is used within the whole amount as in
-+        number_to_words; the "and" before the cents is always written.
++        The amount is rounded half up to the nearest cent, going by the
++        number as written. Raise BadNumValueError if num is not a finite number.
 +
-+        Raises BadNumValueError if num is not a finite number.
++        andword: as for number_to_words (the "and" before the cents is
++        always written).
 +        """
 +        try:
-+            amount = Decimal(num if isinstance(num, (int, Decimal)) else str(num))
-+        except (ArithmeticError, ValueError, TypeError) as err:
++            amount = Decimal(num if isinstance(num, Decimal) else str(num))
++        except InvalidOperation as err:
 +            raise BadNumValueError from err
 +        if not amount.is_finite():
 +            raise BadNumValueError
-+        with localcontext() as ctx:
-+            ctx.prec = max(ctx.prec, len(amount.as_tuple().digits) + 10)
-+            amount = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-+            cents = int(abs(amount) * 100) % 100
-+            whole = int(amount)
-+        words = self.number_to_words(whole, andword=andword)
-+        if amount < 0 and whole == 0:
-+            words = f"minus {words}"
-+        return f"{words} and {cents:02d}/100"
++        try:
++            cents = amount.quantize(
++                Decimal("0.01"), rounding=ROUND_HALF_UP, context=Context(prec=1000)
++            )
++        except InvalidOperation as err:  # too large to write out
++            raise BadNumValueError from err
++        whole, frac = divmod(abs(cents) * 100, 100)
++        words = self.number_to_words(
++            int(whole) * (-1 if cents < 0 and whole else 1), andword=andword
++        )
++        return f"{words} and {int(frac):02d}/100"
 +
-     @typechecked
-     def number_to_words(  # noqa: C901
-         self,
+     @staticmethod
+     def _render(chunks, decimal, comma):
+         first_item = chunks.pop(0)
 diff --git a/newsfragments/+number-to-currency.feature.rst b/newsfragments/+number-to-currency.feature.rst
 new file mode 100644
-index 0000000..f3ff6bd
+index 0000000..bbc3ebc
 --- /dev/null
 +++ b/newsfragments/+number-to-currency.feature.rst
 @@ -0,0 +1 @@
-+Added ``engine.number_to_currency``, which writes an amount in words with the cents as a fraction of one hundred, as on a check.
++Added ``number_to_currency``, which writes an amount in words with the cents as a fraction of 100 (for example "nineteen and 99/100"), as printed on checks.
+diff --git a/tests/test_currency.py b/tests/test_currency.py
+new file mode 100644
+index 0000000..d7f6696
+--- /dev/null
++++ b/tests/test_currency.py
+@@ -0,0 +1,33 @@
++from decimal import Decimal
++
++import pytest
++
++import inflect
++
++
++@pytest.mark.parametrize(
++    "num, expected",
++    [
++        (100_020.56, 'one hundred thousand and twenty and 56/100'),
++        (1234, 'one thousand, two hundred and thirty-four and 00/100'),
++        (0.07, 'zero and 07/100'),
++        ("19.99", 'nineteen and 99/100'),
++        (2.675, 'two and 68/100'),
++        (2.674, 'two and 67/100'),
++        (Decimal("0.995"), 'one and 00/100'),
++        (-1.5, 'minus one and 50/100'),
++    ],
++)
++def test_number_to_currency(num, expected):
++    assert inflect.engine().number_to_currency(num) == expected
++
++
++def test_number_to_currency_andword():
++    p = inflect.engine()
++    assert p.number_to_currency(101.01, andword="") == 'one hundred one and 01/100'
++
++
++@pytest.mark.parametrize("num", ["ten", "nan", "inf", "", float("inf"), "1e999999999"])
++def test_number_to_currency_bad(num):
++    with pytest.raises(inflect.BadNumValueError):
++        inflect.engine().number_to_currency(num)
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+Checking an empty string, which the `Word` type rejects. I'll loosen the annotation so it raises `BadNumValueError`.
+
+I added `p.number_to_currency(num, andword="and")` in `inflect/__init__.py`. All your examples give the outputs you listed, and the full suite passes with the new tests.
+
+- **Rounding:** it goes by the number as written, so `2.675` gives `68/100` and `2.674` gives `67/100`. `Decimal("0.995")` gives `'one and 00/100'`.
+- **Bad input:** `"ten"`, `"nan"`, `"inf"`, `float("inf")` and `""` raise `inflect.BadNumValueError`. So does an absurdly large value like `"1e999999999"`.
+- **Negative amounts:** you didn't specify these. `-1.5` gives `'minus one and 50/100'`. A negative that rounds to zero, like `-0.001`, gives `'zero and 00/100'` rather than "minus zero".
+
+I also added tests in `tests/test_currency.py`, a README section and method-list entry, and a newsfragment at `newsfragments/+number-to-currency.feature.rst`.
+
+I couldn't run `ruff` because it isn't installed here, so the formatting is unchecked. I haven't committed anything.
+
+</details>
+
+### claude, hush: pass
+
+Files: [README.rst](../hush/claude/python-feat-inflect-number-to-currency-1/files/README.rst), [inflect/__init__.py](../hush/claude/python-feat-inflect-number-to-currency-1/files/inflect/__init__.py), [newsfragments/+number-to-currency.feature.rst](../hush/claude/python-feat-inflect-number-to-currency-1/files/newsfragments/+number-to-currency.feature.rst), [tests/test_number_to_currency.py](../hush/claude/python-feat-inflect-number-to-currency-1/files/tests/test_number_to_currency.py)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/README.rst b/README.rst
+index 2799b7f..fa2ce47 100644
+--- a/README.rst
++++ b/README.rst
+@@ -55,7 +55,7 @@ Methods
+ - ``compare``, ``compare_nouns``, ``compare_nouns``, ``compare_adjs``
+ - ``a``, ``an``
+ - ``present_participle``
+-- ``ordinal``, ``number_to_words``
++- ``ordinal``, ``number_to_words``, ``number_to_currency``
+ - ``join``
+ - ``inflect``, ``classical``, ``gender``
+ - ``defnoun``, ``defverb``, ``defadj``, ``defa``, ``defan``
+diff --git a/inflect/__init__.py b/inflect/__init__.py
+index cbe1702..6c8e75e 100644
+--- a/inflect/__init__.py
++++ b/inflect/__init__.py
+@@ -61,6 +61,7 @@ import functools
+ import itertools
+ import re
+ from collections.abc import Callable, Iterable, Iterator, Sequence
++import decimal as decimal_module
+ from decimal import Decimal
+ from numbers import Number
+ from re import Match
+@@ -4050,6 +4051,38 @@ class engine:
+         )
+         return signout + valout
+ 
++    def number_to_currency(self, num: Number | Word, andword: str = "and") -> str:
++        """
++        Return an amount in words with the cents as a fraction of 100.
++
++        e.g. 100020.56 -> "one hundred thousand and twenty and 56/100"
++
++        The amount is rounded half up to the cent, going by the number as
++        written. andword is used as in number_to_words; the "and" before the
++        cents is always written.
++
++        Raise BadNumValueError if num is not a finite number.
++        """
++        try:
++            amount = num if isinstance(num, Decimal) else Decimal(str(num).strip())
++            if not amount.is_finite():
++                raise BadNumValueError
++            with decimal_module.localcontext() as ctx:
++                ctx.prec = max(ctx.prec, len(amount.as_tuple().digits) + 10)
++                if amount.adjusted() > 0:
++                    ctx.prec = max(ctx.prec, amount.adjusted() + 10)
++                rounded = amount.scaleb(2).to_integral_value(
++                    decimal_module.ROUND_HALF_UP
++                )
++                cents = int(rounded)
++        except (decimal_module.InvalidOperation, ValueError) as err:
++            raise BadNumValueError from err
++
++        whole, fraction = divmod(abs(cents), 100)
++        sign = "-" if cents < 0 else ""
++        words = self.number_to_words(f"{sign}{whole}", andword=andword)
++        return f"{words} and {fraction:02d}/100"
++
+     @staticmethod
+     def _render(chunks, decimal, comma):
+         first_item = chunks.pop(0)
+diff --git a/newsfragments/+number-to-currency.feature.rst b/newsfragments/+number-to-currency.feature.rst
+new file mode 100644
+index 0000000..6e435c4
+--- /dev/null
++++ b/newsfragments/+number-to-currency.feature.rst
+@@ -0,0 +1 @@
++Added ``number_to_currency`` to write an amount in words with the cents as a fraction of 100, e.g. "one hundred thousand and twenty and 56/100".
 diff --git a/tests/test_number_to_currency.py b/tests/test_number_to_currency.py
 new file mode 100644
-index 0000000..1c161f6
+index 0000000..96f226e
 --- /dev/null
 +++ b/tests/test_number_to_currency.py
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,34 @@
 +from decimal import Decimal
 +
 +import pytest
@@ -373,6 +533,7 @@ index 0000000..1c161f6
 +        (2.674, 'two and 67/100'),
 +        (Decimal("0.995"), 'one and 00/100'),
 +        (-5.5, 'minus five and 50/100'),
++        (-0.001, 'zero and 00/100'),
 +    ],
 +)
 +def test_number_to_currency(num, expected):
@@ -384,250 +545,31 @@ index 0000000..1c161f6
 +    assert p.number_to_currency(101.01, andword="") == 'one hundred one and 01/100'
 +
 +
-+@pytest.mark.parametrize('num', ["ten", "nan", "inf", float("inf"), Decimal("NaN")])
-+def test_number_to_currency_bad(num):
++@pytest.mark.parametrize('bad', ["ten", "nan", "inf", "", float("inf"), Decimal("NaN")])
++def test_number_to_currency_bad(bad):
 +    with pytest.raises(inflect.BadNumValueError):
-+        inflect.engine().number_to_currency(num)
++        inflect.engine().number_to_currency(bad)
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-I added `p.number_to_currency(num, andword="and")` to the engine, and the full test suite passes, including the new tests.
-
-It gives the outputs in your examples, including `2.675` → `68/100`, `2.674` → `67/100` and `Decimal("0.995")` → `'one and 00/100'`. `"ten"`, `"nan"`, `"inf"` and `float("inf")` raise `inflect.BadNumValueError`. So do `Decimal("NaN")`, `None` and an empty string, which I also checked by hand.
-
-Floats are rounded from their printed form, which is how `2.675` gives `68/100`.
-
-Negative amounts weren't in your spec. I chose "minus" in front, so `-5.5` gives `'minus five and 50/100'`. A negative amount that rounds to zero, like `-0.001`, gives `'zero and 00/100'`.
-
-The method is in `inflect/__init__.py`, next to `number_to_words`. I also added `number_to_currency` to the module docstring's method list, a changelog entry at `newsfragments/+number-to-currency.feature.rst`, and tests in `tests/test_number_to_currency.py`.
-
-I haven't committed anything.
-
-</details>
-
-### claude, hush: pass
-
-Files: [inflect/__init__.py](../hush/claude/python-feat-inflect-number-to-currency-1/files/inflect/__init__.py), [newsfragments/+number-to-currency.feature.rst](../hush/claude/python-feat-inflect-number-to-currency-1/files/newsfragments/+number-to-currency.feature.rst), [tests/test_numwords.py](../hush/claude/python-feat-inflect-number-to-currency-1/files/tests/test_numwords.py)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/inflect/__init__.py b/inflect/__init__.py
-index cbe1702..c99ad13 100644
---- a/inflect/__init__.py
-+++ b/inflect/__init__.py
-@@ -61,7 +61,8 @@ import functools
- import itertools
- import re
- from collections.abc import Callable, Iterable, Iterator, Sequence
--from decimal import Decimal
-+import decimal as decimal_module
-+from decimal import ROUND_HALF_UP, Decimal
- from numbers import Number
- from re import Match
- from typing import (
-@@ -4050,6 +4051,36 @@ class engine:
-         )
-         return signout + valout
- 
-+    @typechecked
-+    def number_to_currency(self, num: Number | Word, andword: str = "and") -> str:
-+        """
-+        Return an amount as on a check: dollars in words, cents as a fraction.
-+
-+        e.g. 100020.56 -> "one hundred thousand and twenty and 56/100"
-+
-+        The amount is rounded half up to the cent, going by the number as
-+        written. andword is as for number_to_words; the "and" before the
-+        cents is always written.
-+
-+        Raise BadNumValueError if num is not a finite number.
-+        """
-+        try:
-+            amount = Decimal(str(num).strip())
-+        except ArithmeticError as err:
-+            raise BadNumValueError from err
-+        if not amount.is_finite():
-+            raise BadNumValueError
-+
-+        with decimal_module.localcontext() as ctx:
-+            ctx.prec = max(ctx.prec, len(amount.as_tuple().digits) + 10)
-+            cents = abs(amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-+        dollars, fraction = divmod(int(cents * 100), 100)
-+
-+        words = self.number_to_words(str(dollars), andword=andword)
-+        if amount < 0 and cents:
-+            words = f"minus {words}"
-+        return f"{words} and {fraction:02d}/100"
-+
-     @staticmethod
-     def _render(chunks, decimal, comma):
-         first_item = chunks.pop(0)
-diff --git a/newsfragments/+number-to-currency.feature.rst b/newsfragments/+number-to-currency.feature.rst
-new file mode 100644
-index 0000000..6a6a173
---- /dev/null
-+++ b/newsfragments/+number-to-currency.feature.rst
-@@ -0,0 +1 @@
-+Added ``number_to_currency``, which writes an amount as on a check, e.g. "one hundred thousand and twenty and 56/100".
-diff --git a/tests/test_numwords.py b/tests/test_numwords.py
-index 178a755..e856259 100644
---- a/tests/test_numwords.py
-+++ b/tests/test_numwords.py
-@@ -1,3 +1,5 @@
-+import decimal
-+
- import pytest
- 
- import inflect
-@@ -472,3 +474,29 @@ def test_issue_217():
-         p.number_to_words("1234567", group=3)
-         == "one, two thirty-four, five sixty-seven"
-     )
-+
-+
-+class TestNumberToCurrency:
-+    @pytest.mark.parametrize(
-+        "num, expected",
-+        [
-+            (100_020.56, "one hundred thousand and twenty and 56/100"),
-+            (1234, "one thousand, two hundred and thirty-four and 00/100"),
-+            (0.07, "zero and 07/100"),
-+            ("19.99", "nineteen and 99/100"),
-+            (2.675, "two and 68/100"),
-+            (2.674, "two and 67/100"),
-+            (decimal.Decimal("0.995"), "one and 00/100"),
-+        ],
-+    )
-+    def test_amounts(self, num, expected):
-+        assert inflect.engine().number_to_currency(num) == expected
-+
-+    def test_andword(self):
-+        p = inflect.engine()
-+        assert p.number_to_currency(101.01, andword="") == "one hundred one and 01/100"
-+
-+    @pytest.mark.parametrize("num", ["ten", "nan", "inf", float("nan")])
-+    def test_bad(self, num):
-+        with pytest.raises(inflect.BadNumValueError):
-+            inflect.engine().number_to_currency(num)
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-Need path; also add tests.
-
-Done. I added `number_to_currency` in `inflect/__init__.py`, tests in `tests/test_numwords.py`, and a newsfragment. The full suite passes.
-
-- **Empty string:** `""` raises a typeguard error rather than `BadNumValueError`, because the `Word` type rejects it, as in `number_to_words`.
-- **Negatives:** I added this one myself. Negative amounts get a "minus" prefix, so `-5.5` gives `minus five and 50/100`. An amount that rounds to zero has no sign.
-- **Not committed:** nothing is committed.
+Done. Added `number_to_currency` to `inflect/__init__.py`, plus tests, a newsfragment and a README line. Full suite passes; ruff and mypy not run.
 
 </details>
 
 ### claude, sloth: pass
 
-Files: [inflect/__init__.py](../sloth/claude/python-feat-inflect-number-to-currency-1/files/inflect/__init__.py), [newsfragments/+number-to-currency.feature.rst](../sloth/claude/python-feat-inflect-number-to-currency-1/files/newsfragments/+number-to-currency.feature.rst)
+Files: [inflect/__init__.py](../sloth/claude/python-feat-inflect-number-to-currency-1/files/inflect/__init__.py), [newsfragments/+number-to-currency.feature.rst](../sloth/claude/python-feat-inflect-number-to-currency-1/files/newsfragments/+number-to-currency.feature.rst), [tests/test_numwords.py](../sloth/claude/python-feat-inflect-number-to-currency-1/files/tests/test_numwords.py)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/inflect/__init__.py b/inflect/__init__.py
-index cbe1702..e8d8c36 100644
+index cbe1702..e96150a 100644
 --- a/inflect/__init__.py
 +++ b/inflect/__init__.py
-@@ -61,7 +61,7 @@ import functools
- import itertools
- import re
- from collections.abc import Callable, Iterable, Iterator, Sequence
--from decimal import Decimal
-+from decimal import ROUND_HALF_UP, Context, Decimal, InvalidOperation
- from numbers import Number
- from re import Match
- from typing import (
-@@ -3930,6 +3930,34 @@ class engine:
-     def _get_sign(num):
-         return {'+': 'plus', '-': 'minus'}.get(num.lstrip()[0], '')
- 
-+    @typechecked
-+    def number_to_currency(self, num: Number | str, andword: str = "and") -> str:
-+        """
-+        Return an amount in words with the cents as a fraction of 100.
-+
-+        e.g. 100020.56 -> "one hundred thousand and twenty and 56/100"
-+
-+        The amount is rounded half up to the cent, going by the number as
-+        written. The "and" before the cents is always written; andword only
-+        affects the whole amount, as in number_to_words.
-+
-+        Raise BadNumValueError if num is not a finite number.
-+        """
-+        try:
-+            amount = Decimal(str(num))
-+            if not amount.is_finite():
-+                raise BadNumValueError
-+            amount = amount.quantize(
-+                Decimal("0.01"),
-+                rounding=ROUND_HALF_UP,
-+                context=Context(prec=max(28, amount.adjusted() + 4)),
-+            )
-+        except InvalidOperation as err:
-+            raise BadNumValueError from err
-+        whole, cents = f"{amount:f}".split(".")
-+        words = self.number_to_words(whole, andword=andword)
-+        return f"{words} and {cents}/100"
-+
-     @typechecked
-     def number_to_words(  # noqa: C901
-         self,
-diff --git a/newsfragments/+number-to-currency.feature.rst b/newsfragments/+number-to-currency.feature.rst
-new file mode 100644
-index 0000000..fe29a89
---- /dev/null
-+++ b/newsfragments/+number-to-currency.feature.rst
-@@ -0,0 +1 @@
-+Added ``number_to_currency``, which writes an amount in words with the cents as a fraction of 100 (e.g. ``one hundred thousand and twenty and 56/100``).
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-I added `number_to_currency(num, andword="and")` to the engine in `inflect/__init__.py`. All your examples produce the outputs you listed. The existing tests pass (278 passed, 16 xfailed). I didn't write new tests, and `ruff` isn't installed here, so lint and format weren't checked.
-
-- **Rounding:** it rounds half up to the cent from the number as written, so `2.675` gives `68/100`, `2.674` gives `67/100` and `Decimal("0.995")` gives `one and 00/100`.
-- **Bad input:** `"ten"`, `"nan"`, `"inf"`, `float("inf")`, `Decimal("NaN")`, `""` and `" "` all raise `BadNumValueError`. I typed the argument as `Number | str` rather than `Word`, so an empty string raises `BadNumValueError`. With `Word` it would have raised a `TypeCheckError`.
-- **Negatives:** you didn't specify these. They get a "minus" prefix, so `-0.07` gives `minus zero and 07/100`.
-- **Changelog:** I added a news fragment at `newsfragments/+number-to-currency.feature.rst`.
-
-I haven't committed anything.
-
-</details>
-
-### claude, all: pass
-
-Files: [inflect/__init__.py](../all/claude/python-feat-inflect-number-to-currency-1/files/inflect/__init__.py), [newsfragments/+number-to-currency.feature.rst](../all/claude/python-feat-inflect-number-to-currency-1/files/newsfragments/+number-to-currency.feature.rst)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/inflect/__init__.py b/inflect/__init__.py
-index cbe1702..1f07610 100644
---- a/inflect/__init__.py
-+++ b/inflect/__init__.py
-@@ -14,7 +14,7 @@ methods:
-     compare compare_nouns compare_verbs compare_adjs
-     present_participle
-     ordinal
--    number_to_words
-+    number_to_words number_to_currency
-     join
-     defnoun defverb defadj defa defan
- 
 @@ -36,7 +36,7 @@ ARTICLES:
      classical inflect num a an
  
@@ -642,11 +584,11 @@ index cbe1702..1f07610 100644
  import re
  from collections.abc import Callable, Iterable, Iterator, Sequence
 -from decimal import Decimal
-+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
++from decimal import ROUND_HALF_UP, Context, Decimal, InvalidOperation
  from numbers import Number
  from re import Match
  from typing import (
-@@ -4050,6 +4050,31 @@ class engine:
+@@ -4050,6 +4050,34 @@ class engine:
          )
          return signout + valout
  
@@ -655,24 +597,144 @@ index cbe1702..1f07610 100644
 +        """
 +        Return an amount in words with the cents as a fraction of 100.
 +
-+        The amount is rounded half up to the cent, going by the number as written.
-+        Raise BadNumValueError if num is not a finite number.
++        e.g. 100020.56 gives "one hundred thousand and twenty and 56/100"
 +
-+        >>> engine().number_to_currency(100_020.56)
-+        'one hundred thousand and twenty and 56/100'
++        The amount is rounded half up to the cent, going by the number as written.
++        andword is passed to number_to_words; the "and" before the cents is fixed.
++
++        Raise BadNumValueError if num is not a finite number.
 +        """
 +        try:
-+            amount = Decimal(str(num).strip())
++            amount = Decimal(str(num))
 +        except InvalidOperation as err:
 +            raise BadNumValueError from err
 +        if not amount.is_finite():
 +            raise BadNumValueError
-+        with localcontext() as ctx:
-+            ctx.prec = len(amount.as_tuple().digits) + max(amount.adjusted(), 0) + 4
-+            total_cents = int((amount * 100).to_integral_value(ROUND_HALF_UP))
-+        whole, cents = divmod(abs(total_cents), 100)
++        rounded = amount.quantize(
++            Decimal("0.01"),
++            rounding=ROUND_HALF_UP,
++            context=Context(prec=max(28, amount.adjusted() + 4)),
++        )
++        sign = "-" if rounded < 0 else ""
++        whole, cents = f"{rounded.copy_abs():f}".split(".")
++        words = self.number_to_words(sign + whole, andword=andword)
++        return f"{words} and {cents}/100"
++
+     @staticmethod
+     def _render(chunks, decimal, comma):
+         first_item = chunks.pop(0)
+diff --git a/newsfragments/+number-to-currency.feature.rst b/newsfragments/+number-to-currency.feature.rst
+new file mode 100644
+index 0000000..76780b4
+--- /dev/null
++++ b/newsfragments/+number-to-currency.feature.rst
+@@ -0,0 +1 @@
++Added ``number_to_currency``, which writes an amount in words with the cents as a fraction of 100 (such as ``one hundred thousand and twenty and 56/100``).
+diff --git a/tests/test_numwords.py b/tests/test_numwords.py
+index 178a755..96b7c77 100644
+--- a/tests/test_numwords.py
++++ b/tests/test_numwords.py
+@@ -1,3 +1,5 @@
++from decimal import Decimal
++
+ import pytest
+ 
+ import inflect
+@@ -472,3 +474,23 @@ def test_issue_217():
+         p.number_to_words("1234567", group=3)
+         == "one, two thirty-four, five sixty-seven"
+     )
++
++
++def test_number_to_currency():
++    p = inflect.engine()
++    assert p.number_to_currency(100_020.56) == "one hundred thousand and twenty and 56/100"
++    assert (
++        p.number_to_currency(1234)
++        == "one thousand, two hundred and thirty-four and 00/100"
++    )
++    assert p.number_to_currency(0.07) == "zero and 07/100"
++    assert p.number_to_currency("19.99") == "nineteen and 99/100"
++    assert p.number_to_currency(101.01, andword="") == "one hundred one and 01/100"
++    assert p.number_to_currency(2.675) == "two and 68/100"
++    assert p.number_to_currency(2.674) == "two and 67/100"
++    assert p.number_to_currency(Decimal("0.995")) == "one and 00/100"
++    assert p.number_to_currency(-0.5) == "minus zero and 50/100"
++    assert p.number_to_currency(10**30) == p.number_to_words(10**30) + " and 00/100"
++    for bad in ("ten", "nan", "inf", "-inf", "", float("nan"), Decimal("Infinity")):
++        with pytest.raises(inflect.BadNumValueError):
++            p.number_to_currency(bad)
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+Fixing an edge case: an empty string fails the `Word` type check, but it should raise `BadNumValueError`.
+
+I added `p.number_to_currency(num, andword="and")` in `inflect/__init__.py`. The full test suite passes (269 passed, 16 xfailed). `ruff` isn't installed here, so I haven't run lint or the format check.
+
+I checked all five of your examples, plus `2.675`, `2.674` and `Decimal("0.995")`. They give the strings you listed.
+
+- **Rounding:** the amount is rounded half up to the cent, going by the number as written. `2.675` is read as exactly `2.675` (not the binary float), so it gives `68/100`.
+- **Non-numbers:** `"ten"`, `"nan"`, `"inf"`, `"-inf"`, `""`, a float NaN and `Decimal("Infinity")` all raise `BadNumValueError`.
+- **Negatives:** `-0.5` gives `'minus zero and 50/100'`. You didn't specify this case, so say if you want something different.
+- **Large amounts:** `10**30` works.
+- **Type check:** `num` is annotated `Number | str` rather than `Number | Word`, because `Word` rejects the empty string before it could raise `BadNumValueError`.
+
+I also added a `test_number_to_currency` test in `tests/test_numwords.py`, a changelog entry in `newsfragments/+number-to-currency.feature.rst`, and `number_to_currency` to the module docstring's function list. Nothing is committed.
+
+</details>
+
+### claude, all: pass
+
+Files: [inflect/__init__.py](../all/claude/python-feat-inflect-number-to-currency-1/files/inflect/__init__.py), [newsfragments/+number-to-currency.feature.rst](../all/claude/python-feat-inflect-number-to-currency-1/files/newsfragments/+number-to-currency.feature.rst), [tests/test_numwords.py](../all/claude/python-feat-inflect-number-to-currency-1/files/tests/test_numwords.py)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/inflect/__init__.py b/inflect/__init__.py
+index cbe1702..ff2b013 100644
+--- a/inflect/__init__.py
++++ b/inflect/__init__.py
+@@ -61,7 +61,7 @@ import functools
+ import itertools
+ import re
+ from collections.abc import Callable, Iterable, Iterator, Sequence
+-from decimal import Decimal
++from decimal import ROUND_HALF_UP, Context, Decimal, InvalidOperation
+ from numbers import Number
+ from re import Match
+ from typing import (
+@@ -4050,6 +4050,33 @@ class engine:
+         )
+         return signout + valout
+ 
++    @typechecked
++    def number_to_currency(self, num: Number | str, andword: str = "and") -> str:
++        """
++        Return an amount as check-style words with the cents as a fraction of 100.
++
++        The amount is rounded half up to the cent, going by the number as written.
++        andword: as for number_to_words; the "and" before the cents is always used.
++
++        >>> engine().number_to_currency(1234.5)
++        'one thousand, two hundred and thirty-four and 50/100'
++
++        Raise BadNumValueError for anything that is not a finite number.
++        """
++        try:
++            amount = num if isinstance(num, Decimal) else Decimal(str(num))
++            if not amount.is_finite():
++                raise BadNumValueError
++            context = Context(prec=max(28, amount.adjusted() + 4), rounding=ROUND_HALF_UP)
++            rounded = amount.quantize(Decimal("0.01"), context=context)
++        except InvalidOperation as err:
++            raise BadNumValueError from err
++        whole = int(rounded)
++        cents = abs(int(rounded.scaleb(2, context=context))) % 100
++        sign = "minus " if rounded < 0 and not whole else ""
 +        words = self.number_to_words(whole, andword=andword)
-+        sign = "minus " * (total_cents < 0)
 +        return f"{sign}{words} and {cents:02d}/100"
 +
      @staticmethod
@@ -680,20 +742,60 @@ index cbe1702..1f07610 100644
          first_item = chunks.pop(0)
 diff --git a/newsfragments/+number-to-currency.feature.rst b/newsfragments/+number-to-currency.feature.rst
 new file mode 100644
-index 0000000..6b694ab
+index 0000000..76780b4
 --- /dev/null
 +++ b/newsfragments/+number-to-currency.feature.rst
 @@ -0,0 +1 @@
-+New ``engine.number_to_currency`` writes an amount in words with the cents as a fraction of 100, as on a check (``one hundred thousand and twenty and 56/100``).
++Added ``number_to_currency``, which writes an amount in words with the cents as a fraction of 100 (such as ``one hundred thousand and twenty and 56/100``).
+diff --git a/tests/test_numwords.py b/tests/test_numwords.py
+index 178a755..f980366 100644
+--- a/tests/test_numwords.py
++++ b/tests/test_numwords.py
+@@ -1,3 +1,5 @@
++from decimal import Decimal
++
+ import pytest
+ 
+ import inflect
+@@ -472,3 +474,26 @@ def test_issue_217():
+         p.number_to_words("1234567", group=3)
+         == "one, two thirty-four, five sixty-seven"
+     )
++
++
++def test_number_to_currency():
++    p = inflect.engine()
++    assert p.number_to_currency(100_020.56) == 'one hundred thousand and twenty and 56/100'
++    assert (
++        p.number_to_currency(1234)
++        == 'one thousand, two hundred and thirty-four and 00/100'
++    )
++    assert p.number_to_currency(0.07) == 'zero and 07/100'
++    assert p.number_to_currency("19.99") == 'nineteen and 99/100'
++    assert p.number_to_currency(101.01, andword="") == 'one hundred one and 01/100'
++    assert p.number_to_currency(2.675) == 'two and 68/100'
++    assert p.number_to_currency(2.674) == 'two and 67/100'
++    assert p.number_to_currency(Decimal("0.995")) == 'one and 00/100'
++    assert p.number_to_currency(-0.5) == 'minus zero and 50/100'
++    assert p.number_to_currency(10**30) .endswith(' and 00/100')
++
++
++@pytest.mark.parametrize("bad", ["ten", "nan", "inf", "-inf", "", Decimal("NaN"), float("inf")])
++def test_number_to_currency_bad(bad):
++    with pytest.raises(inflect.BadNumValueError):
++        inflect.engine().number_to_currency(bad)
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Done. `number_to_currency` added in `inflect/__init__.py`, plus `newsfragments/+number-to-currency.feature.rst`. All your examples match, bad input raises `BadNumValueError`, and existing tests pass. I added no new tests.
+Fixing the cents calculation for huge numbers: `%` hits the default 28-digit precision.
 
-Negative amounts come out as "minus five and 50/100".
+Done. I added `engine.number_to_currency` in `inflect/__init__.py`, with tests in `tests/test_numwords.py` and a newsfragment. The full suite passes (276 passed, 16 xfailed), and every example from your request is in the tests. `ruff` isn't installed here, so lint and format weren't run.
+
+- **Negatives:** `-0.5` gives `'minus zero and 50/100'`. You didn't specify this, so I chose it.
+- **Empty string:** `""` raises `BadNumValueError`. `number_to_words` can't take an empty string, so the empty case is only handled here.
 
 </details>
 
@@ -869,7 +971,195 @@ Files: [README.rst](../muffle/codex/python-feat-inflect-number-to-currency-1/fil
 
 ```diff
 diff --git a/README.rst b/README.rst
-index 2799b7f..04d2159 100644
+index 2799b7f..bc2f610 100644
+--- a/README.rst
++++ b/README.rst
+@@ -200,6 +200,20 @@ Note: This returns a single string.
+     >>> p.number_to_words(p.ordinal(1234))
+     'one thousand, two hundred and thirty-fourth'
+ 
++Write Currency Amounts
++^^^^^^^^^^^^^^^^^^^^^
++``number_to_currency`` accepts integers, floats, ``Decimal`` values, and numeric
++strings. It rounds half up to the nearest cent and writes cents as a fraction.
++``andword`` controls conjunctions in the whole amount; the cents always use "and".
++Invalid and non-finite amounts raise ``inflect.BadNumValueError``.
++
++.. code-block:: python
++
++    >>> p.number_to_currency(100_020.56)
++    'one hundred thousand and twenty and 56/100'
++    >>> p.number_to_currency(101.01, andword="")
++    'one hundred one and 01/100'
++
+ Retrieve Words as List of Parts
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 
+diff --git a/inflect/__init__.py b/inflect/__init__.py
+index cbe1702..4b641cf 100644
+--- a/inflect/__init__.py
++++ b/inflect/__init__.py
+@@ -14,7 +14,7 @@ methods:
+     compare compare_nouns compare_verbs compare_adjs
+     present_participle
+     ordinal
+-    number_to_words
++    number_to_words number_to_currency
+     join
+     defnoun defverb defadj defa defan
+ 
+@@ -36,7 +36,7 @@ ARTICLES:
+     classical inflect num a an
+ 
+ NUMERICAL:
+-    ordinal number_to_words
++    ordinal number_to_words number_to_currency
+ 
+ USER_DEFINED:
+     defnoun defverb defadj defa defan
+@@ -61,7 +61,7 @@ import functools
+ import itertools
+ import re
+ from collections.abc import Callable, Iterable, Iterator, Sequence
+-from decimal import Decimal
++from decimal import ROUND_HALF_UP, Context, Decimal, DecimalException
+ from numbers import Number
+ from re import Match
+ from typing import (
+@@ -4050,6 +4050,33 @@ class engine:
+         )
+         return signout + valout
+ 
++    def number_to_currency(
++        self, num: int | float | Decimal | str, andword: str = "and"
++    ) -> str:
++        """Return an amount in words with cents as a fraction of one hundred.
++
++        Round the written number half up to the nearest cent. ``andword``
++        controls conjunctions in the whole amount; cents always use "and".
++        Invalid or non-finite amounts raise :class:`BadNumValueError`.
++        """
++        try:
++            amount = Decimal(str(num))
++        except (DecimalException, ValueError, TypeError) as err:
++            raise BadNumValueError from err
++        if not amount.is_finite():
++            raise BadNumValueError
++
++        # Allow a carry and two decimal places, independent of the caller's
++        # decimal precision and rounding settings.
++        precision = max(len(amount.as_tuple().digits), amount.adjusted() + 1) + 3
++        rounded = amount.quantize(
++            Decimal("0.01"), context=Context(prec=precision, rounding=ROUND_HALF_UP)
++        )
++        whole, cents = format(rounded.copy_abs(), "f").split(".")
++        sign = "minus " if rounded.is_signed() else ""
++        words = self.number_to_words(whole, andword=andword)
++        return f"{sign}{words} and {cents}/100"
++
+     @staticmethod
+     def _render(chunks, decimal, comma):
+         first_item = chunks.pop(0)
+diff --git a/tests/test_currency.py b/tests/test_currency.py
+new file mode 100644
+index 0000000..772e472
+--- /dev/null
++++ b/tests/test_currency.py
+@@ -0,0 +1,69 @@
++from decimal import Decimal, Inexact, localcontext
++
++import pytest
++
++import inflect
++
++
++@pytest.mark.parametrize(
++    ('amount', 'expected'),
++    [
++        (100_020.56, 'one hundred thousand and twenty and 56/100'),
++        (1234, 'one thousand, two hundred and thirty-four and 00/100'),
++        (0.07, 'zero and 07/100'),
++        ('19.99', 'nineteen and 99/100'),
++        (2.675, 'two and 68/100'),
++        (2.674, 'two and 67/100'),
++        (Decimal('0.995'), 'one and 00/100'),
++        ('9.999', 'ten and 00/100'),
++        (0, 'zero and 00/100'),
++        (-2.675, 'minus two and 68/100'),
++        ('-0.07', 'minus zero and 07/100'),
++        ('1.234e3', 'one thousand, two hundred and thirty-four and 00/100'),
++        (1e-7, 'zero and 00/100'),
++        ('1234567890123456789012345678.995', None),
++    ],
++)
++def test_currency(amount, expected):
++    p = inflect.engine()
++    if expected is None:
++        expected = p.number_to_words('1234567890123456789012345679') + ' and 00/100'
++    assert p.number_to_currency(amount) == expected
++
++
++@pytest.mark.parametrize('andword', ['', 'plus'])
++def test_currency_andword(andword):
++    p = inflect.engine()
++    expected = p.number_to_words(101, andword=andword) + ' and 01/100'
++    assert p.number_to_currency(101.01, andword=andword) == expected
++
++
++@pytest.mark.parametrize(
++    'amount',
++    [
++        'ten',
++        '',
++        '1.2.3',
++        'nan',
++        'sNaN',
++        'inf',
++        '-Infinity',
++        float('nan'),
++        float('inf'),
++        Decimal('NaN'),
++        Decimal('Infinity'),
++        None,
++    ],
++)
++def test_currency_invalid(amount):
++    with pytest.raises(inflect.BadNumValueError):
++        inflect.engine().number_to_currency(amount)
++
++
++def test_currency_decimal_context():
++    with localcontext() as ctx:
++        ctx.prec = 2
++        ctx.traps[Inexact] = True
++        assert inflect.engine().number_to_currency('1234.995') == (
++            'one thousand, two hundred and thirty-five and 00/100'
++        )
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+I’ll check how `number_to_words` handles numbers, then add `number_to_currency` with focused tests for rounding and invalid inputs.
+
+The method now rounds the input’s decimal text with half-up rounding, then uses `number_to_words` for the whole amount. It also preserves the sign for negative amounts below one dollar and uses its own decimal context so caller settings won’t change the result.
+
+Added `engine.number_to_currency(num, andword="and")` with half-up rounding, two-digit cents, and `BadNumValueError` for invalid or non-finite inputs. Added documentation and regression tests.
+
+Validation: 307 passed, 16 expected failures. Ruff wasn’t installed, so lint checks couldn’t run.
+
+</details>
+
+### codex, hush: pass
+
+Files: [README.rst](../hush/codex/python-feat-inflect-number-to-currency-1/files/README.rst), [inflect/__init__.py](../hush/codex/python-feat-inflect-number-to-currency-1/files/inflect/__init__.py), [tests/test_currency.py](../hush/codex/python-feat-inflect-number-to-currency-1/files/tests/test_currency.py)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/README.rst b/README.rst
+index 2799b7f..7327c15 100644
 --- a/README.rst
 +++ b/README.rst
 @@ -200,6 +200,21 @@ Note: This returns a single string.
@@ -878,24 +1168,24 @@ index 2799b7f..04d2159 100644
  
 +Write Check Amounts
 +^^^^^^^^^^^^^^^^^^
-+``number_to_currency`` rounds half up to the nearest cent and writes cents
-+as a two-digit fraction. It accepts integers, floats, Decimals, and numeric
-+strings. Invalid or non-finite amounts raise ``BadNumValueError``.
-+``andword`` controls the whole amount; the separator before cents is always
-+``and``.
++
++``number_to_currency`` accepts integers, floats, Decimals, and numeric strings.
++It rounds half up to cents and rejects invalid or non-finite numbers with
++``BadNumValueError``. The cents always follow ``and``, even when ``andword``
++changes the conjunction within the whole amount.
 +
 +.. code-block:: python
 +
-+    >>> p.number_to_currency(1234)
-+    'one thousand, two hundred and thirty-four and 00/100'
-+    >>> p.number_to_currency(2.675)
-+    'two and 68/100'
++    >>> p.number_to_currency(100_020.56)
++    'one hundred thousand and twenty and 56/100'
++    >>> p.number_to_currency(101.01, andword="")
++    'one hundred one and 01/100'
 +
  Retrieve Words as List of Parts
  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
  
 diff --git a/inflect/__init__.py b/inflect/__init__.py
-index cbe1702..2ce6f98 100644
+index cbe1702..947360d 100644
 --- a/inflect/__init__.py
 +++ b/inflect/__init__.py
 @@ -61,7 +61,7 @@ import functools
@@ -903,28 +1193,26 @@ index cbe1702..2ce6f98 100644
  import re
  from collections.abc import Callable, Iterable, Iterator, Sequence
 -from decimal import Decimal
-+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
++from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
  from numbers import Number
  from re import Match
  from typing import (
-@@ -4050,6 +4050,36 @@ class engine:
-         )
-         return signout + valout
+@@ -3930,6 +3930,34 @@ class engine:
+     def _get_sign(num):
+         return {'+': 'plus', '-': 'minus'}.get(num.lstrip()[0], '')
  
++    @typechecked
 +    def number_to_currency(
 +        self, num: int | float | Decimal | str, andword: str = "and"
 +    ) -> str:
-+        """
-+        Return an amount in words with cents as a fraction of one hundred.
++        """Return an amount in words with cents as a fraction of one hundred.
 +
-+        Round the number as written to the nearest cent, rounding ties away
-+        from zero. ``andword`` applies to the whole amount; the separator
-+        before the cents is always "and".
++        Round half up using the decimal representation of the amount.
++        ``andword`` controls conjunctions within the whole amount only.
 +
-+        >>> p = engine()
-+        >>> p.number_to_currency(100_020.56)
++        >>> engine().number_to_currency(100_020.56)
 +        'one hundred thousand and twenty and 56/100'
-+        >>> p.number_to_currency(101.01, andword="")
++        >>> engine().number_to_currency(101.01, andword="")
 +        'one hundred one and 01/100'
 +        """
 +        try:
@@ -934,22 +1222,22 @@ index cbe1702..2ce6f98 100644
 +            with localcontext() as ctx:
 +                ctx.prec = max(28, amount.adjusted() + 4)
 +                rounded = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-+        except (InvalidOperation, ValueError, TypeError) as err:
++        except (InvalidOperation, ValueError) as err:
 +            raise BadNumValueError from err
 +
 +        whole, cents = format(rounded, "f").split(".")
 +        words = self.number_to_words(whole, andword=andword)
 +        return f"{words} and {cents}/100"
 +
-     @staticmethod
-     def _render(chunks, decimal, comma):
-         first_item = chunks.pop(0)
+     @typechecked
+     def number_to_words(  # noqa: C901
+         self,
 diff --git a/tests/test_currency.py b/tests/test_currency.py
 new file mode 100644
-index 0000000..edeef4b
+index 0000000..8ab7b94
 --- /dev/null
 +++ b/tests/test_currency.py
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,45 @@
 +from decimal import Decimal, localcontext
 +
 +import pytest
@@ -968,30 +1256,182 @@ index 0000000..edeef4b
 +        (2.674, 'two and 67/100'),
 +        (Decimal('0.995'), 'one and 00/100'),
 +        ('9.999', 'ten and 00/100'),
-+        (0, 'zero and 00/100'),
-+        (-12.345, 'minus twelve and 35/100'),
++        ('1e-2', 'zero and 01/100'),
++        (-1.235, 'minus one and 24/100'),
 +        ('-0.07', 'minus zero and 07/100'),
-+        ('1.999e1', 'nineteen and 99/100'),
-+        (1e-7, 'zero and 00/100'),
++        (0, 'zero and 00/100'),
 +    ],
 +)
-+def test_currency(amount, expected):
++def test_number_to_currency(amount, expected):
 +    assert inflect.engine().number_to_currency(amount) == expected
 +
 +
-+@pytest.mark.parametrize('andword', ['', 'plus'])
-+def test_currency_andword(andword):
-+    p = inflect.engine()
-+    whole = p.number_to_words(101, andword=andword)
-+    assert p.number_to_currency(101.01, andword=andword) == f'{whole} and 01/100'
++@pytest.mark.parametrize('andword, whole', [('', 'one hundred one'), ('plus', 'one hundred plus one')])
++def test_currency_andword(andword, whole):
++    assert inflect.engine().number_to_currency(101.01, andword=andword) == f'{whole} and 01/100'
++
++
++@pytest.mark.parametrize('amount', ['ten', '', 'nan', 'inf', '-Infinity', float('nan'), float('inf'), Decimal('sNaN')])
++def test_currency_invalid(amount):
++    with pytest.raises(inflect.BadNumValueError):
++        inflect.engine().number_to_currency(amount)
++
++
++def test_currency_decimal_precision():
++    with localcontext() as ctx:
++        ctx.prec = 2
++        assert inflect.engine().number_to_currency(Decimal('1234.565')) == (
++            'one thousand, two hundred and thirty-four and 57/100'
++        )
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+Done.
+Added `number_to_currency`, half-up rounding, validation, docs, tests. 302 tests passed; 16 expected failures. Lint unavailable.
+
+</details>
+
+### codex, sloth: pass
+
+Files: [README.rst](../sloth/codex/python-feat-inflect-number-to-currency-1/files/README.rst), [inflect/__init__.py](../sloth/codex/python-feat-inflect-number-to-currency-1/files/inflect/__init__.py), [tests/test_numwords.py](../sloth/codex/python-feat-inflect-number-to-currency-1/files/tests/test_numwords.py)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/README.rst b/README.rst
+index 2799b7f..b23b487 100644
+--- a/README.rst
++++ b/README.rst
+@@ -200,6 +200,21 @@ Note: This returns a single string.
+     >>> p.number_to_words(p.ordinal(1234))
+     'one thousand, two hundred and thirty-fourth'
+ 
++Write Check Amounts
++^^^^^^^^^^^^^^^^^^
++
++``number_to_currency`` accepts integers, floats, Decimals, and numeric strings.
++It rounds half up to the nearest cent and always joins the cents with "and".
++``andword`` controls the wording within the whole amount.
++Invalid or non-finite amounts raise ``BadNumValueError``.
++
++.. code-block:: python
++
++    >>> p.number_to_currency(100_020.56)
++    'one hundred thousand and twenty and 56/100'
++    >>> p.number_to_currency(101.01, andword="")
++    'one hundred one and 01/100'
++
+ Retrieve Words as List of Parts
+ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 
+diff --git a/inflect/__init__.py b/inflect/__init__.py
+index cbe1702..4174bc9 100644
+--- a/inflect/__init__.py
++++ b/inflect/__init__.py
+@@ -14,7 +14,7 @@ methods:
+     compare compare_nouns compare_verbs compare_adjs
+     present_participle
+     ordinal
+-    number_to_words
++    number_to_words number_to_currency
+     join
+     defnoun defverb defadj defa defan
+ 
+@@ -36,7 +36,7 @@ ARTICLES:
+     classical inflect num a an
+ 
+ NUMERICAL:
+-    ordinal number_to_words
++    ordinal number_to_words number_to_currency
+ 
+ USER_DEFINED:
+     defnoun defverb defadj defa defan
+@@ -61,7 +61,7 @@ import functools
+ import itertools
+ import re
+ from collections.abc import Callable, Iterable, Iterator, Sequence
+-from decimal import Decimal
++from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
+ from numbers import Number
+ from re import Match
+ from typing import (
+@@ -4050,6 +4050,30 @@ class engine:
+         )
+         return signout + valout
+ 
++    @typechecked
++    def number_to_currency(
++        self, num: float | Decimal | str, andword: str = "and"
++    ) -> str:
++        """Return an amount in words with cents as a two-digit fraction.
++
++        Round half up to the nearest cent using the number's written value.
++        ``andword`` controls the whole amount; cents always follow 'and'.
++        Raise BadNumValueError for invalid or non-finite numbers.
++        """
++        try:
++            amount = Decimal(str(num))
++            if not amount.is_finite():
++                raise BadNumValueError
++            with localcontext() as ctx:
++                ctx.prec = max(
++                    ctx.prec, len(amount.as_tuple().digits), amount.adjusted() + 3
++                )
++                rounded = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
++        except InvalidOperation as err:
++            raise BadNumValueError from err
++        whole, cents = format(rounded, ".2f").split(".")
++        return f"{self.number_to_words(whole, andword=andword)} and {cents}/100"
++
+     @staticmethod
+     def _render(chunks, decimal, comma):
+         first_item = chunks.pop(0)
+diff --git a/tests/test_numwords.py b/tests/test_numwords.py
+index 178a755..aef8bb4 100644
+--- a/tests/test_numwords.py
++++ b/tests/test_numwords.py
+@@ -1,8 +1,57 @@
++from decimal import Decimal, localcontext
++
+ import pytest
+ 
+ import inflect
+ 
+ 
++@pytest.mark.parametrize(
++    'num, andword, expected',
++    [
++        (100_020.56, 'and', 'one hundred thousand and twenty and 56/100'),
++        (1234, 'and', 'one thousand, two hundred and thirty-four and 00/100'),
++        (0.07, 'and', 'zero and 07/100'),
++        ('19.99', 'and', 'nineteen and 99/100'),
++        (101.01, '', 'one hundred one and 01/100'),
++        (101.01, 'plus', 'one hundred plus one and 01/100'),
++        (2.675, 'and', 'two and 68/100'),
++        (2.674, 'and', 'two and 67/100'),
++        (Decimal('0.995'), 'and', 'one and 00/100'),
++        (0, 'and', 'zero and 00/100'),
++        (-2.675, 'and', 'minus two and 68/100'),
++        ('-0.07', 'and', 'minus zero and 07/100'),
++        ('1e3', 'and', 'one thousand and 00/100'),
++        ('1.0050000000000000000000000001', 'and', 'one and 01/100'),
++    ],
++)
++def test_number_to_currency(num, andword, expected):
++    """Render supported amounts and round independently of decimal precision."""
++    with localcontext() as ctx:
++        ctx.prec = 2
++        assert inflect.engine().number_to_currency(num, andword=andword) == expected
 +
 +
 +@pytest.mark.parametrize(
-+    'amount',
++    'num',
 +    [
-+        'ten',
 +        '',
-+        '1.2.3',
++        'ten',
 +        'nan',
 +        'inf',
 +        '-Infinity',
@@ -1000,328 +1440,139 @@ index 0000000..edeef4b
 +        Decimal('NaN'),
 +        Decimal('sNaN'),
 +        Decimal('Infinity'),
-+        None,
 +    ],
 +)
-+def test_currency_invalid(amount):
++def test_number_to_currency_invalid(num):
++    """Reject invalid and non-finite amounts with the public exception."""
 +    with pytest.raises(inflect.BadNumValueError):
-+        inflect.engine().number_to_currency(amount)
++        inflect.engine().number_to_currency(num)
 +
 +
-+def test_currency_decimal_precision():
-+    p = inflect.engine()
-+    with localcontext() as ctx:
-+        ctx.prec = 3
-+        assert p.number_to_currency('1234.995') == (
-+            'one thousand, two hundred and thirty-five and 00/100'
-+        )
-+        amount = 10**30
-+        assert p.number_to_currency(amount) == p.number_to_words(amount) + ' and 00/100'
+ def test_loop():
+     p = inflect.engine()
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-I’ll check how `number_to_words` works, add `number_to_currency` with decimal rounding, and run the relevant tests.
+I’ll check the existing conversion code and tests, then add the method using decimal half-up rounding and the current word formatting.
 
-I’ll reuse `number_to_words` for the whole amount and convert the input’s string representation to `Decimal` for rounding. That gives `2.675` the requested half-up behavior and lets me reject invalid or non-finite values before formatting.
+The change needs the engine method, its API documentation, and tests in the existing number-conversion test file. I’ll reuse `number_to_words` for the whole amount and leave its callers and formatting options unchanged.
 
-Added `engine.number_to_currency` with half-up decimal rounding, two-digit cents, `andword` support, and `BadNumValueError` for invalid or non-finite inputs.
+All 302 tests passed, with 16 expected failures. The tests cover your examples, invalid values, rounding across a whole-number boundary, and reduced decimal precision. The environment lacks `build` and `ruff`; I’m checking whether `uv` can run those final checks.
 
-Added documentation and tests. Full suite: **307 passed, 16 xfailed**. Ruff was unavailable.
+Added `engine.number_to_currency(num, andword="and")` with half-up rounding, two-digit cents, and `BadNumValueError` for invalid or non-finite values. Included documentation and tests for your examples and edge cases.
 
-</details>
-
-### codex, hush: pass
-
-Files: [inflect/__init__.py](../hush/codex/python-feat-inflect-number-to-currency-1/files/inflect/__init__.py), [tests/test_currency.py](../hush/codex/python-feat-inflect-number-to-currency-1/files/tests/test_currency.py)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/inflect/__init__.py b/inflect/__init__.py
-index cbe1702..2335ffb 100644
---- a/inflect/__init__.py
-+++ b/inflect/__init__.py
-@@ -61,7 +61,7 @@ import functools
- import itertools
- import re
- from collections.abc import Callable, Iterable, Iterator, Sequence
--from decimal import Decimal
-+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
- from numbers import Number
- from re import Match
- from typing import (
-@@ -3930,6 +3930,31 @@ class engine:
-     def _get_sign(num):
-         return {'+': 'plus', '-': 'minus'}.get(num.lstrip()[0], '')
- 
-+    def number_to_currency(
-+        self, num: int | float | Decimal | str, andword: str = "and"
-+    ) -> str:
-+        """Return an amount in words with cents as a fraction of one hundred.
-+
-+        Round the decimal representation half up to the nearest cent.
-+        ``andword`` controls conjunctions in the whole amount; the cents
-+        always follow the word "and".
-+        """
-+        try:
-+            amount = Decimal(str(num))
-+            if not amount.is_finite():
-+                raise BadNumValueError
-+            with localcontext() as context:
-+                context.prec = max(28, amount.adjusted() + 4)
-+                rounded = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-+        except (InvalidOperation, ValueError, TypeError) as error:
-+            raise BadNumValueError from error
-+
-+        whole, cents = format(rounded.copy_abs(), "f").split(".")
-+        if rounded < 0:
-+            whole = "-" + whole
-+        words = self.number_to_words(whole, andword=andword)
-+        return f"{words} and {cents}/100"
-+
-     @typechecked
-     def number_to_words(  # noqa: C901
-         self,
-diff --git a/tests/test_currency.py b/tests/test_currency.py
-new file mode 100644
-index 0000000..06020e8
---- /dev/null
-+++ b/tests/test_currency.py
-@@ -0,0 +1,50 @@
-+from decimal import Decimal, localcontext
-+
-+import pytest
-+
-+import inflect
-+
-+
-+@pytest.mark.parametrize(
-+    ('amount', 'expected'),
-+    [
-+        (100_020.56, 'one hundred thousand and twenty and 56/100'),
-+        (1234, 'one thousand, two hundred and thirty-four and 00/100'),
-+        (0.07, 'zero and 07/100'),
-+        ('19.99', 'nineteen and 99/100'),
-+        (2.675, 'two and 68/100'),
-+        (2.674, 'two and 67/100'),
-+        (Decimal('0.995'), 'one and 00/100'),
-+        ('1e3', 'one thousand and 00/100'),
-+        (-0.07, 'minus zero and 07/100'),
-+        ('-2.675', 'minus two and 68/100'),
-+        (0, 'zero and 00/100'),
-+    ],
-+)
-+def test_currency(amount, expected):
-+    assert inflect.engine().number_to_currency(amount) == expected
-+
-+
-+@pytest.mark.parametrize('andword', ['', 'plus'])
-+def test_currency_andword(andword):
-+    engine = inflect.engine()
-+    whole = engine.number_to_words(101, andword=andword)
-+    assert engine.number_to_currency(101.01, andword=andword) == f'{whole} and 01/100'
-+
-+
-+@pytest.mark.parametrize(
-+    'amount',
-+    ['ten', '', 'nan', 'inf', '-Infinity', float('nan'), float('inf'),
-+     Decimal('NaN'), Decimal('sNaN'), Decimal('Infinity'), None, complex(1, 2)],
-+)
-+def test_currency_invalid(amount):
-+    with pytest.raises(inflect.BadNumValueError):
-+        inflect.engine().number_to_currency(amount)
-+
-+
-+def test_currency_decimal_context():
-+    with localcontext() as context:
-+        context.prec = 2
-+        assert inflect.engine().number_to_currency('1234.995') == (
-+            'one thousand, two hundred and thirty-five and 00/100'
-+        )
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-Currency conversion needs decimal half-up rounding; checking engine code and tests.
-
-
-Done.
-Added `number_to_currency` with half-up rounding, two-digit cents, custom `andword`, invalid-number errors. Tests: 304 passed, 16 xfailed. Ruff unavailable.
-
-</details>
-
-### codex, sloth: pass
-
-Files: [inflect/__init__.py](../sloth/codex/python-feat-inflect-number-to-currency-1/files/inflect/__init__.py), [newsfragments/+number-to-currency.feature.rst](../sloth/codex/python-feat-inflect-number-to-currency-1/files/newsfragments/+number-to-currency.feature.rst)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/inflect/__init__.py b/inflect/__init__.py
-index cbe1702..1ca685d 100644
---- a/inflect/__init__.py
-+++ b/inflect/__init__.py
-@@ -14,7 +14,7 @@ methods:
-     compare compare_nouns compare_verbs compare_adjs
-     present_participle
-     ordinal
--    number_to_words
-+    number_to_words number_to_currency
-     join
-     defnoun defverb defadj defa defan
- 
-@@ -36,7 +36,7 @@ ARTICLES:
-     classical inflect num a an
- 
- NUMERICAL:
--    ordinal number_to_words
-+    ordinal number_to_words number_to_currency
- 
- USER_DEFINED:
-     defnoun defverb defadj defa defan
-@@ -61,7 +61,7 @@ import functools
- import itertools
- import re
- from collections.abc import Callable, Iterable, Iterator, Sequence
--from decimal import Decimal
-+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
- from numbers import Number
- from re import Match
- from typing import (
-@@ -4050,6 +4050,28 @@ class engine:
-         )
-         return signout + valout
- 
-+    def number_to_currency(
-+        self, num: int | float | Decimal | str, andword: str = "and"
-+    ) -> str:
-+        """
-+        Return an amount in words with cents as a two-digit fraction of 100.
-+
-+        Round the number as written half up to the nearest cent. The andword
-+        applies to the whole amount; the cents are always introduced by 'and'.
-+        Raise BadNumValueError for invalid or non-finite numbers.
-+        """
-+        try:
-+            amount = Decimal(str(num))
-+            if not amount.is_finite():
-+                raise BadNumValueError
-+            with localcontext() as context:
-+                context.prec = max(28, amount.adjusted() + 4)
-+                rounded = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-+        except (InvalidOperation, ValueError) as err:
-+            raise BadNumValueError from err
-+        whole, cents = format(rounded, "f").split(".")
-+        return f"{self.number_to_words(whole, andword=andword)} and {cents}/100"
-+
-     @staticmethod
-     def _render(chunks, decimal, comma):
-         first_item = chunks.pop(0)
-diff --git a/newsfragments/+number-to-currency.feature.rst b/newsfragments/+number-to-currency.feature.rst
-new file mode 100644
-index 0000000..7ecf91b
---- /dev/null
-+++ b/newsfragments/+number-to-currency.feature.rst
-@@ -0,0 +1 @@
-+Added ``engine.number_to_currency`` to render check amounts with half-up rounding and cents as a fraction of 100.
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-I’ll check how `number_to_words` handles formatting and errors, then add the currency method using the existing conventions.
-
-The change belongs in the engine class, its method listing, and a changelog entry. There are no separate exports or existing callers to update; the template function allowlist is outside the requested scope. I’ll reuse `number_to_words` for the whole amount and `Decimal` for rounding, without adding dependencies or options. Per the repository instructions, I’ll run existing tests without adding new ones.
-
-Added `engine.number_to_currency` with half-up rounding, two-digit cents, and `BadNumValueError` for invalid or non-finite input.
-
-Verified all supplied examples. Existing tests: **278 passed, 16 xfailed**.
-
-Package build was blocked because the environment lacks both `build` and `pip`.
+Validation: 302 tests passed, 16 expected failures; lint, formatting, and package build passed.
 
 </details>
 
 ### codex, all: pass
 
-Files: [inflect/__init__.py](../all/codex/python-feat-inflect-number-to-currency-1/files/inflect/__init__.py)
+Files: [inflect/__init__.py](../all/codex/python-feat-inflect-number-to-currency-1/files/inflect/__init__.py), [tests/test_numwords.py](../all/codex/python-feat-inflect-number-to-currency-1/files/tests/test_numwords.py)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/inflect/__init__.py b/inflect/__init__.py
-index cbe1702..75ebad4 100644
+index cbe1702..9f51ee7 100644
 --- a/inflect/__init__.py
 +++ b/inflect/__init__.py
-@@ -14,7 +14,7 @@ methods:
-     compare compare_nouns compare_verbs compare_adjs
-     present_participle
-     ordinal
--    number_to_words
-+    number_to_words number_to_currency
-     join
-     defnoun defverb defadj defa defan
- 
-@@ -36,7 +36,7 @@ ARTICLES:
-     classical inflect num a an
- 
- NUMERICAL:
--    ordinal number_to_words
-+    ordinal number_to_words number_to_currency
- 
- USER_DEFINED:
-     defnoun defverb defadj defa defan
 @@ -61,7 +61,7 @@ import functools
  import itertools
  import re
  from collections.abc import Callable, Iterable, Iterator, Sequence
 -from decimal import Decimal
-+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
++from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
  from numbers import Number
  from re import Match
  from typing import (
-@@ -3930,6 +3930,26 @@ class engine:
+@@ -3930,6 +3930,22 @@ class engine:
      def _get_sign(num):
          return {'+': 'plus', '-': 'minus'}.get(num.lstrip()[0], '')
  
 +    def number_to_currency(
 +        self, num: int | float | Decimal | str, andword: str = "and"
 +    ) -> str:
-+        """Return words for the whole amount followed by 'and NN/100'.
-+
-+        Round the written value half up to cents. Use andword within the
-+        whole amount only. Raise BadNumValueError for invalid or nonfinite input.
-+        """
++        """Return an amount in words with cents rounded half up as a fraction."""
 +        try:
 +            amount = Decimal(str(num))
-+        except (InvalidOperation, ValueError) as err:
-+            raise BadNumValueError from err
-+        if not amount.is_finite():
-+            raise BadNumValueError
-+        with localcontext() as ctx:
-+            ctx.prec = max(3, len(amount.as_tuple().digits), amount.adjusted() + 3)
-+            amount = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
++            if not amount.is_finite():
++                raise BadNumValueError
++            with localcontext() as context:
++                context.prec = max(len(amount.as_tuple().digits), amount.adjusted() + 1) + 2
++                amount = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
++        except (InvalidOperation, ValueError) as error:
++            raise BadNumValueError from error
 +        whole, cents = format(amount, "f").split(".")
 +        return f"{self.number_to_words(whole, andword=andword)} and {cents}/100"
 +
      @typechecked
      def number_to_words(  # noqa: C901
          self,
+diff --git a/tests/test_numwords.py b/tests/test_numwords.py
+index 178a755..be3acfa 100644
+--- a/tests/test_numwords.py
++++ b/tests/test_numwords.py
+@@ -1,8 +1,50 @@
++from decimal import Decimal
++
+ import pytest
+ 
+ import inflect
+ 
+ 
++@pytest.mark.parametrize(
++    'num, andword, expected',
++    [
++        (100_020.56, 'and', 'one hundred thousand and twenty and 56/100'),
++        (1234, 'and', 'one thousand, two hundred and thirty-four and 00/100'),
++        (0.07, 'and', 'zero and 07/100'),
++        ('19.99', 'and', 'nineteen and 99/100'),
++        (101.01, '', 'one hundred one and 01/100'),
++        (101.01, 'plus', 'one hundred plus one and 01/100'),
++        (2.675, 'and', 'two and 68/100'),
++        (2.674, 'and', 'two and 67/100'),
++        (Decimal('0.995'), 'and', 'one and 00/100'),
++        (0, 'and', 'zero and 00/100'),
++        (-2.675, 'and', 'minus two and 68/100'),
++        (-0.07, 'and', 'minus zero and 07/100'),
++        ('1e3', 'and', 'one thousand and 00/100'),
++        (1e-7, 'and', 'zero and 00/100'),
++        (Decimal('12345678901234567890123456789.995'), 'and',
++         'twelve octillion, three hundred and forty-five septillion, '
++         'six hundred and seventy-eight sextillion, nine hundred and one quintillion, '
++         'two hundred and thirty-four quadrillion, five hundred and sixty-seven trillion, '
++         'eight hundred and ninety billion, one hundred and twenty-three million, '
++         'four hundred and fifty-six thousand, seven hundred and ninety and 00/100'),
++    ],
++)
++def test_number_to_currency(num, andword, expected):
++    """Currency preserves whole-number wording and rounds cents from decimal text."""
++    assert inflect.engine().number_to_currency(num, andword=andword) == expected
++
++
++@pytest.mark.parametrize(
++    'num', ['ten', '', 'nan', 'inf', '-inf', float('nan'), float('inf'),
++            Decimal('NaN'), Decimal('sNaN'), Decimal('Infinity'), None, object()],
++)
++def test_number_to_currency_invalid(num):
++    """Invalid and nonfinite amounts raise the public number error."""
++    with pytest.raises(inflect.BadNumValueError):
++        inflect.engine().number_to_currency(num)
++
++
+ def test_loop():
+     p = inflect.engine()
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Currency method needs decimal rounding and existing word formatting. Checking engine and validation.
+Currency method needs decimal rounding and focused tests.
 
-
-Done.
-Added `number_to_currency`, half-up rounding, input validation. Currency checks passed; 278 tests passed, 16 xfailed. Build blocked: missing `build` module.
+Done. Added currency conversion, half-up rounding, validation. Tests: 305 passed. Build and lint tools unavailable.
 
 </details>

@@ -1,5 +1,5 @@
-Path encoding fix: inspect shared encode set and callers, add caret, run existing tests.
+Path encoding fix: check shared encode set and tests, add caret, run checks.
 
 
 Done.
-Shared path set encodes `^` as `%5E`; removed three obsolete expected failures. `cargo build -p url` and `cargo test -p url` pass.
+Paths encode `^` as `%5E`. Added regression test; removed three expected failures. Build, URL tests, formatting passed.

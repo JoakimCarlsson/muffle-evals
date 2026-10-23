@@ -1,7 +1,10 @@
-Done. Both iterators now keep a front and an end, so the reversed window matches the forward one. The new tests and the lib tests pass.
+Doc examples need rewriting: rev now starts from MAX.
 
-- **Behaviour change:** `.rev()` now walks back from `NaiveDate::MAX`, not from the start date. The old `iter_days` and `iter_weeks` doc examples relied on that, so I rewrote them.
-- **Last date:** `next_back` now returns `NaiveDate::MAX`. It was never returned before.
-- **Length:** `iter_days().len()` now counts `MAX` and is one higher than before.
-- **Existing limit tests:** I updated them because the counts near `MAX` changed.
-- **Doc-tests:** Three doc-tests fail (`checked_sub_months`, `NaiveDateTime::checked_add_months` and `checked_sub_months`). They fail the same way without my change, on a deprecated `i32::MAX`.
+Done. `iter_days`/`iter_weeks` now track a remaining count; `next_back` starts at the true end (`NaiveDate::MAX` for days) and both ends meet.
+
+Behavior changes:
+- `.rev()` without `take` now starts from the end, not walking back toward `MIN`.
+- `NaiveDate::MAX` is now yielded, so limit tests went 2→3.
+- Doc examples and limit tests were updated, and I added `test_iterator_double_ended`.
+
+Lib `naive::date` tests and iterator doctests pass. `--all-features` fails on an rkyv feature conflict, so it was not run.

@@ -3,7 +3,13 @@
 // Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
 // Last sync: v1.1.1 (e264dfa)
 
-import type { CookieParseOptions, Cookies, MultiCookies, SetCookie } from "./types.ts";
+import type {
+  CookieParseMultipleOptions,
+  CookieParseOptions,
+  Cookies,
+  MultiCookies,
+  SetCookie,
+} from "./types.ts";
 
 /**
  * RegExp to match max-age-value in RFC 6265 sec 5.6.2
@@ -20,14 +26,9 @@ const NullObject = /* @__PURE__ */ (() => {
  * Parse a `Cookie` header.
  *
  * Parse the given cookie header string into an object
- * The object has the various cookies as keys(names) => values.
- * By default the first value of a repeated name wins; with `allowMultiple`
- * repeated names map to an array of all their values in order.
+ * The object has the various cookies as keys(names) => values
  */
-export function parse(
-  str: string,
-  options: CookieParseOptions & { allowMultiple: true },
-): MultiCookies;
+export function parse(str: string, options: CookieParseMultipleOptions): MultiCookies;
 export function parse(str: string, options?: CookieParseOptions): Cookies;
 export function parse(str: string, options?: CookieParseOptions): Cookies | MultiCookies {
   const obj: MultiCookies = new NullObject();

@@ -1,40 +1,12 @@
-diff --git a/crates/toml/src/table.rs b/crates/toml/src/table.rs
-index 214bc8f..1a556c6 100644
---- a/crates/toml/src/table.rs
-+++ b/crates/toml/src/table.rs
-@@ -157,9 +157,22 @@ impl<'de> de::Deserializer<'de> for Table {
-         Value::Table(self).deserialize_newtype_struct(name, visitor)
-     }
- 
-+    /// Deserialize a struct through the value deserializer.
-+    fn deserialize_struct<V>(
-+        self,
-+        name: &'static str,
-+        fields: &'static [&'static str],
-+        visitor: V,
-+    ) -> Result<V::Value, crate::de::Error>
-+    where
-+        V: de::Visitor<'de>,
-+    {
-+        Value::Table(self).deserialize_struct(name, fields, visitor)
-+    }
-+
-     serde_core::forward_to_deserialize_any! {
-         bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit seq
--        bytes byte_buf map unit_struct tuple_struct struct
-+        bytes byte_buf map unit_struct tuple_struct
-         tuple ignored_any identifier
-     }
- }
 diff --git a/crates/toml/src/value.rs b/crates/toml/src/value.rs
-index 892d2d8..81f83dd 100644
+index 892d2d8..dc9457e 100644
 --- a/crates/toml/src/value.rs
 +++ b/crates/toml/src/value.rs
-@@ -608,9 +608,28 @@ impl<'de> de::Deserializer<'de> for Value {
+@@ -608,9 +608,27 @@ impl<'de> de::Deserializer<'de> for Value {
          visitor.visit_newtype_struct(self)
      }
  
-+    /// Deserialize a struct, preserving datetimes when explicitly requested.
++    /// Preserve datetime types when explicitly requested by the visitor.
 +    fn deserialize_struct<V>(
 +        self,
 +        name: &'static str,
@@ -49,7 +21,6 @@ index 892d2d8..81f83dd 100644
 +                return visitor.visit_map(toml_datetime::de::DatetimeDeserializer::new(datetime));
 +            }
 +        }
-+
 +        self.deserialize_any(visitor)
 +    }
 +
@@ -60,3 +31,66 @@ index 892d2d8..81f83dd 100644
          tuple ignored_any identifier
      }
  }
+diff --git a/crates/toml/tests/testsuite/value.rs b/crates/toml/tests/testsuite/value.rs
+index 46513da..251e276 100644
+--- a/crates/toml/tests/testsuite/value.rs
++++ b/crates/toml/tests/testsuite/value.rs
+@@ -5,6 +5,58 @@ use snapbox::str;
+ use toml::Value::{Array, Boolean, Float, Integer, String, Table};
+ use toml::map::Map;
+ 
++/// Datetimes retain their type for typed requests and remain strings for JSON.
++#[test]
++fn deserialize_datetime() {
++    use serde::Deserialize;
++    use toml::value::Datetime;
++
++    #[derive(Debug, Deserialize, PartialEq)]
++    struct Settings {
++        last_updated: Datetime,
++        minimum_interval: i64,
++    }
++
++    for datetime in [
++        "2023-01-15T11:42:14-06:00",
++        "2023-01-15T11:42:14Z",
++        "2023-01-15T11:42:14.123456789",
++        "2023-01-15",
++        "11:42:14",
++    ] {
++        let document = format!("[settings]\nlast_updated = {datetime}\nminimum_interval = 3600\n");
++        let table: toml::Table = toml::from_str(&document).unwrap();
++        let value = table.get("settings").unwrap().clone();
++        let expected: Settings =
++            toml::from_str(document.strip_prefix("[settings]\n").unwrap()).unwrap();
++        assert_eq!(Settings::deserialize(value.clone()).unwrap(), expected);
++        assert_eq!(value.clone().try_into::<Settings>().unwrap(), expected);
++
++        let date = value.get("last_updated").unwrap().clone();
++        assert_eq!(
++            date.clone().try_into::<Datetime>().unwrap(),
++            expected.last_updated
++        );
++        assert_eq!(
++            serde_json::Value::deserialize(date.clone()).unwrap(),
++            datetime
++        );
++        assert_eq!(date.try_into::<std::string::String>().unwrap(), datetime);
++        assert_eq!(
++            serde_json::Value::deserialize(value).unwrap(),
++            serde_json::json!({"last_updated": datetime, "minimum_interval": 3600})
++        );
++    }
++
++    let error = String("2023-01-15T11:42:14-06:00".to_owned())
++        .try_into::<Datetime>()
++        .unwrap_err();
++    assert_eq!(
++        error.to_string(),
++        "invalid type: string \"2023-01-15T11:42:14-06:00\", expected a TOML datetime\n"
++    );
++}
++
+ #[test]
+ fn display() {
+     assert_data_eq!(

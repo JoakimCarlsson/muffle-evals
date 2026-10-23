@@ -11,6 +11,8 @@ Unreleased
 - A {class}`Group` with `invoke_without_command=True` marks its subcommand as
   optional in the usage help, showing `[COMMAND]` instead of `COMMAND`.
   {issue}`3059` {pr}`3507`
+- Optional arguments of type {class}`Choice` or {class}`DateTime` no longer
+  show doubled square brackets in the usage help.
 - `echo_via_pager` flushes after each write, so passing a generator streams
   output to the pager incrementally instead of staying hidden until the pipe
   buffer fills. {issue}`3242` {issue}`2542` {pr}`3534`
@@ -18,8 +20,6 @@ Unreleased
   stream when no external pager runs, completing the partial
   `I/O operation on closed file` fix from {pr}`3482`. {issue}`3449`
   {pr}`3533`
-- An optional argument of type {class}`Choice` or {class}`DateTime` no longer
-  shows double square brackets in the usage help.
 
 ## Version 8.4.1
 

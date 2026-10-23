@@ -5041,6 +5041,11 @@ class NthCombinationWithReplacementTests(TestCase):
 
 
 class ValueChainTests(TestCase):
+    def test_error_while_iterating(self):
+        it = map(len, ['ab', 'cde', 5])
+        with self.assertRaises(TypeError):
+            list(mi.value_chain(it))
+
     def test_empty(self):
         actual = list(mi.value_chain())
         expected = []
@@ -5073,11 +5078,6 @@ class ValueChainTests(TestCase):
         )
         expected = [1, (2, (3,)), 'foo', ['bar', ['baz']], 'tic', 'key', obj]
         self.assertEqual(actual, expected)
-
-    def test_iteration_type_error(self):
-        # A TypeError raised while iterating must propagate
-        with self.assertRaises(TypeError):
-            list(mi.value_chain(map(len, ['ab', 'cde', 5])))
 
 
 class ProductIndexTests(TestCase):

@@ -1,2 +1,5 @@
-Done. `__attrs_pre_init__` receives supplied values.
-Reproducer passed; 1338 tests passed, 2 failed from installed version metadata. Build blocked: missing build/pip.
+Pre-init forwarding bug. Checking generated arguments and existing tests.
+
+
+Done.
+Fixed pre-init argument forwarding; regression tests added. Tests: 1,343 passed, 5 skipped, 3 xfailed. Build/lint unavailable: missing `build`/`ruff`.

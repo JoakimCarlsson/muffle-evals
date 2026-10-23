@@ -44,7 +44,7 @@ func WithJitter(j time.Duration, next Backoff) Backoff {
 }
 
 // WithFullJitter wraps a backoff and returns a random duration in [0, base).
-// Non-positive base durations are returned unchanged.
+// Non-positive durations are returned unchanged.
 func WithFullJitter(next Backoff) Backoff {
 	return BackoffFunc(func() (time.Duration, bool) {
 		val, stop := next.Next()

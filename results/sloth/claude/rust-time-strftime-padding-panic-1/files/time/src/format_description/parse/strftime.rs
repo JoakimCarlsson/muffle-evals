@@ -79,11 +79,16 @@ impl<'input> Iterator for Tokenizer<'input> {
             Some(&b'_') => (Some(Padding::Space), 3),
             Some(&b'-') => (Some(Padding::None), 3),
             Some(&b'0') => (Some(Padding::Zero), 3),
-            _ => (None, 2),
+            Some(_) => (None, 2),
+            None => {
+                return Some(Err(error_expected_end(Location {
+                    byte: self.byte_pos,
+                })));
+            }
         };
         let Some(&component) = self.input.get(advance - 1) else {
             return Some(Err(error_expected_end(Location {
-                byte: self.byte_pos + if padding.is_some() { 2 } else { 0 },
+                byte: self.byte_pos + advance as u32 - 1,
             })));
         };
 

@@ -1,5 +1,5 @@
 diff --git a/src/header/map.rs b/src/header/map.rs
-index 08a1b8b..6a7c3a5 100644
+index 08a1b8b..5754d28 100644
 --- a/src/header/map.rs
 +++ b/src/header/map.rs
 @@ -2368,7 +2368,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
@@ -7,7 +7,7 @@ index 08a1b8b..6a7c3a5 100644
          debug_assert!(map.entries.len() >= self.entry);
  
 -        let lower = map.entries.len() - self.entry;
-+        let lower = (map.entries.len() - self.entry).saturating_sub(1) + self.cursor.is_some() as usize;
++        let lower = (map.entries.len() - self.entry).saturating_sub(self.cursor.is_none() as usize);
          // We could pessimistically guess at the upper bound, saying
          // that its lower + map.extra_values.len(). That could be
          // way over though, such as if we're near the end, and have
@@ -16,7 +16,45 @@ index 08a1b8b..6a7c3a5 100644
          debug_assert!(self.entries_len >= self.entry);
  
 -        let lower = self.entries_len - self.entry;
-+        let lower = (self.entries_len - self.entry).saturating_sub(1) + self.cursor.is_some() as usize;
++        let lower = (self.entries_len - self.entry).saturating_sub(self.cursor.is_none() as usize);
          // We could pessimistically guess at the upper bound, saying
          // that its lower + map.extra_values.len(). That could be
          // way over though, such as if we're near the end, and have
+@@ -4051,3 +4051,37 @@ fn skip_duplicates_during_key_iteration() {
+     map.try_append("a", HeaderValue::from_static("b")).unwrap();
+     assert_eq!(map.keys().count(), map.keys_len());
+ }
++
++#[test]
++fn iter_size_hint_lower_bound_is_never_too_high() {
++    let mut map = HeaderMap::new();
++    assert_eq!(map.iter().size_hint().0, 0);
++    map.try_insert(super::HOST, HeaderValue::from_static("x"))
++        .unwrap();
++    map.try_append(super::ACCEPT, HeaderValue::from_static("a"))
++        .unwrap();
++    map.try_append(super::ACCEPT, HeaderValue::from_static("b"))
++        .unwrap();
++
++    let mut it = map.iter();
++    let mut remaining = 3;
++    loop {
++        assert!(it.size_hint().0 <= remaining);
++        if it.next().is_none() {
++            break;
++        }
++        remaining -= 1;
++    }
++    assert_eq!(it.size_hint().0, 0);
++
++    let mut it = map.iter_mut();
++    let mut remaining = 3;
++    loop {
++        assert!(it.size_hint().0 <= remaining);
++        if it.next().is_none() {
++            break;
++        }
++        remaining -= 1;
++    }
++    assert_eq!(it.size_hint().0, 0);
++}

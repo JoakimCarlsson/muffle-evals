@@ -699,15 +699,17 @@ class TestAttributes:
     @pytest.mark.parametrize("call_style", ["positional", "keyword", "defaults"])
     def test_pre_init_defaults(self, call_style):
         """
-        Pre-init receives argument values for fields with defaults and factories.
+        Pre-init receives argument values, including overrides of defaults.
+        Omitted factories are passed as NOTHING before initialization.
         """
         received = []
 
         @attr.define
         class C:
             required: int
-            value: int = 100
+            _value: int = attr.field(default=100, alias="value")
             mapping: dict = attr.field(factory=dict)
+            ignored: int = attr.field(default=42, init=False)
             kw_required: int = attr.field(kw_only=True)
             kw_default: int = attr.field(default=100, kw_only=True)
 
@@ -720,9 +722,9 @@ class TestAttributes:
 
         mapping = {"blah": "blah"}
         if call_style == "positional":
-            inst = C(200, 200, mapping, kw_required=200, kw_default=200)
+            C(200, 200, mapping, kw_required=200, kw_default=200)
         elif call_style == "keyword":
-            inst = C(
+            C(
                 required=200,
                 value=200,
                 mapping=mapping,
@@ -731,13 +733,12 @@ class TestAttributes:
             )
         else:
             inst = C(200, kw_required=200)
-
-        if call_style == "defaults":
-            assert [(200, 100, attr.NOTHING, 200, 100)] == received
+            assert received == [(200, 100, attr.NOTHING, 200, 100)]
             assert inst.mapping == {}
-        else:
-            assert [(200, 200, mapping, 200, 200)] == received
-            assert received[0][2] is mapping
+            return
+
+        assert received == [(200, 200, mapping, 200, 200)]
+        assert received[0][2] is mapping
 
     @pytest.mark.usefixtures("with_and_without_validation")
     def test_pre_init_kw_only_work_with_defaults(self):

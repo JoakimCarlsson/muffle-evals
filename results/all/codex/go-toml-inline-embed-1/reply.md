@@ -1,2 +1,2 @@
 Done.
-Embedded structs with unnamed `toml:",inline"` tags now decode flattened fields. `go build ./...` and existing tests pass.
+Fixed embedded `inline` decoding. Added regression coverage for pointers, empty tags, named fields, ignored fields, shadowing. `go build ./...` and `go test ./...` passed.

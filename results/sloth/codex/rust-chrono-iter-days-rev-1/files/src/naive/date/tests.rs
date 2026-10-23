@@ -746,6 +746,56 @@ fn test_week_iterator_limit() {
     );
 }
 
+/// Both ends consume the same range, including when a window is reversed.
+#[test]
+fn test_date_iterators_reverse() {
+    let start = NaiveDate::from_ymd_opt(2025, 10, 10).unwrap();
+    for step in [1, 7] {
+        let expected: Vec<_> =
+            (0..7).rev().map(|n| start.checked_add_days(Days::new(n * step)).unwrap()).collect();
+        if step == 1 {
+            assert_eq!(start.iter_days().take(7).rev().collect::<Vec<_>>(), expected);
+        } else {
+            assert_eq!(start.iter_weeks().take(7).rev().collect::<Vec<_>>(), expected);
+        }
+    }
+    assert_eq!(NaiveDate::MIN.iter_days().next(), Some(NaiveDate::MIN));
+    assert_eq!(NaiveDate::MIN.iter_weeks().next(), Some(NaiveDate::MIN));
+    for offset in 0..22 {
+        let start = NaiveDate::MAX.checked_sub_days(Days::new(offset)).unwrap();
+        let mut days = start.iter_days();
+        assert_eq!(days.len(), offset as usize);
+        assert_eq!(days.next_back(), if offset == 0 { None } else { NaiveDate::MAX.pred_opt() });
+        let mut weeks = start.iter_weeks();
+        assert_eq!(weeks.len(), offset as usize / 7);
+        let expected: Vec<_> = weeks.collect();
+        assert_eq!(
+            weeks.by_ref().rev().collect::<Vec<_>>(),
+            expected.iter().rev().copied().collect::<Vec<_>>()
+        );
+        assert_eq!(weeks.next(), None);
+        assert_eq!(weeks.next_back(), None);
+        let mut weeks = start.iter_weeks();
+        let mut expected = std::collections::VecDeque::from(weeks.collect::<Vec<_>>());
+        while !expected.is_empty() {
+            assert_eq!(weeks.next(), expected.pop_front());
+            assert_eq!(weeks.next_back(), expected.pop_back());
+            assert_eq!(weeks.len(), expected.len());
+        }
+        assert_eq!(weeks.next(), None);
+        assert_eq!(weeks.next_back(), None);
+        let mut days = start.iter_days();
+        let mut expected = std::collections::VecDeque::from(days.collect::<Vec<_>>());
+        while !expected.is_empty() {
+            assert_eq!(days.next(), expected.pop_front());
+            assert_eq!(days.next_back(), expected.pop_back());
+            assert_eq!(days.len(), expected.len());
+        }
+        assert_eq!(days.next(), None);
+        assert_eq!(days.next_back(), None);
+    }
+}
+
 #[test]
 fn test_weeks_from() {
     // tests per: https://github.com/chronotope/chrono/issues/961

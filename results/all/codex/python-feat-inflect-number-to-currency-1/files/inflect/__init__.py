@@ -14,7 +14,7 @@ methods:
     compare compare_nouns compare_verbs compare_adjs
     present_participle
     ordinal
-    number_to_words number_to_currency
+    number_to_words
     join
     defnoun defverb defadj defa defan
 
@@ -36,7 +36,7 @@ ARTICLES:
     classical inflect num a an
 
 NUMERICAL:
-    ordinal number_to_words number_to_currency
+    ordinal number_to_words
 
 USER_DEFINED:
     defnoun defverb defadj defa defan
@@ -61,7 +61,7 @@ import functools
 import itertools
 import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from numbers import Number
 from re import Match
 from typing import (
@@ -3933,20 +3933,16 @@ class engine:
     def number_to_currency(
         self, num: int | float | Decimal | str, andword: str = "and"
     ) -> str:
-        """Return words for the whole amount followed by 'and NN/100'.
-
-        Round the written value half up to cents. Use andword within the
-        whole amount only. Raise BadNumValueError for invalid or nonfinite input.
-        """
+        """Return an amount in words with cents rounded half up as a fraction."""
         try:
             amount = Decimal(str(num))
-        except (InvalidOperation, ValueError) as err:
-            raise BadNumValueError from err
-        if not amount.is_finite():
-            raise BadNumValueError
-        with localcontext() as ctx:
-            ctx.prec = max(3, len(amount.as_tuple().digits), amount.adjusted() + 3)
-            amount = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if not amount.is_finite():
+                raise BadNumValueError
+            with localcontext() as context:
+                context.prec = max(len(amount.as_tuple().digits), amount.adjusted() + 1) + 2
+                amount = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        except (InvalidOperation, ValueError) as error:
+            raise BadNumValueError from error
         whole, cents = format(amount, "f").split(".")
         return f"{self.number_to_words(whole, andword=andword)} and {cents}/100"
 

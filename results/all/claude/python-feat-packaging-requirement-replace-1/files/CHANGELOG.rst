@@ -4,13 +4,14 @@ Changelog
 *unreleased*
 ~~~~~~~~~~~~
 
+Features:
+
+* Add ``Requirement.__replace__()``, supporting :func:`copy.replace` on Python
+  3.13+.
+
 Removals:
 
 * Drop support for EOL Python 3.9. (:pull:`1263`)
-
-Features:
-
-* Add ``Requirement.__replace__`` so :func:`copy.replace` works on Python 3.13+.
 
 26.3 - 2026-08-03
 ~~~~~~~~~~~~~~~~~

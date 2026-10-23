@@ -1,16 +1,8 @@
 diff --git a/src/click/core.py b/src/click/core.py
-index d2db291..da33479 100644
+index d2db291..cd642b5 100644
 --- a/src/click/core.py
 +++ b/src/click/core.py
-@@ -3566,6 +3566,7 @@ class Argument(Parameter):
-         return self.name.upper()
- 
-     def make_metavar(self, ctx: Context) -> str:
-+        """Return the argument metavar for usage and error messages."""
-         if self.metavar is not None:
-             return self.metavar
-         var = self.type.get_metavar(param=self, ctx=ctx)
-@@ -3573,7 +3574,7 @@ class Argument(Parameter):
+@@ -3573,7 +3573,7 @@ class Argument(Parameter):
              var = self.name.upper()
          if self.deprecated:
              var += "!"
@@ -19,3 +11,41 @@ index d2db291..da33479 100644
              var = f"[{var}]"
          if self.nargs != 1:
              var += "..."
+diff --git a/tests/test_arguments.py b/tests/test_arguments.py
+index 6015282..3f239b3 100644
+--- a/tests/test_arguments.py
++++ b/tests/test_arguments.py
+@@ -7,6 +7,33 @@ import click
+ from click._utils import UNSET
+ 
+ 
++@pytest.mark.parametrize(
++    ("type", "optional", "required"),
++    [
++        (click.Choice(["foo", "bar", "baz"]), "[foo|bar|baz]", "{foo|bar|baz}"),
++        (click.DateTime(formats=["%Y-%m-%d"]), "[%Y-%m-%d]", "[%Y-%m-%d]"),
++        (str, "[METHOD]", "METHOD"),
++    ],
++)
++@pytest.mark.parametrize(
++    "attrs", [{"nargs": -1}, {"required": False}, {"required": True}]
++)
++def test_argument_metavar_brackets(runner, type, optional, required, attrs):
++    """Optional arguments reuse brackets already supplied by their type."""
++
++    @click.command()
++    @click.argument("method", type=type, **attrs)
++    def cli(method):
++        """Show the argument's metavar."""
++
++    result = runner.invoke(cli, ["--help"])
++    assert result.exit_code == 0
++    metavar = required if attrs.get("required") else optional
++    if attrs.get("nargs") == -1:
++        metavar += "..."
++    assert result.output.splitlines()[0] == f"Usage: cli [OPTIONS] {metavar}"
++
++
+ def test_nargs_star(runner):
+     @click.command()
+     @click.argument("src", nargs=-1)

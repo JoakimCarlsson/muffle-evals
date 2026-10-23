@@ -2238,12 +2238,13 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
 		f := t.Field(i)
 		tag, tagged := f.Tag.Lookup("toml")
 		name := f.Name
+		var parts []string
 		if tagged {
 			// A tag of exactly "-" drops the field. "-," names it "-".
 			if tag == "-" {
 				continue
 			}
-			parts := strings.SplitN(tag, ",", 2)
+			parts = strings.SplitN(tag, ",", 2)
 			if parts[0] != "" {
 				name = parts[0]
 			}
@@ -2257,8 +2258,9 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
 				// Embedded non-struct fields are not decoded into.
 				continue
 			}
-			if !tagged || strings.HasPrefix(tag, ",") {
-				// Untagged embedded structs, or tagged with options but no name, are flattened, even when their
+			if !tagged || strings.SplitN(tag, ",", 2)[0] == "" {
+				// Embedded structs without a tag name (untagged, or only
+				// options such as ",inline") are flattened, even when their
 				// type is unexported: only their own exported fields are
 				// reachable.
 				embedded = append(embedded, f)

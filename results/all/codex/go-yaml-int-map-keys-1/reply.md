@@ -1,2 +1,5 @@
+Integer map keys should retain decimal text. Checking decoder paths and existing tests.
+
+
 Done.
-`decode.go` uses decimal string conversion for integer map keys. `42` stays `"42"`. Build and existing tests pass.
+Integer keys now decode as decimal strings. Regression tests cover zero, negatives, limits, named strings. `go test ./...` and `go build ./...` pass.

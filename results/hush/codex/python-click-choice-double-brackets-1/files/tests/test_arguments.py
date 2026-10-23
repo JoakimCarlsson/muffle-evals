@@ -319,30 +319,47 @@ def test_deprecated_usage(runner):
         ({"nargs": 2, "required": False}, "[FOO]..."),
     ],
 )
-@pytest.mark.parametrize(
-    ("type", "required_metavar", "optional_metavar"),
-    [
-        (None, "FOO", "FOO"),
-        (click.Choice(["foo", "bar", "baz"]), "{foo|bar|baz}", "foo|bar|baz"),
-        (click.DateTime(formats=["%Y-%m-%d"]), "[%Y-%m-%d]", "%Y-%m-%d"),
-    ],
-)
-def test_argument_metavar_marks_optional(
-    runner, kwargs, expected, type, required_metavar, optional_metavar
-):
+def test_argument_metavar_marks_optional(runner, kwargs, expected):
     """An argument is bracketed in the usage line only when it is optional."""
 
     @click.command()
-    @click.argument("foo", type=type, **kwargs)
+    @click.argument("foo", **kwargs)
     def cli(foo):
         pass
 
     result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
-    expected = expected.replace(
-        "FOO", optional_metavar if expected.startswith("[") else required_metavar
-    )
     assert result.output.splitlines()[0] == f"Usage: cli [OPTIONS] {expected}"
+
+
+@pytest.mark.parametrize(
+    ("type", "metavar", "required_metavar"),
+    [
+        (click.Choice(["foo", "bar", "baz"]), "[foo|bar|baz]", "{foo|bar|baz}"),
+        (click.DateTime(formats=["%Y-%m-%d"]), "[%Y-%m-%d]", "[%Y-%m-%d]"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("kwargs", "required", "suffix"),
+    [
+        ({"required": False}, False, ""),
+        ({"nargs": -1}, False, "..."),
+        ({"required": True}, True, ""),
+        ({"required": True, "nargs": -1}, True, "..."),
+    ],
+)
+def test_argument_bracketed_metavar(
+    runner, type, metavar, required_metavar, kwargs, required, suffix
+):
+    @click.command()
+    @click.argument("value", type=type, **kwargs)
+    def cli(value):
+        pass
+
+    result = runner.invoke(cli, ["--help"])
+    assert result.exit_code == 0
+    expected = required_metavar if required else metavar
+    assert result.output.splitlines()[0] == f"Usage: cli [OPTIONS] {expected}{suffix}"
 
 
 @pytest.mark.parametrize("deprecated", [True, "USE B INSTEAD"])

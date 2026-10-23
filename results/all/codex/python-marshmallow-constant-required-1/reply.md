@@ -1,5 +1,2 @@
-Constant defaults conflict with required validation. Checking shared field logic and existing tests.
-
-
 Done.
-Required `Constant` accepts missing input, preserves constant values and `None`. All 1,136 tests passed; wheel built.
+Required `Constant` accepts missing input and preserves `None`. Added regression coverage; 1,139 tests passed. Wheel built.

@@ -1,1 +1,3 @@
-Done. Added `BytesMut::extend_from_within` in `src/bytes_mut.rs`, with the same range and panic checks as `Bytes::slice`. The doc example passes and the build is clean. I didn't run the full test suite, and I didn't add other tests.
+Done. Added `BytesMut::extend_from_within` in `src/bytes_mut.rs`, with 3 tests in `tests/test_bytes.rs` and a doc test. They pass. I ran only the new tests, not the full suite. Nothing is committed.
+
+It panics if the range end is past `len` or the start is after the end. `cargo fmt` also ran on the repo.

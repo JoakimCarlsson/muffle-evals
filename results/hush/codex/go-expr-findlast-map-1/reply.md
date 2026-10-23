@@ -1,2 +1,2 @@
 Done.
-Fixed reverse-loop stack leak affecting both builtins. Added map regression tests covering matches, no matches, empty arrays, optimization on/off. `go test ./...` passed.
+Fixed reverse-loop stack cleanup for both builtins. Added regression tests for matches, no matches, empty arrays, optimization enabled/disabled. `go test ./...` passed.

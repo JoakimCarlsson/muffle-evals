@@ -2238,16 +2238,15 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
 		f := t.Field(i)
 		tag, tagged := f.Tag.Lookup("toml")
 		name := f.Name
-		renamed := false
+		var parts []string
 		if tagged {
 			// A tag of exactly "-" drops the field. "-," names it "-".
 			if tag == "-" {
 				continue
 			}
-			parts := strings.SplitN(tag, ",", 2)
+			parts = strings.SplitN(tag, ",", 2)
 			if parts[0] != "" {
 				name = parts[0]
-				renamed = true
 			}
 		}
 		if f.Anonymous {
@@ -2259,14 +2258,14 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
 				// Embedded non-struct fields are not decoded into.
 				continue
 			}
-			if !renamed {
-				// Embedded structs without a tag name are flattened, even when their
-				// type is unexported: only their own exported fields are
-				// reachable.
+			if !tagged || parts[0] == "" {
+				// Embedded structs without a tag name are flattened, even
+				// when their type is unexported: only their own exported
+				// fields are reachable.
 				embedded = append(embedded, f)
 				continue
 			}
-			// An embedded struct with a tag name acts as a regular named field.
+			// A tagged embedded struct acts as a regular named field.
 		} else if f.PkgPath != "" {
 			// unexported
 			continue

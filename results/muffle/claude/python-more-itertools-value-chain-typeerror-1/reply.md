@@ -1,9 +1,7 @@
-Fix: check iterability with `iter()` before yielding from it, so only the non-iterable check is guarded.
+Only the `iter()` call should be guarded.
 
-I fixed `value_chain` so a `TypeError` raised while it iterates an argument now reaches you. Your `map(len, ['ab', 'cde', 5])` example now raises `TypeError: object of type 'int' has no len()`.
+I fixed `value_chain` in `more_itertools/more.py` so a `TypeError` raised while iterating an argument now reaches you. Your example `list(value_chain(map(len, ['ab', 'cde', 5])))` should now raise `TypeError: object of type 'int' has no len()`, like `itertools.chain` does. I didn't run that exact line. The new regression test covers the same case, and the 6 `ValueChain` tests pass.
 
-The old code wrapped the whole `yield from value` in `try/except TypeError`. That caught errors raised partway through iteration as well as the "not iterable" case, and then yielded the half-consumed object. Now only the `iter(value)` call is guarded (`more_itertools/more.py`). Arguments that aren't iterable are still emitted as single values, and strings and bytes are still emitted as-is.
+The old code wrapped `yield from value` in the `try/except TypeError`, so it also caught errors raised mid-iteration and yielded the half-consumed object. It now catches `TypeError` only around `iter(value)`. Arguments that aren't iterable are still emitted as single values, and strings and bytes are unchanged.
 
-I added a regression test, `test_iteration_type_error`, in `tests/test_more.py`. The six `ValueChain` tests pass, and so do the doctests in `more.py`. I didn't run the rest of the test suite.
-
-I made no commit.
+The regression test is `test_error_while_iterating` in `tests/test_more.py`. I only ran the `ValueChain` tests, not the full suite. I also tried running the module doctests, but that failed with a relative-import error, so they weren't checked.

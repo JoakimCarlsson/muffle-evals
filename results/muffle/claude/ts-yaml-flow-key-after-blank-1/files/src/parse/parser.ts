@@ -698,7 +698,7 @@ export class Parser {
                 })
                 return
               }
-            } else if (atMapIndent && (it.sep || it.value || it.explicitKey)) {
+            } else if (atMapIndent && (it.sep || it.explicitKey || it.value)) {
               map.items.push({ start })
             }
             this.stack.push(bv)

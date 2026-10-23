@@ -201,56 +201,68 @@ func ExampleWithJitterPercent() {
 func TestWithFullJitter(t *testing.T) {
 	t.Parallel()
 
-	// Use changing bases to verify each call uses the wrapped backoff's value.
-	bases := []time.Duration{time.Nanosecond, time.Second, time.Duration(1<<63 - 1)}
-	var base time.Duration
-	calls := 0
-	b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-		calls++
-		return base, false
-	}))
-	for _, base = range bases {
-		for range 1000 {
-			val, stop := b.Next()
-			if stop {
-				t.Fatal("should not stop")
+	for _, base := range []time.Duration{1, time.Second, 1<<63 - 1} {
+		t.Run(base.String(), func(t *testing.T) {
+			t.Parallel()
+
+			calls := 0
+			b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
+				calls++
+				return base, false
+			}))
+			for range 1000 {
+				val, stop := b.Next()
+				if stop || val < 0 || val >= base {
+					t.Fatalf("Next() = (%v, %t), want duration in [0, %v) and no stop", val, stop, base)
+				}
 			}
-			if val < 0 || val >= base {
-				t.Fatalf("expected %v in [0, %v)", val, base)
+			if calls != 1000 {
+				t.Errorf("wrapped backoff called %d times, want 1000", calls)
 			}
-		}
-	}
-	if calls != 1000*len(bases) {
-		t.Errorf("expected one wrapped call per Next, got %d", calls)
+		})
 	}
 }
 
-func TestWithFullJitter_NonPositiveAndStop(t *testing.T) {
+func TestWithFullJitter_EdgeCases(t *testing.T) {
 	t.Parallel()
 
-	for _, base := range []time.Duration{0, -time.Second, time.Duration(-1 << 63), time.Second} {
-		for _, stopped := range []bool{false, true} {
-			if base > 0 && !stopped {
-				continue
-			}
+	cases := []struct {
+		name string
+		base time.Duration
+		stop bool
+		want time.Duration
+	}{
+		{name: "zero"},
+		{name: "negative", base: -time.Second, want: -time.Second},
+		{name: "minimum", base: -1 << 63, want: -1 << 63},
+		{name: "stop_positive", base: time.Second, stop: true},
+		{name: "stop_zero", stop: true},
+		{name: "stop_negative", base: -time.Second, stop: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-				return base, stopped
+				return tc.base, tc.stop
 			}))
-			want := base
-			if stopped {
-				want = 0
+			if val, stop := b.Next(); val != tc.want || stop != tc.stop {
+				t.Errorf("Next() = (%v, %t), want (%v, %t)", val, stop, tc.want, tc.stop)
 			}
-			if val, stop := b.Next(); val != want || stop != stopped {
-				t.Errorf("base %v, stop %t: got (%v, %t), want (%v, %t)", base, stopped, val, stop, want, stopped)
-			}
-		}
+		})
 	}
 }
 
 func ExampleWithFullJitter() {
 	b := retry.NewFibonacci(1 * time.Second)
 	b = retry.WithFullJitter(b)
-	_ = b
+
+	if err := retry.Do(context.Background(), b, func(context.Context) error {
+		// TODO: logic here
+		return nil
+	}); err != nil {
+		// handle error
+	}
 }
 
 func TestWithMaxRetries(t *testing.T) {

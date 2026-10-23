@@ -3942,44 +3942,6 @@ func TestOmitEmpty(t *testing.T) {
 	assert.Equal(t, "X = [{Foo = 'test', Inner = {V = 'alue'}}]\n", string(b))
 }
 
-func TestUnmarshalEmbeddedInline(t *testing.T) {
-	type Base struct {
-		Region string
-		Name   string
-		BsPort int
-	}
-	type Config struct {
-		Base  `toml:",inline"`
-		PID   uint32
-		index int `toml:"-"`
-	}
-	type PointerConfig struct {
-		*Base `toml:",inline"`
-		PID   uint32
-	}
-	const doc = "Region = \"us\"\nName = \"srv1\"\nBsPort = 100\nPID = 42\n"
-	want := Base{Region: "us", Name: "srv1", BsPort: 100}
-	t.Run("value", func(t *testing.T) {
-		var got Config
-		err := toml.NewDecoder(strings.NewReader(doc)).DisallowUnknownFields().Decode(&got)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got.Base != want || got.PID != 42 || got.index != 0 {
-			t.Fatalf("unexpected config: %+v", got)
-		}
-	})
-	t.Run("pointer", func(t *testing.T) {
-		var got PointerConfig
-		if err := toml.Unmarshal([]byte(doc), &got); err != nil {
-			t.Fatal(err)
-		}
-		if got.Base == nil || *got.Base != want || got.PID != 42 {
-			t.Fatalf("unexpected config: %+v", got)
-		}
-	})
-}
-
 func TestUnmarshalTags(t *testing.T) {
 	type doc struct {
 		Dash   string `toml:"-,"`
@@ -5640,4 +5602,53 @@ e = 1
 	m := map[string]interface{}{}
 	assert.NoError(t, toml.Unmarshal([]byte(doc), &m))
 	assert.Equal(t, 1, len(m["a"].([]interface{}))-1)
+}
+
+func TestUnmarshalEmbeddedStructWithOptions(t *testing.T) {
+	type Base struct {
+		Region string
+		Name   string
+		BsPort int
+	}
+	type config struct {
+		Base  `toml:",inline"`
+		PID   uint32
+		index int `toml:"-"`
+	}
+	type pointerConfig struct {
+		*Base `toml:",inline"`
+		PID   uint32
+	}
+	type emptyTagConfig struct {
+		Base `toml:""`
+		PID  uint32
+	}
+	type optionsConfig struct {
+		Base `toml:",omitempty,inline"`
+		PID  uint32
+	}
+	type namedConfig struct {
+		Base `toml:"base,inline"`
+		PID  uint32
+	}
+	base := Base{Region: "us", Name: "srv1", BsPort: 100}
+	flat := "Region = 'us'\nName = 'srv1'\nBsPort = 100\nPID = 42\n"
+	for _, tc := range []struct {
+		name string
+		doc  string
+		got  interface{}
+		want interface{}
+	}{
+		{"inline", flat, &config{}, &config{Base: base, PID: 42}},
+		{"pointer", flat, &pointerConfig{}, &pointerConfig{Base: &base, PID: 42}},
+		{"empty tag", flat, &emptyTagConfig{}, &emptyTagConfig{Base: base, PID: 42}},
+		{"multiple options", flat, &optionsConfig{}, &optionsConfig{Base: base, PID: 42}},
+		{"explicit name", "PID = 42\nbase = { Region = 'us', Name = 'srv1', BsPort = 100 }\n", &namedConfig{}, &namedConfig{Base: base, PID: 42}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decoder := toml.NewDecoder(strings.NewReader(tc.doc)).DisallowUnknownFields()
+			assert.NoError(t, decoder.Decode(tc.got))
+			assert.Equal(t, tc.want, tc.got)
+		})
+	}
 }

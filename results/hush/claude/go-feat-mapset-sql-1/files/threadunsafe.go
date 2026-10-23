@@ -26,7 +26,6 @@ SOFTWARE.
 package mapset
 
 import (
-	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
@@ -37,12 +36,6 @@ type threadUnsafeSet[T comparable] map[T]struct{}
 
 // Assert concrete type:threadUnsafeSet adheres to Set interface.
 var _ Set[string] = (*threadUnsafeSet[string])(nil)
-
-// Assert concrete type:threadUnsafeSet can be stored in and read from a database column.
-var (
-	_ driver.Valuer = (*threadUnsafeSet[string])(nil)
-	_ sql.Scanner   = (*threadUnsafeSet[string])(nil)
-)
 
 func newThreadUnsafeSet[T comparable]() *threadUnsafeSet[T] {
 	t := make(threadUnsafeSet[T])
@@ -391,14 +384,14 @@ func (s *threadUnsafeSet[T]) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// Value implements driver.Valuer. It returns the set as a JSON array of bytes.
+// Value implements driver.Valuer, it returns the set as a JSON array ([]byte).
 func (s threadUnsafeSet[T]) Value() (driver.Value, error) {
 	return s.MarshalJSON()
 }
 
 // Scan implements sql.Scanner. It replaces the contents of the set with the
-// JSON array in src, which must be a string or []byte. A nil src empties the
-// set. On error the set is left unchanged.
+// JSON array in src (string or []byte). A nil src empties the set. On error
+// the set is left unchanged.
 func (s *threadUnsafeSet[T]) Scan(src any) error {
 	var b []byte
 	switch v := src.(type) {
@@ -410,15 +403,15 @@ func (s *threadUnsafeSet[T]) Scan(src any) error {
 	case []byte:
 		b = v
 	default:
-		return fmt.Errorf("mapset: cannot scan %T into a set", src)
+		return fmt.Errorf("mapset: cannot scan %T into set", src)
 	}
 
-	var elems []T
-	if err := json.Unmarshal(b, &elems); err != nil {
+	var items []T
+	if err := json.Unmarshal(b, &items); err != nil {
 		return err
 	}
 	clear(*s)
-	s.append(elems...)
+	s.append(items...)
 
 	return nil
 }

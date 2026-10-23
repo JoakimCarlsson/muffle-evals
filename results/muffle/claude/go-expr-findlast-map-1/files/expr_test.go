@@ -3006,17 +3006,23 @@ func TestBytesLiteral_errors(t *testing.T) {
 	}
 }
 
-func TestExpr_findLast_inMapLiteral(t *testing.T) {
-	tests := map[string]any{
-		`{"r": findLast([1, 2, 3, 4, 5], # > 3)}`:      map[string]any{"r": 5},
-		`{"r": findLastIndex([1, 2, 3, 4, 5], # > 3)}`: map[string]any{"r": 4},
-		`{"r": findLast([1, 2], # > 3)}`:               map[string]any{"r": nil},
+func TestFindLast_inMapLiteral(t *testing.T) {
+	tests := []struct {
+		code string
+		want any
+	}{
+		{`{"r": findLast([1.0, 2.0, 3.0, 4.0, 5.0], # > 3)}`, map[string]any{"r": 5.0}},
+		{`{"r": findLastIndex([1.0, 2.0, 3.0, 4.0, 5.0], # > 3)}`, map[string]any{"r": 4}},
+		{`{"r": findLast([1, 2, 3], # > 9)}`, map[string]any{"r": nil}},
+		{`{"r": findLastIndex([1, 2, 3], # > 9)}`, map[string]any{"r": nil}},
 	}
-	for input, want := range tests {
-		program, err := expr.Compile(input)
-		require.NoError(t, err)
-		out, err := expr.Run(program, nil)
-		require.NoError(t, err)
-		assert.Equal(t, want, out, input)
+	for _, tt := range tests {
+		t.Run(tt.code, func(t *testing.T) {
+			program, err := expr.Compile(tt.code)
+			require.NoError(t, err)
+			out, err := expr.Run(program, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, out)
+		})
 	}
 }

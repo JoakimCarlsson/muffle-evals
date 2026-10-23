@@ -698,10 +698,7 @@ export class Parser {
                 })
                 return
               }
-            } else if (
-              atMapIndent &&
-              !(bv.type === 'flow-collection' && !it.sep && !it.explicitKey)
-            ) {
+            } else if (atNextItem) {
               map.items.push({ start })
             }
             this.stack.push(bv)

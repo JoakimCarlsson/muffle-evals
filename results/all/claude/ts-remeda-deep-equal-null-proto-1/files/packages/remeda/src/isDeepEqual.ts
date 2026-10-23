@@ -80,13 +80,6 @@ export function isDeepEqual(...args: readonly unknown[]): unknown {
   return purry(isDeepEqualImplementation, args);
 }
 
-/**
- * Prototype of an object, where a `null` prototype is treated as
- * `Object.prototype` so that null-prototype objects compare like plain objects.
- */
-const prototypeOf = (object: object): unknown =>
-  Object.getPrototypeOf(object) ?? Object.prototype;
-
 function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
   if (data === other) {
     return true;
@@ -106,7 +99,7 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
     return false;
   }
 
-  if (prototypeOf(data) !== prototypeOf(other)) {
+  if (getComparablePrototype(data) !== getComparablePrototype(other)) {
     // If the objects don't share a prototype it's unlikely that they are
     // semantically equal. It is technically possible to build 2 prototypes that
     // act the same but are not equal (at the reference level, checked via
@@ -164,6 +157,14 @@ function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
   }
 
   return true;
+}
+
+/**
+ * Objects with a `null` prototype (e.g. the result of `querystring.parse`) are
+ * plain objects for all intents and purposes, so they are compared as such.
+ */
+function getComparablePrototype(value: object): unknown {
+  return Object.getPrototypeOf(value) ?? Object.prototype;
 }
 
 function isDeepEqualArrays(

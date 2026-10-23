@@ -38,44 +38,33 @@ describe("alias", () => {
   });
 
   describe("reverseResolveAlias", () => {
-    it("returns every match sorted by output length", () => {
+    it.each([
+      [
+        "/root/some/assets/smth.jpg",
+        { "~": "/root", "~assets": "/root/some/assets" },
+        ["~/some/assets/smth.jpg", "~assets/smth.jpg"],
+      ],
+      [
+        "/root/index.js",
+        { "@": "/root", "~": "/root/index.js" },
+        ["@/index.js", "~"],
+      ],
+      ["/src/foo/bar", { "~/": "/src" }, ["~/foo/bar"]],
+      ["/src", { "~/": "/src" }, ["~/"]],
+      ["./bar.js", { "@": "/root" }, []],
+      ["/rooted/foo", { "@": "/root" }, []],
+      ["/src/foo", { "@": "/src/" }, ["@/foo"]],
+      ["/foo", { "@": "/" }, ["@/foo"]],
+      [String.raw`c:\src\foo`, { "@": String.raw`C:\src` }, ["@/foo"]],
+      ["/root/lib/foo", { "@": "/root", "~": "@/lib" }, ["@/lib/foo", "~/foo"]],
+    ])("resolves %s", (path, aliases, expected) => {
       expect(
-        reverseResolveAlias("/root/some/assets/smth.jpg", {
-          "~": "/root",
-          "~assets": "/root/some/assets",
-        }),
-      ).toEqual(["~/some/assets/smth.jpg", "~assets/smth.jpg"]);
-      expect(reverseResolveAlias("/root/index.js", aliases)).toEqual([
-        "@/index.js",
-        "~",
-      ]);
+        reverseResolveAlias(path, aliases as Record<string, string>),
+      ).toEqual(expected);
     });
-    it("respects whole targets and separator boundaries", () => {
-      expect(reverseResolveAlias("/rooted/foo", aliases)).toEqual([]);
-      expect(reverseResolveAlias("./bar.js", aliases)).toEqual([]);
-      expect(reverseResolveAlias("/root", {})).toEqual([]);
-    });
-    it("preserves aliases ending in a slash", () => {
-      expect(reverseResolveAlias("/src/foo/bar", aliases)).toEqual([
-        "~/foo/bar",
-      ]);
-      expect(reverseResolveAlias("/src", aliases)).toEqual(["~/"]);
-    });
-    it("normalizes aliases and Windows paths", () => {
-      expect(reverseResolveAlias("/root/bingpot/index.ts", _aliases)).toEqual([
-        "@/bingpot/index.ts",
-        "bingpot",
-      ]);
-      expect(
-        reverseResolveAlias(String.raw`C:\src\foo`, {
-          "~/": String.raw`C:\src`,
-        }),
-      ).toEqual(["~/foo"]);
-    });
-    it("handles trailing target separators", () => {
-      expect(reverseResolveAlias("/src/foo", { "@": "/src/" })).toEqual([
-        "@/foo",
-      ]);
+
+    it("accepts normalized aliases", () => {
+      expect(reverseResolveAlias("/src/foo", aliases)).toEqual(["~/foo"]);
     });
   });
 

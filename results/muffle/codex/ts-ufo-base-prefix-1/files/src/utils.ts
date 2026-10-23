@@ -292,18 +292,10 @@ export function withBase(input: string, base: string) {
     return input;
   }
   const _base = withoutTrailingSlash(base);
-  if (_hasBase(input, _base)) {
+  if (hasBase(input, _base)) {
     return input;
   }
   return joinURL(_base, input);
-}
-
-function _hasBase(input: string, base: string): boolean {
-  if (!input.startsWith(base)) {
-    return false;
-  }
-  const next = input[base.length];
-  return !next || next === "/" || next === "?" || next === "#";
 }
 
 /**
@@ -324,11 +316,19 @@ export function withoutBase(input: string, base: string) {
     return input;
   }
   const _base = withoutTrailingSlash(base);
-  if (!_hasBase(input, _base)) {
+  if (!hasBase(input, _base)) {
     return input;
   }
   const trimmed = input.slice(_base.length);
   return trimmed[0] === "/" ? trimmed : "/" + trimmed;
+}
+
+function hasBase(input: string, base: string): boolean {
+  if (!input.startsWith(base)) {
+    return false;
+  }
+  const next = input[base.length];
+  return !next || next === "/" || next === "?" || next === "#";
 }
 
 /**

@@ -22,22 +22,12 @@ const NullObject = /* @__PURE__ */ (() => {
  * Parse the given cookie header string into an object
  * The object has the various cookies as keys(names) => values
  */
-export function parse(
+export function parse<AllowMultiple extends boolean = false>(
   str: string,
-  options?: CookieParseOptions & { allowMultiple?: false },
-): Cookies;
-/**
- * Parse a `Cookie` header, optionally collecting duplicate values in arrays.
- */
-export function parse(str: string, options?: CookieParseOptions): Cookies<true>;
-/**
- * Parse a `Cookie` header using the given decoding and duplicate handling options.
- */
-export function parse(
-  str: string,
-  options?: CookieParseOptions,
-): Record<string, string | undefined | (string | undefined)[]> {
-  const obj: Cookies<true> = new NullObject();
+  options?: CookieParseOptions & { allowMultiple?: AllowMultiple },
+): Cookies<AllowMultiple>;
+export function parse(str: string, options?: CookieParseOptions): Cookies<boolean> {
+  const obj: Cookies<boolean> = new NullObject();
   const len = str.length;
   // RFC 6265 sec 4.1.1, RFC 2616 2.2 defines a cookie name consists of one char minimum, plus '='.
   if (len < 2) return obj;
@@ -64,13 +54,15 @@ export function parse(
       continue;
     }
 
-    if (options?.allowMultiple && Object.hasOwn(obj, key)) {
+    if (options?.allowMultiple) {
       const value = dec(valueSlice(str, eqIdx + 1, endIdx));
       const previous = obj[key];
       if (Array.isArray(previous)) {
         previous.push(value);
-      } else {
+      } else if (Object.hasOwn(obj, key)) {
         obj[key] = [previous, value];
+      } else {
+        obj[key] = value;
       }
     } else if (obj[key] === undefined) {
       obj[key] = dec(valueSlice(str, eqIdx + 1, endIdx));

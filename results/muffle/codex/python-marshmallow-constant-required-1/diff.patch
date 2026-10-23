@@ -1,65 +1,68 @@
 diff --git a/CHANGELOG.rst b/CHANGELOG.rst
-index 8b90369..7cc9280 100644
+index 8b90369..3deb43d 100644
 --- a/CHANGELOG.rst
 +++ b/CHANGELOG.rst
-@@ -6,6 +6,8 @@ Changelog
+@@ -6,6 +6,9 @@ Changelog
  
  Bug fixes:
  
-+- Allow ``fields.Constant`` with ``required=True`` and always deserialize to the constant.
++- Restore support for ``fields.Constant(required=True)``, including loading
++  the constant when the field is missing.
 +
  - Make `marshmallow.fields.Number` and `marshmallow.fields.Mapping` abstract base classes to
    prevent using them within Schemas (:issue:`2924`). Thanks :user:`MartingaleCoda` for reporting.
  
 diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
-index 5b8a072..8b6986a 100644
+index 5b8a072..0d2be14 100644
 --- a/src/marshmallow/fields.py
 +++ b/src/marshmallow/fields.py
-@@ -2074,15 +2074,18 @@ class Constant(Field[_ContantT]):
+@@ -2074,11 +2074,18 @@ class Constant(Field[_ContantT]):
      _CHECK_ATTRIBUTE = False
  
      def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
 -        kwargs["load_default"] = constant
 -        kwargs["dump_default"] = constant
-+        kwargs.pop("load_default", None)
-+        kwargs.pop("dump_default", None)
++        kwargs["load_default"] = missing_
 +        if kwargs.get("allow_none") is None:
 +            kwargs["allow_none"] = constant is None
          super().__init__(**kwargs)
 +        self.load_default = self.dump_default = constant
          self.constant = constant
  
++    def _validate_missing(self, value: typing.Any) -> None:
++        # Constants supply their own value even when required and missing.
++        if value is not missing_:
++            super()._validate_missing(value)
++
      def _serialize(self, value, *args, **kwargs) -> _ContantT:
          return self.constant
  
--    def _deserialize(self, value, *args, **kwargs) -> _ContantT:
-+    def deserialize(self, value, attr=None, data=None, **kwargs) -> _ContantT:
-         return self.constant
- 
- 
 diff --git a/tests/test_deserialization.py b/tests/test_deserialization.py
-index 7cbe28e..a056dfc 100644
+index 7cbe28e..00fd384 100644
 --- a/tests/test_deserialization.py
 +++ b/tests/test_deserialization.py
-@@ -1405,13 +1405,17 @@ class TestFieldDeserialization:
+@@ -1405,17 +1405,20 @@ class TestFieldDeserialization:
          field = fields.Constant("something")
          assert field.deserialize("whatever") == "something"
  
 -    def test_constant_is_always_included_in_deserialized_data(self):
 +    @pytest.mark.parametrize("required", [False, True])
-+    @pytest.mark.parametrize("constant", [42, None])
-+    def test_constant_is_always_included_in_deserialized_data(self, required, constant):
++    def test_constant_is_always_included_in_deserialized_data(self, required):
          class MySchema(Schema):
 -            foo = fields.Constant(42)
-+            foo = fields.Constant(constant, required=required)
++            foo = fields.Constant(42, required=required)
  
          sch = MySchema()
--        assert sch.load({})["foo"] == 42
--        assert sch.load({"foo": 24})["foo"] == 42
 +        assert sch.fields["foo"].required is required
-+        assert sch.load({}) == {"foo": constant}
-+        assert sch.load({"foo": 24}) == {"foo": constant}
-+        assert sch.load({"foo": None}) == {"foo": constant}
+         assert sch.load({})["foo"] == 42
+         assert sch.load({"foo": 24})["foo"] == 42
  
-     def test_constant_none_allows_none_value(self):
+-    def test_constant_none_allows_none_value(self):
++    @pytest.mark.parametrize("required", [False, True])
++    def test_constant_none_allows_none_value(self, required):
          class MySchema(Schema):
+-            foo = fields.Constant(None)
++            foo = fields.Constant(None, required=required)
+ 
+         sch = MySchema()
+         assert sch.load({"foo": None})["foo"] is None

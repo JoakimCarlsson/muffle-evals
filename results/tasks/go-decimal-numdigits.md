@@ -82,15 +82,15 @@ index 880d569..608a12e 100644
 | agent | setup | hidden tests | lines +/- (code) | test lines | output tokens | cost |
 |---|---|---|---:|---:|---:|---:|
 | claude | base | pass | +10/-7 | 29 | 6,146 | $0.194 |
-| claude | muffle | pass | +13/-6 | 20 | 6,155 | $0.163 |
-| claude | hush | pass | +12/-6 | 26 | 1,524 | $0.051 |
-| claude | sloth | pass | +3/-6 | 0 | 3,352 | $0.087 |
-| claude | all | pass | +8/-7 | 0 | 1,173 | $0.055 |
+| claude | muffle | pass | +27/-13 | 6 | 3,130 | $0.123 |
+| claude | hush | pass | +17/-7 | 12 | 1,413 | $0.073 |
+| claude | sloth | pass | +5/-1 | 5 | 2,163 | $0.076 |
+| claude | all | pass | +10/-7 | 6 | 1,642 | $0.078 |
 | codex | base | pass | +5/-6 | 38 | 1,374 | - |
-| codex | muffle | pass | +5/-6 | 39 | 1,403 | - |
-| codex | hush | pass | +5/-6 | 24 | 1,402 | - |
-| codex | sloth | pass | +5/-6 | 0 | 853 | - |
-| codex | all | pass | +5/-6 | 0 | 1,012 | - |
+| codex | muffle | pass | +5/-6 | 24 | 1,522 | - |
+| codex | hush | pass | +5/-6 | 35 | 1,351 | - |
+| codex | sloth | pass | +5/-6 | 18 | 1,503 | - |
+| codex | all | pass | +5/-6 | 13 | 972 | - |
 
 ### claude, base: pass
 
@@ -196,85 +196,98 @@ Files: [decimal.go](../muffle/claude/go-decimal-numdigits-1/files/decimal.go), [
 
 ```diff
 diff --git a/decimal.go b/decimal.go
-index 880d569..729e24b 100644
+index 880d569..f25b3ca 100644
 --- a/decimal.go
 +++ b/decimal.go
-@@ -1256,13 +1256,20 @@ func (d Decimal) NumDigits() int {
+@@ -1254,25 +1254,39 @@ func (d Decimal) Ln(precision int32) (Decimal, error) {
+ // NumDigits returns the number of digits of the decimal coefficient (d.Value)
+ func (d Decimal) NumDigits() int {
  	v := d.getValue()
- 	if v.IsInt64() {
- 		i64 := v.Int64()
+-	if v.IsInt64() {
+-		i64 := v.Int64()
 -		// restrict fast path to integers with exact conversion to float64
 -		if i64 <= (1<<53) && i64 >= -(1<<53) {
 -			if i64 == 0 {
 -				return 1
--			}
--			return int(math.Log10(math.Abs(float64(i64)))) + 1
-+		if i64 == 0 {
-+			return 1
-+		}
-+		// exact integer comparison; math.Log10 is inexact near powers of ten
-+		u := uint64(i64)
-+		if i64 < 0 {
-+			u = -u
++	if v.IsUint64() || v.IsInt64() {
++		// exact integer comparison, float64 log10 is not exact for powers of 10
++		u := v.Uint64()
++		if v.Sign() < 0 {
++			u = -uint64(v.Int64())
 +		}
 +		n := 1
-+		for u >= 10 {
-+			u /= 10
++		for p := uint64(10); u >= p; p *= 10 {
 +			n++
++			if p > math.MaxUint64/10 {
++				break
+ 			}
+-			return int(math.Log10(math.Abs(float64(i64)))) + 1
  		}
 +		return n
  	}
  
  	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
++	if estimatedNumDigits < 1 {
++		estimatedNumDigits = 1
++	}
+ 
+-	// estimatedNumDigits (lg10) may be off by 1, need to verify
+-	digitsBigInt := big.NewInt(int64(estimatedNumDigits))
+-	errorCorrectionUnit := digitsBigInt.Exp(tenInt, digitsBigInt, nil)
+-
+-	if v.CmpAbs(errorCorrectionUnit) >= 0 {
+-		return estimatedNumDigits + 1
++	// the estimate may be off by 1 in either direction, need to verify
++	pow := new(big.Int).Exp(tenInt, big.NewInt(int64(estimatedNumDigits)), nil)
++	for v.CmpAbs(pow) >= 0 {
++		estimatedNumDigits++
++		pow.Mul(pow, tenInt)
++	}
++	for estimatedNumDigits > 1 {
++		pow.Quo(pow, tenInt)
++		if v.CmpAbs(pow) >= 0 {
++			break
++		}
++		estimatedNumDigits--
+ 	}
+ 
+ 	return estimatedNumDigits
 diff --git a/decimal_test.go b/decimal_test.go
-index 25d95bc..8534435 100644
+index 25d95bc..012ff83 100644
 --- a/decimal_test.go
 +++ b/decimal_test.go
-@@ -3962,3 +3962,23 @@ func ExampleNewFromFloat() {
- 	//0.123123123123123
- 	//-10000000000000
- }
-+
-+func TestDecimal_NumDigitsPowersOfTen(t *testing.T) {
-+	p := big.NewInt(1)
-+	for i := 1; i <= 400; i++ {
-+		for _, delta := range []int64{-1, 0, 1} {
-+			v := new(big.Int).Add(p, big.NewInt(delta))
-+			if v.Sign() <= 0 {
-+				continue
-+			}
-+			want := len(v.String())
-+			if got := NewFromBigInt(v, 0).NumDigits(); got != want {
-+				t.Errorf("NumDigits(%s): got %d, want %d", v, got, want)
-+			}
-+			if got := NewFromBigInt(new(big.Int).Neg(v), 0).NumDigits(); got != want {
-+				t.Errorf("NumDigits(-%s): got %d, want %d", v, got, want)
-+			}
-+		}
-+		p.Mul(p, big.NewInt(10))
-+	}
-+}
+@@ -3156,6 +3156,12 @@ func TestDecimal_NumDigits(t *testing.T) {
+ 		{"-5.26", 3},
+ 		{"-5.2663117716", 11},
+ 		{"-26.1", 3},
++		{"100000000000000E20", 15},
++		{"1000000000000000E20", 16},
++		{"10000000000000000E20", 17},
++		{"-1000000000000000E20", 16},
++		{"9223372036854775808", 19},
++		{"18446744073709551616", 20},
+ 		{"", 1},
+ 	} {
+ 		d, _ := NewFromString(testCase.Dec)
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Reproduced: the float `Log10` fast path is inexact at 10^15. I'm replacing it with an exact integer check.
+Fix is in and passes. I'm adding the cases from your report to the existing test table.
 
-I fixed `NumDigits`, and it now returns the exact digit count of the coefficient. The full test suite passes.
+`Decimal.NumDigits` now returns the exact digit count of the coefficient. All tests pass, including the three numbers from your report.
 
-**Cause:** the fast path for small coefficients used `math.Log10(float64(i64))`. That is slightly inexact near powers of ten. For 10^15, `Log10` returns a value just under 15, so the result was 15 instead of 16. Your second example, `1000000000000000E20`, has exactly that coefficient. The other two examples avoid it because 10^14 and 10^16 happen to come out exact or take the big-integer path.
+**Cause:** the fast path for small coefficients computed `int(math.Log10(x)) + 1` in floating point. On this platform `math.Log10(1e15)` returns `14.999999999999998` instead of `15`, so 10^15 came out as 15 digits instead of 16. Exact powers of ten can hit this.
 
-**Fix:** in `decimal.go`, the float calculation is replaced with exact integer division, counting digits of the absolute value. The big-integer path for larger coefficients is unchanged.
+**Changes in `decimal.go`:**
+- **Small coefficients:** any value that fits in 64 bits is now counted with exact integer comparison against powers of ten. There's no float arithmetic, and it also covers values above 2^53 that used to fall through to the big-integer path.
+- **Large coefficients:** the bit-length estimate could only be corrected upward, so an overestimate would have gone unnoticed. It now checks and corrects in both directions.
 
-I also added a regression test, `TestDecimal_NumDigitsPowersOfTen`, in `decimal_test.go`. It checks 10^n−1, 10^n and 10^n+1, positive and negative, for n up to 400, against `len(v.String())`. Before the fix it failed at 10^15 and 10^15+1.
+**Tests in `decimal_test.go`:** I added your three inputs, a negative one, and values around the 64-bit boundary to `TestDecimal_NumDigits`. I also ran a temporary check, since deleted, over 10^e−1, 10^e and 10^e+1 for e up to 399, positive and negative, against `len(String())`. All matched.
 
-I haven't committed anything.
-
-That notification is for my first scratch-test command. It hung because the `cat > file` at the start had no input, and it was stopped at its time limit. It doesn't affect the fix. I reran the test properly, and the scratch file is already deleted.
-
-I removed the stray `nd_test.go` and `git status` shows only `decimal.go` modified. The regression test I added to `decimal_test.go` was appended after that check, so it isn't in that output. The `NumDigits` fix and the full test suite are as I reported before.
+I didn't commit anything.
 
 </details>
 
@@ -286,24 +299,152 @@ Files: [decimal.go](../hush/claude/go-decimal-numdigits-1/files/decimal.go), [de
 
 ```diff
 diff --git a/decimal.go b/decimal.go
-index 880d569..65ecca9 100644
+index 880d569..f94897f 100644
 --- a/decimal.go
 +++ b/decimal.go
-@@ -1256,13 +1256,19 @@ func (d Decimal) NumDigits() int {
+@@ -1254,15 +1254,25 @@ func (d Decimal) Ln(precision int32) (Decimal, error) {
+ // NumDigits returns the number of digits of the decimal coefficient (d.Value)
+ func (d Decimal) NumDigits() int {
+ 	v := d.getValue()
+-	if v.IsInt64() {
+-		i64 := v.Int64()
+-		// restrict fast path to integers with exact conversion to float64
+-		if i64 <= (1<<53) && i64 >= -(1<<53) {
+-			if i64 == 0 {
+-				return 1
++	if v.IsUint64() || v.IsInt64() {
++		// math.Log10 is inexact for exact powers of 10, count digits with integers
++		var u uint64
++		if v.IsInt64() {
++			i64 := v.Int64()
++			if i64 < 0 {
++				u = uint64(-i64)
++			} else {
++				u = uint64(i64)
+ 			}
+-			return int(math.Log10(math.Abs(float64(i64)))) + 1
++		} else {
++			u = v.Uint64()
++		}
++		n := 1
++		for u >= 10 {
++			u /= 10
++			n++
+ 		}
++		return n
+ 	}
+ 
+ 	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
+diff --git a/decimal_test.go b/decimal_test.go
+index 25d95bc..d50c082 100644
+--- a/decimal_test.go
++++ b/decimal_test.go
+@@ -3962,3 +3962,15 @@ func ExampleNewFromFloat() {
+ 	//0.123123123123123
+ 	//-10000000000000
+ }
++
++func TestDecimal_NumDigitsPowersOfTen(t *testing.T) {
++	for i := 0; i < 60; i++ {
++		v := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(i)), nil)
++		for _, c := range []*big.Int{v, new(big.Int).Sub(v, big.NewInt(1)), new(big.Int).Neg(v)} {
++			d := NewFromBigInt(c, 20)
++			if want := len(new(big.Int).Abs(c).Text(10)); d.NumDigits() != want {
++				t.Errorf("%s: expected %d digits, got %d", c, want, d.NumDigits())
++			}
++		}
++	}
++}
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+Done. Cause: `math.Log10` inexact on 10^15, fast path in `NumDigits` gave 15. Replaced with integer digit count (`decimal.go`), added `TestDecimal_NumDigitsPowersOfTen`; all tests pass.
+
+</details>
+
+### claude, sloth: pass
+
+Files: [decimal.go](../sloth/claude/go-decimal-numdigits-1/files/decimal.go), [decimal_test.go](../sloth/claude/go-decimal-numdigits-1/files/decimal_test.go)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/decimal.go b/decimal.go
+index 880d569..50d721d 100644
+--- a/decimal.go
++++ b/decimal.go
+@@ -1261,7 +1261,11 @@ func (d Decimal) NumDigits() int {
+ 			if i64 == 0 {
+ 				return 1
+ 			}
+-			return int(math.Log10(math.Abs(float64(i64)))) + 1
++			n := 0
++			for ; i64 != 0; i64 /= 10 {
++				n++
++			}
++			return n
+ 		}
+ 	}
+ 
+diff --git a/decimal_test.go b/decimal_test.go
+index 25d95bc..6d4a09f 100644
+--- a/decimal_test.go
++++ b/decimal_test.go
+@@ -3157,6 +3157,11 @@ func TestDecimal_NumDigits(t *testing.T) {
+ 		{"-5.2663117716", 11},
+ 		{"-26.1", 3},
+ 		{"", 1},
++		{"100000000000000E20", 15},
++		{"1000000000000000E20", 16},
++		{"10000000000000000E20", 17},
++		{"999999999999999", 15},
++		{"-1000000000000000", 16},
+ 	} {
+ 		d, _ := NewFromString(testCase.Dec)
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+Fixed in `decimal.go`: `NumDigits` now returns the exact digit count of the coefficient, so `1000000000000000E20` gives 16. The tests pass.
+
+The bug was in the fast path for coefficients below 2^53. It used `math.Log10`, which isn't exact in Go, so for 10^15 it came out just under 15 and the count was one too low. I replaced it with a plain integer loop that divides by 10 and counts. The big-integer path for larger coefficients is correct, so I left it as it was.
+
+I added your three cases to `TestDecimal_NumDigits`, plus `999999999999999` (15 digits) and `-1000000000000000` (16 digits). I didn't run the benchmarks, so I haven't measured the speed of the loop against the old float calculation.
+
+`gofmt -l` flags `decimal_test.go`, but it already did before my change, so I left the formatting alone.
+
+</details>
+
+### claude, all: pass
+
+Files: [decimal.go](../all/claude/go-decimal-numdigits-1/files/decimal.go), [decimal_test.go](../all/claude/go-decimal-numdigits-1/files/decimal_test.go)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/decimal.go b/decimal.go
+index 880d569..3551c7d 100644
+--- a/decimal.go
++++ b/decimal.go
+@@ -1255,14 +1255,17 @@ func (d Decimal) Ln(precision int32) (Decimal, error) {
+ func (d Decimal) NumDigits() int {
  	v := d.getValue()
  	if v.IsInt64() {
- 		i64 := v.Int64()
+-		i64 := v.Int64()
 -		// restrict fast path to integers with exact conversion to float64
 -		if i64 <= (1<<53) && i64 >= -(1<<53) {
 -			if i64 == 0 {
 -				return 1
 -			}
 -			return int(math.Log10(math.Abs(float64(i64)))) + 1
-+		if i64 == 0 {
-+			return 1
-+		}
-+		u := uint64(i64)
-+		if i64 < 0 {
++		// math.Log10 is inexact near powers of ten, so count with integer division
++		u := uint64(v.Int64())
++		if v.Sign() < 0 {
 +			u = -u
 +		}
 +		n := 1
@@ -316,160 +457,30 @@ index 880d569..65ecca9 100644
  
  	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
 diff --git a/decimal_test.go b/decimal_test.go
-index 25d95bc..5e58ed4 100644
+index 25d95bc..51273b2 100644
 --- a/decimal_test.go
 +++ b/decimal_test.go
-@@ -603,17 +603,17 @@ func TestNewFromBigRat(t *testing.T) {
- 	}
- 
- 	tests := map[Inp]string{
--		Inp{big.NewRat(0, 1), 16}:                                                     "0",
--		Inp{big.NewRat(4, 5), 16}:                                                     "0.8",
--		Inp{big.NewRat(10, 2), 16}:                                                    "5",
--		Inp{big.NewRat(1023427554493, 43432632), 16}:                                  "23563.5628642767953828", // rounded
--		Inp{big.NewRat(1, 434324545566634), 16}:                                       "0.0000000000000023",
--		Inp{big.NewRat(1, 3), 16}:                                                     "0.3333333333333333",
--		Inp{big.NewRat(2, 3), 2}:                                                      "0.67",               // rounded
--		Inp{big.NewRat(2, 3), 16}:                                                     "0.6666666666666667", // rounded
--		Inp{big.NewRat(10000, 3), 16}:                                                 "3333.3333333333333333",
--		Inp{mustParseRat("30702832066636633479"), 16}:                                 "30702832066636633479",
--		Inp{mustParseRat("487028320159896636679.1827512895753"), 16}:                  "487028320159896636679.1827512895753",
-+		Inp{big.NewRat(0, 1), 16}:                                    "0",
-+		Inp{big.NewRat(4, 5), 16}:                                    "0.8",
-+		Inp{big.NewRat(10, 2), 16}:                                   "5",
-+		Inp{big.NewRat(1023427554493, 43432632), 16}:                 "23563.5628642767953828", // rounded
-+		Inp{big.NewRat(1, 434324545566634), 16}:                      "0.0000000000000023",
-+		Inp{big.NewRat(1, 3), 16}:                                    "0.3333333333333333",
-+		Inp{big.NewRat(2, 3), 2}:                                     "0.67",               // rounded
-+		Inp{big.NewRat(2, 3), 16}:                                    "0.6666666666666667", // rounded
-+		Inp{big.NewRat(10000, 3), 16}:                                "3333.3333333333333333",
-+		Inp{mustParseRat("30702832066636633479"), 16}:                "30702832066636633479",
-+		Inp{mustParseRat("487028320159896636679.1827512895753"), 16}: "487028320159896636679.1827512895753",
- 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), -2}: "127028320612589896636633500",                  // rounded
- 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), 16}: "127028320612589896636633479.1735827512895753", // rounded
- 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), 32}: "127028320612589896636633479.173582751289575278357832",
-@@ -3962,3 +3962,18 @@ func ExampleNewFromFloat() {
- 	//0.123123123123123
- 	//-10000000000000
- }
-+
-+func TestNumDigitsPowersOfTen(t *testing.T) {
-+	for i := 0; i < 40; i++ {
-+		d := New(1, int32(i)).Mul(New(1, 0))
-+		want := len(d.Coefficient().Text(10))
-+		if got := d.NumDigits(); got != want {
-+			t.Errorf("10^%d: got %d, want %d", i, got, want)
-+		}
-+		d = RequireFromString("1" + strings.Repeat("0", i) + "E20")
-+		want = len(d.Coefficient().Text(10))
-+		if got := d.NumDigits(); got != want {
-+			t.Errorf("1e%d E20: got %d, want %d", i, got, want)
-+		}
-+	}
-+}
+@@ -3157,6 +3157,12 @@ func TestDecimal_NumDigits(t *testing.T) {
+ 		{"-5.2663117716", 11},
+ 		{"-26.1", 3},
+ 		{"", 1},
++		{"100000000000000E20", 15},
++		{"1000000000000000E20", 16},
++		{"10000000000000000E20", 17},
++		{"-1000000000000000E20", 16},
++		{"9223372036854775807", 19},
++		{"-9223372036854775808", 19},
+ 	} {
+ 		d, _ := NewFromString(testCase.Dec)
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Done. `NumDigits` fast path used float `math.Log10`, which gave 14.999… for 10^15. It now counts digits with integer division in `decimal.go`. I added `TestNumDigitsPowersOfTen`, and `go test` passes.
+Done. In `NumDigits`, the `math.Log10` fast path was inexact near powers of ten. I replaced it with an exact integer-division loop in `decimal.go`. I added your three cases and some int64 edge cases to `TestDecimal_NumDigits`, and the build and tests pass.
 
-`gofmt -w` also reformatted some existing lines in `decimal_test.go`, which was already unformatted before my change.
-
-</details>
-
-### claude, sloth: pass
-
-Files: [decimal.go](../sloth/claude/go-decimal-numdigits-1/files/decimal.go)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/decimal.go b/decimal.go
-index 880d569..1d72c95 100644
---- a/decimal.go
-+++ b/decimal.go
-@@ -1256,13 +1256,10 @@ func (d Decimal) NumDigits() int {
- 	v := d.getValue()
- 	if v.IsInt64() {
- 		i64 := v.Int64()
--		// restrict fast path to integers with exact conversion to float64
--		if i64 <= (1<<53) && i64 >= -(1<<53) {
--			if i64 == 0 {
--				return 1
--			}
--			return int(math.Log10(math.Abs(float64(i64)))) + 1
-+		if i64 < 0 {
-+			i64 = -i64
- 		}
-+		return len(strconv.FormatUint(uint64(i64), 10))
- 	}
- 
- 	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-I'm checking the fix. The last output was too terse to confirm anything.
-
-I fixed `Decimal.NumDigits` in `decimal.go`, and your second example now returns 16. The existing tests pass, and I added no new test since you didn't ask for one.
-
-**Cause:** the fast path for small coefficients used `math.Log10`. `Log10` isn't exact, so for `10^15` it returned just under 15, and the digit count came out one too low. The big-integer path below it was already exact.
-
-**Fix:** the small-coefficient path now counts digits by formatting the absolute value with `strconv.FormatUint`. This avoids any float arithmetic. It also handles `math.MinInt64`, which the old code's `-i64` handling would have mishandled.
-
-I checked your three inputs, which now give 15, 16 and 17 and match `len(d.Coefficient().Text(10))`. Zero gives 1, and the sign isn't counted, so `-5` gives 1. The `-5` line in my scratch check printed 2 for the `len(...Text(10))` column because that text includes the minus sign, but `NumDigits` itself returned 1.
-
-Formatting the number allocates a small string, so the small-coefficient path is a bit slower than the old float shortcut. I didn't benchmark it.
-
-</details>
-
-### claude, all: pass
-
-Files: [decimal.go](../all/claude/go-decimal-numdigits-1/files/decimal.go)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/decimal.go b/decimal.go
-index 880d569..6863305 100644
---- a/decimal.go
-+++ b/decimal.go
-@@ -1255,14 +1255,15 @@ func (d Decimal) Ln(precision int32) (Decimal, error) {
- func (d Decimal) NumDigits() int {
- 	v := d.getValue()
- 	if v.IsInt64() {
--		i64 := v.Int64()
--		// restrict fast path to integers with exact conversion to float64
--		if i64 <= (1<<53) && i64 >= -(1<<53) {
--			if i64 == 0 {
--				return 1
--			}
--			return int(math.Log10(math.Abs(float64(i64)))) + 1
-+		u := uint64(v.Int64())
-+		if v.Sign() < 0 {
-+			u = -u
-+		}
-+		n := 1
-+		for ; u >= 10; u /= 10 {
-+			n++
- 		}
-+		return n
- 	}
- 
- 	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-Done. The cause was `math.Log10` returning slightly under 15 for 1e15 in the int64 fast path. I replaced it with an exact integer digit-count loop in `decimal.go`.
-
-Your three cases and a few edge cases (0, negatives, min int64) matched in a temporary test, which I removed. The existing tests pass. I did not add a permanent regression test.
+The big-int path is unchanged. It checks its own estimate, and I didn't test it beyond your examples.
 
 </details>
 
@@ -625,73 +636,40 @@ index 880d569..17e5067 100644
  
  	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
 diff --git a/decimal_test.go b/decimal_test.go
-index 25d95bc..a63a949 100644
+index 25d95bc..33d406e 100644
 --- a/decimal_test.go
 +++ b/decimal_test.go
-@@ -603,17 +603,17 @@ func TestNewFromBigRat(t *testing.T) {
- 	}
- 
- 	tests := map[Inp]string{
--		Inp{big.NewRat(0, 1), 16}:                                                     "0",
--		Inp{big.NewRat(4, 5), 16}:                                                     "0.8",
--		Inp{big.NewRat(10, 2), 16}:                                                    "5",
--		Inp{big.NewRat(1023427554493, 43432632), 16}:                                  "23563.5628642767953828", // rounded
--		Inp{big.NewRat(1, 434324545566634), 16}:                                       "0.0000000000000023",
--		Inp{big.NewRat(1, 3), 16}:                                                     "0.3333333333333333",
--		Inp{big.NewRat(2, 3), 2}:                                                      "0.67",               // rounded
--		Inp{big.NewRat(2, 3), 16}:                                                     "0.6666666666666667", // rounded
--		Inp{big.NewRat(10000, 3), 16}:                                                 "3333.3333333333333333",
--		Inp{mustParseRat("30702832066636633479"), 16}:                                 "30702832066636633479",
--		Inp{mustParseRat("487028320159896636679.1827512895753"), 16}:                  "487028320159896636679.1827512895753",
-+		Inp{big.NewRat(0, 1), 16}:                                    "0",
-+		Inp{big.NewRat(4, 5), 16}:                                    "0.8",
-+		Inp{big.NewRat(10, 2), 16}:                                   "5",
-+		Inp{big.NewRat(1023427554493, 43432632), 16}:                 "23563.5628642767953828", // rounded
-+		Inp{big.NewRat(1, 434324545566634), 16}:                      "0.0000000000000023",
-+		Inp{big.NewRat(1, 3), 16}:                                    "0.3333333333333333",
-+		Inp{big.NewRat(2, 3), 2}:                                     "0.67",               // rounded
-+		Inp{big.NewRat(2, 3), 16}:                                    "0.6666666666666667", // rounded
-+		Inp{big.NewRat(10000, 3), 16}:                                "3333.3333333333333333",
-+		Inp{mustParseRat("30702832066636633479"), 16}:                "30702832066636633479",
-+		Inp{mustParseRat("487028320159896636679.1827512895753"), 16}: "487028320159896636679.1827512895753",
- 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), -2}: "127028320612589896636633500",                  // rounded
- 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), 16}: "127028320612589896636633479.1735827512895753", // rounded
- 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), 32}: "127028320612589896636633479.173582751289575278357832",
-@@ -3144,6 +3144,9 @@ func TestDecimal_NumDigits(t *testing.T) {
- 	}{
- 		{"0", 1},
- 		{"0.00", 1},
+@@ -3148,6 +3148,11 @@ func TestDecimal_NumDigits(t *testing.T) {
+ 		{"3.0", 2},
+ 		{"5.26", 3},
+ 		{"5.2663117716", 11},
 +		{"100000000000000E20", 15},
 +		{"1000000000000000E20", 16},
 +		{"10000000000000000E20", 17},
- 		{"1.0", 2},
- 		{"3.0", 2},
- 		{"5.26", 3},
-@@ -3167,6 +3170,31 @@ func TestDecimal_NumDigits(t *testing.T) {
++		{"9223372036854775807", 19},
++		{"-9223372036854775808", 19},
+ 		{"3164836416948884.2162426426426267863", 35},
+ 		{"26.1", 3},
+ 		{"529.1591", 7},
+@@ -3167,6 +3172,25 @@ func TestDecimal_NumDigits(t *testing.T) {
  	}
  }
  
-+func TestDecimal_NumDigitsBoundaries(t *testing.T) {
-+	// Check both sides of powers of ten, including the int64 fast path
-+	// and coefficients that require arbitrary precision.
++func TestDecimal_NumDigitsPowersOfTen(t *testing.T) {
 +	for exponent := int64(0); exponent <= 100; exponent++ {
 +		power := new(big.Int).Exp(big.NewInt(10), big.NewInt(exponent), nil)
 +		for _, offset := range []int64{-1, 0, 1} {
 +			coefficient := new(big.Int).Add(power, big.NewInt(offset))
-+			want := len(coefficient.String())
++			want := len(coefficient.Text(10))
 +			for _, sign := range []int64{1, -1} {
-+				value := new(big.Int).Mul(coefficient, big.NewInt(sign))
-+				d := NewFromBigInt(value, 20)
-+				if got := d.NumDigits(); got != want {
-+					t.Errorf("coefficient %s: expected %d digits, got %d", value, want, got)
++				signed := new(big.Int).Mul(coefficient, big.NewInt(sign))
++				for _, scale := range []int32{-20, 0, 20} {
++					d := NewFromBigInt(signed, scale)
++					if got := d.NumDigits(); got != want {
++						t.Errorf("coefficient %s, exponent %d: expected %d digits, got %d", signed, scale, want, got)
++					}
 +				}
 +			}
-+		}
-+	}
-+	for _, coefficient := range []int64{math.MinInt64, math.MaxInt64} {
-+		d := New(coefficient, 0)
-+		if got := d.NumDigits(); got != 19 {
-+			t.Errorf("coefficient %d: expected 19 digits, got %d", coefficient, got)
 +		}
 +	}
 +}
@@ -705,13 +683,13 @@ index 25d95bc..a63a949 100644
 
 <details><summary>reply</summary>
 
-I’ll check `NumDigits`, fix the digit count, and add regression coverage for the reported values.
+I’ll check `NumDigits`, fix the incorrect count, and add regression coverage.
 
-The error comes from the floating-point logarithm in the fast path. I replaced it with integer division and added checks around powers of ten for both signs, including large coefficients and the `int64` limits. The test suite is running.
+The floating-point logarithm in the fast path rounds some exact powers of ten incorrectly. I’ll replace it with integer division and test values on both sides of powers of ten, including negative coefficients.
 
-Fixed `Decimal.NumDigits` by replacing the floating-point fast path with exact integer division. Your second example now returns `16`.
+Fixed `NumDigits` by replacing the floating-point logarithm fast path with exact integer division.
 
-Added regression tests for the reported examples, powers-of-ten boundaries, negative coefficients, and `int64` limits.
+Added regression coverage for your examples, values around powers of ten, negative coefficients, and int64 boundaries.
 
 Validation: `go test ./...` passes.
 
@@ -748,9 +726,38 @@ index 880d569..17e5067 100644
  
  	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
 diff --git a/decimal_test.go b/decimal_test.go
-index 25d95bc..3701f1b 100644
+index 25d95bc..f2fb872 100644
 --- a/decimal_test.go
 +++ b/decimal_test.go
+@@ -603,17 +603,17 @@ func TestNewFromBigRat(t *testing.T) {
+ 	}
+ 
+ 	tests := map[Inp]string{
+-		Inp{big.NewRat(0, 1), 16}:                                                     "0",
+-		Inp{big.NewRat(4, 5), 16}:                                                     "0.8",
+-		Inp{big.NewRat(10, 2), 16}:                                                    "5",
+-		Inp{big.NewRat(1023427554493, 43432632), 16}:                                  "23563.5628642767953828", // rounded
+-		Inp{big.NewRat(1, 434324545566634), 16}:                                       "0.0000000000000023",
+-		Inp{big.NewRat(1, 3), 16}:                                                     "0.3333333333333333",
+-		Inp{big.NewRat(2, 3), 2}:                                                      "0.67",               // rounded
+-		Inp{big.NewRat(2, 3), 16}:                                                     "0.6666666666666667", // rounded
+-		Inp{big.NewRat(10000, 3), 16}:                                                 "3333.3333333333333333",
+-		Inp{mustParseRat("30702832066636633479"), 16}:                                 "30702832066636633479",
+-		Inp{mustParseRat("487028320159896636679.1827512895753"), 16}:                  "487028320159896636679.1827512895753",
++		Inp{big.NewRat(0, 1), 16}:                                    "0",
++		Inp{big.NewRat(4, 5), 16}:                                    "0.8",
++		Inp{big.NewRat(10, 2), 16}:                                   "5",
++		Inp{big.NewRat(1023427554493, 43432632), 16}:                 "23563.5628642767953828", // rounded
++		Inp{big.NewRat(1, 434324545566634), 16}:                      "0.0000000000000023",
++		Inp{big.NewRat(1, 3), 16}:                                    "0.3333333333333333",
++		Inp{big.NewRat(2, 3), 2}:                                     "0.67",               // rounded
++		Inp{big.NewRat(2, 3), 16}:                                    "0.6666666666666667", // rounded
++		Inp{big.NewRat(10000, 3), 16}:                                "3333.3333333333333333",
++		Inp{mustParseRat("30702832066636633479"), 16}:                "30702832066636633479",
++		Inp{mustParseRat("487028320159896636679.1827512895753"), 16}: "487028320159896636679.1827512895753",
+ 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), -2}: "127028320612589896636633500",                  // rounded
+ 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), 16}: "127028320612589896636633479.1735827512895753", // rounded
+ 		Inp{mustParseRat("127028320612589896636633479.173582751289575278357832"), 32}: "127028320612589896636633479.173582751289575278357832",
 @@ -3144,6 +3144,11 @@ func TestDecimal_NumDigits(t *testing.T) {
  	}{
  		{"0", 1},
@@ -758,8 +765,8 @@ index 25d95bc..3701f1b 100644
 +		{"100000000000000E20", 15},
 +		{"1000000000000000E20", 16},
 +		{"10000000000000000E20", 17},
-+		{"9223372036854775807", 19},
 +		{"-9223372036854775808", 19},
++		{"9223372036854775807", 19},
  		{"1.0", 2},
  		{"3.0", 2},
  		{"5.26", 3},
@@ -768,18 +775,18 @@ index 25d95bc..3701f1b 100644
  }
  
 +func TestDecimal_NumDigitsPowerBoundaries(t *testing.T) {
-+	for exponent := int64(0); exponent <= 100; exponent++ {
-+		power := new(big.Int).Exp(big.NewInt(10), big.NewInt(exponent), nil)
++	for power := int64(1); power <= 100; power++ {
++		boundary := new(big.Int).Exp(big.NewInt(10), big.NewInt(power), nil)
 +		for _, offset := range []int64{-1, 0, 1} {
-+			coefficient := new(big.Int).Add(power, big.NewInt(offset))
-+			want := len(coefficient.Text(10))
-+			for _, negative := range []bool{false, true} {
-+				if negative {
-+					coefficient.Neg(coefficient)
-+				}
-+				d := NewFromBigInt(coefficient, 20)
-+				if got := d.NumDigits(); got != want {
-+					t.Errorf("coefficient %s: expected %d digits, got %d", coefficient, want, got)
++			coefficient := new(big.Int).Add(boundary, big.NewInt(offset))
++			want := len(coefficient.String())
++			for _, sign := range []int64{-1, 1} {
++				value := new(big.Int).Mul(coefficient, big.NewInt(sign))
++				for _, exp := range []int32{-20, 0, 20} {
++					d := NewFromBigInt(value, exp)
++					if got := d.NumDigits(); got != want {
++						t.Errorf("coefficient %s, exponent %d: expected %d digits, got %d", value, exp, want, got)
++					}
 +				}
 +			}
 +		}
@@ -795,17 +802,17 @@ index 25d95bc..3701f1b 100644
 
 <details><summary>reply</summary>
 
-Fix coefficient digit count; inspect implementation and tests.
+`NumDigits` should return exact coefficient digits. Checking implementation and tests.
 
 
 Done.
-`NumDigits` uses exact integer counting. Added regression tests for reported inputs, signed power boundaries, and int64 limits. `go test ./...` passed.
+`NumDigits` uses exact integer counting. Added regression tests for powers of ten, signs, exponents, and integer limits. `go test ./...` passed.
 
 </details>
 
 ### codex, sloth: pass
 
-Files: [decimal.go](../sloth/codex/go-decimal-numdigits-1/files/decimal.go)
+Files: [decimal.go](../sloth/codex/go-decimal-numdigits-1/files/decimal.go), [decimal_test.go](../sloth/codex/go-decimal-numdigits-1/files/decimal_test.go)
 
 <details><summary>diff</summary>
 
@@ -833,27 +840,58 @@ index 880d569..17e5067 100644
  	}
  
  	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
+diff --git a/decimal_test.go b/decimal_test.go
+index 25d95bc..bcd783c 100644
+--- a/decimal_test.go
++++ b/decimal_test.go
+@@ -3144,6 +3144,24 @@ func TestDecimal_NumDigits(t *testing.T) {
+ 	}{
+ 		{"0", 1},
+ 		{"0.00", 1},
++		{"100000000000000E20", 15},
++		{"1000000000000000E20", 16},
++		{"10000000000000000E20", 17},
++		{"999999999999999", 15},
++		{"1000000000000001", 16},
++		{"-999999999999999", 15},
++		{"-1000000000000000E20", 16},
++		{"-1000000000000001", 16},
++		{"9", 1},
++		{"10", 2},
++		{"11", 2},
++		{"-9", 1},
++		{"-10", 2},
++		{"-11", 2},
++		{"9223372036854775807", 19},
++		{"-9223372036854775808", 19},
++		{"9223372036854775808", 19},
++		{"-9223372036854775809", 19},
+ 		{"1.0", 2},
+ 		{"3.0", 2},
+ 		{"5.26", 3},
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-I’ll check `NumDigits` and its callers, fix the coefficient digit count, then build and run the existing tests.
+I’ll check `NumDigits`, its callers, and the existing tests, then fix the coefficient count and verify the boundary cases.
 
-The error comes from the `int64` fast path: floating-point `Log10` can round incorrectly at powers of ten. I’ll replace it with integer division, which also handles negative coefficients exactly. The larger-coefficient path already checks its estimate against an exact power of ten.
+The error comes from the `int64` fast path: `math.Log10` rounds incorrectly near powers of ten, even when the integer converts exactly to `float64`. I’ll replace it with integer division and extend the existing `NumDigits` test with the reported examples, both signs, and boundary values.
 
-Scope is limited to `NumDigits`. Its power, exponential, and logarithm callers need no changes, and neither do fixtures, configuration, or exports. I won’t add new tests or API options.
+The scope is `NumDigits` and its test. Its callers in power, exponential, and logarithm calculations will inherit the correction; no signatures, fixtures, configuration, or exports need changes.
 
-Fixed [`Decimal.NumDigits`]( /home/jdaddy/.cache/muffle-evals/runs/sloth/codex/go-decimal-numdigits-1/work/decimal.go:1255) by replacing floating-point logarithms with exact integer division for `int64` coefficients. This handles powers of ten, zero, and negative values correctly.
+Fixed `Decimal.NumDigits` by replacing the floating-point fast path with exact integer division. Your examples now return **15, 16, and 17**.
 
-`go build ./...`, existing tests, and `git diff --check` pass.
+Added regression coverage for the examples, negative values, power-of-ten boundaries, and `int64` limits.
+
+Validation passed: `go test ./...`, `go build ./...`, and `git diff --check`.
 
 </details>
 
 ### codex, all: pass
 
-Files: [decimal.go](../all/codex/go-decimal-numdigits-1/files/decimal.go)
+Files: [decimal.go](../all/codex/go-decimal-numdigits-1/files/decimal.go), [decimal_test.go](../all/codex/go-decimal-numdigits-1/files/decimal_test.go)
 
 <details><summary>diff</summary>
 
@@ -881,16 +919,37 @@ index 880d569..17e5067 100644
  	}
  
  	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
+diff --git a/decimal_test.go b/decimal_test.go
+index 25d95bc..21eb3be 100644
+--- a/decimal_test.go
++++ b/decimal_test.go
+@@ -3144,6 +3144,19 @@ func TestDecimal_NumDigits(t *testing.T) {
+ 	}{
+ 		{"0", 1},
+ 		{"0.00", 1},
++		{"100000000000000E20", 15},
++		{"1000000000000000E20", 16},
++		{"10000000000000000E20", 17},
++		{"999999999999999", 15},
++		{"1000000000000001", 16},
++		{"-999999999999999", 15},
++		{"-1000000000000000E20", 16},
++		{"-1000000000000001", 16},
++		{"9223372036854775807", 19},
++		{"-9223372036854775808", 19},
++		{"9999999999999999999", 19},
++		{"10000000000000000000", 20},
++		{"-10000000000000000000", 20},
+ 		{"1.0", 2},
+ 		{"3.0", 2},
+ 		{"5.26", 3},
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-`NumDigits` needs exact coefficient digit counts. Checking implementation and callers, then fixing and running existing tests.
-
-
 Done.
-`NumDigits` uses exact integer division. Build, existing tests, reported examples, power-of-ten boundaries, and signed integer limits passed.
+`NumDigits` uses exact integer division for int64 coefficients. Regression tests cover reported numbers, negatives, boundaries. `go test ./...` and `go build ./...` pass.
 
 </details>

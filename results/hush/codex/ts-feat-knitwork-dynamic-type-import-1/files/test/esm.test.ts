@@ -111,48 +111,46 @@ describe("genDynamicImport", () => {
 });
 
 describe("genDynamicTypeImport", () => {
-  it.each([
-    [undefined, 'typeof import("pkg")'],
-    ["foo", 'typeof import("pkg").foo'],
-    ["default", 'typeof import("pkg").default'],
-    ["$foo_1", 'typeof import("pkg").$foo_1'],
-    ["é", 'typeof import("pkg").é'],
-    ["foo-bar", 'typeof import("pkg")["foo-bar"]'],
-    ["1", 'typeof import("pkg")["1"]'],
-    ["", 'typeof import("pkg")[""]'],
-  ])("handles export name %j", (name, expected) => {
-    expect(genDynamicTypeImport("pkg", name)).to.equal(expected);
-  });
-
-  it("allows an omitted name", () => {
-    expect(genDynamicTypeImport("pkg")).to.equal('typeof import("pkg")');
-  });
-
-  it("preserves dynamic import comments and attributes", () => {
-    for (const t of genDynamicImportTests) {
-      expect(genDynamicTypeImport("pkg", "foo", t.opts)).to.equal(
-        `typeof ${genDynamicImport("pkg", {
-          ...t.opts,
-          wrapper: false,
-          interopDefault: false,
-        })}.foo`,
-      );
-    }
-    expect(
-      genDynamicTypeImport("pkg", "foo", {
-        comment: 'webpackChunkName: "chunks/dynamic"',
-        attributes: { type: "json" },
-      }),
-    ).to.equal(
-      'typeof import("pkg" /* webpackChunkName: "chunks/dynamic" */, { with: { type: "json" } }).foo',
-    );
-  });
-
-  it("quotes export names with the requested string options", () => {
-    expect(
-      genDynamicTypeImport("pkg", "foo-bar", { singleQuotes: true }),
-    ).to.equal("typeof import('pkg')['foo-bar']");
-  });
+  const cases: Array<{
+    input: Parameters<typeof genDynamicTypeImport>;
+    code: string;
+  }> = [
+    { input: ["pkg"], code: 'typeof import("pkg")' },
+    { input: ["pkg", undefined], code: 'typeof import("pkg")' },
+    { input: ["pkg", "foo"], code: 'typeof import("pkg").foo' },
+    { input: ["pkg", "default"], code: 'typeof import("pkg").default' },
+    { input: ["pkg", "$foo"], code: 'typeof import("pkg").$foo' },
+    { input: ["pkg", "café"], code: 'typeof import("pkg").café' },
+    { input: ["pkg", "foo-bar"], code: 'typeof import("pkg")["foo-bar"]' },
+    { input: ["pkg", ""], code: 'typeof import("pkg")[""]' },
+    { input: ["pkg", "1"], code: 'typeof import("pkg")["1"]' },
+    { input: ["pkg", 'a"b'], code: 'typeof import("pkg")["a\\"b"]' },
+    {
+      input: ["pkg", "foo", { comment: 'webpackChunkName: "chunks/dynamic"' }],
+      code: 'typeof import("pkg" /* webpackChunkName: "chunks/dynamic" */).foo',
+    },
+    {
+      input: ["pkg", "foo", { attributes: { type: "json" } }],
+      code: 'typeof import("pkg", { with: { type: "json" } }).foo',
+    },
+    {
+      input: ["pkg", "foo-bar", { singleQuotes: true }],
+      code: "typeof import('pkg')['foo-bar']",
+    },
+    {
+      input: [
+        "pkg",
+        undefined,
+        { attributes: { type: "json" }, comment: "chunk" },
+      ],
+      code: 'typeof import("pkg" /* chunk */, { with: { type: "json" } })',
+    },
+  ];
+  for (const t of cases) {
+    it(genTestTitle(t.code), () => {
+      expect(genDynamicTypeImport(...t.input)).to.equal(t.code);
+    });
+  }
 });
 
 const genSafeVariableNameTests = [

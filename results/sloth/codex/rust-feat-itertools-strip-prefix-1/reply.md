@@ -1,9 +1,9 @@
-I’ll check the trait and public export conventions, then add both methods and the error type. I’ll also check the feature gates and run the existing tests.
+I’ll check the trait, exports, and test conventions, then add the methods and error type with focused tests.
 
-This needs changes to `Itertools`, a new error-type module, the public exports, and the changelog. The implementation can work without allocation or new dependencies. I’ll document the iterator positions on failure, including exhaustion; existing callers and configuration need no changes.
+The change needs two `Itertools` methods, a public error type exported at both the crate root and `structs`, and tests in `tests/test_core.rs`. It needs no allocation or feature flags. Both methods can share one comparison loop, which will stop immediately on mismatch or exhaustion.
 
-Both methods are implemented, along with the public error type and examples. Builds pass with default features, without default features, and with allocation only. A doc example hit Rust 2018’s array `.into_iter()` behavior; I corrected it and am rerunning the tests.
+The implementation is in place. The tests cover successful and empty prefixes, mismatch recovery, early exhaustion, different item types, a mutable comparator, and agreement with `str::strip_prefix`. They also check that an iterator which resumes after returning `None` is returned without extra polling. I fixed a Rust 2018 array iteration issue in the test; validation is continuing.
 
-Added both `Itertools` methods and public `StripPrefixError` with the requested fields and consumption behavior. Included documentation examples and a changelog entry.
+Added `strip_prefix`, `strip_prefix_by`, and public `StripPrefixError` with the requested fields and recovery behavior.
 
-Validation: all 650 tests pass; formatting, documentation, and feature-variant builds pass. Clippy reports four existing warnings in unrelated code.
+Validation passed: all 651 tests, no-default-features tests and builds, and formatting. Clippy passes with four pre-existing `question_mark` warnings suppressed.

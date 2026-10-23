@@ -3,7 +3,7 @@
 // Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
 // Last sync: v1.1.1 (e264dfa)
 
-import type { CookieParseOptions, Cookies, MultiCookies, SetCookie } from "./types.ts";
+import type { CookieParseOptions, Cookies, CookiesMultiple, SetCookie } from "./types.ts";
 
 /**
  * RegExp to match max-age-value in RFC 6265 sec 5.6.2
@@ -20,15 +20,16 @@ const NullObject = /* @__PURE__ */ (() => {
  * Parse a `Cookie` header.
  *
  * Parse the given cookie header string into an object
- * The object has the various cookies as keys(names) => values
+ * The object has the various cookies as keys(names) => values.
+ * With `allowMultiple`, a repeated name maps to an array of all its values.
  */
 export function parse(
   str: string,
   options: CookieParseOptions & { allowMultiple: true },
-): MultiCookies;
+): CookiesMultiple;
 export function parse(str: string, options?: CookieParseOptions): Cookies;
-export function parse(str: string, options?: CookieParseOptions): MultiCookies {
-  const obj: MultiCookies = new NullObject();
+export function parse(str: string, options?: CookieParseOptions): CookiesMultiple {
+  const obj: CookiesMultiple = new NullObject();
   const len = str.length;
   // RFC 6265 sec 4.1.1, RFC 2616 2.2 defines a cookie name consists of one char minimum, plus '='.
   if (len < 2) return obj;

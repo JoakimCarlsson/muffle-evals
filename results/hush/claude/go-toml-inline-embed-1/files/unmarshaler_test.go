@@ -5604,21 +5604,24 @@ e = 1
 	assert.Equal(t, 1, len(m["a"].([]interface{}))-1)
 }
 
-func TestUnmarshalEmbeddedInlineTag(t *testing.T) {
-	type Base struct {
-		Region string
-		BsPort int
-	}
-	type Config struct {
-		Base `toml:",inline"`
-		PID  uint32
-	}
-	var c Config
-	err := toml.Unmarshal([]byte("Region = \"us\"\nBsPort = 100\nPID = 42\n"), &c)
+type inlineEmbeddedBase struct {
+	Region string
+	Name   string
+	BsPort int
+}
+
+type inlineEmbeddedConfig struct {
+	inlineEmbeddedBase `toml:",inline"`
+	PID                uint32
+}
+
+func TestUnmarshalInlineEmbeddedStruct(t *testing.T) {
+	var c inlineEmbeddedConfig
+	err := toml.Unmarshal([]byte("Region = \"us\"\nName = \"srv1\"\nBsPort = 100\nPID = 42\n"), &c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Region != "us" || c.BsPort != 100 || c.PID != 42 {
-		t.Fatalf("got %+v", c)
+	if c.Region != "us" || c.Name != "srv1" || c.BsPort != 100 || c.PID != 42 {
+		t.Fatalf("unexpected result: %+v", c)
 	}
 }

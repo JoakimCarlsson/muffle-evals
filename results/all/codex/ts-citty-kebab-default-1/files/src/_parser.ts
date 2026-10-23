@@ -11,7 +11,7 @@ export type Argv<T = Record<string, any>> = T & {
   _: string[];
 };
 
-/** Parses CLI arguments, resolving aliases before applying defaults. */
+/** Parse CLI arguments, resolving aliases before applying defaults. */
 export function parseRawArgs<T = Record<string, any>>(
   args: string[] = [],
   opts: ParseOptions = {},

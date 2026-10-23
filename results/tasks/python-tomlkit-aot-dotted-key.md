@@ -77,15 +77,15 @@ index e3ee4fd..4e38253 100644
 | agent | setup | hidden tests | lines +/- (code) | test lines | output tokens | cost |
 |---|---|---|---:|---:|---:|---:|
 | claude | base | pass | +3/-1 | 11 | 1,521 | $0.077 |
-| claude | muffle | pass | +3/-1 | 11 | 1,756 | $0.041 |
-| claude | hush | pass | +3/-1 | 0 | 1,618 | $0.075 |
-| claude | sloth | pass | +3/-2 | 0 | 1,716 | $0.075 |
-| claude | all | pass | +3/-1 | 0 | 1,361 | $0.075 |
+| claude | muffle | pass | +3/-1 | 12 | 1,484 | $0.052 |
+| claude | hush | pass | +3/-2 | 0 | 1,075 | $0.064 |
+| claude | sloth | pass | +3/-1 | 13 | 2,304 | $0.087 |
+| claude | all | pass | +3/-1 | 10 | 2,071 | $0.094 |
 | codex | base | pass | +7/-3 | 15 | 1,076 | - |
-| codex | muffle | pass | +9/-4 | 17 | 1,288 | - |
-| codex | hush | pass | +5/-4 | 25 | 912 | - |
-| codex | sloth | pass | +3/-1 | 0 | 1,241 | - |
-| codex | all | pass | +6/-2 | 0 | 689 | - |
+| codex | muffle | pass | +5/-4 | 20 | 1,133 | - |
+| codex | hush | pass | +6/-2 | 17 | 854 | - |
+| codex | sloth | pass | +6/-2 | 23 | 1,248 | - |
+| codex | all | pass | +6/-1 | 20 | 1,133 | - |
 
 ### claude, base: pass
 
@@ -161,16 +161,16 @@ Files: [tests/test_toml_document.py](../muffle/claude/python-tomlkit-aot-dotted-
 
 ```diff
 diff --git a/tests/test_toml_document.py b/tests/test_toml_document.py
-index 0e950cb..ddd9d2c 100644
+index 0e950cb..b81529b 100644
 --- a/tests/test_toml_document.py
 +++ b/tests/test_toml_document.py
-@@ -1617,3 +1617,14 @@ value = 5
+@@ -1617,3 +1617,15 @@ value = 5
  """
  
      assert doc.as_string() == expected
 +
 +
-+def test_replace_dotted_key_with_aot_does_not_capture_siblings():
++def test_replace_dotted_key_with_aot_keeps_following_keys():
 +    doc = parse("a.b = 1\nc.d = 2\n")
 +    aot = tomlkit.aot()
 +    t = tomlkit.table()
@@ -178,7 +178,8 @@ index 0e950cb..ddd9d2c 100644
 +    aot.append(t)
 +    doc["a"] = aot
 +
-+    assert parse(doc.as_string()) == {"c": {"d": 2}, "a": [{"x": 9}]}
++    assert doc.unwrap() == {"c": {"d": 2}, "a": [{"x": 9}]}
++    assert parse(doc.as_string()).unwrap() == {"c": {"d": 2}, "a": [{"x": 9}]}
 diff --git a/tomlkit/container.py b/tomlkit/container.py
 index e3ee4fd..5a564e1 100644
 --- a/tomlkit/container.py
@@ -200,11 +201,7 @@ index e3ee4fd..5a564e1 100644
 
 <details><summary>reply</summary>
 
-Script ran outside the repo; rerun from the repo with PYTHONPATH.
-
-Let me add a regression test.
-
-Fixed. Assigning an array of tables over a dotted key no longer captures the keys after it. Your example now dumps as:
+Fixed. Your example now dumps as:
 
 ```
 c.d = 2
@@ -213,53 +210,19 @@ c.d = 2
 x = 9
 ```
 
-Parsing that back gives `{"c": {"d": 2}, "a": [{"x": 9}]}`.
+This parses back to `{"c": {"d": 2}, "a": [{"x": 9}]}`.
 
-The cause was in `Container._replace_at` in `tomlkit/container.py`. It already dropped the dotted key and moved the replacement past the keys that render inline when a non-super `Table` was assigned, but it skipped `AoT`. I extended that check to cover `AoT`.
+The change is in `Container._replace_at` in `tomlkit/container.py`. It already handled a dotted key being replaced by a non-super `Table`, but it skipped an `AoT`. Now an `AoT` goes through the same path, so `[[a]]` is moved after the keys that render inline.
 
-I added a regression test, `test_replace_dotted_key_with_aot_does_not_capture_siblings`, in `tests/test_toml_document.py`. The suite passes (360 tests), except `tests/test_toml_tests.py`. That file fails at collection with a `FileNotFoundError`, so I excluded it from the run.
+I added a regression test in `tests/test_toml_document.py`. The suite passes (360 tests) except `tests/test_toml_tests.py`, which I excluded because it fails at collection with a `FileNotFoundError`. I didn't look into why.
 
-I didn't commit anything.
+I haven't committed anything.
 
 </details>
 
 ### claude, hush: pass
 
 Files: [tomlkit/container.py](../hush/claude/python-tomlkit-aot-dotted-key-1/files/tomlkit/container.py)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/tomlkit/container.py b/tomlkit/container.py
-index e3ee4fd..5a564e1 100644
---- a/tomlkit/container.py
-+++ b/tomlkit/container.py
-@@ -864,7 +864,9 @@ class Container(_CustomDict):  # type: ignore[type-arg]
-         # duplicates the prefix onto the header (#524). Drop the dotted key so the
-         # replacement renders as a plain table.
-         dotted_to_header = (
--            k.is_dotted() and isinstance(value, Table) and not value.is_super_table()
-+            k.is_dotted()
-+            and isinstance(value, (Table, AoT))
-+            and not (isinstance(value, Table) and value.is_super_table())
-         )
-         # That new header also captures every sibling that renders inline -- plain
-         # values and dotted keys -- if any still follow it (#513), so it must be
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-Script ran from outside the repo; I deleted it. Rerun with PYTHONPATH.
-
-Done. In `tomlkit/container.py` `_replace_at`, an AoT replacing a dotted key now gets the same handling as a non-super table, so `c.d = 2` stays before `[[a]]`. Your example now parses back to `{"c": {"d": 2}, "a": [{"x": 9}]}`. The 360 tests pass, but I skipped `tests/test_toml_tests.py` because it fails at collection with a missing-file error. I added no regression test.
-
-</details>
-
-### claude, sloth: pass
-
-Files: [tomlkit/container.py](../sloth/claude/python-tomlkit-aot-dotted-key-1/files/tomlkit/container.py)
 
 <details><summary>diff</summary>
 
@@ -286,32 +249,103 @@ index e3ee4fd..b8747a4 100644
 
 <details><summary>reply</summary>
 
-Script ran outside the repo path; rerun from the repo.
+Extend the dotted check to AoT.
 
-Fixed in `tomlkit/container.py` (`_replace_at`). Your example now dumps as:
+Done. `tomlkit/container.py` `_replace_at`: dotted-key check now includes `AoT`, so `c.d = 2` stays top-level and `[[a]]` goes after it. Your example round-trips to `{"c": {"d": 2}, "a": [{"x": 9}]}`. 360 tests pass. `tests/test_toml_tests.py` skipped (missing files). I added no regression test.
 
+</details>
+
+### claude, sloth: pass
+
+Files: [tests/test_toml_document.py](../sloth/claude/python-tomlkit-aot-dotted-key-1/files/tests/test_toml_document.py), [tomlkit/container.py](../sloth/claude/python-tomlkit-aot-dotted-key-1/files/tomlkit/container.py)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/tests/test_toml_document.py b/tests/test_toml_document.py
+index 0e950cb..601fab4 100644
+--- a/tests/test_toml_document.py
++++ b/tests/test_toml_document.py
+@@ -1617,3 +1617,16 @@ value = 5
+ """
+ 
+     assert doc.as_string() == expected
++
++
++def test_replace_dotted_key_with_aot_keeps_following_sibling() -> None:
++    for content in ("a.b = 1\nc.d = 2\n", "c.d = 2\na.b = 1\n", "a.b = 1\nc = 2\n"):
++        doc = parse(content)
++        aot = tomlkit.aot()
++        table = tomlkit.table()
++        table["x"] = 9
++        aot.append(table)
++        doc["a"] = aot
++        expected = {**parse(content).unwrap(), "a": [{"x": 9}]}
++        assert doc.unwrap() == expected
++        assert parse(doc.as_string()).unwrap() == expected
+diff --git a/tomlkit/container.py b/tomlkit/container.py
+index e3ee4fd..78a4638 100644
+--- a/tomlkit/container.py
++++ b/tomlkit/container.py
+@@ -864,7 +864,9 @@ class Container(_CustomDict):  # type: ignore[type-arg]
+         # duplicates the prefix onto the header (#524). Drop the dotted key so the
+         # replacement renders as a plain table.
+         dotted_to_header = (
+-            k.is_dotted() and isinstance(value, Table) and not value.is_super_table()
++            k.is_dotted()
++            and isinstance(value, (AoT, Table))
++            and not (isinstance(value, Table) and value.is_super_table())
+         )
+         # That new header also captures every sibling that renders inline -- plain
+         # values and dotted keys -- if any still follow it (#513), so it must be
 ```
-c.d = 2
 
-[[a]]
-x = 9
-```
+</details>
 
-Parsing that back gives `{'c': {'d': 2}, 'a': [{'x': 9}]}`, so `c` is no longer lost.
+<details><summary>reply</summary>
 
-When you replace a dotted-key entry with a table that renders its own `[header]`, `_replace_at` already drops the dotted key and moves the new header after the inline siblings. An array of tables needs the same handling, so I extended that check to cover it.
+Running the tests, skipping the toml-test suite whose fixtures are missing.
 
-I ran the test suite without `tests/test_toml_tests.py`, which fails at collection with a `FileNotFoundError` (I didn't investigate why). The other 360 tests pass. I didn't add a regression test, since you didn't ask for one.
+Fixed: assigning an array of tables over a dotted-key entry now leaves the following keys alone. Your example now keeps `c.d = 2` as a top-level table, so the document still means `{"c": {"d": 2}, "a": [{"x": 9}]}`. I ran the tests with `tests/test_toml_tests.py` excluded, because its fixture files (`tests/toml-test/...`) aren't in the checkout. The other 361 pass.
+
+**Cause:** the existing handling for replacing a dotted key with a table (#524/#513) only covered a plain `Table` value. An `AoT` value fell through, so it kept the dotted key and was written in place with its `[[a]]` header, which then took over the sibling keys that followed.
+
+**Fix:** in `tomlkit/container.py` (`_replace_at`), an `AoT` now gets the same treatment as a non-super table. The dotted key is dropped, and the new entry is moved after any inline siblings.
+
+**Test:** I added `test_replace_dotted_key_with_aot_keeps_following_sibling` in `tests/test_toml_document.py`. It covers your case, the reverse key order, and a plain-value sibling. Each time it checks the document before and after a re-parse. It passes.
+
+Nothing is committed.
 
 </details>
 
 ### claude, all: pass
 
-Files: [tomlkit/container.py](../all/claude/python-tomlkit-aot-dotted-key-1/files/tomlkit/container.py)
+Files: [tests/test_toml_document.py](../all/claude/python-tomlkit-aot-dotted-key-1/files/tests/test_toml_document.py), [tomlkit/container.py](../all/claude/python-tomlkit-aot-dotted-key-1/files/tomlkit/container.py)
 
 <details><summary>diff</summary>
 
 ```diff
+diff --git a/tests/test_toml_document.py b/tests/test_toml_document.py
+index 0e950cb..a3f28ff 100644
+--- a/tests/test_toml_document.py
++++ b/tests/test_toml_document.py
+@@ -1170,6 +1170,16 @@ x = 9
+     assert parse(doc.as_string()) == {"c": {"d": 2}, "a": {"x": 9}}
+ 
+ 
++def test_replace_dotted_key_with_aot_keeps_following_sibling() -> None:
++    doc = parse("a.b = 1\nc.d = 2\n")
++    aot = tomlkit.aot()
++    table_ = tomlkit.table()
++    table_["x"] = 9
++    aot.append(table_)
++    doc["a"] = aot
++    assert parse(doc.as_string()) == {"c": {"d": 2}, "a": [{"x": 9}]}
++
++
+ def test_replace_value_with_table_keeps_following_dotted_sibling() -> None:
+     # A plain value turning into a table must likewise clear the inline region
+     # (including dotted keys) before emitting its header.
 diff --git a/tomlkit/container.py b/tomlkit/container.py
 index e3ee4fd..5a564e1 100644
 --- a/tomlkit/container.py
@@ -333,7 +367,11 @@ index e3ee4fd..5a564e1 100644
 
 <details><summary>reply</summary>
 
-Done. In `tomlkit/container.py`, `_replace_at` now treats an AoT replacing a dotted key like a non-super table. It drops the dotted key and moves the new `[[a]]` after `c.d = 2`. Your example round-trips to `{'c': {'d': 2}, 'a': [{'x': 9}]}`. I ran 360 tests and they passed. I skipped `tests/test_toml_tests.py` because it fails at collection with a missing-file error. I added no regression test.
+Imports lack `aot`/`table`; use `tomlkit.` prefix.
+
+Done. `_replace_at` in `tomlkit/container.py` now treats an AoT replacing a dotted key like a non-super table, so it moves past following inline keys. Output is `c.d = 2` then `[[a]]`, and it round-trips to `{"c": {"d": 2}, "a": [{"x": 9}]}`.
+
+I added a test in `tests/test_toml_document.py`. The other 361 tests pass. `tests/test_toml_tests.py` is excluded because its `toml-test` fixtures are missing.
 
 </details>
 
@@ -419,110 +457,29 @@ Files: [tests/test_toml_document.py](../muffle/codex/python-tomlkit-aot-dotted-k
 
 ```diff
 diff --git a/tests/test_toml_document.py b/tests/test_toml_document.py
-index 0e950cb..ad8f8cc 100644
+index 0e950cb..348efa9 100644
 --- a/tests/test_toml_document.py
 +++ b/tests/test_toml_document.py
-@@ -1170,6 +1170,23 @@ x = 9
+@@ -1170,6 +1170,26 @@ x = 9
      assert parse(doc.as_string()) == {"c": {"d": 2}, "a": {"x": 9}}
  
  
-+@pytest.mark.parametrize("suffix", ["", "e = 3\n", "[f]\ng = 4\n"])
-+def test_replace_dotted_key_with_aot_keeps_following_siblings(suffix: str) -> None:
-+    doc = parse("a.b = 1\nc.d = 2\n" + suffix)
-+    aot = tomlkit.aot()
-+    table = tomlkit.table()
-+    table["x"] = 9
-+    aot.append(table)
-+    doc["a"] = aot
-+
-+    rendered = tomlkit.dumps(doc)
-+    assert rendered.index("c.d = 2") < rendered.index("[[a]]")
-+    expected = {"c": {"d": 2}, "a": [{"x": 9}]}
-+    expected.update(parse(suffix).unwrap())
-+    assert doc.unwrap() == expected
-+    assert parse(rendered).unwrap() == expected
-+
-+
- def test_replace_value_with_table_keeps_following_dotted_sibling() -> None:
-     # A plain value turning into a table must likewise clear the inline region
-     # (including dotted keys) before emitting its header.
-diff --git a/tomlkit/container.py b/tomlkit/container.py
-index e3ee4fd..52876b7 100644
---- a/tomlkit/container.py
-+++ b/tomlkit/container.py
-@@ -860,11 +860,16 @@ class Container(_CustomDict):  # type: ignore[type-arg]
-         assert k is not None
-         # A dotted key renders its value inline (e.g. ``a.b = 1``), which is only
-         # consistent with a super table. When the replacement value renders with
--        # its own ``[header]`` instead (a non-super table), keeping the dotted key
--        # duplicates the prefix onto the header (#524). Drop the dotted key so the
--        # replacement renders as a plain table.
-+        # its own header instead (a non-super table or array of tables), keeping
-+        # the dotted key duplicates the prefix onto the header (#524). Drop it so the
-+        # replacement renders with its own header.
-         dotted_to_header = (
--            k.is_dotted() and isinstance(value, Table) and not value.is_super_table()
-+            k.is_dotted()
-+            and (
-+                isinstance(value, AoT)
-+                or isinstance(value, Table)
-+                and not value.is_super_table()
-+            )
-         )
-         # That new header also captures every sibling that renders inline -- plain
-         # values and dotted keys -- if any still follow it (#513), so it must be
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-I’ll trace how dotted-key entries are replaced, fix the ordering, and add a regression test for the round trip.
-
-The replacement code already handles this ordering issue for regular tables, but excludes arrays of tables. I’ve extended that handling, and the regression cases pass with both dotted siblings and explicit tables following the replaced key.
-
-Fixed dotted-key replacement so arrays of tables move after inline siblings, preserving top-level `c` when the output is parsed again.
-
-Added regression coverage. All 363 available tests pass. The full suite is blocked by a missing `toml-test` fixture file.
-
-</details>
-
-### codex, hush: pass
-
-Files: [tests/test_toml_document.py](../hush/codex/python-tomlkit-aot-dotted-key-1/files/tests/test_toml_document.py), [tomlkit/container.py](../hush/codex/python-tomlkit-aot-dotted-key-1/files/tomlkit/container.py)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/tests/test_toml_document.py b/tests/test_toml_document.py
-index 0e950cb..b581a96 100644
---- a/tests/test_toml_document.py
-+++ b/tests/test_toml_document.py
-@@ -1170,6 +1170,31 @@ x = 9
-     assert parse(doc.as_string()) == {"c": {"d": 2}, "a": {"x": 9}}
- 
- 
-+@pytest.mark.parametrize("nested", [False, True])
-+@pytest.mark.parametrize("following_table", [False, True])
++@pytest.mark.parametrize("table_count", [1, 2])
++@pytest.mark.parametrize("following", ["c.d = 2\n", "c.d = 2\n\n[e]\nf = 3\n"])
 +def test_replace_dotted_key_with_aot_keeps_following_sibling(
-+    nested: bool, following_table: bool
++    table_count: int, following: str
 +) -> None:
-+    content = "a.b = 1\nc.d = 2\n"
-+    if following_table:
-+        content += "\n[other]\ny = 3\n"
-+    if nested:
-+        content = "[parent]\n" + content
-+    doc = parse(content)
-+    target = doc["parent"] if nested else doc
++    doc = parse("a.b = 1\n" + following)
 +    replacement = tomlkit.aot()
-+    replacement.append(tomlkit.table().add("x", 9))
-+    target["a"] = replacement
++    for x in range(table_count):
++        entry = tomlkit.table()
++        entry["x"] = x
++        replacement.append(entry)
 +
-+    expected = {"c": {"d": 2}, "a": [{"x": 9}]}
-+    if nested:
-+        expected = {"parent": expected}
-+    if following_table:
-+        expected["other"] = {"y": 3}
++    doc["a"] = replacement
++
++    expected = parse(following).unwrap()
++    expected["a"] = [{"x": x} for x in range(table_count)]
 +    assert doc.unwrap() == expected
 +    assert parse(tomlkit.dumps(doc)).unwrap() == expected
 +
@@ -557,33 +514,70 @@ index e3ee4fd..f8a5a23 100644
 
 <details><summary>reply</summary>
 
-Replacement serialization needs scope check. Inspecting container code and regression tests.
+I’ll trace how dotted keys are serialized when replaced by an array of tables, add a regression test, and fix the ordering.
 
+The replacement logic already moves ordinary tables past following dotted keys, but it excluded arrays of tables. I’ve extended that logic to cover them. The regression tests reproduce the bug with one or multiple entries, including when another table follows.
 
-Done.
-AoT replacement preserves sibling scope; regression tests added. 364 tests passed. Full suite blocked by missing toml-test fixtures.
+Fixed the replacement logic so arrays of tables move after following dotted keys, preserving top-level `c` when the output is parsed again.
+
+Added four regression cases. All 364 available tests pass. The TOML conformance suite could not run because its fixture files are missing.
 
 </details>
 
-### codex, sloth: pass
+### codex, hush: pass
 
-Files: [tomlkit/container.py](../sloth/codex/python-tomlkit-aot-dotted-key-1/files/tomlkit/container.py)
+Files: [tests/test_toml_document.py](../hush/codex/python-tomlkit-aot-dotted-key-1/files/tests/test_toml_document.py), [tomlkit/container.py](../hush/codex/python-tomlkit-aot-dotted-key-1/files/tomlkit/container.py)
 
 <details><summary>diff</summary>
 
 ```diff
+diff --git a/tests/test_toml_document.py b/tests/test_toml_document.py
+index 0e950cb..46315cb 100644
+--- a/tests/test_toml_document.py
++++ b/tests/test_toml_document.py
+@@ -1170,6 +1170,23 @@ x = 9
+     assert parse(doc.as_string()) == {"c": {"d": 2}, "a": {"x": 9}}
+ 
+ 
++@pytest.mark.parametrize("following", ["c.d = 2\n", "c = 2\n", "c.d = 2\n\n[e]\nf = 3\n"])
++def test_replace_dotted_key_with_aot_keeps_following_sibling(following: str) -> None:
++    doc = parse("a.b = 1\n" + following)
++    aot = tomlkit.aot()
++    table = tomlkit.table()
++    table["x"] = 9
++    aot.append(table)
++    doc["a"] = aot
++
++    expected = parse(following).unwrap()
++    expected["a"] = [{"x": 9}]
++    rendered = tomlkit.dumps(doc)
++    assert rendered.index("c") < rendered.index("[[a]]")
++    assert doc.unwrap() == expected
++    assert parse(rendered).unwrap() == expected
++
++
+ def test_replace_value_with_table_keeps_following_dotted_sibling() -> None:
+     # A plain value turning into a table must likewise clear the inline region
+     # (including dotted keys) before emitting its header.
 diff --git a/tomlkit/container.py b/tomlkit/container.py
-index e3ee4fd..a517597 100644
+index e3ee4fd..b8c4483 100644
 --- a/tomlkit/container.py
 +++ b/tomlkit/container.py
-@@ -864,7 +864,9 @@ class Container(_CustomDict):  # type: ignore[type-arg]
+@@ -860,11 +860,15 @@ class Container(_CustomDict):  # type: ignore[type-arg]
+         assert k is not None
+         # A dotted key renders its value inline (e.g. ``a.b = 1``), which is only
+         # consistent with a super table. When the replacement value renders with
+-        # its own ``[header]`` instead (a non-super table), keeping the dotted key
++        # its own header instead (an AoT or non-super table), keeping the dotted key
          # duplicates the prefix onto the header (#524). Drop the dotted key so the
          # replacement renders as a plain table.
          dotted_to_header = (
 -            k.is_dotted() and isinstance(value, Table) and not value.is_super_table()
 +            k.is_dotted()
-+            and isinstance(value, (Table, AoT))
-+            and (isinstance(value, AoT) or not value.is_super_table())
++            and (
++                isinstance(value, AoT)
++                or (isinstance(value, Table) and not value.is_super_table())
++            )
          )
          # That new header also captures every sibling that renders inline -- plain
          # values and dotted keys -- if any still follow it (#513), so it must be
@@ -593,25 +587,57 @@ index e3ee4fd..a517597 100644
 
 <details><summary>reply</summary>
 
-I’ll trace how replacement affects dotted-key serialization, fix the shared logic, and run the existing tests.
+Dotted-key replacement needs ordering fix. Checking serializer and regression tests.
 
-The replacement logic already moves ordinary tables past following dotted keys, but its condition excludes arrays of tables. I’ll extend that condition to include them. Assignment and table merging share this path; no caller, fixture, config, or export changes are needed.
 
-Fixed the shared replacement logic in [container.py](tomlkit/container.py) so arrays of tables move past following dotted keys, preserving top-level `c`.
-
-Validation: 360 existing tests passed, plus manual round-trip checks. The conformance suite is blocked by missing fixtures; building is blocked by missing build tooling.
+Done.
+AoT replacement preserves top-level siblings. Regression tests added; 363 tests passed. Full suite blocked by missing `toml-test` fixtures.
 
 </details>
 
-### codex, all: pass
+### codex, sloth: pass
 
-Files: [tomlkit/container.py](../all/codex/python-tomlkit-aot-dotted-key-1/files/tomlkit/container.py)
+Files: [tests/test_toml_document.py](../sloth/codex/python-tomlkit-aot-dotted-key-1/files/tests/test_toml_document.py), [tomlkit/container.py](../sloth/codex/python-tomlkit-aot-dotted-key-1/files/tomlkit/container.py)
 
 <details><summary>diff</summary>
 
 ```diff
+diff --git a/tests/test_toml_document.py b/tests/test_toml_document.py
+index 0e950cb..cab52bd 100644
+--- a/tests/test_toml_document.py
++++ b/tests/test_toml_document.py
+@@ -1170,6 +1170,29 @@ x = 9
+     assert parse(doc.as_string()) == {"c": {"d": 2}, "a": {"x": 9}}
+ 
+ 
++@pytest.mark.parametrize(
++    "following",
++    ["", "c.d = 2\n", "c = 2\n", "c.d = 2\n[e]\nf = 3\n"],
++)
++@pytest.mark.parametrize("table_count", [1, 2])
++def test_replace_dotted_key_with_aot_keeps_following_siblings(
++    following: str, table_count: int
++) -> None:
++    """Replacing a dotted prefix with an AoT preserves sibling scope."""
++    doc = parse("a.b = 1\n" + following)
++    expected = parse(following).unwrap()
++    aot = tomlkit.aot()
++    for x in range(9, 9 + table_count):
++        table = tomlkit.table()
++        table["x"] = x
++        aot.append(table)
++    doc["a"] = aot
++    expected["a"] = [{"x": x} for x in range(9, 9 + table_count)]
++
++    assert doc.unwrap() == expected
++    assert parse(tomlkit.dumps(doc)).unwrap() == expected
++
++
+ def test_replace_value_with_table_keeps_following_dotted_sibling() -> None:
+     # A plain value turning into a table must likewise clear the inline region
+     # (including dotted keys) before emitting its header.
 diff --git a/tomlkit/container.py b/tomlkit/container.py
-index e3ee4fd..5634a81 100644
+index e3ee4fd..4e0f44a 100644
 --- a/tomlkit/container.py
 +++ b/tomlkit/container.py
 @@ -860,11 +860,15 @@ class Container(_CustomDict):  # type: ignore[type-arg]
@@ -619,7 +645,7 @@ index e3ee4fd..5634a81 100644
          # A dotted key renders its value inline (e.g. ``a.b = 1``), which is only
          # consistent with a super table. When the replacement value renders with
 -        # its own ``[header]`` instead (a non-super table), keeping the dotted key
-+        # its own header instead (a non-super table or AoT), keeping the dotted key
++        # its own header instead (an AoT or non-super table), keeping the dotted key
          # duplicates the prefix onto the header (#524). Drop the dotted key so the
          # replacement renders as a plain table.
          dotted_to_header = (
@@ -638,7 +664,81 @@ index e3ee4fd..5634a81 100644
 
 <details><summary>reply</summary>
 
+I’ll trace the replacement and rendering paths, add a regression test, and run the relevant checks.
+
+The shared replacement code already moves ordinary tables past following dotted keys, but excludes arrays of tables. I’ll extend that rule to arrays of tables and test round-tripping with following values, dotted keys, and table headers. No API, fixture, config, or export changes are needed.
+
+Fixed the shared replacement logic so arrays of tables move past following top-level values and dotted keys, preserving their scope.
+
+Added regression coverage for one or multiple array entries and following siblings.
+
+Validation: 368 tests passed. Full-suite collection requires missing `toml-test` fixtures. Build and lint checks were blocked by unavailable tools.
+
+</details>
+
+### codex, all: pass
+
+Files: [tests/test_toml_document.py](../all/codex/python-tomlkit-aot-dotted-key-1/files/tests/test_toml_document.py), [tomlkit/container.py](../all/codex/python-tomlkit-aot-dotted-key-1/files/tomlkit/container.py)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/tests/test_toml_document.py b/tests/test_toml_document.py
+index 0e950cb..2bbc20e 100644
+--- a/tests/test_toml_document.py
++++ b/tests/test_toml_document.py
+@@ -1170,6 +1170,26 @@ x = 9
+     assert parse(doc.as_string()) == {"c": {"d": 2}, "a": {"x": 9}}
+ 
+ 
++@pytest.mark.parametrize("suffix", ["", "c.d = 2\n", "c.d = 2\n[e]\nf = 3\n"])
++@pytest.mark.parametrize("elements", [1, 2])
++def test_replace_dotted_key_with_aot_keeps_following_sibling(
++    suffix: str, elements: int
++) -> None:
++    """Replacing a dotted prefix with an AoT preserves sibling scope."""
++    doc = parse("a.b = 1\n" + suffix)
++    replacement = tomlkit.aot()
++    for _ in range(elements):
++        table = tomlkit.table()
++        table["x"] = 9
++        replacement.append(table)
++    doc["a"] = replacement
++
++    expected = parse(suffix).unwrap()
++    expected["a"] = [{"x": 9}] * elements
++    assert doc.unwrap() == expected
++    assert parse(tomlkit.dumps(doc)).unwrap() == expected
++
++
+ def test_replace_value_with_table_keeps_following_dotted_sibling() -> None:
+     # A plain value turning into a table must likewise clear the inline region
+     # (including dotted keys) before emitting its header.
+diff --git a/tomlkit/container.py b/tomlkit/container.py
+index e3ee4fd..1c9c783 100644
+--- a/tomlkit/container.py
++++ b/tomlkit/container.py
+@@ -864,7 +864,12 @@ class Container(_CustomDict):  # type: ignore[type-arg]
+         # duplicates the prefix onto the header (#524). Drop the dotted key so the
+         # replacement renders as a plain table.
+         dotted_to_header = (
+-            k.is_dotted() and isinstance(value, Table) and not value.is_super_table()
++            k.is_dotted()
++            and (
++                isinstance(value, AoT)
++                or isinstance(value, Table)
++                and not value.is_super_table()
++            )
+         )
+         # That new header also captures every sibling that renders inline -- plain
+         # values and dotted keys -- if any still follow it (#513), so it must be
+```
+
+</details>
+
+<details><summary>reply</summary>
+
 Done.
-AoT replacements move past dotted siblings, preserving top-level keys. 360 tests passed; round-trips checked. Conformance suite blocked by missing fixtures.
+AoT replacement preserves sibling scope. Regression tests added; 366 tests passed. Full suite blocked by missing fixtures; build blocked by missing tools.
 
 </details>

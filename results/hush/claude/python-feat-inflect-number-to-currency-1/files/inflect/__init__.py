@@ -62,7 +62,7 @@ import itertools
 import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
 import decimal as decimal_module
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from numbers import Number
 from re import Match
 from typing import (
@@ -4051,34 +4051,36 @@ class engine:
         )
         return signout + valout
 
-    @typechecked
     def number_to_currency(self, num: Number | Word, andword: str = "and") -> str:
         """
-        Return an amount as on a check: dollars in words, cents as a fraction.
+        Return an amount in words with the cents as a fraction of 100.
 
         e.g. 100020.56 -> "one hundred thousand and twenty and 56/100"
 
         The amount is rounded half up to the cent, going by the number as
-        written. andword is as for number_to_words; the "and" before the
+        written. andword is used as in number_to_words; the "and" before the
         cents is always written.
 
         Raise BadNumValueError if num is not a finite number.
         """
         try:
-            amount = Decimal(str(num).strip())
-        except ArithmeticError as err:
+            amount = num if isinstance(num, Decimal) else Decimal(str(num).strip())
+            if not amount.is_finite():
+                raise BadNumValueError
+            with decimal_module.localcontext() as ctx:
+                ctx.prec = max(ctx.prec, len(amount.as_tuple().digits) + 10)
+                if amount.adjusted() > 0:
+                    ctx.prec = max(ctx.prec, amount.adjusted() + 10)
+                rounded = amount.scaleb(2).to_integral_value(
+                    decimal_module.ROUND_HALF_UP
+                )
+                cents = int(rounded)
+        except (decimal_module.InvalidOperation, ValueError) as err:
             raise BadNumValueError from err
-        if not amount.is_finite():
-            raise BadNumValueError
 
-        with decimal_module.localcontext() as ctx:
-            ctx.prec = max(ctx.prec, len(amount.as_tuple().digits) + 10)
-            cents = abs(amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        dollars, fraction = divmod(int(cents * 100), 100)
-
-        words = self.number_to_words(str(dollars), andword=andword)
-        if amount < 0 and cents:
-            words = f"minus {words}"
+        whole, fraction = divmod(abs(cents), 100)
+        sign = "-" if cents < 0 else ""
+        words = self.number_to_words(f"{sign}{whole}", andword=andword)
         return f"{words} and {fraction:02d}/100"
 
     @staticmethod

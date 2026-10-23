@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// ParseComma parses a base-10 integer after removing commas.
-// It returns zero and an error if the number is invalid or out of range.
+// ParseComma parses a base-10 integer, ignoring commas.
+// It returns zero and an error if s is invalid or outside the int64 range.
 func ParseComma(s string) (int64, error) {
 	v, err := strconv.ParseInt(strings.ReplaceAll(s, ",", ""), 10, 64)
 	if err != nil {
@@ -18,9 +18,9 @@ func ParseComma(s string) (int64, error) {
 	return v, nil
 }
 
-// ParseCommaf parses a floating-point number after removing commas.
+// ParseCommaf parses a floating-point number, ignoring commas.
 // It accepts the special values NaN, +Inf, and -Inf produced by Commaf.
-// It returns zero and an error if the number is invalid or out of range.
+// It returns zero and an error if s is invalid or overflows float64.
 func ParseCommaf(s string) (float64, error) {
 	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
 	if err != nil {

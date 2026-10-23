@@ -1,37 +1,31 @@
 diff --git a/src/utils.ts b/src/utils.ts
-index 6ec11c1..5aefef7 100644
+index 6ec11c1..f22ab1c 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
-@@ -74,6 +74,37 @@ export function resolveAlias(path: string, aliases: Record<string, string>) {
+@@ -74,6 +74,31 @@ export function resolveAlias(path: string, aliases: Record<string, string>) {
    return _path;
  }
  
 +/**
-+ * Returns all alias forms of a path, sorted from longest to shortest.
++ * Returns every alias form of a path, sorted by descending length.
++ *
++ * @param path - The real path to resolve back to aliases.
++ * @param aliases - The alias mappings used for resolution.
++ * @returns matching aliased paths, or an empty array if none match.
 + */
 +export function reverseResolveAlias(
 +  path: string,
 +  aliases: Record<string, string>,
 +): string[] {
 +  const _path = normalizeWindowsPath(path);
-+  aliases = normalizeAliases(aliases);
 +  const matches: string[] = [];
 +
-+  for (const [alias, to] of Object.entries(aliases)) {
-+    const target = normalizeWindowsPath(to).replace(/\/+$/, "");
-+    if (
-+      !_path.startsWith(target) ||
-+      !pathSeparators.has(_path[target.length])
-+    ) {
-+      continue;
++  for (const [alias, to] of Object.entries(normalizeAliases(aliases))) {
++    const target = normalizeWindowsPath(to).replace(/\/$/, "");
++    if (_path.startsWith(target) && pathSeparators.has(_path[target.length])) {
++      const suffix = _path.slice(target.length);
++      matches.push(suffix ? join(alias, suffix) : alias);
 +    }
-+
-+    const suffix = _path.slice(target.length);
-+    matches.push(
-+      suffix && hasTrailingSlash(alias)
-+        ? alias + suffix.slice(1)
-+        : alias + suffix,
-+    );
 +  }
 +
 +  return matches.sort((a, b) => b.length - a.length);
@@ -41,7 +35,7 @@ index 6ec11c1..5aefef7 100644
   * Extracts the filename from a given path, excluding any directory paths and the file extension.
   *
 diff --git a/test/utils.spec.ts b/test/utils.spec.ts
-index 51ad676..4a5a831 100644
+index 51ad676..dd930cc 100644
 --- a/test/utils.spec.ts
 +++ b/test/utils.spec.ts
 @@ -1,6 +1,11 @@
@@ -57,49 +51,38 @@ index 51ad676..4a5a831 100644
  
  describe("alias", () => {
    const _aliases = {
-@@ -32,6 +37,48 @@ describe("alias", () => {
+@@ -32,6 +37,37 @@ describe("alias", () => {
      `);
    });
  
 +  describe("reverseResolveAlias", () => {
-+    it("returns every match sorted by output length", () => {
++    it.each([
++      [
++        "/root/some/assets/smth.jpg",
++        { "~": "/root", "~assets": "/root/some/assets" },
++        ["~/some/assets/smth.jpg", "~assets/smth.jpg"],
++      ],
++      [
++        "/root/index.js",
++        { "@": "/root", "~": "/root/index.js" },
++        ["@/index.js", "~"],
++      ],
++      ["/src/foo/bar", { "~/": "/src" }, ["~/foo/bar"]],
++      ["/src", { "~/": "/src" }, ["~/"]],
++      ["./bar.js", { "@": "/root" }, []],
++      ["/rooted/foo", { "@": "/root" }, []],
++      ["/src/foo", { "@": "/src/" }, ["@/foo"]],
++      ["/foo", { "@": "/" }, ["@/foo"]],
++      [String.raw`c:\src\foo`, { "@": String.raw`C:\src` }, ["@/foo"]],
++      ["/root/lib/foo", { "@": "/root", "~": "@/lib" }, ["@/lib/foo", "~/foo"]],
++    ])("resolves %s", (path, aliases, expected) => {
 +      expect(
-+        reverseResolveAlias("/root/some/assets/smth.jpg", {
-+          "~": "/root",
-+          "~assets": "/root/some/assets",
-+        }),
-+      ).toEqual(["~/some/assets/smth.jpg", "~assets/smth.jpg"]);
-+      expect(reverseResolveAlias("/root/index.js", aliases)).toEqual([
-+        "@/index.js",
-+        "~",
-+      ]);
++        reverseResolveAlias(path, aliases as Record<string, string>),
++      ).toEqual(expected);
 +    });
-+    it("respects whole targets and separator boundaries", () => {
-+      expect(reverseResolveAlias("/rooted/foo", aliases)).toEqual([]);
-+      expect(reverseResolveAlias("./bar.js", aliases)).toEqual([]);
-+      expect(reverseResolveAlias("/root", {})).toEqual([]);
-+    });
-+    it("preserves aliases ending in a slash", () => {
-+      expect(reverseResolveAlias("/src/foo/bar", aliases)).toEqual([
-+        "~/foo/bar",
-+      ]);
-+      expect(reverseResolveAlias("/src", aliases)).toEqual(["~/"]);
-+    });
-+    it("normalizes aliases and Windows paths", () => {
-+      expect(reverseResolveAlias("/root/bingpot/index.ts", _aliases)).toEqual([
-+        "@/bingpot/index.ts",
-+        "bingpot",
-+      ]);
-+      expect(
-+        reverseResolveAlias(String.raw`C:\src\foo`, {
-+          "~/": String.raw`C:\src`,
-+        }),
-+      ).toEqual(["~/foo"]);
-+    });
-+    it("handles trailing target separators", () => {
-+      expect(reverseResolveAlias("/src/foo", { "@": "/src/" })).toEqual([
-+        "@/foo",
-+      ]);
++
++    it("accepts normalized aliases", () => {
++      expect(reverseResolveAlias("/src/foo", aliases)).toEqual(["~/foo"]);
 +    });
 +  });
 +

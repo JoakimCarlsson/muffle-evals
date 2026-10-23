@@ -1,9 +1,9 @@
-I’ll check how `findExports` splits declarations, fix generic argument handling, and add regression tests for these cases.
+I’ll check how declaration separators are parsed, fix the generic argument handling, and add regression tests for these cases.
 
-The declaration regex also truncates some matches before the closing `>`, so the scanner needs to look past the captured text to recognize a generic call. I’ll add that lookahead while preserving comparison handling. Arrow function types also need a guard so `=>` doesn’t close a generic list.
+The scanner tracks angle brackets only in type annotations, so it treats commas in generic calls as declaration separators. It also treats the `>` in `=>` as a closing angle bracket. I’ll fix both and use a lookahead for generic calls so `1<2` still parses correctly.
 
-Fixed `findExports` to ignore commas inside generic constructor and call arguments, preserve real declaration separators, and handle `=>` inside generic type annotations.
+Fixed `findExports` to handle commas inside generic constructor and function calls, preserve comparison expressions, and correctly handle `=>` inside generic type annotations.
 
-Added regression tests for all reported cases and nested generics.
+Added regression tests for your examples, nested generics, and `findExportNames`.
 
-Validation passed: all 198 tests, ESLint, Prettier, and TypeScript checks.
+Validation passed: all 197 tests, TypeScript checks, lint, and formatting.

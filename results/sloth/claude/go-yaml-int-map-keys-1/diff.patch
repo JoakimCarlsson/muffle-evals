@@ -1,19 +1,36 @@
 diff --git a/decode.go b/decode.go
-index 43c317f..fedbdc6 100644
+index 43c317f..414b4ed 100644
 --- a/decode.go
 +++ b/decode.go
-@@ -1755,7 +1755,13 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
+@@ -1755,6 +1755,9 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
  				return err
  			}
  			k = reflect.ValueOf(keyVal)
--			if k.IsValid() && k.Type().ConvertibleTo(keyType) {
 +			if k.IsValid() && keyType.Kind() == reflect.String && k.Kind() != reflect.String {
-+				keyStr, err := d.mapKeyNodeToString(ctx, key)
-+				if err != nil {
-+					return err
-+				}
-+				k = reflect.ValueOf(keyStr).Convert(keyType)
-+			} else if k.IsValid() && k.Type().ConvertibleTo(keyType) {
++				k = reflect.ValueOf(fmt.Sprint(keyVal))
++			}
+ 			if k.IsValid() && k.Type().ConvertibleTo(keyType) {
  				k = k.Convert(keyType)
  			}
- 		}
+diff --git a/decode_test.go b/decode_test.go
+index 2d56942..8d43896 100644
+--- a/decode_test.go
++++ b/decode_test.go
+@@ -1334,6 +1334,17 @@ func TestDecoder_Invalid(t *testing.T) {
+ 	}
+ }
+ 
++func TestDecoder_NonStringKeyToStringMap(t *testing.T) {
++	var got map[string]any
++	if err := yaml.Unmarshal([]byte("42: 100\n1.5: a\ntrue: b\nnull: c\nx: d\n"), &got); err != nil {
++		t.Fatal(err)
++	}
++	want := map[string]any{"42": uint64(100), "1.5": "a", "true": "b", "": "c", "x": "d"}
++	if !reflect.DeepEqual(got, want) {
++		t.Fatalf("got %v, want %v", got, want)
++	}
++}
++
+ func TestDecoder_ScientificNotation(t *testing.T) {
+ 	tests := []struct {
+ 		source string

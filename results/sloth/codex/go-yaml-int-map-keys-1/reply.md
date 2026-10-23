@@ -1,7 +1,9 @@
-I’ll trace how map keys are converted, fix the shared decoding path, and run the existing tests.
+I’ll trace map-key decoding, fix the shared conversion, and add a regression test. I’ll check that typed map keys and existing error behavior stay intact; no new options or dependencies are needed.
 
-The map decoder uses Go’s direct integer-to-string conversion, which turns `42` into the character `*`. The decoder already has a conversion helper that produces `"42"`; I’ll use it here too. Only `decode.go` needs to change. This covers top-level, nested, and merged maps without changing callers, fixtures, config, or exports.
+The map decoder uses Go’s integer-to-string conversion, which turns `42` into the Unicode character `*`. The existing scalar conversion helper already formats integers as decimal strings. I’ll reuse it in the map decoder and add cases to the existing decoder tests. No public API, fixture, or config changes are needed.
 
-Fixed in [decode.go](/home/jdaddy/.cache/muffle-evals/runs/sloth/codex/go-yaml-int-map-keys-1/work/decode.go:1759) by reusing the existing string conversion helper. Integer key `42` now becomes `"42"`.
+Fixed integer map keys to use decimal string formatting, so the example now produces `map[42:100]`.
 
-Verified positive, negative, and maximum-width integer keys. `go build ./...` and `go test ./...` pass.
+Added regression coverage for zero, negative integers, large integer boundaries, and named string key types.
+
+Validation passed: `go test ./...`, `go build ./...`, and `git diff --check`.

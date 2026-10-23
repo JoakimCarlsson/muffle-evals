@@ -1,2 +1,2 @@
 Done.
-Borrowed/owned parsers return `Expected` at missing component position for trailing padding modifiers. Build and all-feature tests passed.
+Both parsers return errors at missing component positions. Regression tests, build, all-feature tests pass. Formatting check blocked by existing differences.

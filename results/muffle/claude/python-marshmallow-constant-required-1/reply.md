@@ -1,7 +1,14 @@
-`fields.Constant(42, required=True)` now works again. Both `MySchema().load({})` and `MySchema().load({"foo": 99})` give `{"foo": 42}`. The full test suite passes (1137 tests), including a new one.
+Fix is in; now I'll verify it and run the tests.
 
-The fix is in `Constant.__init__` in `src/marshmallow/fields.py`. `Constant` always sets `load_default` to the constant, and a recent change makes the base `Field` reject `load_default` together with `required=True`. `Constant` now takes `required` out of its arguments before calling the base constructor and sets it afterwards. Its `_validate_missing` override skips the "missing required field" error, so the constant is loaded instead. The field still reports `required=True`, so the OpenAPI export marks it as required.
+`fields.Constant(42, required=True)` is accepted again. I haven't added a regression test for it.
 
-`Constant(None)` still works, including with `required=True`.
+- `MySchema().load({})` and `MySchema().load({"foo": 99})` both give `{"foo": 42}`.
+- `Constant(None, required=True)` loads `{"foo": None}`.
+- The field still reports `required=True`, so your OpenAPI export still marks it required.
+- The existing suite passes (1136 tests).
 
-I added `test_required_constant_is_always_included_in_deserialized_data` to `tests/test_deserialization.py`. It covers `Constant(42)` and `Constant(None)`, each with `required=True`. I also added a bug-fix entry to `CHANGELOG.rst`. Nothing is committed.
+**Cause:** `Constant` always passes `load_default=constant` to the base `Field`. The latest release added a check that rejects `load_default` on required fields, so `required=True` now raises.
+
+**Fix:** `Constant.__init__` in `src/marshmallow/fields.py` now takes `required` out of the arguments and sets it on the field after the base class is initialised. `Constant` also overrides `_validate_missing` so a missing value never raises the "required" error. I added a bug-fix line to `CHANGELOG.rst`.
+
+I didn't commit anything.

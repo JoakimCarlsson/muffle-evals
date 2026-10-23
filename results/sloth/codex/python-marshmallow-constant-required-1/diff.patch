@@ -1,26 +1,49 @@
 diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
-index 5b8a072..86f174f 100644
+index 5b8a072..cd7ee86 100644
 --- a/src/marshmallow/fields.py
 +++ b/src/marshmallow/fields.py
-@@ -2074,11 +2074,20 @@ class Constant(Field[_ContantT]):
+@@ -2074,11 +2074,18 @@ class Constant(Field[_ContantT]):
      _CHECK_ATTRIBUTE = False
  
      def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
--        kwargs["load_default"] = constant
-+        """Initialize the field with its constant value."""
-+        kwargs["load_default"] = missing_
++        required = kwargs.pop("required", False)
+         kwargs["load_default"] = constant
          kwargs["dump_default"] = constant
-+        if kwargs.get("allow_none") is None:
-+            kwargs["allow_none"] = constant is None
          super().__init__(**kwargs)
-+        self.load_default = constant
++        self.required = required
          self.constant = constant
  
 +    def _validate_missing(self, value: typing.Any) -> None:
-+        """Allow missing input to use the constant, even for required fields."""
++        """Allow missing values to resolve to the constant, even when required."""
 +        if value is not missing_:
 +            super()._validate_missing(value)
 +
      def _serialize(self, value, *args, **kwargs) -> _ContantT:
          return self.constant
  
+diff --git a/tests/test_deserialization.py b/tests/test_deserialization.py
+index 7cbe28e..bbb4f40 100644
+--- a/tests/test_deserialization.py
++++ b/tests/test_deserialization.py
+@@ -1405,13 +1405,17 @@ class TestFieldDeserialization:
+         field = fields.Constant("something")
+         assert field.deserialize("whatever") == "something"
+ 
+-    def test_constant_is_always_included_in_deserialized_data(self):
++    @pytest.mark.parametrize("required", [False, True])
++    @pytest.mark.parametrize("constant", [42, None])
++    def test_constant_is_always_included_in_deserialized_data(self, required, constant):
++        """Constants resolve missing and supplied values regardless of required."""
+         class MySchema(Schema):
+-            foo = fields.Constant(42)
++            foo = fields.Constant(constant, required=required)
+ 
+         sch = MySchema()
+-        assert sch.load({})["foo"] == 42
+-        assert sch.load({"foo": 24})["foo"] == 42
++        assert sch.fields["foo"].required is required
++        assert sch.load({}) == {"foo": constant}
++        assert sch.load({"foo": 99}) == {"foo": constant}
+ 
+     def test_constant_none_allows_none_value(self):
+         class MySchema(Schema):

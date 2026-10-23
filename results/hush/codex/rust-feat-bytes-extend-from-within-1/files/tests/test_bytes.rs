@@ -608,6 +608,69 @@ fn extend_from_slice_mut() {
 }
 
 #[test]
+fn extend_from_within_mut() {
+    use std::ops::Bound::*;
+
+    let ranges = [
+        (Unbounded, Unbounded),
+        (Included(3), Excluded(6)),
+        (Excluded(2), Included(5)),
+        (Unbounded, Included(2)),
+        (Included(3), Unbounded),
+        (Included(7), Excluded(7)),
+        (Included(0), Excluded(0)),
+    ];
+    for range in ranges {
+        for capacity in [7, 64] {
+            let mut bytes = BytesMut::with_capacity(capacity);
+            bytes.extend_from_slice(b"aaabbb_");
+            let mut expected = bytes.to_vec();
+            expected.extend_from_within(range);
+            bytes.extend_from_within(range);
+            assert_eq!(&bytes[..], &expected[..]);
+        }
+    }
+
+    let mut empty = BytesMut::new();
+    empty.extend_from_within(..);
+    assert!(empty.is_empty());
+
+    // Exercise growth of an offset view while another view stays alive.
+    let mut bytes = BytesMut::from(&b"prefixaaabbb_"[..]);
+    let prefix = bytes.split_to(6);
+    bytes.extend_from_within(..);
+    assert_eq!(&bytes[..], b"aaabbb_aaabbb_");
+    assert_eq!(&prefix[..], b"prefix");
+
+    // Exercise reclaiming space before the current view.
+    let mut bytes = BytesMut::with_capacity(64);
+    bytes.extend_from_slice(&[b'x'; 64]);
+    bytes.advance(56);
+    bytes.extend_from_within(..);
+    assert_eq!(&bytes[..], &[b'x'; 16]);
+}
+
+#[test]
+fn extend_from_within_mut_invalid_ranges() {
+    use std::ops::Bound::*;
+
+    for range in [
+        (Included(4), Excluded(2)),
+        (Included(0), Excluded(8)),
+        (Included(8), Excluded(8)),
+        (Excluded(usize::MAX), Unbounded),
+        (Unbounded, Included(usize::MAX)),
+    ] {
+        let mut bytes = BytesMut::from(&b"aaabbb_"[..]);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            bytes.extend_from_within(range);
+        }));
+        assert!(result.is_err());
+        assert_eq!(&bytes[..], b"aaabbb_");
+    }
+}
+
+#[test]
 fn extend_mut_from_bytes() {
     let mut bytes = BytesMut::with_capacity(0);
     bytes.extend([Bytes::from(LONG)]);
@@ -1719,57 +1782,4 @@ fn bytes_mut_reserve_overflow() {
     b.reserve(usize::MAX - 6);
     // This call relies on the corrupted cap and may cause UB & HBO
     b.put_u8(b'h');
-}
-
-#[test]
-fn extend_from_within_mut() {
-    use std::ops::Bound::*;
-
-    let ranges = [
-        (Included(3), Excluded(6)),
-        (Unbounded, Unbounded),
-        (Unbounded, Included(2)),
-        (Excluded(2), Unbounded),
-        (Included(7), Excluded(7)),
-        (Included(0), Excluded(0)),
-    ];
-    for capacity in [7, 64] {
-        for range in ranges {
-            let mut bytes = BytesMut::with_capacity(capacity);
-            bytes.extend_from_slice(b"aaabbb_");
-            let mut expected = bytes.to_vec();
-            expected.extend_from_within(range);
-            bytes.extend_from_within(range);
-            assert_eq!(&bytes[..], &expected[..]);
-        }
-    }
-    let mut empty = BytesMut::new();
-    empty.extend_from_within(..);
-    assert!(empty.is_empty());
-
-    let mut bytes = BytesMut::from(&b"prefixaaabbb_"[..]);
-    let prefix = bytes.split_to(6);
-    bytes.extend_from_within(3..6);
-    assert_eq!(&bytes[..], b"aaabbb_bbb");
-    assert_eq!(&prefix[..], b"prefix");
-}
-
-#[test]
-fn extend_from_within_mut_invalid_ranges() {
-    use std::ops::Bound::*;
-
-    for range in [
-        (Included(4), Excluded(3)),
-        (Included(0), Excluded(8)),
-        (Included(8), Unbounded),
-        (Excluded(usize::MAX), Unbounded),
-        (Unbounded, Included(usize::MAX)),
-    ] {
-        let mut bytes = BytesMut::from(&b"aaabbb_"[..]);
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            bytes.extend_from_within(range);
-        }));
-        assert!(result.is_err());
-        assert_eq!(&bytes[..], b"aaabbb_");
-    }
 }

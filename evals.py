@@ -242,9 +242,7 @@ def run_agent(setup, agent, task, work, raw, config, env):
     """
     config.mkdir(parents=True)
     if agent == "claude":
-        credentials = max(Path.home().glob(".local/share/pandemonium-nightly/accounts/claude-code/*/.credentials.json"),
-                          key=lambda path: path.stat().st_mtime)
-        shutil.copy(credentials, config / ".credentials.json")
+        shutil.copy(Path.home() / ".claude" / ".credentials.json", config / ".credentials.json")
         env["CLAUDE_CONFIG_DIR"] = str(config)
         command = [str(CLAUDE), "-p", task["prompt"], "--model", CLAUDE_MODEL, "--permission-mode",
                    "bypassPermissions", "--output-format", "stream-json", "--verbose", "--strict-mcp-config",

@@ -83,15 +83,15 @@ index b081b4b..1c2e72e 100644
 | agent | setup | hidden tests | lines +/- (code) | test lines | output tokens | cost |
 |---|---|---|---:|---:|---:|---:|
 | claude | base | pass | +12/-0 | 16 | 2,762 | $0.096 |
-| claude | muffle | pass | +12/-0 | 10 | 2,278 | $0.086 |
-| claude | hush | pass | +8/-0 | 0 | 1,375 | $0.070 |
-| claude | sloth | pass | +6/-0 | 0 | 2,028 | $0.083 |
-| claude | all | pass | +7/-0 | 0 | 1,636 | $0.073 |
+| claude | muffle | pass | +12/-0 | 0 | 1,891 | $0.064 |
+| claude | hush | pass | +10/-0 | 0 | 1,434 | $0.074 |
+| claude | sloth | pass | +8/-0 | 10 | 2,716 | $0.095 |
+| claude | all | pass | +6/-0 | 10 | 2,181 | $0.075 |
 | codex | base | pass | +11/-1 | 7 | 1,498 | - |
-| codex | muffle | pass | +8/-3 | 8 | 1,665 | - |
-| codex | hush | pass | +9/-0 | 7 | 1,114 | - |
-| codex | sloth | pass | +10/-1 | 0 | 1,444 | - |
-| codex | all | pass | +8/-0 | 0 | 1,302 | - |
+| codex | muffle | pass | +12/-2 | 7 | 1,241 | - |
+| codex | hush | pass | +11/-1 | 7 | 1,200 | - |
+| codex | sloth | pass | +7/-0 | 8 | 1,479 | - |
+| codex | all | pass | +9/-1 | 8 | 1,361 | - |
 
 ### claude, base: pass
 
@@ -186,35 +186,34 @@ I also added two tests in `tests/test_fields.py` and a bug-fix entry in `CHANGEL
 
 ### claude, muffle: pass
 
-Files: [CHANGELOG.rst](../muffle/claude/python-marshmallow-constant-required-1/files/CHANGELOG.rst), [src/marshmallow/fields.py](../muffle/claude/python-marshmallow-constant-required-1/files/src/marshmallow/fields.py), [tests/test_deserialization.py](../muffle/claude/python-marshmallow-constant-required-1/files/tests/test_deserialization.py)
+Files: [CHANGELOG.rst](../muffle/claude/python-marshmallow-constant-required-1/files/CHANGELOG.rst), [src/marshmallow/fields.py](../muffle/claude/python-marshmallow-constant-required-1/files/src/marshmallow/fields.py)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/CHANGELOG.rst b/CHANGELOG.rst
-index 8b90369..9a36bd4 100644
+index 8b90369..7323364 100644
 --- a/CHANGELOG.rst
 +++ b/CHANGELOG.rst
 @@ -6,6 +6,8 @@ Changelog
  
  Bug fixes:
  
-+- Fix `marshmallow.fields.Constant` raising ``ValueError`` when ``required=True``.
-+  A required ``Constant`` always loads as the constant, even if missing from the input.
++- Allow ``required=True`` on `marshmallow.fields.Constant`. The constant is still
++  loaded when the field is missing.
  - Make `marshmallow.fields.Number` and `marshmallow.fields.Mapping` abstract base classes to
    prevent using them within Schemas (:issue:`2924`). Thanks :user:`MartingaleCoda` for reporting.
  
 diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
-index 5b8a072..4cd6be7 100644
+index 5b8a072..e01a91e 100644
 --- a/src/marshmallow/fields.py
 +++ b/src/marshmallow/fields.py
 @@ -2074,11 +2074,21 @@ class Constant(Field[_ContantT]):
      _CHECK_ATTRIBUTE = False
  
      def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
-+        # ``required`` is applied after init, since the base class forbids it
-+        # together with ``load_default``. A required Constant is still always
-+        # loaded as the constant, whether the input is missing or not.
++        # A required Constant is still always loaded as the constant, so
++        # ``required`` is only kept as a flag (e.g. for OpenAPI generation).
 +        required = kwargs.pop("required", False)
          kwargs["load_default"] = constant
          kwargs["dump_default"] = constant
@@ -223,15 +222,122 @@ index 5b8a072..4cd6be7 100644
          self.constant = constant
  
 +    def _validate_missing(self, value) -> None:
++        # A missing value is never an error: the constant is used instead.
 +        if value is missing_:
 +            return
 +        super()._validate_missing(value)
 +
      def _serialize(self, value, *args, **kwargs) -> _ContantT:
          return self.constant
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+Fix is in; now I'll verify it and run the tests.
+
+`fields.Constant(42, required=True)` is accepted again. I haven't added a regression test for it.
+
+- `MySchema().load({})` and `MySchema().load({"foo": 99})` both give `{"foo": 42}`.
+- `Constant(None, required=True)` loads `{"foo": None}`.
+- The field still reports `required=True`, so your OpenAPI export still marks it required.
+- The existing suite passes (1136 tests).
+
+**Cause:** `Constant` always passes `load_default=constant` to the base `Field`. The latest release added a check that rejects `load_default` on required fields, so `required=True` now raises.
+
+**Fix:** `Constant.__init__` in `src/marshmallow/fields.py` now takes `required` out of the arguments and sets it on the field after the base class is initialised. `Constant` also overrides `_validate_missing` so a missing value never raises the "required" error. I added a bug-fix line to `CHANGELOG.rst`.
+
+I didn't commit anything.
+
+</details>
+
+### claude, hush: pass
+
+Files: [src/marshmallow/fields.py](../hush/claude/python-marshmallow-constant-required-1/files/src/marshmallow/fields.py)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
+index 5b8a072..ab038b9 100644
+--- a/src/marshmallow/fields.py
++++ b/src/marshmallow/fields.py
+@@ -2074,11 +2074,21 @@ class Constant(Field[_ContantT]):
+     _CHECK_ATTRIBUTE = False
+ 
+     def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
++        # A required Constant is still always loaded as the constant, so
++        # ``required`` is set after init to bypass the load_default check.
++        required = kwargs.pop("required", False)
+         kwargs["load_default"] = constant
+         kwargs["dump_default"] = constant
+         super().__init__(**kwargs)
++        self.required = required
+         self.constant = constant
+ 
++    def _validate_missing(self, value) -> None:
++        # A missing value is never an error: the constant is used instead.
++        if value is missing_:
++            return
++        super()._validate_missing(value)
++
+     def _serialize(self, value, *args, **kwargs) -> _ContantT:
+         return self.constant
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+Done. `Constant` now accepts `required=True` and always loads the constant (`src/marshmallow/fields.py`). `load({})` and `load({"foo": 99})` both give `{"foo": 42}`, `Constant(None, required=True)` loads `None`, and `required` stays `True` on the field. Full test suite passes; I added no new tests and no changelog entry.
+
+</details>
+
+### claude, sloth: pass
+
+Files: [CHANGELOG.rst](../sloth/claude/python-marshmallow-constant-required-1/files/CHANGELOG.rst), [src/marshmallow/fields.py](../sloth/claude/python-marshmallow-constant-required-1/files/src/marshmallow/fields.py), [tests/test_deserialization.py](../sloth/claude/python-marshmallow-constant-required-1/files/tests/test_deserialization.py)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/CHANGELOG.rst b/CHANGELOG.rst
+index 8b90369..14db878 100644
+--- a/CHANGELOG.rst
++++ b/CHANGELOG.rst
+@@ -8,6 +8,7 @@ Bug fixes:
+ 
+ - Make `marshmallow.fields.Number` and `marshmallow.fields.Mapping` abstract base classes to
+   prevent using them within Schemas (:issue:`2924`). Thanks :user:`MartingaleCoda` for reporting.
++- Fix ``fields.Constant(..., required=True)`` raising ``ValueError``.
+ 
+ 
+ 4.2.2 (2026-02-04)
+diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
+index 5b8a072..0fc6bed 100644
+--- a/src/marshmallow/fields.py
++++ b/src/marshmallow/fields.py
+@@ -2074,11 +2074,18 @@ class Constant(Field[_ContantT]):
+     _CHECK_ATTRIBUTE = False
+ 
+     def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
++        required = kwargs.pop("required", False)
+         kwargs["load_default"] = constant
+         kwargs["dump_default"] = constant
+         super().__init__(**kwargs)
++        # Set after init: a required constant still loads as the constant when missing,
++        # ``required`` only marks the field as required for e.g. OpenAPI export.
++        self.required = required
+         self.constant = constant
+ 
++    def _validate_missing(self, value) -> None:
++        """A missing value is always valid: it loads as the constant."""
++
+     def _serialize(self, value, *args, **kwargs) -> _ContantT:
+         return self.constant
  
 diff --git a/tests/test_deserialization.py b/tests/test_deserialization.py
-index 7cbe28e..fcd54ad 100644
+index 7cbe28e..2d8a61e 100644
 --- a/tests/test_deserialization.py
 +++ b/tests/test_deserialization.py
 @@ -1413,6 +1413,16 @@ class TestFieldDeserialization:
@@ -244,9 +350,9 @@ index 7cbe28e..fcd54ad 100644
 +            bar = fields.Constant(None, required=True)
 +
 +        sch = MySchema()
-+        assert sch.fields["foo"].required is True
++        assert MySchema._declared_fields["foo"].required is True
 +        assert sch.load({}) == {"foo": 42, "bar": None}
-+        assert sch.load({"foo": 99}) == {"foo": 42, "bar": None}
++        assert sch.load({"foo": 99, "bar": 1}) == {"foo": 42, "bar": None}
 +
      def test_constant_none_allows_none_value(self):
          class MySchema(Schema):
@@ -257,62 +363,25 @@ index 7cbe28e..fcd54ad 100644
 
 <details><summary>reply</summary>
 
-`fields.Constant(42, required=True)` now works again. Both `MySchema().load({})` and `MySchema().load({"foo": 99})` give `{"foo": 42}`. The full test suite passes (1137 tests), including a new one.
+Setting `required` alone isn't enough: `deserialize` would still raise "required" on a missing value. I'm overriding `_validate_missing` on `Constant` to skip that check, then adding the test.
 
-The fix is in `Constant.__init__` in `src/marshmallow/fields.py`. `Constant` always sets `load_default` to the constant, and a recent change makes the base `Field` reject `load_default` together with `required=True`. `Constant` now takes `required` out of its arguments before calling the base constructor and sets it afterwards. Its `_validate_missing` override skips the "missing required field" error, so the constant is loaded instead. The field still reports `required=True`, so the OpenAPI export marks it as required.
+`fields.Constant(42, required=True)` now defines without error. The full suite passes (1137 tests), including a new one for this case.
 
-`Constant(None)` still works, including with `required=True`.
+- **Cause:** `Constant` always passes `load_default=constant` to `Field.__init__`. The base class rejects `required=True` together with a `load_default`.
+- **Fix, in `src/marshmallow/fields.py`:**
+  - `Constant` now sets `required` after the base init, so the check no longer fires. `field.required` stays `True`, which is what your OpenAPI export reads.
+  - It also overrides `_validate_missing` as a no-op. Without that, loading `{}` would have raised a "required" error.
+- **Behavior:** `MySchema().load({})` and `MySchema().load({"foo": 99})` both return `{"foo": 42}`. `Constant(None, required=True)` loads as `None` in both cases, and a plain `Constant(None)` still works.
+- **Test:** `test_required_constant_is_always_included_in_deserialized_data` in `tests/test_deserialization.py` covers the required constant and the required `None` constant.
+- **Changelog:** I added a line to `CHANGELOG.rst`.
 
-I added `test_required_constant_is_always_included_in_deserialized_data` to `tests/test_deserialization.py`. It covers `Constant(42)` and `Constant(None)`, each with `required=True`. I also added a bug-fix entry to `CHANGELOG.rst`. Nothing is committed.
-
-</details>
-
-### claude, hush: pass
-
-Files: [src/marshmallow/fields.py](../hush/claude/python-marshmallow-constant-required-1/files/src/marshmallow/fields.py)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
-index 5b8a072..c993330 100644
---- a/src/marshmallow/fields.py
-+++ b/src/marshmallow/fields.py
-@@ -2074,11 +2074,19 @@ class Constant(Field[_ContantT]):
-     _CHECK_ATTRIBUTE = False
- 
-     def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
-+        required = kwargs.pop("required", False)
-         kwargs["load_default"] = constant
-         kwargs["dump_default"] = constant
-         super().__init__(**kwargs)
-+        # Set after init: the constant is the load default, which required
-+        # fields normally forbid. Useful for marking the field required in schema specs.
-+        self.required = required
-         self.constant = constant
- 
-+    def _validate_missing(self, value) -> None:
-+        # Loading always yields the constant, so nothing can be missing or invalid
-+        pass
-+
-     def _serialize(self, value, *args, **kwargs) -> _ContantT:
-         return self.constant
-```
+I had to set `PYTHONPATH=src` to run the tests, because `marshmallow` isn't installed in the environment. I haven't committed anything.
 
 </details>
 
-<details><summary>reply</summary>
+### claude, all: pass
 
-Done. `Constant` in `src/marshmallow/fields.py` now accepts `required=True`, and `load({})` and `load({"foo": 99})` both give `{"foo": 42}`. `Constant(None)` still works. The 1136 existing tests pass, but I added no new test for the required case.
-
-- **How:** it sets `required` after `super().__init__`, so the "load_default must not be set" check is skipped, and it overrides `_validate_missing` to do nothing.
-- **Side effect:** `load({"foo": None})` now also gives `42` rather than a "may not be null" error. Say if you'd rather keep the null error.
-
-</details>
-
-### claude, sloth: pass
-
-Files: [src/marshmallow/fields.py](../sloth/claude/python-marshmallow-constant-required-1/files/src/marshmallow/fields.py)
+Files: [src/marshmallow/fields.py](../all/claude/python-marshmallow-constant-required-1/files/src/marshmallow/fields.py), [tests/test_deserialization.py](../all/claude/python-marshmallow-constant-required-1/files/tests/test_deserialization.py)
 
 <details><summary>diff</summary>
 
@@ -338,70 +407,37 @@ index 5b8a072..2d1a0a4 100644
 +
      def _serialize(self, value, *args, **kwargs) -> _ContantT:
          return self.constant
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-Fix is in; now re-running the check and tests with `src` on the path.
-
-`fields.Constant(42, required=True)` now works: the field keeps `required=True` for your OpenAPI export, and loading always gives the constant.
-
-I checked it by hand:
-- `MySchema().load({})` and `MySchema().load({"foo": 99})` both return `{"foo": 42}`.
-- `Constant(None, required=True)` loads to `{"foo": None}` in both cases.
-
-The existing test suite passes (1136 tests). I didn't add a test for the required case, since you didn't ask for one.
-
-The change is in `Constant.__init__` in `src/marshmallow/fields.py`. It no longer passes `required` up to `Field`, whose check was what raised the error. It sets `self.required` afterwards, and the "required" check is skipped when the field is missing from the input.
-
-I haven't committed anything.
-
-</details>
-
-### claude, all: pass
-
-Files: [src/marshmallow/fields.py](../all/claude/python-marshmallow-constant-required-1/files/src/marshmallow/fields.py)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
-index 5b8a072..9d6d677 100644
---- a/src/marshmallow/fields.py
-+++ b/src/marshmallow/fields.py
-@@ -2074,9 +2074,11 @@ class Constant(Field[_ContantT]):
-     _CHECK_ATTRIBUTE = False
  
-     def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
-+        required = kwargs.pop("required", False)
-         kwargs["load_default"] = constant
-         kwargs["dump_default"] = constant
-         super().__init__(**kwargs)
-+        self.required = required
-         self.constant = constant
+diff --git a/tests/test_deserialization.py b/tests/test_deserialization.py
+index 7cbe28e..97faac5 100644
+--- a/tests/test_deserialization.py
++++ b/tests/test_deserialization.py
+@@ -1413,6 +1413,16 @@ class TestFieldDeserialization:
+         assert sch.load({})["foo"] == 42
+         assert sch.load({"foo": 24})["foo"] == 42
  
-     def _serialize(self, value, *args, **kwargs) -> _ContantT:
-@@ -2085,6 +2087,11 @@ class Constant(Field[_ContantT]):
-     def _deserialize(self, value, *args, **kwargs) -> _ContantT:
-         return self.constant
- 
-+    def _validate_missing(self, value: typing.Any) -> None:
-+        """A missing constant is never an error; ``required`` only marks the field."""
-+        if value is not missing_:
-+            super()._validate_missing(value)
++    def test_required_constant_is_always_included_in_deserialized_data(self):
++        class MySchema(Schema):
++            foo = fields.Constant(42, required=True)
++            bar = fields.Constant(None, required=True)
 +
- 
- # Aliases
- URL = Url
++        sch = MySchema()
++        assert MySchema().fields["foo"].required
++        assert sch.load({}) == {"foo": 42, "bar": None}
++        assert sch.load({"foo": 99}) == {"foo": 42, "bar": None}
++
+     def test_constant_none_allows_none_value(self):
+         class MySchema(Schema):
+             foo = fields.Constant(None)
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Done. `Constant` in `src/marshmallow/fields.py` now accepts `required=True`, and the field still reports `required` for OpenAPI export. `load({})` and `load({"foo": 99})` both give `{"foo": 42}`, `Constant(None, required=True)` loads `{"foo": None}`, and all 1136 tests pass. I didn't add tests for the new case.
+Tests failed to import marshmallow. Retrying with `PYTHONPATH=src`.
+
+Done. `Constant` now pops `required`, sets it after init, and skips the missing-value check in `_validate_missing`. `required=True` is kept for OpenAPI. Added a test in `tests/test_deserialization.py`; the full suite passes (1137 tests).
 
 </details>
 
@@ -503,123 +539,38 @@ Files: [CHANGELOG.rst](../muffle/codex/python-marshmallow-constant-required-1/fi
 
 ```diff
 diff --git a/CHANGELOG.rst b/CHANGELOG.rst
-index 8b90369..7cc9280 100644
---- a/CHANGELOG.rst
-+++ b/CHANGELOG.rst
-@@ -6,6 +6,8 @@ Changelog
- 
- Bug fixes:
- 
-+- Allow ``fields.Constant`` with ``required=True`` and always deserialize to the constant.
-+
- - Make `marshmallow.fields.Number` and `marshmallow.fields.Mapping` abstract base classes to
-   prevent using them within Schemas (:issue:`2924`). Thanks :user:`MartingaleCoda` for reporting.
- 
-diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
-index 5b8a072..8b6986a 100644
---- a/src/marshmallow/fields.py
-+++ b/src/marshmallow/fields.py
-@@ -2074,15 +2074,18 @@ class Constant(Field[_ContantT]):
-     _CHECK_ATTRIBUTE = False
- 
-     def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
--        kwargs["load_default"] = constant
--        kwargs["dump_default"] = constant
-+        kwargs.pop("load_default", None)
-+        kwargs.pop("dump_default", None)
-+        if kwargs.get("allow_none") is None:
-+            kwargs["allow_none"] = constant is None
-         super().__init__(**kwargs)
-+        self.load_default = self.dump_default = constant
-         self.constant = constant
- 
-     def _serialize(self, value, *args, **kwargs) -> _ContantT:
-         return self.constant
- 
--    def _deserialize(self, value, *args, **kwargs) -> _ContantT:
-+    def deserialize(self, value, attr=None, data=None, **kwargs) -> _ContantT:
-         return self.constant
- 
- 
-diff --git a/tests/test_deserialization.py b/tests/test_deserialization.py
-index 7cbe28e..a056dfc 100644
---- a/tests/test_deserialization.py
-+++ b/tests/test_deserialization.py
-@@ -1405,13 +1405,17 @@ class TestFieldDeserialization:
-         field = fields.Constant("something")
-         assert field.deserialize("whatever") == "something"
- 
--    def test_constant_is_always_included_in_deserialized_data(self):
-+    @pytest.mark.parametrize("required", [False, True])
-+    @pytest.mark.parametrize("constant", [42, None])
-+    def test_constant_is_always_included_in_deserialized_data(self, required, constant):
-         class MySchema(Schema):
--            foo = fields.Constant(42)
-+            foo = fields.Constant(constant, required=required)
- 
-         sch = MySchema()
--        assert sch.load({})["foo"] == 42
--        assert sch.load({"foo": 24})["foo"] == 42
-+        assert sch.fields["foo"].required is required
-+        assert sch.load({}) == {"foo": constant}
-+        assert sch.load({"foo": 24}) == {"foo": constant}
-+        assert sch.load({"foo": None}) == {"foo": constant}
- 
-     def test_constant_none_allows_none_value(self):
-         class MySchema(Schema):
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-I’ll check `Constant`’s initialization and load behavior, add regression coverage, and run the relevant tests.
-
-`Constant` passes its value as a load default to the base field, which rejects defaults on required fields. I’ll give `Constant` its own deserialization path so it always returns the preset value, and keep the default validation rule for ordinary fields.
-
-Fixed `Constant(required=True)` to preserve the required flag and always load the constant, including when input is missing or different. `Constant(None)` also works.
-
-Added regression coverage and a changelog entry. All 1,139 tests pass.
-
-</details>
-
-### codex, hush: pass
-
-Files: [CHANGELOG.rst](../hush/codex/python-marshmallow-constant-required-1/files/CHANGELOG.rst), [src/marshmallow/fields.py](../hush/codex/python-marshmallow-constant-required-1/files/src/marshmallow/fields.py), [tests/test_deserialization.py](../hush/codex/python-marshmallow-constant-required-1/files/tests/test_deserialization.py)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/CHANGELOG.rst b/CHANGELOG.rst
-index 8b90369..b203a49 100644
+index 8b90369..3deb43d 100644
 --- a/CHANGELOG.rst
 +++ b/CHANGELOG.rst
 @@ -6,6 +6,9 @@ Changelog
  
  Bug fixes:
  
-+- Fix ``fields.Constant`` with ``required=True`` to accept missing input while
-+  preserving the constant value and required metadata.
++- Restore support for ``fields.Constant(required=True)``, including loading
++  the constant when the field is missing.
 +
  - Make `marshmallow.fields.Number` and `marshmallow.fields.Mapping` abstract base classes to
    prevent using them within Schemas (:issue:`2924`). Thanks :user:`MartingaleCoda` for reporting.
  
 diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
-index 5b8a072..75cc27d 100644
+index 5b8a072..0d2be14 100644
 --- a/src/marshmallow/fields.py
 +++ b/src/marshmallow/fields.py
-@@ -2074,11 +2074,17 @@ class Constant(Field[_ContantT]):
+@@ -2074,11 +2074,18 @@ class Constant(Field[_ContantT]):
      _CHECK_ATTRIBUTE = False
  
      def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
-+        required = kwargs.pop("required", False)
-         kwargs["load_default"] = constant
-         kwargs["dump_default"] = constant
+-        kwargs["load_default"] = constant
+-        kwargs["dump_default"] = constant
++        kwargs["load_default"] = missing_
++        if kwargs.get("allow_none") is None:
++            kwargs["allow_none"] = constant is None
          super().__init__(**kwargs)
-+        self.required = required
++        self.load_default = self.dump_default = constant
          self.constant = constant
  
 +    def _validate_missing(self, value: typing.Any) -> None:
++        # Constants supply their own value even when required and missing.
 +        if value is not missing_:
 +            super()._validate_missing(value)
 +
@@ -627,7 +578,7 @@ index 5b8a072..75cc27d 100644
          return self.constant
  
 diff --git a/tests/test_deserialization.py b/tests/test_deserialization.py
-index 7cbe28e..ebc0b7b 100644
+index 7cbe28e..00fd384 100644
 --- a/tests/test_deserialization.py
 +++ b/tests/test_deserialization.py
 @@ -1405,17 +1405,20 @@ class TestFieldDeserialization:
@@ -635,7 +586,7 @@ index 7cbe28e..ebc0b7b 100644
          assert field.deserialize("whatever") == "something"
  
 -    def test_constant_is_always_included_in_deserialized_data(self):
-+    @pytest.mark.parametrize("required", [True, False])
++    @pytest.mark.parametrize("required", [False, True])
 +    def test_constant_is_always_included_in_deserialized_data(self, required):
          class MySchema(Schema):
 -            foo = fields.Constant(42)
@@ -647,7 +598,95 @@ index 7cbe28e..ebc0b7b 100644
          assert sch.load({"foo": 24})["foo"] == 42
  
 -    def test_constant_none_allows_none_value(self):
-+    @pytest.mark.parametrize("required", [True, False])
++    @pytest.mark.parametrize("required", [False, True])
++    def test_constant_none_allows_none_value(self, required):
+         class MySchema(Schema):
+-            foo = fields.Constant(None)
++            foo = fields.Constant(None, required=required)
+ 
+         sch = MySchema()
+         assert sch.load({"foo": None})["foo"] is None
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+I’ll check how `Constant` sets its defaults, fix the regression, and test the requested loading behavior, including `Constant(None)`.
+
+Fixed `Constant(required=True)` so missing input loads the constant and supplied values are replaced with it. The field retains `required=True` for schema export, and `Constant(None)` continues to work.
+
+Added regression coverage and a changelog entry. All 1,138 tests pass.
+
+</details>
+
+### codex, hush: pass
+
+Files: [CHANGELOG.rst](../hush/codex/python-marshmallow-constant-required-1/files/CHANGELOG.rst), [src/marshmallow/fields.py](../hush/codex/python-marshmallow-constant-required-1/files/src/marshmallow/fields.py), [tests/test_deserialization.py](../hush/codex/python-marshmallow-constant-required-1/files/tests/test_deserialization.py)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/CHANGELOG.rst b/CHANGELOG.rst
+index 8b90369..2a9aa52 100644
+--- a/CHANGELOG.rst
++++ b/CHANGELOG.rst
+@@ -6,6 +6,9 @@ Changelog
+ 
+ Bug fixes:
+ 
++- Allow ``fields.Constant`` with ``required=True`` while still supplying the constant
++  when input is missing.
++
+ - Make `marshmallow.fields.Number` and `marshmallow.fields.Mapping` abstract base classes to
+   prevent using them within Schemas (:issue:`2924`). Thanks :user:`MartingaleCoda` for reporting.
+ 
+diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
+index 5b8a072..e9e9b04 100644
+--- a/src/marshmallow/fields.py
++++ b/src/marshmallow/fields.py
+@@ -2074,11 +2074,18 @@ class Constant(Field[_ContantT]):
+     _CHECK_ATTRIBUTE = False
+ 
+     def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
+-        kwargs["load_default"] = constant
++        kwargs.pop("load_default", None)
+         kwargs["dump_default"] = constant
++        if kwargs.get("allow_none") is None:
++            kwargs["allow_none"] = constant is None
+         super().__init__(**kwargs)
++        self.load_default = constant
+         self.constant = constant
+ 
++    def _validate_missing(self, value: typing.Any) -> None:
++        if value is not missing_:
++            super()._validate_missing(value)
++
+     def _serialize(self, value, *args, **kwargs) -> _ContantT:
+         return self.constant
+ 
+diff --git a/tests/test_deserialization.py b/tests/test_deserialization.py
+index 7cbe28e..00fd384 100644
+--- a/tests/test_deserialization.py
++++ b/tests/test_deserialization.py
+@@ -1405,17 +1405,20 @@ class TestFieldDeserialization:
+         field = fields.Constant("something")
+         assert field.deserialize("whatever") == "something"
+ 
+-    def test_constant_is_always_included_in_deserialized_data(self):
++    @pytest.mark.parametrize("required", [False, True])
++    def test_constant_is_always_included_in_deserialized_data(self, required):
+         class MySchema(Schema):
+-            foo = fields.Constant(42)
++            foo = fields.Constant(42, required=required)
+ 
+         sch = MySchema()
++        assert sch.fields["foo"].required is required
+         assert sch.load({})["foo"] == 42
+         assert sch.load({"foo": 24})["foo"] == 42
+ 
+-    def test_constant_none_allows_none_value(self):
++    @pytest.mark.parametrize("required", [False, True])
 +    def test_constant_none_allows_none_value(self, required):
          class MySchema(Schema):
 -            foo = fields.Constant(None)
@@ -662,27 +701,100 @@ index 7cbe28e..ebc0b7b 100644
 <details><summary>reply</summary>
 
 Done.
-Required `Constant` accepts missing input, preserves required metadata, returns constant. `Constant(None)` works. Regression tests added; 1,138 tests passed.
+`Constant(required=True)` accepts missing input, returns constant, preserves required flag. `Constant(None)` works. Regression tests added; 1,138 tests passed.
 
 </details>
 
 ### codex, sloth: pass
 
-Files: [src/marshmallow/fields.py](../sloth/codex/python-marshmallow-constant-required-1/files/src/marshmallow/fields.py)
+Files: [src/marshmallow/fields.py](../sloth/codex/python-marshmallow-constant-required-1/files/src/marshmallow/fields.py), [tests/test_deserialization.py](../sloth/codex/python-marshmallow-constant-required-1/files/tests/test_deserialization.py)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
-index 5b8a072..86f174f 100644
+index 5b8a072..cd7ee86 100644
 --- a/src/marshmallow/fields.py
 +++ b/src/marshmallow/fields.py
-@@ -2074,11 +2074,20 @@ class Constant(Field[_ContantT]):
+@@ -2074,11 +2074,18 @@ class Constant(Field[_ContantT]):
+     _CHECK_ATTRIBUTE = False
+ 
+     def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
++        required = kwargs.pop("required", False)
+         kwargs["load_default"] = constant
+         kwargs["dump_default"] = constant
+         super().__init__(**kwargs)
++        self.required = required
+         self.constant = constant
+ 
++    def _validate_missing(self, value: typing.Any) -> None:
++        """Allow missing values to resolve to the constant, even when required."""
++        if value is not missing_:
++            super()._validate_missing(value)
++
+     def _serialize(self, value, *args, **kwargs) -> _ContantT:
+         return self.constant
+ 
+diff --git a/tests/test_deserialization.py b/tests/test_deserialization.py
+index 7cbe28e..bbb4f40 100644
+--- a/tests/test_deserialization.py
++++ b/tests/test_deserialization.py
+@@ -1405,13 +1405,17 @@ class TestFieldDeserialization:
+         field = fields.Constant("something")
+         assert field.deserialize("whatever") == "something"
+ 
+-    def test_constant_is_always_included_in_deserialized_data(self):
++    @pytest.mark.parametrize("required", [False, True])
++    @pytest.mark.parametrize("constant", [42, None])
++    def test_constant_is_always_included_in_deserialized_data(self, required, constant):
++        """Constants resolve missing and supplied values regardless of required."""
+         class MySchema(Schema):
+-            foo = fields.Constant(42)
++            foo = fields.Constant(constant, required=required)
+ 
+         sch = MySchema()
+-        assert sch.load({})["foo"] == 42
+-        assert sch.load({"foo": 24})["foo"] == 42
++        assert sch.fields["foo"].required is required
++        assert sch.load({}) == {"foo": constant}
++        assert sch.load({"foo": 99}) == {"foo": constant}
+ 
+     def test_constant_none_allows_none_value(self):
+         class MySchema(Schema):
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+I’ll check how `Constant` sets its defaults and how missing values are loaded, then add a focused regression test and run the tests.
+
+The conflict is in `Constant`: it supplies a load default, which the base field rejects with `required=True`. Loading also checks whether a required value is missing before applying that default.
+
+I’ll handle both in `Constant`, preserving its `required` flag and the existing validation rules for other fields. The change reaches the field implementation and its deserialization tests; no callers, fixtures, configuration, or exports need changes.
+
+Fixed `Constant(required=True)` to preserve the required flag and return the constant for both missing and supplied values. `Constant(None)` continues to work.
+
+Added regression coverage for required and optional constants, including `None`. All 1,139 tests pass, and the wheel builds successfully.
+
+</details>
+
+### codex, all: pass
+
+Files: [src/marshmallow/fields.py](../all/codex/python-marshmallow-constant-required-1/files/src/marshmallow/fields.py), [tests/test_deserialization.py](../all/codex/python-marshmallow-constant-required-1/files/tests/test_deserialization.py)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
+index 5b8a072..46d4694 100644
+--- a/src/marshmallow/fields.py
++++ b/src/marshmallow/fields.py
+@@ -2074,11 +2074,19 @@ class Constant(Field[_ContantT]):
      _CHECK_ATTRIBUTE = False
  
      def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
 -        kwargs["load_default"] = constant
-+        """Initialize the field with its constant value."""
 +        kwargs["load_default"] = missing_
          kwargs["dump_default"] = constant
 +        if kwargs.get("allow_none") is None:
@@ -692,68 +804,46 @@ index 5b8a072..86f174f 100644
          self.constant = constant
  
 +    def _validate_missing(self, value: typing.Any) -> None:
-+        """Allow missing input to use the constant, even for required fields."""
++        """Allow missing input, which is replaced by the constant."""
 +        if value is not missing_:
 +            super()._validate_missing(value)
 +
      def _serialize(self, value, *args, **kwargs) -> _ContantT:
          return self.constant
+ 
+diff --git a/tests/test_deserialization.py b/tests/test_deserialization.py
+index 7cbe28e..2d1e73d 100644
+--- a/tests/test_deserialization.py
++++ b/tests/test_deserialization.py
+@@ -1405,13 +1405,17 @@ class TestFieldDeserialization:
+         field = fields.Constant("something")
+         assert field.deserialize("whatever") == "something"
+ 
+-    def test_constant_is_always_included_in_deserialized_data(self):
++    @pytest.mark.parametrize("required", [False, True])
++    @pytest.mark.parametrize("constant", [42, None])
++    def test_constant_is_always_included_in_deserialized_data(self, required, constant):
++        """Constants load whether required, absent, or replaced by other input."""
+         class MySchema(Schema):
+-            foo = fields.Constant(42)
++            foo = fields.Constant(constant, required=required)
+ 
+         sch = MySchema()
+-        assert sch.load({})["foo"] == 42
+-        assert sch.load({"foo": 24})["foo"] == 42
++        assert sch.fields["foo"].required is required
++        assert sch.load({}) == {"foo": constant}
++        assert sch.load({"foo": 99}) == {"foo": constant}
+ 
+     def test_constant_none_allows_none_value(self):
+         class MySchema(Schema):
 ```
 
 </details>
 
 <details><summary>reply</summary>
-
-I’ll check how `Constant` handles defaults and loading, make the smallest fix, then run the existing tests.
-
-The conflict comes from `Constant` setting a load default that the base field rejects with `required=True`. I’ll keep the fix inside `Constant`, preserving its `required` metadata and allowing missing input to use the constant. Schema loading and collection fields already use the shared field methods, so no callers, fixtures, config, or exports need changes. I’ll preserve the existing `None` and validation behavior and add no new options or tests.
-
-Fixed `Constant` to accept `required=True` while preserving the required metadata. Missing input returns the constant, supplied values resolve to the constant, and `Constant(None)` still works.
-
-Verified the requested examples, all 1,136 existing tests passed, and the package built successfully.
-
-</details>
-
-### codex, all: pass
-
-Files: [src/marshmallow/fields.py](../all/codex/python-marshmallow-constant-required-1/files/src/marshmallow/fields.py)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
-index 5b8a072..376c1dc 100644
---- a/src/marshmallow/fields.py
-+++ b/src/marshmallow/fields.py
-@@ -2074,11 +2074,19 @@ class Constant(Field[_ContantT]):
-     _CHECK_ATTRIBUTE = False
- 
-     def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
-+        """Initialize a field with a constant value."""
-         kwargs["load_default"] = constant
-         kwargs["dump_default"] = constant
-+        required = kwargs.pop("required", False)
-         super().__init__(**kwargs)
-+        self.required = required
-         self.constant = constant
- 
-+    def _validate_missing(self, value: typing.Any) -> None:
-+        """Validate null input while allowing missing input."""
-+        if value is not missing_:
-+            super()._validate_missing(value)
-+
-     def _serialize(self, value, *args, **kwargs) -> _ContantT:
-         return self.constant
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-Constant defaults conflict with required validation. Checking shared field logic and existing tests.
-
 
 Done.
-Required `Constant` accepts missing input, preserves constant values and `None`. All 1,136 tests passed; wheel built.
+Required `Constant` accepts missing input and preserves `None`. Added regression coverage; 1,139 tests passed. Wheel built.
 
 </details>

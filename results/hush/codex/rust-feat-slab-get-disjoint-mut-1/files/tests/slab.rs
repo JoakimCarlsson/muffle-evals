@@ -734,50 +734,50 @@ fn clone_from() {
 #[test]
 fn get_disjoint_mut_order_and_swap() {
     let mut slab: Slab<_> = (0..5).enumerate().collect();
-    slab.remove(1);
     let [last, first, middle] = slab.get_disjoint_mut([4, 0, 2]).unwrap();
-    assert_eq!((*last, *first, *middle), (4, 0, 2));
     std::mem::swap(last, first);
     *middle = 20;
     assert_eq!((slab[0], slab[2], slab[4]), (4, 20, 0));
-    let [value] = slab.get_disjoint_mut([3]).unwrap();
-    *value = 30;
+    let [only] = slab.get_disjoint_mut([3]).unwrap();
+    *only = 30;
     assert_eq!(slab[3], 30);
 }
 
 #[test]
 fn get_disjoint_mut_errors() {
     use GetDisjointMutError::*;
-    let mut slab: Slab<_> = (0..5).enumerate().collect();
+    let mut slab = Slab::with_capacity(20);
+    for value in 0..5 {
+        slab.insert(value);
+    }
     slab.remove(1);
     assert_eq!(
         slab.get_disjoint_mut([42, 2, 1, 2]),
         Err(OverlappingIndices)
     );
-    assert_eq!(slab.get_disjoint_mut([42, 42]), Err(OverlappingIndices));
     assert_eq!(slab.get_disjoint_mut([1, 1]), Err(OverlappingIndices));
-    assert_eq!(slab.get_disjoint_mut([0, 0]), Err(OverlappingIndices));
+    assert_eq!(slab.get_disjoint_mut([42, 42]), Err(OverlappingIndices));
     assert_eq!(slab.get_disjoint_mut([1, 5]), Err(IndexVacant));
     assert_eq!(slab.get_disjoint_mut([5, 1]), Err(IndexOutOfBounds));
-    assert_eq!(slab.get_disjoint_mut([usize::MAX]), Err(IndexOutOfBounds));
+    assert_eq!(
+        slab.get_disjoint_mut([0, usize::MAX]),
+        Err(IndexOutOfBounds)
+    );
     assert_eq!(slab.get_disjoint_mut([0, 1]), Err(IndexVacant));
-    assert_eq!(slab.get_disjoint_mut([0, 5]), Err(IndexOutOfBounds));
+    assert_eq!(slab.len(), 4);
     assert_eq!(slab[0], 0);
 }
 
 #[test]
 fn get_disjoint_mut_empty_and_zero_sized() {
-    let mut slab = Slab::<()>::with_capacity(10);
+    let mut slab = Slab::<()>::new();
     assert_eq!(slab.get_disjoint_mut([]), Ok([]));
     assert_eq!(
         slab.get_disjoint_mut([0]),
         Err(GetDisjointMutError::IndexOutOfBounds)
     );
-    for _ in 0..3 {
+    for _ in 0..4 {
         slab.insert(());
     }
-    assert_eq!(
-        slab.get_disjoint_mut([2, 0, 1]),
-        Ok([&mut (), &mut (), &mut ()])
-    );
+    assert_eq!(slab.get_disjoint_mut([3, 1, 0, 2]).unwrap().len(), 4);
 }

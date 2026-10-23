@@ -1,9 +1,11 @@
-I’ll check `NumDigits` and its callers, fix the coefficient digit count, then build and run the existing tests.
+I’ll check `NumDigits`, its callers, and the existing tests, then fix the coefficient count and verify the boundary cases.
 
-The error comes from the `int64` fast path: floating-point `Log10` can round incorrectly at powers of ten. I’ll replace it with integer division, which also handles negative coefficients exactly. The larger-coefficient path already checks its estimate against an exact power of ten.
+The error comes from the `int64` fast path: `math.Log10` rounds incorrectly near powers of ten, even when the integer converts exactly to `float64`. I’ll replace it with integer division and extend the existing `NumDigits` test with the reported examples, both signs, and boundary values.
 
-Scope is limited to `NumDigits`. Its power, exponential, and logarithm callers need no changes, and neither do fixtures, configuration, or exports. I won’t add new tests or API options.
+The scope is `NumDigits` and its test. Its callers in power, exponential, and logarithm calculations will inherit the correction; no signatures, fixtures, configuration, or exports need changes.
 
-Fixed [`Decimal.NumDigits`]( /home/jdaddy/.cache/muffle-evals/runs/sloth/codex/go-decimal-numdigits-1/work/decimal.go:1255) by replacing floating-point logarithms with exact integer division for `int64` coefficients. This handles powers of ten, zero, and negative values correctly.
+Fixed `Decimal.NumDigits` by replacing the floating-point fast path with exact integer division. Your examples now return **15, 16, and 17**.
 
-`go build ./...`, existing tests, and `git diff --check` pass.
+Added regression coverage for the examples, negative values, power-of-ten boundaries, and `int64` limits.
+
+Validation passed: `go test ./...`, `go build ./...`, and `git diff --check`.

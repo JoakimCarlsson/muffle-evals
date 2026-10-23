@@ -2,6 +2,7 @@ package humanize
 
 import (
 	"bytes"
+	"errors"
 	"math"
 	"math/big"
 	"strconv"
@@ -140,88 +141,78 @@ func BigComma(bin *big.Int) string {
 	return sign + strings.Join(parts[j:], ",")
 }
 
-// stripCommas validates the integer part of s as produced by Comma
-// (optional leading '-', then either plain digits or digit groups
-// separated by commas) and returns s without commas. The returned
-// index is the position of the first non-integer byte in the result.
-func stripCommas(s string) (string, int, bool) {
-	start := 0
-	if strings.HasPrefix(s, "-") {
-		start = 1
+var errBadComma = errors.New("humanize: invalid comma-formatted number")
+
+// uncomma validates s as the output of Comma or Commaf and returns it
+// with the commas removed. Commas are only allowed in the integer part,
+// in groups of three.
+func uncomma(s string) (string, bool) {
+	sign := ""
+	if s != "" && (s[0] == '-' || s[0] == '+') {
+		sign, s = s[:1], s[1:]
 	}
-	end := start
-	for end < len(s) && (s[end] == ',' || (s[end] >= '0' && s[end] <= '9')) {
-		end++
-	}
-	intPart := s[start:end]
-	if intPart == "" {
-		return "", 0, false
-	}
-	if strings.Contains(intPart, ",") {
-		groups := strings.Split(intPart, ",")
-		if len(groups[0]) < 1 || len(groups[0]) > 3 {
-			return "", 0, false
+	intPart, frac, hasFrac := strings.Cut(s, ".")
+	if hasFrac {
+		if frac == "" {
+			return "", false
 		}
-		for _, g := range groups[1:] {
-			if len(g) != 3 {
-				return "", 0, false
+		for i := 0; i < len(frac); i++ {
+			if frac[i] < '0' || frac[i] > '9' {
+				return "", false
 			}
 		}
-		intPart = strings.Join(groups, "")
 	}
-	out := s[:start] + intPart
-	return out + s[end:], len(out), true
+	groups := strings.Split(intPart, ",")
+	for i, g := range groups {
+		if len(g) == 0 || (i == 0 && len(g) > 3 && len(groups) > 1) || (i > 0 && len(g) != 3) {
+			return "", false
+		}
+		for j := 0; j < len(g); j++ {
+			if g[j] < '0' || g[j] > '9' {
+				return "", false
+			}
+		}
+	}
+	out := sign + strings.Join(groups, "")
+	if hasFrac {
+		out += "." + frac
+	}
+	return out, true
 }
 
 // ParseComma parses a string produced by Comma back into an int64.
-// Plain numbers without commas are accepted too. It returns 0 and an
-// error if s is not a valid integer or does not fit in an int64.
+// Plain numbers without commas are accepted too.
 //
 // e.g. ParseComma("834,142") -> 834142
 func ParseComma(s string) (int64, error) {
-	clean, n, ok := stripCommas(s)
-	if !ok || n != len(clean) {
-		return 0, &strconv.NumError{Func: "ParseComma", Num: s, Err: strconv.ErrSyntax}
+	plain, ok := uncomma(s)
+	if !ok || strings.Contains(plain, ".") {
+		return 0, errBadComma
 	}
-	v, err := strconv.ParseInt(clean, 10, 64)
+	n, err := strconv.ParseInt(plain, 10, 64)
 	if err != nil {
-		return 0, &strconv.NumError{Func: "ParseComma", Num: s, Err: err.(*strconv.NumError).Err}
+		return 0, err
 	}
-	return v, nil
+	return n, nil
 }
 
 // ParseCommaf parses a string produced by Commaf back into a float64.
-// Plain numbers without commas are accepted too. It returns 0 and an
-// error if s is not a valid number.
+// Plain numbers without commas are accepted too, as are the "NaN",
+// "+Inf" and "-Inf" forms that Commaf produces.
 //
 // e.g. ParseCommaf("834,142.32") -> 834142.32
 func ParseCommaf(s string) (float64, error) {
 	switch s {
-	case "NaN":
-		return math.NaN(), nil
-	case "+Inf":
-		return math.Inf(1), nil
-	case "-Inf":
-		return math.Inf(-1), nil
+	case "NaN", "+Inf", "-Inf":
+		return strconv.ParseFloat(s, 64)
 	}
-	syntax := &strconv.NumError{Func: "ParseCommaf", Num: s, Err: strconv.ErrSyntax}
-	clean, n, ok := stripCommas(s)
+	plain, ok := uncomma(s)
 	if !ok {
-		return 0, syntax
+		return 0, errBadComma
 	}
-	if rest := clean[n:]; rest != "" {
-		if rest[0] != '.' || len(rest) < 2 {
-			return 0, syntax
-		}
-		for i := 1; i < len(rest); i++ {
-			if rest[i] < '0' || rest[i] > '9' {
-				return 0, syntax
-			}
-		}
-	}
-	v, err := strconv.ParseFloat(clean, 64)
+	f, err := strconv.ParseFloat(plain, 64)
 	if err != nil {
-		return 0, &strconv.NumError{Func: "ParseCommaf", Num: s, Err: err.(*strconv.NumError).Err}
+		return 0, err
 	}
-	return v, nil
+	return f, nil
 }

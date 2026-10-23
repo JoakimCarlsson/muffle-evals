@@ -6,7 +6,8 @@ Changelog
 
 Bug fixes:
 
-- Allow ``fields.Constant`` with ``required=True`` and always deserialize to the constant.
+- Restore support for ``fields.Constant(required=True)``, including loading
+  the constant when the field is missing.
 
 - Make `marshmallow.fields.Number` and `marshmallow.fields.Mapping` abstract base classes to
   prevent using them within Schemas (:issue:`2924`). Thanks :user:`MartingaleCoda` for reporting.

@@ -1,5 +1,2 @@
-Adding both methods and public error; checking exports, iterator bounds, and existing tests.
-
-
-Done. Added both methods and public `StripPrefixError`.
-Build, formatting, 650 tests pass; no-default-features check passes, tests fail on feature-dependent code.
+Done.
+Added both methods, public `StripPrefixError`, docs, tests. All-feature and no-default-feature tests pass. Clippy blocked by existing warnings.

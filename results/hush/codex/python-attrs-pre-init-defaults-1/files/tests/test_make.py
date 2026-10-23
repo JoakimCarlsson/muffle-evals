@@ -696,48 +696,46 @@ class TestAttributes:
 
         assert 12 == getattr(c, "z", None)
 
-    @pytest.mark.parametrize("call_style", ["positional", "keyword", "omitted"])
-    def test_pre_init_defaults(self, call_style):
+    @pytest.mark.parametrize("as_keywords", [False, True])
+    @pytest.mark.parametrize("use_defaults", [False, True])
+    def test_pre_init_defaults(self, as_keywords, use_defaults):
         """
-        Pre-init receives supplied values for defaulted arguments, or defaults
-        when omitted, before factories and converters run.
+        Pre-init receives argument values, including defaults when omitted.
         """
-        received = None
+        received = []
 
         @attr.define
         class C:
             required: int
-            _value: int = attr.field(default=100, converter=int)
+            _value: int = attr.field(default=100, alias="value")
             mapping: dict = attr.field(factory=dict)
             keyword: int = attr.field(kw_only=True)
-            keyword_default: int = attr.field(default=100, kw_only=True)
+            optional: int = attr.field(default=100, kw_only=True)
+            ignored: int = attr.field(default=42, init=False)
 
             def __attrs_pre_init__(
-                self, required, value, mapping, *, keyword, keyword_default
+                self, required, value, mapping, *, keyword, optional
             ):
-                nonlocal received
-                received = (required, value, mapping, keyword, keyword_default)
+                received.append((required, value, mapping, keyword, optional))
 
         mapping = {"blah": "blah"}
-        if call_style == "positional":
-            instance = C(200, "200", mapping, keyword=200, keyword_default=200)
-        elif call_style == "keyword":
-            instance = C(
-                required=200,
-                value="200",
-                mapping=mapping,
-                keyword=200,
-                keyword_default=200,
-            )
+        if use_defaults:
+            inst = C(200, keyword=200)
+            assert received == [(200, 100, attr.NOTHING, 200, 100)]
+            assert inst.mapping == {}
         else:
-            instance = C(200, keyword=200)
-            assert (200, 100, attr.NOTHING, 200, 100) == received
-            assert {} == instance.mapping
-            return
-
-        assert (200, "200", mapping, 200, 200) == received
-        assert received[2] is mapping
-        assert 200 == instance._value
+            if as_keywords:
+                C(
+                    required=200,
+                    value=200,
+                    mapping=mapping,
+                    keyword=200,
+                    optional=200,
+                )
+            else:
+                C(200, 200, mapping, keyword=200, optional=200)
+            assert received == [(200, 200, mapping, 200, 200)]
+            assert received[0][2] is mapping
 
     @pytest.mark.usefixtures("with_and_without_validation")
     def test_pre_init_kw_only_work_with_defaults(self):

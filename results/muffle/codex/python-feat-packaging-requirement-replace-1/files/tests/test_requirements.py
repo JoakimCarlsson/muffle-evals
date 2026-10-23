@@ -1088,97 +1088,113 @@ def test_pickle_requirement_25_0_format_loads() -> None:
     assert r == Requirement("requests>=2.0")
 
 
-class TestRequirementReplace:
-    @pytest.mark.parametrize(
-        "changes",
-        [
-            {},
-            {"name": "flask"},
-            {"extras": {"tests"}},
-            {"specifier": SpecifierSet(">=3.0")},
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        ({}, 'requests[security]>=2.0; python_version >= "3"'),
+        ({"name": "flask"}, 'flask[security]>=2.0; python_version >= "3"'),
+        (
+            {"extras": {"Other_Extra"}},
+            'requests[Other_Extra]>=2.0; python_version >= "3"',
+        ),
+        (
+            {"specifier": SpecifierSet(">=3")},
+            'requests[security]>=3; python_version >= "3"',
+        ),
+        ({"marker": None}, "requests[security]>=2.0"),
+        (
             {"marker": Marker('extra == "Foo_Bar"')},
-            {"marker": None},
-            {"specifier": SpecifierSet(), "url": "https://example.com/pkg"},
-        ],
+            'requests[security]>=2.0; extra == "foo-bar"',
+        ),
+        (
+            {"url": "https://example.org/pkg", "specifier": SpecifierSet()},
+            'requests[security] @ https://example.org/pkg ; python_version >= "3"',
+        ),
+    ],
+)
+def test_replace(changes: dict[str, object], expected: str) -> None:
+    original = Requirement('requests[security]>=2.0; python_version >= "3"')
+    result = original.__replace__(**changes)
+    assert result == Requirement(expected)
+    assert str(result) == expected
+    assert result is not original
+    assert result.extras is not original.extras
+    assert result.marker is None or result.marker is not original.marker
+    assert str(original) == 'requests[security]>=2.0; python_version >= "3"'
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"name": "not a name!"},
+        {"name": "foo[bar]"},
+        {"name": " foo"},
+        {"extras": {"a,b"}},
+        {"extras": {""}},
+        {"url": "https://example.org ; os_name == 'posix'"},
+        {"url": ""},
+        {"url": "https://example.org"},
+        {"name": None},
+        {"extras": {1}},
+        {"specifier": ">=3"},
+        {"marker": "os_name == 'posix'"},
+    ],
+)
+def test_replace_invalid(changes: dict[str, object]) -> None:
+    with pytest.raises(InvalidRequirement):
+        Requirement("requests>=2").__replace__(**changes)
+
+
+def test_replace_unknown_field() -> None:
+    with pytest.raises(TypeError):
+        Requirement("requests").__replace__(unknown="foo")
+    with pytest.raises(TypeError):
+        Requirement("requests").__replace__("foo")  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("override", [None, False, True])
+@pytest.mark.parametrize("individual", [None, False, True])
+@pytest.mark.parametrize("replace_specifier", [False, True])
+def test_replace_prereleases(
+    override: bool | None, individual: bool | None, replace_specifier: bool
+) -> None:
+    original = Requirement("requests>=2,<4")
+    source = SpecifierSet(">=3,<5") if replace_specifier else original.specifier
+    source.prereleases = override
+    for spec in source:
+        spec.prereleases = individual
+    result = (
+        original.__replace__(specifier=source)
+        if replace_specifier
+        else original.__replace__()
     )
-    def test_replace(self, changes: dict[str, object]) -> None:
-        original = Requirement('requests[security]>=2.0; python_version >= "3"')
-        before = str(original)
-        result = original.__replace__(**changes)
-        assert result is not original
-        assert str(original) == before
-        assert result == Requirement(str(result))
-        for field in ("name", "url", "extras", "specifier", "marker"):
-            assert getattr(result, field) == changes.get(
-                field, getattr(original, field)
-            )
-        assert result.extras is not original.extras
-        assert result.marker is not original.marker
+    assert result.specifier is not source
+    assert result.specifier._prereleases is override
+    for copied, spec in zip(
+        sorted(result.specifier, key=str), sorted(source, key=str), strict=True
+    ):
+        assert copied is not spec
+        assert copied._prereleases is individual
+        copied.prereleases = not individual
+        assert spec._prereleases is individual
+    result.specifier.prereleases = not override
+    assert source._prereleases is override
 
-    @pytest.mark.parametrize(
-        "changes",
-        [
-            {"name": "not a name!"},
-            {"name": "foo[bar]"},
-            {"name": "foo>=1"},
-            {"extras": {"a,b"}},
-            {"extras": {""}},
-            {"url": ""},
-            {"url": "https://example.com/ ; os_name == 'posix'"},
-            {"url": "https://example.com/", "specifier": SpecifierSet(">=1")},
-            {"name": None},
-        ],
-    )
-    def test_invalid(self, changes: dict[str, object]) -> None:
-        with pytest.raises(InvalidRequirement):
-            Requirement("demo").__replace__(**changes)
 
-    def test_unknown_field(self) -> None:
-        with pytest.raises(TypeError, match="unknown"):
-            Requirement("demo").__replace__(unknown="value")
+def test_replace_subclass() -> None:
+    class CustomRequirement(Requirement):
+        def __init__(self, requirement_string: str) -> None:
+            super().__init__(requirement_string)
+            self.initialized_name = self.name
 
-    def test_positional_argument(self) -> None:
-        with pytest.raises(TypeError):
-            Requirement("demo").__replace__("other")  # type: ignore[call-arg]
+    result = CustomRequirement("requests").__replace__(name="flask")
+    assert isinstance(result, CustomRequirement)
+    assert result.initialized_name == "flask"
 
-    @pytest.mark.parametrize("override", [None, False, True])
-    @pytest.mark.parametrize("replace_specifier", [False, True])
-    def test_specifier_copy(
-        self, override: bool | None, replace_specifier: bool
-    ) -> None:
-        original = Requirement("demo>=1,<3")
-        specifier = SpecifierSet(">=2,<4") if replace_specifier else original.specifier
-        specifier.prereleases = override
-        for index, spec in enumerate(specifier):
-            spec.prereleases = bool(index)
-        expected = {str(spec): spec._prereleases for spec in specifier}
-        result = (
-            original.__replace__(specifier=specifier)
-            if replace_specifier
-            else original.__replace__()
-        )
-        assert result.specifier is not specifier
-        assert result.specifier._prereleases is override
-        assert {str(spec): spec._prereleases for spec in result.specifier} == expected
-        for copied in result.specifier:
-            assert all(copied is not source for source in specifier)
-            copied.prereleases = None
-        result.specifier.prereleases = not override
-        assert specifier._prereleases is override
-        assert {str(spec): spec._prereleases for spec in specifier} == expected
 
-    def test_subclass(self) -> None:
-        class CustomRequirement(Requirement):
-            def __init__(self, requirement_string: str) -> None:
-                super().__init__(requirement_string)
-                self.initial_name = self.name
-
-        result = CustomRequirement("demo").__replace__(name="other")
-        assert isinstance(result, CustomRequirement)
-        assert result.initial_name == "other"
-
-    @pytest.mark.skipif(not hasattr(copy, "replace"), reason="Python 3.13+")
-    def test_copy_replace(self) -> None:
-        original = Requirement("demo>=1")
-        result = copy.replace(original, specifier=SpecifierSet(">=2"))  # type: ignore[attr-defined]
-        assert str(result) == "demo>=2"
+def test_copy_replace() -> None:
+    if not hasattr(copy, "replace"):
+        pytest.skip("copy.replace requires Python 3.13+")
+    assert copy.replace(
+        Requirement("requests>=2"), specifier=SpecifierSet(">=3")
+    ) == Requirement("requests>=3")

@@ -46,15 +46,14 @@ export function genInlineTypeImport(
 }
 
 /**
- * Generate a typescript `typeof import()` type, using dot access for valid identifiers.
+ * Generate a typescript `typeof import()` type, optionally for a named export.
  *
  * @group Typescript
  */
 export function genDynamicTypeImport(
   specifier: string,
   name?: string,
-  options: Pick<DynamicImportOptions, "comment" | "attributes"> &
-    ESMCodeGenOptions = {},
+  options: Pick<DynamicImportOptions, "comment" | "attributes"> = {},
 ) {
   const importType = `typeof ${genDynamicImport(specifier, {
     ...options,
@@ -63,9 +62,8 @@ export function genDynamicTypeImport(
   if (name === undefined) {
     return importType;
   }
-  return /^[$A-Z_a-z][\w$]*$/.test(name)
-    ? `${importType}.${name}`
-    : `${importType}[${genString(name, options)}]`;
+  const key = genObjectKey(name);
+  return key === name ? `${importType}.${name}` : `${importType}[${key}]`;
 }
 
 /**

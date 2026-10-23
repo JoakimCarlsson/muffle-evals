@@ -100,6 +100,30 @@ func Commaf(v float64) string {
 	return buf.String()
 }
 
+// ParseComma parses a string produced by Comma back into an int64.
+// It returns 0 and an error if s is not a valid integer.
+//
+// e.g. ParseComma("834,142") -> 834142
+func ParseComma(s string) (int64, error) {
+	v, err := strconv.ParseInt(strings.ReplaceAll(s, ",", ""), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
+// ParseCommaf parses a string produced by Commaf back into a float64.
+// It returns 0 and an error if s is not a valid number.
+//
+// e.g. ParseCommaf("834,142.32") -> 834142.32
+func ParseCommaf(s string) (float64, error) {
+	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
 // CommafWithDigits works like the Commaf but limits the resulting
 // string to the given number of decimal places.
 //
@@ -138,28 +162,4 @@ func BigComma(bin *big.Int) string {
 	}
 	parts[j] = strconv.Itoa(int(b.Int64()))
 	return sign + strings.Join(parts[j:], ",")
-}
-
-// ParseComma parses a string produced by Comma back into an int64.
-// It returns 0 and an error if s is not a valid number.
-//
-// e.g. ParseComma("834,142") -> 834142
-func ParseComma(s string) (int64, error) {
-	v, err := strconv.ParseInt(strings.ReplaceAll(s, ",", ""), 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	return v, nil
-}
-
-// ParseCommaf parses a string produced by Commaf back into a float64.
-// It returns 0 and an error if s is not a valid number.
-//
-// e.g. ParseCommaf("834,142.32") -> 834142.32
-func ParseCommaf(s string) (float64, error) {
-	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
-	if err != nil {
-		return 0, err
-	}
-	return v, nil
 }

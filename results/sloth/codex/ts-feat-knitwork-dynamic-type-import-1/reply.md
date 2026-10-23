@@ -1,7 +1,9 @@
-I’ll check the dynamic import generator, exports, and build setup, then add the helper using the existing rendering utilities.
+I’ll check the existing generators, exports, and tests, then add the helper using the same options and rendering conventions.
 
-The change needs a helper in `src/esm.ts` and a README entry; the existing barrel export will expose it automatically. I’ll reuse `genDynamicImport` for comments, attributes, and quoting, and check identifier syntax for dot access. Existing helpers, fixtures, and config need no changes. No new dependencies or options are needed.
+The change needs a TypeScript generator, tests, and an API documentation entry; the existing barrel export will expose it automatically. I’ll reuse `genDynamicImport` for comments and attributes and leave `genInlineTypeImport` unchanged.
 
-Added and exported `genDynamicTypeImport` with optional names, dot access for valid identifiers, and escaped bracket access otherwise. Comments and attributes use the existing dynamic import renderer. README updated.
+The object-key helper accepts numeric keys, which aren’t valid after a dot, so this helper needs an identifier check of its own. No new dependencies or configuration are needed.
 
-Build, lint, formatting, and all 54 existing tests passed using local tools because `pnpm` was unavailable.
+Added and exported `genDynamicTypeImport` with optional names, dot or bracket access, and shared comment/attributes rendering. Updated API docs and added edge-case tests.
+
+Validation passed: all 70 tests, lint, formatting, typecheck, and build. Used installed binaries because `pnpm` was unavailable.

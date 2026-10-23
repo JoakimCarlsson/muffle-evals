@@ -30,10 +30,20 @@ index b98df69..eece455 100644
          self.byte_pos += advance as u32;
          Some(parse_component(
 diff --git a/time/tests/integration/parse_format_description.rs b/time/tests/integration/parse_format_description.rs
-index 8e99b42..11bf90b 100644
+index 8e99b42..569d051 100644
 --- a/time/tests/integration/parse_format_description.rs
 +++ b/time/tests/integration/parse_format_description.rs
-@@ -1090,3 +1090,31 @@ fn strftime_compound_equivalence(#[case] strftime: &str, #[case] custom: &str) -
+@@ -1027,6 +1027,9 @@ fn rfc_3339() {
+ #[case("%B", format_description!("[month repr:long]"))]
+ #[case("%C", format_description!("[year repr:century]"))]
+ #[case("%d", format_description!("[day]"))]
++#[case("%_d", format_description!("[day padding:space]"))]
++#[case("%-d", format_description!("[day padding:none]"))]
++#[case("%0d", format_description!("[day padding:zero]"))]
+ #[case("%e", format_description!("[day padding:space]"))]
+ #[case("%g", format_description!("[year repr:last_two base:iso_week]"))]
+ #[case("%G", format_description!("[year base:iso_week]"))]
+@@ -1090,3 +1093,29 @@ fn strftime_compound_equivalence(#[case] strftime: &str, #[case] custom: &str) -
  
      Ok(())
  }
@@ -46,22 +56,20 @@ index 8e99b42..11bf90b 100644
 +#[case("prefix %-", 9)]
 +#[case("prefix %0", 9)]
 +#[case("é%_", 4)]
-+#[case("%Y%_", 4)]
-+fn strftime_missing_component(#[case] input: &str, #[case] expected_index: usize) {
-+    assert!(matches!(
-+        format_description::parse_strftime_borrowed(input),
-+        Err(InvalidFormatDescription::Expected {
-+            what: "valid escape sequence",
-+            index,
-+            ..
-+        }) if index == expected_index
-+    ));
-+    assert!(matches!(
-+        format_description::parse_strftime_owned(input),
-+        Err(InvalidFormatDescription::Expected {
-+            what: "valid escape sequence",
-+            index,
-+            ..
-+        }) if index == expected_index
-+    ));
++#[case("%Y%0", 4)]
++#[case("%", 0)]
++fn strftime_escape_error(#[case] input: &str, #[case] expected_index: usize) {
++    for error in [
++        format_description::parse_strftime_borrowed(input).unwrap_err(),
++        format_description::parse_strftime_owned(input).unwrap_err(),
++    ] {
++        assert!(matches!(
++            error,
++            InvalidFormatDescription::Expected {
++                what: "valid escape sequence",
++                index,
++                ..
++            } if index == expected_index
++        ));
++    }
 +}

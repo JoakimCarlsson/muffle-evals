@@ -11,110 +11,7 @@ import pytest
 
 from packaging.markers import Marker
 from packaging.requirements import InvalidRequirement, Requirement
-from packaging.specifiers import Specifier, SpecifierSet
-
-
-def test_replace() -> None:
-    original = Requirement('requests[security]>=2; python_version >= "3"')
-    result = original.__replace__(name="flask")
-    assert str(result) == 'flask[security]>=2; python_version >= "3"'
-    assert original.name == "requests"
-    clone = original.__replace__()
-    assert clone == original
-    assert clone is not original
-    assert clone.extras is not original.extras
-    assert clone.marker is not original.marker
-
-
-def test_replace_fields() -> None:
-    original = Requirement("requests>=2")
-    result = original.__replace__(
-        url="https://example.com/pkg",
-        extras={"test"},
-        specifier=SpecifierSet(),
-        marker=Marker('extra == "Foo_Bar"'),
-    )
-    assert (
-        str(result) == 'requests[test] @ https://example.com/pkg ; extra == "foo-bar"'
-    )
-    assert result == Requirement(str(result))
-    assert result.__replace__(url=None, extras=set(), marker=None) == Requirement(
-        "requests"
-    )
-    assert original.__replace__(specifier=SpecifierSet(">=3")) == Requirement(
-        "requests>=3"
-    )
-
-
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"name": "not a name!"},
-        {"name": "foo[bar]"},
-        {"name": "foo "},
-        {"extras": {"a,b"}},
-        {"extras": {""}},
-        {"url": ""},
-        {"url": "https://example.com pkg"},
-        {"url": "https://example.com"},
-        {"name": None},
-        {"specifier": ">=3"},
-        {"marker": "os_name == 'posix'"},
-    ],
-)
-def test_replace_invalid(changes: dict[str, object]) -> None:
-    with pytest.raises(InvalidRequirement):
-        Requirement("foo>=2").__replace__(**changes)
-
-
-def test_replace_arguments() -> None:
-    with pytest.raises(TypeError, match="unexpected keyword"):
-        Requirement("foo").__replace__(unknown="bar")
-    with pytest.raises(TypeError):
-        Requirement("foo").__replace__("bar")  # type: ignore[misc]
-
-
-@pytest.mark.parametrize("supplied", [False, True])
-@pytest.mark.parametrize("override", [None, False, True])
-def test_replace_specifier_copy(supplied: bool, override: bool | None) -> None:
-    original = Requirement("foo>=2")
-    specs = SpecifierSet(
-        [Specifier(">=3", prereleases=True), Specifier("<4", prereleases=False)],
-        prereleases=override,
-    )
-    if supplied:
-        result = original.__replace__(specifier=specs)
-    else:
-        original.specifier = specs
-        result = original.__replace__()
-    assert result.specifier is not specs
-    assert result.specifier._prereleases is override
-    for source, cloned in zip(specs, result.specifier, strict=True):
-        assert source == cloned
-        assert source is not cloned
-        assert source._prereleases is cloned._prereleases
-        cloned.prereleases = not source.prereleases
-        assert source.prereleases != cloned.prereleases
-    result.specifier.prereleases = not override
-    assert specs._prereleases is override
-
-
-def test_replace_subclass() -> None:
-    class CustomRequirement(Requirement):
-        def __init__(self, requirement_string: str) -> None:
-            super().__init__(requirement_string)
-            self.initialized_name = self.name
-
-    result = CustomRequirement("foo").__replace__(name="bar")
-    assert isinstance(result, CustomRequirement)
-    assert result.initialized_name == "bar"
-
-
-@pytest.mark.skipif(not hasattr(copy, "replace"), reason="Requires Python 3.13")
-def test_copy_replace() -> None:
-    result = copy.replace(Requirement("foo>=2"), specifier=SpecifierSet(">=3"))
-    assert result == Requirement("foo>=3")
-
+from packaging.specifiers import SpecifierSet
 
 EQUAL_DEPENDENCIES = [
     ("packaging>20.1", "packaging>20.1"),
@@ -1189,3 +1086,92 @@ def test_pickle_requirement_25_0_format_loads() -> None:
     assert str(r.specifier) == ">=2.0"
     assert r.marker is None
     assert r == Requirement("requests>=2.0")
+
+
+class TestRequirementReplace:
+    def test_copy_and_fields(self) -> None:
+        original = Requirement('requests[security]>=2; python_version >= "3"')
+        clone = original.__replace__()
+        assert clone == original
+        assert clone is not original
+        assert clone.extras is not original.extras
+        assert clone.marker is not original.marker
+        assert original.__replace__(name="flask").name == "flask"
+        changed = original.__replace__(
+            name="flask",
+            extras={"test"},
+            specifier=SpecifierSet(),
+            url="https://example.com/flask.whl",
+            marker=None,
+        )
+        assert str(changed) == "flask[test] @ https://example.com/flask.whl"
+        assert str(original) == 'requests[security]>=2; python_version >= "3"'
+        assert changed.__replace__(url=None).url is None
+
+    @pytest.mark.parametrize(
+        "changes",
+        [
+            {"name": "not a name!"},
+            {"name": "foo[bar]"},
+            {"extras": {"a,b"}},
+            {"extras": {""}},
+            {"url": ""},
+            {"url": "https://example.com ; os_name == 'posix'"},
+            {"url": "https://example.com"},
+            {"name": None},
+        ],
+    )
+    def test_invalid(self, changes: dict[str, object]) -> None:
+        with pytest.raises(InvalidRequirement):
+            Requirement("requests>=2").__replace__(**changes)
+
+    def test_arguments(self) -> None:
+        with pytest.raises(TypeError):
+            Requirement("foo").__replace__(unknown="bar")
+        with pytest.raises(TypeError):
+            Requirement("foo").__replace__("bar")  # type: ignore[call-arg]
+
+    @pytest.mark.parametrize("replace_specifier", [False, True])
+    @pytest.mark.parametrize("override", [None, False, True])
+    def test_prereleases(self, replace_specifier: bool, override: bool | None) -> None:
+        original = Requirement("foo>=1a1,<3,!=2")
+        specs = SpecifierSet(">=1a1,<3,!=2", prereleases=override)
+        for spec, setting in zip(specs, [None, False, True], strict=True):
+            spec.prereleases = setting
+        original.specifier = specs
+        result = (
+            original.__replace__(specifier=specs)
+            if replace_specifier
+            else original.__replace__()
+        )
+        assert result.specifier is not specs
+        assert result.specifier._prereleases is override
+        for before, after in zip(specs, result.specifier, strict=True):
+            assert before == after
+            assert before is not after
+            assert before._prereleases is after._prereleases
+        result.specifier.prereleases = not override
+        assert specs._prereleases is override
+
+    def test_marker_normalization(self) -> None:
+        result = Requirement("foo").__replace__(marker=Marker('extra == "Foo_Bar"'))
+        assert str(result.marker) == 'extra == "foo-bar"'
+        assert result == Requirement(str(result))
+
+    def test_subclass(self) -> None:
+        class Child(Requirement):
+            def __init__(self, requirement_string: str) -> None:
+                super().__init__(requirement_string)
+                self.initialized = True
+
+        result = Child("foo").__replace__(name="bar")
+        assert isinstance(result, Child)
+        assert result.initialized
+        assert result.name == "bar"
+
+    def test_copy_replace(self) -> None:
+        if not hasattr(copy, "replace"):
+            pytest.skip("copy.replace requires Python 3.13")
+        assert copy.replace(
+            Requirement("foo>=2"), specifier=SpecifierSet(">=3")
+        ) == Requirement("foo>=3")

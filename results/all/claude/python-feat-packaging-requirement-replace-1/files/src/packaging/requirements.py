@@ -3,19 +3,16 @@
 # for complete details.
 from __future__ import annotations
 
-import copy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ._parser import parse_requirement as _parse_requirement
 from ._tokenizer import ParserSyntaxError
 from .markers import Marker, _normalize_extra_values
-from .specifiers import InvalidSpecifier, SpecifierSet
+from .specifiers import InvalidSpecifier, Specifier, SpecifierSet
 from .utils import canonicalize_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
-
-    from typing_extensions import Self
 
 __all__ = [
     "InvalidRequirement",
@@ -25,13 +22,6 @@ __all__ = [
 
 def __dir__() -> list[str]:
     return __all__
-
-
-class _Unset:
-    """Type of the sentinel for fields not passed to ``__replace__``."""
-
-
-_UNSET = _Unset()
 
 
 class InvalidRequirement(ValueError):
@@ -137,49 +127,51 @@ class Requirement:
     def __replace__(
         self,
         *,
-        name: str | _Unset = _UNSET,
-        url: str | None | _Unset = _UNSET,
-        extras: Iterable[str] | _Unset = _UNSET,
-        specifier: SpecifierSet | _Unset = _UNSET,
-        marker: Marker | None | _Unset = _UNSET,
-    ) -> Self:
-        """Return a copy with the given fields replaced.
+        name: str = ...,  # type: ignore[assignment]
+        url: str | None = ...,  # type: ignore[assignment]
+        extras: Iterable[str] = ...,  # type: ignore[assignment]
+        specifier: SpecifierSet = ...,  # type: ignore[assignment]
+        marker: Marker | None = ...,  # type: ignore[assignment]
+    ) -> Requirement:
+        """Return a copy of this requirement with the given fields replaced.
 
-        Fields not passed are kept. The result is validated by parsing its
-        string form, and shares no mutable state with ``self`` or the
-        arguments. Also used by :func:`copy.replace` on Python 3.13+.
+        Fields that are not given are kept. The result is validated and
+        normalized as if its string form had been parsed, and does not share
+        the :class:`~.SpecifierSet` or its specifiers with the inputs. Also
+        used by :func:`copy.replace` on Python 3.13+.
 
         :raises InvalidRequirement: If the result is not a valid requirement,
-            or a value would be read back as something different.
+            or would parse back with different fields than those given.
 
-        .. versionadded:: 26.4
+        .. versionadded:: 26.3
         """
-        new_name = self.name if isinstance(name, _Unset) else name
-        new_url = self.url if isinstance(url, _Unset) else url or None
-        new_extras = self.extras if isinstance(extras, _Unset) else set(extras)
-        new_specifier = self.specifier if isinstance(specifier, _Unset) else specifier
-        new_marker = self.marker if isinstance(marker, _Unset) else marker
-
-        candidate = Requirement.__new__(Requirement)
-        candidate.name = new_name
-        candidate.url = new_url
-        candidate.extras = new_extras
-        candidate.specifier = new_specifier
-        candidate.marker = new_marker
-        result = type(self)("".join(candidate._iter_parts(new_name)))
-
+        fields: dict[str, Any] = {
+            "name": self.name if name is ... else name,
+            "url": self.url if url is ... else url,
+            "extras": set(self.extras if extras is ... else extras),
+            "specifier": self.specifier if specifier is ... else specifier,
+            "marker": self.marker if marker is ... else marker,
+        }
+        candidate = object.__new__(Requirement)
+        for key, value in fields.items():
+            setattr(candidate, key, value)
+        try:
+            result = type(self)(str(candidate))
+        except InvalidSpecifier as e:
+            raise InvalidRequirement(str(e)) from e
         if (
-            result.name != new_name
-            or result.url != new_url
-            or result.extras != new_extras
+            result.name != fields["name"]
+            or result.url != (fields["url"] or None)
+            or result.extras != fields["extras"]
+            or (result.marker is None) != (fields["marker"] is None)
         ):
             raise InvalidRequirement(
-                f"Cannot represent replaced fields as a requirement: {candidate}"
+                f"Replacement values do not round-trip: {str(candidate)!r}"
             )
-
+        source: SpecifierSet = fields["specifier"]
         result.specifier = SpecifierSet(
-            [copy.copy(s) for s in new_specifier],
-            prereleases=new_specifier._prereleases,
+            [Specifier(str(s), prereleases=s._prereleases) for s in source._specs],
+            prereleases=source._prereleases,
         )
         return result
 

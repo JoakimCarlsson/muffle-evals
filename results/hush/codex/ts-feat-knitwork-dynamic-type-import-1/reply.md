@@ -1,2 +1,2 @@
 Done.
-Exported `genDynamicTypeImport` with identifier access, comments, attributes, docs. All 65 tests, lint, formatting, build passed.
+Exported `genDynamicTypeImport` with optional names, dot/bracket access, comments, attributes. Docs added. Lint, 68 tests, build passed.

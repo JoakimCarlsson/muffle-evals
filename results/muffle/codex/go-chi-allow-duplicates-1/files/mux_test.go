@@ -429,7 +429,10 @@ func TestMethodNotAllowed(t *testing.T) {
 }
 
 func TestMethodNotAllowedOverlappingRoutes(t *testing.T) {
-	for _, methods := range [][]string{{http.MethodPost}, {http.MethodPost, http.MethodPut}} {
+	for _, methods := range [][]string{
+		{http.MethodPost},
+		{http.MethodPost, http.MethodPut},
+	} {
 		t.Run(fmt.Sprint(methods), func(t *testing.T) {
 			r := NewRouter()
 			for _, pattern := range []string{
@@ -452,7 +455,7 @@ func TestMethodNotAllowedOverlappingRoutes(t *testing.T) {
 			}
 			allowed := resp.Header().Values("Allow")
 			if len(allowed) != len(methods) {
-				t.Fatalf("expected each allowed method once: want %v, got %v", methods, allowed)
+				t.Fatalf("expected each allowed method once: %v, got %v", methods, allowed)
 			}
 			for _, method := range methods {
 				count := 0

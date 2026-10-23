@@ -3854,7 +3854,7 @@ func TestSetNullValue(t *testing.T) {
 	}
 }
 
-func TestUnmarshalIntegerStringMapKeys(t *testing.T) {
+func TestDecoder_IntegerStringMapKeys(t *testing.T) {
 	for _, key := range []string{"42", "-42", "0", "9223372036854775807", "18446744073709551615"} {
 		t.Run(key, func(t *testing.T) {
 			source := []byte(key + ": 100\n")
@@ -3863,14 +3863,15 @@ func TestUnmarshalIntegerStringMapKeys(t *testing.T) {
 				t.Fatal(err)
 			}
 			if len(got) != 1 || got[key] != uint64(100) {
-				t.Fatalf("unexpected map: %#v", got)
+				t.Fatalf("expected key %q with value 100, got %#v", key, got)
 			}
+
 			var named map[TestString]any
 			if err := yaml.Unmarshal(source, &named); err != nil {
 				t.Fatal(err)
 			}
 			if len(named) != 1 || named[TestString(key)] != uint64(100) {
-				t.Fatalf("unexpected named-key map: %#v", named)
+				t.Fatalf("expected named key %q with value 100, got %#v", key, named)
 			}
 		})
 	}

@@ -81,65 +81,59 @@ describe("objects", () => {
     expect(isDeepEqual({}, {})).toBe(true);
   });
 
-  describe("null prototypes", () => {
-    test("compares querystring.parse results with plain objects", () => {
+  describe("null-prototype objects", () => {
+    test.each([
+      [{}, {}, true],
+      [{ a: 1 }, { a: 1 }, true],
+      [{ a: 1 }, { a: 2 }, false],
+      [{ a: 1 }, {}, false],
+      [{ a: undefined }, { b: undefined }, false],
+      [{ toString: undefined }, { b: undefined }, false],
+    ])(
+      "compares contents in both orders: %j and %j",
+      (data, other, expected) => {
+        const nullPrototype: unknown = Object.assign(Object.create(null), data);
+
+        expect(isDeepEqual(nullPrototype, other)).toBe(expected);
+        expect(isDeepEqual(other, nullPrototype)).toBe(expected);
+        expect(isDeepEqual(other)(nullPrototype)).toBe(expected);
+        expect(isDeepEqual(nullPrototype)(other)).toBe(expected);
+      },
+    );
+
+    test("compares querystring results, including nested values", () => {
       const data = parse("a=1&b=2");
       const other = { a: "1", b: "2" };
 
       expect(isDeepEqual(data, other)).toBe(true);
       expect(isDeepEqual(other, data)).toBe(true);
+      expect(isDeepEqual({ items: [data] }, { items: [other] })).toBe(true);
+      expect(isDeepEqual({ items: [other] }, { items: [data] })).toBe(true);
     });
 
-    test.each([
-      [{}, {}, true],
-      [{ a: 1 }, { a: 1 }, true],
-      [{ a: 1 }, { a: 2 }, false],
-      [{ a: 1 }, { b: 1 }, false],
-      [{ a: 1 }, {}, false],
-      [{ constructor: Object }, { toString: Object }, false],
-    ])("compares %j with %j as %s", (data, other, expected) => {
-      const nullPrototype: unknown = Object.assign(Object.create(null), data);
-
-      expect(isDeepEqual(nullPrototype, other)).toBe(expected);
-      expect(isDeepEqual(other, nullPrototype)).toBe(expected);
-      expect(isDeepEqual(other)(nullPrototype)).toBe(expected);
-      expect(isDeepEqual(nullPrototype)(other)).toBe(expected);
-    });
-
-    test("compares nested objects", () => {
-      const data = { a: [Object.assign(Object.create(null), { b: 1 })] };
-      const other = { a: [{ b: 1 }] };
-
-      expect(isDeepEqual(data, other)).toBe(true);
-      expect(isDeepEqual(other, data)).toBe(true);
-    });
-
-    test.each([
-      [],
-      new Map(),
-      new Set(),
-      new Date(),
-      /a/u,
-      new (class {
-        public a = 1;
-      })(),
-    ])("does not equate null prototypes with instances (%j)", (instance) => {
-      const nullPrototype: unknown = Object.create(null);
-
-      expect(isDeepEqual(nullPrototype, instance)).toBe(false);
-      expect(isDeepEqual(instance, nullPrototype)).toBe(false);
-    });
-
-    test("preserves comparisons between different classes", () => {
-      class First {
-        public a = 1;
+    test("does not equate null-prototype objects with other prototypes", () => {
+      class Example {
+        public value = 1;
       }
-      class Second {
-        public a = 1;
+      class OtherExample {
+        public value = 1;
+      }
+      const data: unknown = Object.create(null);
+
+      for (const other of [
+        [],
+        new Map(),
+        new Set(),
+        new Date(),
+        /test/u,
+        new Example(),
+        Object.create({}),
+      ]) {
+        expect(isDeepEqual(data, other)).toBe(false);
+        expect(isDeepEqual(other, data)).toBe(false);
       }
 
-      expect(isDeepEqual(new First(), new Second())).toBe(false);
-      expect(isDeepEqual(new First(), { a: 1 })).toBe(false);
+      expect(isDeepEqual(new Example(), new OtherExample())).toBe(false);
     });
   });
 

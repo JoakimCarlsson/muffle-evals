@@ -5620,8 +5620,8 @@ func TestUnmarshalEmbeddedInlineTag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Region != "us" || c.Name != "srv1" || c.BsPort != 100 || c.PID != 42 {
-		t.Fatalf("unexpected result: %+v", c)
+	want := Config{Base: Base{Region: "us", Name: "srv1", BsPort: 100}, PID: 42}
+	if c != want {
+		t.Fatalf("got %+v, want %+v", c, want)
 	}
-	_ = c.index
 }

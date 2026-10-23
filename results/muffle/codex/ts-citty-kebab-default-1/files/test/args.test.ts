@@ -100,27 +100,46 @@ describe("args", () => {
     expect(parsed._).toEqual([]);
   });
 
-  it.each(["fooBar", "foo-bar"])("should override defaults using --%s", (name) => {
-    const parsed = parseArgs([`--${name}`, "one"], {
-      fooBar: { type: "enum", options: ["one", "two"], default: "two" },
-    });
+  it.each(["--foo-bar", "--fooBar", "--value", "-f"])(
+    "should override an enum default with %s",
+    (flag) => {
+      const parsed = parseArgs([flag, "one"], {
+        fooBar: {
+          type: "enum",
+          options: ["one", "two"],
+          default: "two",
+          alias: ["value", "f"],
+        },
+      });
 
-    expect(parsed).toEqual({ _: [], fooBar: "one", "foo-bar": "one" });
+      expect(parsed).toEqual({
+        _: [],
+        fooBar: "one",
+        "foo-bar": "one",
+        value: "one",
+        f: "one",
+      });
+    },
+  );
+
+  it.each(["fooBar", "foo-bar"])("should resolve defaults and input for %s", (name) => {
+    const definition: ArgsDef = { [name]: { type: "string", default: "two" } };
+    expect(parseArgs([], definition)).toEqual({ _: [], fooBar: "two", "foo-bar": "two" });
+    expect(parseArgs(["--foo-bar", "one"], definition)).toEqual({
+      _: [],
+      fooBar: "one",
+      "foo-bar": "one",
+    });
   });
 
-  it("should preserve defaults for camelCase arguments when omitted", () => {
-    const parsed = parseArgs([], {
-      fooBar: { type: "enum", options: ["one", "two"], default: "two" },
+  it.each([
+    [false, "--foo-bar", true],
+    [true, "--no-foo-bar", false],
+  ] as const)("should override boolean default %s with %s", (value, flag, expected) => {
+    expect(parseArgs([flag], { fooBar: { type: "boolean", default: value } })).toEqual({
+      _: [],
+      fooBar: expected,
+      "foo-bar": expected,
     });
-
-    expect(parsed).toEqual({ _: [], fooBar: "two", "foo-bar": "two" });
-  });
-
-  it("should validate enum values supplied through kebab-case aliases", () => {
-    expect(() =>
-      parseArgs(["--foo-bar", "three"], {
-        fooBar: { type: "enum", options: ["one", "two"], default: "two" },
-      }),
-    ).toThrow("Invalid value for argument: --fooBar (three)");
   });
 });

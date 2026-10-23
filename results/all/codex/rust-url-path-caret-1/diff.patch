@@ -1,5 +1,5 @@
 diff --git a/url/src/parser.rs b/url/src/parser.rs
-index 27d7cb7..5ff6305 100644
+index 27d7cb7..189be6f 100644
 --- a/url/src/parser.rs
 +++ b/url/src/parser.rs
 @@ -20,7 +20,7 @@ use percent_encoding::{percent_encode, utf8_percent_encode, AsciiSet, CONTROLS};
@@ -11,14 +11,6 @@ index 27d7cb7..5ff6305 100644
  
  /// https://url.spec.whatwg.org/#userinfo-percent-encode-set
  pub(crate) const USERINFO: &AsciiSet = &PATH
-@@ -32,7 +32,6 @@ pub(crate) const USERINFO: &AsciiSet = &PATH
-     .add(b'[')
-     .add(b'\\')
-     .add(b']')
--    .add(b'^')
-     .add(b'|');
- 
- pub(crate) const PATH_SEGMENT: &AsciiSet = &PATH.add(b'/').add(b'%');
 diff --git a/url/tests/expected_failures.txt b/url/tests/expected_failures.txt
 index 8d4407c..2332b2a 100644
 --- a/url/tests/expected_failures.txt
@@ -40,3 +32,37 @@ index 8d4407c..2332b2a 100644
  <data:space                                                                                                                                  #fragment> set hash to <>
  <sc:space    #fragment> set hash to <>
  <data:space  ?query#fragment> set hash to <>
+diff --git a/url/tests/unit.rs b/url/tests/unit.rs
+index 828f797..509705e 100644
+--- a/url/tests/unit.rs
++++ b/url/tests/unit.rs
+@@ -249,6 +249,29 @@ fn new_directory_paths() {
+     }
+ }
+ 
++/// Carets are encoded in hierarchical paths, including path mutations.
++#[test]
++fn path_caret_encoding() {
++    for scheme in &["http", "foo", "file"] {
++        let base = Url::parse(&format!("{}://localhost/", scheme)).unwrap();
++        for (path, expected) in &[("a^b", "a%5Eb"), ("^", "%5E"), ("a%5Eb", "a%5Eb"), ("", "")] {
++            let expected_url = format!("{}{}", base, expected);
++            let input = format!("{}{}", base, path);
++            assert_eq!(Url::parse(&input).unwrap().as_str(), expected_url);
++            assert_eq!(base.join(path).unwrap().as_str(), expected_url);
++            let mut url = base.clone();
++            url.set_path(&format!("/{}", path));
++            assert_eq!(url.as_str(), expected_url);
++        }
++        let mut url = base.clone();
++        url.path_segments_mut().unwrap().push("a^b");
++        assert_eq!(url.as_str(), format!("{}a%5Eb", base));
++    }
++    for input in &["http://localhost/?a^b#c^d", "foo:a^b"] {
++        assert_eq!(Url::parse(input).unwrap().as_str(), *input);
++    }
++}
++
+ #[test]
+ fn path_backslash_fun() {
+     let mut special_url = "http://foobar.com".parse::<Url>().unwrap();

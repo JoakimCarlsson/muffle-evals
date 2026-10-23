@@ -3,13 +3,12 @@
 # for complete details.
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import TYPE_CHECKING
 
 from ._parser import parse_requirement as _parse_requirement
 from ._tokenizer import ParserSyntaxError
 from .markers import Marker, _normalize_extra_values
-from .specifiers import InvalidSpecifier, SpecifierSet
+from .specifiers import InvalidSpecifier, Specifier, SpecifierSet
 from .utils import canonicalize_name
 
 if TYPE_CHECKING:
@@ -125,57 +124,6 @@ class Requirement:
         if self.marker:
             yield f"; {self.marker}"
 
-    def __replace__(self, **changes: object) -> Requirement:
-        """Return a new requirement with the given fields replaced.
-
-        Accepts ``name``, ``url``, ``extras``, ``specifier``, and ``marker``
-        as keyword arguments, using the same types as the corresponding
-        attributes. The result is validated and normalized by parsing it.
-        Invalid or ambiguous field values raise :class:`InvalidRequirement`.
-
-        Supports :func:`copy.replace` on Python 3.13 and later, and can be
-        called directly on earlier Python versions. Specifiers are copied
-        independently, preserving their prerelease overrides.
-        """
-        fields = ("name", "url", "extras", "specifier", "marker")
-        for field in changes:
-            if field not in fields:
-                raise TypeError(f"Unexpected field name: {field!r}")
-
-        # Use a base instance to assemble the string without invoking a
-        # subclass constructor until we have a valid requirement.
-        candidate = Requirement("placeholder")
-        field_types = {
-            "name": (str,),
-            "url": (str, type(None)),
-            "extras": (set,),
-            "specifier": (SpecifierSet,),
-            "marker": (Marker, type(None)),
-        }
-        for field in fields:
-            value = changes.get(field, getattr(self, field))
-            if not isinstance(value, field_types[field]):
-                raise InvalidRequirement(f"Invalid value for {field}: {value!r}")
-            if isinstance(value, set) and not all(isinstance(e, str) for e in value):
-                raise InvalidRequirement(f"Invalid extras: {value!r}")
-            setattr(candidate, field, value)
-
-        parsed = Requirement(str(candidate))
-        # Equality on Requirement canonicalizes names and extras, which would
-        # conceal field boundaries or spelling changed by the round trip.
-        if (
-            parsed.name != candidate.name
-            or parsed.url != candidate.url
-            or parsed.extras != candidate.extras
-            or parsed.specifier != candidate.specifier
-            or parsed.marker != candidate.marker
-        ):
-            raise InvalidRequirement("Requirement fields do not round-trip")
-
-        result = type(self)(str(parsed))
-        result.specifier = deepcopy(candidate.specifier)
-        return result
-
     def __getstate__(self) -> tuple[str, bool | None]:
         # Return the requirement string for compactness and stability, paired
         # with the specifier's explicit prereleases override, which is not
@@ -217,6 +165,62 @@ class Requirement:
 
     def __str__(self) -> str:
         return "".join(self._iter_parts(self.name))
+
+    def __replace__(self, **changes: object) -> Requirement:
+        """Return a new requirement with the given fields replaced.
+
+        Accepts ``name``, ``url``, ``extras``, ``specifier``, and ``marker``
+        with the same types as the corresponding attributes. The result is
+        validated and normalized by parsing, and mutable fields are copied.
+        Specifier prerelease overrides are preserved.
+
+        :raises TypeError: If an unknown field is supplied.
+        :raises InvalidRequirement: If the resulting fields cannot be represented
+            faithfully as a requirement.
+        """
+        unknown = changes.keys() - Requirement.__slots__
+        if unknown:
+            raise TypeError(f"Unexpected field(s): {', '.join(sorted(unknown))}")
+
+        fields = {
+            field: changes.get(field, getattr(self, field))
+            for field in Requirement.__slots__
+        }
+        if not (
+            isinstance(fields["name"], str)
+            and (fields["url"] is None or isinstance(fields["url"], str))
+            and isinstance(fields["extras"], set)
+            and all(isinstance(extra, str) for extra in fields["extras"])
+            and isinstance(fields["specifier"], SpecifierSet)
+            and (fields["marker"] is None or isinstance(fields["marker"], Marker))
+        ):
+            raise InvalidRequirement("Invalid requirement field types")
+
+        candidate = Requirement.__new__(Requirement)
+        for field, value in fields.items():
+            setattr(candidate, field, value)
+
+        parsed = Requirement(str(candidate))
+        if (
+            parsed.name != candidate.name
+            or parsed.url != candidate.url
+            or parsed.extras != candidate.extras
+            or str(parsed.specifier) != str(candidate.specifier)
+            or parsed.marker != candidate.marker
+        ):
+            raise InvalidRequirement("Requirement fields changed during parsing")
+
+        result = type(self)(str(parsed))
+        # Parsing cannot retain explicit overrides. Reconstruct every specifier
+        # so neither the set nor its mutable members are shared with the input.
+        result.specifier = SpecifierSet(
+            (
+                Specifier(str(spec), prereleases=spec._prereleases)
+                for spec in candidate.specifier._specs
+            ),
+            prereleases=candidate.specifier._prereleases,
+        )
+        return result
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}({str(self)!r})>"

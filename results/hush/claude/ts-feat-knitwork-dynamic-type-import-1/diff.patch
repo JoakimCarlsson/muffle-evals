@@ -14,22 +14,27 @@ index 3db6980..d514555 100644
  
  Generate an typescript `typeof import()` statement for default import.
 diff --git a/src/typescript.ts b/src/typescript.ts
-index 27fbbe7..f6a8bef 100644
+index 27fbbe7..dc59e2a 100644
 --- a/src/typescript.ts
 +++ b/src/typescript.ts
-@@ -3,6 +3,8 @@ import { ESMCodeGenOptions, ESMImport, genDynamicImport } from "./esm";
+@@ -1,5 +1,10 @@
+ import { _genStatement } from "./_utils";
+-import { ESMCodeGenOptions, ESMImport, genDynamicImport } from "./esm";
++import {
++  DynamicImportOptions,
++  ESMCodeGenOptions,
++  ESMImport,
++  genDynamicImport,
++} from "./esm";
  import { genString } from "./string";
  import { genObjectKey, wrapInDelimiters } from "./utils";
  
-+const VALID_PROPERTY_RE = /^[$A-Z_a-z][\w$]*$/;
-+
- export type TypeObject = {
-   [key: string]: string | TypeObject;
- };
-@@ -40,6 +42,28 @@ export function genInlineTypeImport(
+@@ -40,6 +45,32 @@ export function genInlineTypeImport(
    })}.${name}`;
  }
  
++const VALID_PROPERTY_NAME_RE = /^[$A-Z_a-z][\w$]*$/;
++
 +/**
 + * Generate a typescript `typeof import()` statement for an optional export name.
 + *
@@ -38,25 +43,27 @@ index 27fbbe7..f6a8bef 100644
 +export function genDynamicTypeImport(
 +  specifier: string,
 +  name?: string,
-+  options: ESMCodeGenOptions & { comment?: string } = {},
++  options: Pick<DynamicImportOptions, "comment" | "attributes" | "assert"> &
++    ESMCodeGenOptions = {},
 +) {
-+  const importType = `typeof ${genDynamicImport(specifier, {
++  const importString = genDynamicImport(specifier, {
 +    ...options,
 +    wrapper: false,
-+  })}`;
-+  if (name === undefined) {
-+    return importType;
-+  }
-+  return VALID_PROPERTY_RE.test(name)
-+    ? `${importType}.${name}`
-+    : `${importType}[${genString(name)}]`;
++  });
++  const accessor =
++    name === undefined
++      ? ""
++      : VALID_PROPERTY_NAME_RE.test(name)
++        ? `.${name}`
++        : `[${genString(name, options)}]`;
++  return `typeof ${importString}${accessor}`;
 +}
 +
  /**
   * Generate typescript object type.
   *
 diff --git a/test/typescript.test.ts b/test/typescript.test.ts
-index 1f32db2..b3cad0f 100644
+index 1f32db2..0c34fc3 100644
 --- a/test/typescript.test.ts
 +++ b/test/typescript.test.ts
 @@ -3,6 +3,7 @@ import {
@@ -67,27 +74,31 @@ index 1f32db2..b3cad0f 100644
    genTypeImport,
    genTypeExport,
  } from "../src";
-@@ -170,3 +171,23 @@ describe("genTypeExport", () => {
+@@ -170,3 +171,27 @@ describe("genTypeExport", () => {
      });
    }
  });
 +
 +describe("genDynamicTypeImport", () => {
-+  it("generates type imports", () => {
-+    expect(genDynamicTypeImport("pkg", undefined)).toBe('typeof import("pkg")');
-+    expect(genDynamicTypeImport("pkg", "foo")).toBe('typeof import("pkg").foo');
-+    expect(genDynamicTypeImport("pkg", "foo-bar")).toBe(
-+      'typeof import("pkg")["foo-bar"]',
-+    );
-+    expect(
-+      genDynamicTypeImport("pkg", "foo", {
-+        comment: 'webpackChunkName: "chunks/dynamic"',
-+      }),
-+    ).toBe(
-+      'typeof import("pkg" /* webpackChunkName: "chunks/dynamic" */).foo',
-+    );
-+    expect(
-+      genDynamicTypeImport("pkg", "foo", { attributes: { type: "json" } }),
-+    ).toBe('typeof import("pkg", { with: { type: "json" } }).foo');
-+  });
++  const tests: Array<{
++    input: Parameters<typeof genDynamicTypeImport>;
++    code: string;
++  }> = [
++    { input: ["pkg", undefined], code: 'typeof import("pkg")' },
++    { input: ["pkg", "foo"], code: 'typeof import("pkg").foo' },
++    { input: ["pkg", "foo-bar"], code: 'typeof import("pkg")["foo-bar"]' },
++    {
++      input: ["pkg", "foo", { comment: 'webpackChunkName: "chunks/dynamic"' }],
++      code: 'typeof import("pkg" /* webpackChunkName: "chunks/dynamic" */).foo',
++    },
++    {
++      input: ["pkg", "foo", { attributes: { type: "json" } }],
++      code: 'typeof import("pkg", { with: { type: "json" } }).foo',
++    },
++  ];
++  for (const t of tests) {
++    it(t.code, () => {
++      expect(genDynamicTypeImport(...t.input)).toBe(t.code);
++    });
++  }
 +});

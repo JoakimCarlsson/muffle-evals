@@ -1,20 +1,16 @@
-Running the full test suite after fixing the backward loop; waiting on it now.
+Adding regression tests next to the existing findLast cases, then running the suite.
 
-`findLast()` and `findLastIndex()` now work inside `{ }` map literals. They also work in array literals, and they work when nothing matches.
+Fixed: `findLast()` and `findLastIndex()` now work inside `{ }` map literals. The full test suite passes (`go test ./...`).
 
-**Cause:** the backward loop in `emitLoopBackwards` (`compiler/compiler.go`) left the loop-condition bool (`index >= 0`) on the stack on every iteration and when the loop ended. A bare `findLast(...)` call hid this, but inside a map literal the stray bool was read as a key, which gave "interface {} is bool, not string".
+**Cause:** the backward loop that `findLast` and `findLastIndex` compile to (`emitLoopBackwards` in `compiler/compiler.go`) never popped its `index >= 0` check. A leftover bool stayed on the VM stack on every iteration and on loop exit. In a map literal, the VM reads the key and value from the stack, so it picked up that stray bool as the key. That is the "interface {} is bool, not string" error. Plain calls only worked because nothing else was reading the stack.
 
-**Fix:** I added an `OpPop` after the condition's `JumpIfFalse` and another at the loop-exit target.
+**Fix:** I added an `OpPop` after the loop-condition jump, on both the continue path and the exit path. The forward loop doesn't have this problem.
 
-I checked these cases with a throwaway test, which I then deleted:
-- `{"r": findLast([1,2,3,4,5], # > 3)}` gives `map[r:5]`.
-- `{"r": findLastIndex([1,2,3,4,5], # > 3)}` gives `map[r:4]`.
-- A predicate that never matches gives `map[r:<nil>]`.
-- `findLastIndex([], ...)` on an empty array gives `map[r:<nil>]`.
-- `[findLast([1,2,3], # > 5), 1]` gives `[<nil> 1]`.
+**Tests:** I added three cases to `expr_test.go` next to the existing `findLast` tests:
+- `findLast` in a map literal
+- `findLastIndex` in a map literal
+- `findLast` in a map literal with no match, which gives `nil`
 
-`go test ./...` passes (55 packages OK). I didn't add a permanent regression test, since you didn't ask for one. Nothing is committed.
+`gofmt -l` lists four files, all existing test files I didn't touch.
 
-That notification is about the first test command, which hung and was stopped at its time limit. It hung because of a stray `cat > /tmp/x` in my command that waited on stdin. I didn't restart it.
-
-The fix and checks I reported are unaffected. I re-ran the throwaway test and the full `go test ./...` in separate commands, and both passed. I deleted the throwaway test file and the stray `/tmp/x`. The only change in the working tree is `compiler/compiler.go`. Nothing is committed.
+I haven't committed anything.

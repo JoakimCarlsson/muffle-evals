@@ -25,8 +25,8 @@ export interface CookieParseOptions {
   filter?(key: string): boolean;
 
   /**
-   * When a cookie name appears more than once, collect all values into an array (in order)
-   * instead of keeping only the first. Names that appear once stay plain strings.
+   * Keep every value of a cookie name that appears more than once, instead of only the first.
+   * Repeated names map to an array of values in order; names that appear once stay plain strings.
    *
    * @default false
    */
@@ -39,9 +39,9 @@ export interface CookieParseOptions {
 export type Cookies = Record<string, string | undefined>;
 
 /**
- * Cookies object when `allowMultiple` is enabled.
+ * Cookies object where repeated names map to an array of values.
  */
-export type MultiCookies = Record<string, string | string[] | undefined>;
+export type CookiesMultiple = Record<string, string | string[] | undefined>;
 
 /**
  * Stringify options.

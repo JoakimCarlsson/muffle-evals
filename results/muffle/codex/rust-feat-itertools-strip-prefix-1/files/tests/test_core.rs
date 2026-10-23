@@ -402,9 +402,9 @@ fn collect_array() {
 #[test]
 fn strip_prefix() {
     it::assert_equal((1..6).strip_prefix([1, 2]).unwrap(), 3..6);
+    it::assert_equal((1..6).strip_prefix([]).unwrap(), 1..6);
     it::assert_equal((1..3).strip_prefix([1, 2]).unwrap(), iter::empty());
-    it::assert_equal((1..3).strip_prefix([]).unwrap(), 1..3);
-    it::assert_equal(iter::empty::<i32>().strip_prefix([]).unwrap(), []);
+    assert!(iter::empty::<i32>().strip_prefix([]).is_ok());
 
     let err: it::StripPrefixError<_, _> = (1..6).strip_prefix([1, 2, 9, 4]).unwrap_err();
     assert_eq!(err.mismatch, (Some(3), 9));
@@ -420,68 +420,41 @@ fn strip_prefix() {
     assert_eq!(err.mismatch, (Some(1), 9));
     it::assert_equal(err.prefix, [2]);
     it::assert_equal(err.iterator, [2]);
-}
 
-#[test]
-fn strip_prefix_chars() {
-    for text in ["", "hello", "héllo", "🦀rust"] {
-        for prefix in ["", "he", "hé", "hello", "hello!", "🦀", "x"] {
-            match (
-                text.chars().strip_prefix(prefix.chars()),
-                text.strip_prefix(prefix),
-            ) {
-                (Ok(rest), Some(expected)) => it::assert_equal(rest, expected.chars()),
-                (Err(_), None) => (),
-                _ => panic!("iterator and str prefix results differ"),
-            }
-        }
-    }
+    it::assert_equal(
+        IntoIterator::into_iter([Some(1), None])
+            .strip_prefix([Some(1)])
+            .unwrap(),
+        [None],
+    );
 }
 
 #[test]
 fn strip_prefix_by() {
     let mut calls = 0;
-    let err = (1..6)
-        .strip_prefix_by([1_u8, 2, 9, 4], |actual, expected| {
+    let err = IntoIterator::into_iter(["a", "bb", "ccc"])
+        .strip_prefix_by([1, 9, 3], |word, len| {
             calls += 1;
-            *actual == i32::from(*expected)
+            word.len() == *len
         })
         .unwrap_err();
-    assert_eq!(calls, 3);
-    assert_eq!(err.mismatch, (Some(3), 9));
-    it::assert_equal(err.iterator, [4, 5]);
-    it::assert_equal(err.prefix, [4]);
-
-    let mut calls = 0;
-    let err = (1..2)
-        .strip_prefix_by([1, 2], |a, b| {
-            calls += 1;
-            a == b
-        })
-        .unwrap_err();
-    assert_eq!(calls, 1);
-    assert_eq!(err.mismatch, (None, 2));
-
-    let rest = (1..4)
-        .strip_prefix_by(["one", "two"], |a, b| {
-            matches!((a, *b), (1, "one") | (2, "two"))
-        })
-        .unwrap();
-    it::assert_equal(rest, [3]);
-
-    let rest = (1..4)
-        .strip_prefix_by([], |_: &i32, _: &()| panic!("empty prefix"))
-        .unwrap();
-    it::assert_equal(rest, 1..4);
+    assert_eq!(calls, 2);
+    assert_eq!(err.mismatch, (Some("bb"), 9));
+    it::assert_equal(err.iterator, ["ccc"]);
+    it::assert_equal(err.prefix, [3]);
+    assert!(iter::empty::<i32>()
+        .strip_prefix_by([1], |_, _| panic!())
+        .is_err());
+    assert!((0..)
+        .strip_prefix_by([], |_: &i32, _: &i32| panic!())
+        .is_ok());
 }
 
 #[test]
-fn strip_prefix_stops_at_first_none() {
-    // Use a non-fused iterator that resumes after returning None.
-    let mut items = IntoIterator::into_iter([Some(1), None, Some(3)]);
-    let source = iter::from_fn(move || items.next().unwrap_or(None));
-    let mut err = source.strip_prefix([1, 2, 3]).err().unwrap();
+fn strip_prefix_does_not_fuse() {
+    let mut source = IntoIterator::into_iter([Some(1), None, Some(2)]);
+    let iter = iter::from_fn(|| source.next().flatten());
+    let mut err = iter.strip_prefix([1, 2]).err().unwrap();
     assert_eq!(err.mismatch, (None, 2));
-    assert_eq!(err.iterator.next(), Some(3));
-    it::assert_equal(err.prefix, [3]);
+    assert_eq!(err.iterator.next(), Some(2));
 }

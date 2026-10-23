@@ -1,5 +1,5 @@
 diff --git a/comma.go b/comma.go
-index 64ce8c9..cec3078 100644
+index 64ce8c9..75ede8a 100644
 --- a/comma.go
 +++ b/comma.go
 @@ -8,6 +8,27 @@ import (
@@ -7,7 +7,7 @@ index 64ce8c9..cec3078 100644
  )
  
 +// ParseComma parses a base-10 integer, ignoring commas.
-+// It returns zero and an error if s is invalid or outside the int64 range.
++// It returns zero and an error if s is invalid or out of range for int64.
 +func ParseComma(s string) (int64, error) {
 +	v, err := strconv.ParseInt(strings.ReplaceAll(s, ",", ""), 10, 64)
 +	if err != nil {
@@ -18,7 +18,7 @@ index 64ce8c9..cec3078 100644
 +
 +// ParseCommaf parses a floating-point number, ignoring commas.
 +// It accepts the special values NaN, +Inf, and -Inf produced by Commaf.
-+// It returns zero and an error if s is invalid or out of range.
++// It returns zero and an error if s is invalid or out of range for float64.
 +func ParseCommaf(s string) (float64, error) {
 +	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
 +	if err != nil {
@@ -32,10 +32,10 @@ index 64ce8c9..cec3078 100644
  //
 diff --git a/parse_comma_test.go b/parse_comma_test.go
 new file mode 100644
-index 0000000..f306bc4
+index 0000000..722884a
 --- /dev/null
 +++ b/parse_comma_test.go
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,63 @@
 +package humanize
 +
 +import (
@@ -44,23 +44,27 @@ index 0000000..f306bc4
 +)
 +
 +func TestParseComma(t *testing.T) {
-+	for _, want := range []int64{0, 1, -1, 10, -10, 999, 1000, -1000, 123456789, math.MinInt64, math.MaxInt64} {
++	for _, want := range []int64{0, 1, -1, 10, -10, 999, 1000, -1000, 123456789, -123456789, math.MinInt64, math.MaxInt64} {
 +		s := Comma(want)
-+		got, err := ParseComma(s)
-+		if err != nil || got != want {
-+			t.Errorf("ParseComma(%q) = %d, %v; want %d, nil", s, got, err, want)
-+		}
-+	}
-+	for _, s := range []string{"10", "-10", "+10"} {
-+		want := int64(10)
-+		if s == "-10" {
-+			want = -10
-+		}
 +		if got, err := ParseComma(s); err != nil || got != want {
 +			t.Errorf("ParseComma(%q) = %d, %v; want %d, nil", s, got, err, want)
 +		}
 +	}
-+	for _, s := range []string{"", "abc", "123a456", "1.2.3", "1.5", ",", "9,223,372,036,854,775,808", "-9,223,372,036,854,775,809"} {
++	for _, tt := range []struct {
++		s    string
++		want int64
++	}{
++		{"10", 10},
++		{"-10", -10},
++		{"+123,456", 123456},
++		{"9223372036854775807", math.MaxInt64},
++		{"-9223372036854775808", math.MinInt64},
++	} {
++		if got, err := ParseComma(tt.s); err != nil || got != tt.want {
++			t.Errorf("ParseComma(%q) = %d, %v; want %d, nil", tt.s, got, err, tt.want)
++		}
++	}
++	for _, s := range []string{"", "abc", "123a456", "1.2.3", "1.5", ",", "1,234a", "9,223,372,036,854,775,808", "-9,223,372,036,854,775,809"} {
 +		if got, err := ParseComma(s); err == nil || got != 0 {
 +			t.Errorf("ParseComma(%q) = %d, %v; want 0 and an error", s, got, err)
 +		}
@@ -68,10 +72,11 @@ index 0000000..f306bc4
 +}
 +
 +func TestParseCommaf(t *testing.T) {
-+	for _, want := range []float64{0, math.Copysign(0, -1), 10, -10, 10.11, 834142.32, -834142.32, math.MaxFloat64, -math.MaxFloat64, math.SmallestNonzeroFloat64, -math.SmallestNonzeroFloat64, math.Inf(1), math.Inf(-1), math.NaN()} {
++	for _, want := range []float64{0, math.Copysign(0, -1), 10.11, -10.11, 1000, 834142.32, -834142.32, math.MaxFloat64, -math.MaxFloat64, math.SmallestNonzeroFloat64, -math.SmallestNonzeroFloat64, math.Inf(1), math.Inf(-1), math.NaN()} {
 +		s := Commaf(want)
 +		got, err := ParseCommaf(s)
-+		if err != nil || math.Float64bits(got) != math.Float64bits(want) && !(math.IsNaN(got) && math.IsNaN(want)) {
++		equal := math.Float64bits(got) == math.Float64bits(want) || (math.IsNaN(got) && math.IsNaN(want))
++		if err != nil || !equal {
 +			t.Errorf("ParseCommaf(%q) = %g, %v; want %g, nil", s, got, err, want)
 +		}
 +	}
@@ -81,14 +86,14 @@ index 0000000..f306bc4
 +	}{
 +		{"10", 10},
 +		{"10.11", 10.11},
-+		{"-10.11", -10.11},
 +		{"-834,142.32", -834142.32},
++		{"123,456,789", 123456789},
 +	} {
 +		if got, err := ParseCommaf(tt.s); err != nil || got != tt.want {
 +			t.Errorf("ParseCommaf(%q) = %g, %v; want %g, nil", tt.s, got, err, tt.want)
 +		}
 +	}
-+	for _, s := range []string{"", "abc", "123a456", "1.2.3", ",", "1e309", "-1e309"} {
++	for _, s := range []string{"", "abc", "123a456", "1.2.3", ",", "1,234a", "1e309", "-1e309"} {
 +		if got, err := ParseCommaf(s); err == nil || got != 0 {
 +			t.Errorf("ParseCommaf(%q) = %g, %v; want 0 and an error", s, got, err)
 +		}

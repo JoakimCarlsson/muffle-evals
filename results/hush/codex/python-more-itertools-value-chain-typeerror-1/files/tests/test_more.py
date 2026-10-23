@@ -5042,16 +5042,22 @@ class NthCombinationWithReplacementTests(TestCase):
 
 class ValueChainTests(TestCase):
     def test_iteration_type_error(self):
-        for values in (
-            map(len, ['ab', 'cde', 5]),
-            (len(value) for value in ['ab', 'cde', 5]),
-        ):
-            with self.subTest(values=values):
-                actual = mi.value_chain(values)
+        def generator():
+            yield 2
+            yield 3
+            raise TypeError('iteration failed')
+
+        for source in (map(len, ['ab', 'cde', 5]), generator()):
+            with self.subTest(source=source):
+                actual = mi.value_chain(source, 'unreached')
                 self.assertEqual(next(actual), 2)
                 self.assertEqual(next(actual), 3)
-                with self.assertRaisesRegex(TypeError, 'has no len'):
+                with self.assertRaises(TypeError):
                     next(actual)
+
+    def test_immediate_iteration_type_error(self):
+        with self.assertRaises(TypeError):
+            list(mi.value_chain(map(len, [5])))
 
     def test_empty(self):
         actual = list(mi.value_chain())

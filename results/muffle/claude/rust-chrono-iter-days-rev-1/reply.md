@@ -1,11 +1,15 @@
-`iter_days` and `iter_weeks` now iterate both ends over the same range, so your example passes. The new and existing date tests and the two iterator doctests pass. I didn't run the full test suite.
+Fix is in and tests pass; I'm doing a last check that the whole library builds and passes.
 
-Both iterators now cover the inclusive range from the start date to `NaiveDate::MAX` and stop when the two ends meet. The changes are in `src/naive/date/mod.rs`, plus tests in `src/naive/date/tests.rs`.
+`iter_days` and `iter_weeks` now work as proper double-ended iterators, and your example passes. The full lib test suite (293 tests), the two `iter_*` doc tests and clippy all pass. I haven't committed anything.
 
-- **`next_back()`:** it now returns `NaiveDate::MAX` for days. For weeks it returns the last date reachable from the start in whole weeks. `len()` agrees with what iteration actually yields.
-- **`iter_days().rev()`:** `.rev()` used to walk backwards from the start date. It now starts at `NaiveDate::MAX`. The old behaviour is gone, not just changed. To go backwards from a date, use `.take(n).rev()`, or `.rev()` from the end of a window.
-- **`NaiveDate::MAX`:** it is now yielded. Before, `next()` stopped one date short of it. At `MAX_YEAR-12-29`, `iter_days().take(4).count()` is now 3, not 2. `iter_weeks` shows the same change.
+**Cause:** the iterator only stored its current date. `next_back` walked backwards from that same date instead of starting at the far end. `len()` was counting towards `NaiveDate::MAX` while `next_back` ignored it.
 
-I added a private `end` field to both iterator structs. Their derived `PartialEq` and `Hash` now include it, and exhausted iterators are normalized so they compare equal. `iter_days` and `iter_weeks` are still `const fn`.
+**Fix (`src/naive/date/mod.rs`):** both iterators now hold an inclusive front and back plus a `done` flag. Forward and backward iteration share one range and stop when they meet.
+- **`iter_days`:** the range is `start..=NaiveDate::MAX`, so `next_back()` returns `NaiveDate::MAX` first.
+- **`iter_weeks`:** the back end is the last start-plus-N-weeks date that doesn't pass `MAX`.
+- **`len()`:** it now matches what iteration actually yields.
 
-I updated the `iter_days` and `iter_weeks` doc examples and the two `*_iterator_limit` tests to the new semantics. I added `test_iterators_double_ended`, which covers your example, both ends meeting, and `MAX` as the start.
+**Behaviour changes:**
+- **`MAX` is now yielded:** the old forward iteration silently dropped `NaiveDate::MAX` for days, and the last in-range week date for weeks. So `NaiveDate::from_ymd_opt(MAX_YEAR, 12, 29).iter_days().take(4)` now gives 3 items, not 2.
+- **`rev()` semantics:** `date.iter_days().rev()` used to walk backwards from `date`. It now starts from `MAX`. To go backwards from a date, use `take(n).rev()` as in your example.
+- **Docs and tests:** I updated the doc examples on `iter_days` and `iter_weeks` that relied on the old `rev()` behaviour. I also changed `test_day_iterator_limit` and `test_week_iterator_limit` to the new counts, and added `test_day_iterator_rev` and `test_week_iterator_rev`. They cover your reproduction, front and back meeting, and the `MAX` edge cases.

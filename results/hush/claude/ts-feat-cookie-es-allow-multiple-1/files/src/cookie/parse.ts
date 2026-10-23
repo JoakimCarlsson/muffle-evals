@@ -3,7 +3,7 @@
 // Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
 // Last sync: v1.1.1 (e264dfa)
 
-import type { CookieParseOptions, Cookies, MultiCookies, SetCookie } from "./types.ts";
+import type { CookieParseOptions, Cookies, CookiesMultiple, SetCookie } from "./types.ts";
 
 /**
  * RegExp to match max-age-value in RFC 6265 sec 5.6.2
@@ -20,14 +20,15 @@ const NullObject = /* @__PURE__ */ (() => {
  * Parse a `Cookie` header.
  *
  * Parse the given cookie header string into an object
- * The object has the various cookies as keys(names) => values.
- * By default the first value of a repeated name wins; with `allowMultiple`
- * repeated names map to an array of all values in order.
+ * The object has the various cookies as keys(names) => values
  */
-export function parse(str: string, options: CookieParseOptions & { allowMultiple: true }): MultiCookies;
+export function parse(
+  str: string,
+  options: CookieParseOptions & { allowMultiple: true },
+): CookiesMultiple;
 export function parse(str: string, options?: CookieParseOptions): Cookies;
-export function parse(str: string, options?: CookieParseOptions): Cookies | MultiCookies {
-  const obj: MultiCookies = new NullObject();
+export function parse(str: string, options?: CookieParseOptions): Cookies | CookiesMultiple {
+  const obj: CookiesMultiple = new NullObject();
   const len = str.length;
   // RFC 6265 sec 4.1.1, RFC 2616 2.2 defines a cookie name consists of one char minimum, plus '='.
   if (len < 2) return obj;
@@ -58,7 +59,8 @@ export function parse(str: string, options?: CookieParseOptions): Cookies | Mult
     if (existing === undefined) {
       obj[key] = dec(valueSlice(str, eqIdx + 1, endIdx));
     } else if (options?.allowMultiple) {
-      const value = dec(valueSlice(str, eqIdx + 1, endIdx));
+      // keep every value in order
+      const value = dec(valueSlice(str, eqIdx + 1, endIdx)) as string;
       if (Array.isArray(existing)) existing.push(value);
       else obj[key] = [existing, value];
     }

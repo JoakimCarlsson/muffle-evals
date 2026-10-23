@@ -1,9 +1,9 @@
-Dedupe in the shared handler with a bitmask-free seen set (works for any Go version).
+Add a test after TestMethodNotAllowed.
 
-The 405 `Allow` header now lists each method once. I haven't run your four-route example to see the new output. The build passes and the existing tests pass. I didn't add a test, since you didn't ask for one.
+The 405 `Allow` header now lists each method once. Your example returns `Allow: [POST]`, and `go test .` passes.
 
-The cause is that the router collects allowed methods from every route that matches the path. Overlapping wildcard routes each add their own copy of `POST`. I fixed it in `methodNotAllowedHandler` in `mux.go`, which now skips any method it has already written. That is the one place every 405 response goes through.
+The router collects allowed methods from every overlapping wildcard route it visits, so the same method gets added several times. I removed the duplicates where the header is written, in `methodNotAllowedHandler` in `mux.go`. I left the collection in `tree.go` alone.
 
-The order of methods in the header is still random, as it was before, because they come from a map.
+I added `TestMethodNotAllowedNoDuplicateAllow` in `mux_test.go`, which uses the four routes from your report. I ran only the root package tests, not the `middleware` package or the rest of the repo.
 
-I made no git commit.
+I didn't commit anything.

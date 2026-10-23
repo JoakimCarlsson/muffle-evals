@@ -1,2 +1,5 @@
+Fix shared argument metavar formatting; check Choice, DateTime, required arguments, and tests.
+
+
 Done.
-`Argument.make_metavar` skips duplicate brackets. Choice/DateTime help verified; 1656 tests passed; wheel built.
+Optional Choice/DateTime arguments avoid double brackets; required arguments preserved. Regression tests added. 1664 tests passed; wheel built.

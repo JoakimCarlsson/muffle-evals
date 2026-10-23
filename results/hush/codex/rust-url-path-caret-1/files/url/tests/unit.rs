@@ -48,22 +48,6 @@ use wasm_bindgen_test::{wasm_bindgen_test as test, wasm_bindgen_test_configure};
 wasm_bindgen_test_configure!(run_in_browser);
 
 #[test]
-fn test_caret_in_path() {
-    for base in ["http://localhost/", "foo://localhost/", "file:///"] {
-        let mut url = Url::parse(&format!("{}a^b?q^r#s^t", base)).unwrap();
-        assert_eq!(url.as_str(), format!("{}a%5Eb?q^r#s^t", base));
-        assert_eq!(url.join("c^d").unwrap().path(), "/c%5Ed");
-
-        url.set_path("/e^f");
-        assert_eq!(url.path(), "/e%5Ef");
-
-        url.path_segments_mut().unwrap().push("g^h");
-        assert_eq!(url.path(), "/e%5Ef/g%5Eh");
-    }
-    assert_eq!(Url::parse("foo:a^b").unwrap().as_str(), "foo:a^b");
-}
-
-#[test]
 fn size() {
     use core::mem::size_of;
     assert_eq!(size_of::<Url>(), size_of::<Option<Url>>());
@@ -262,6 +246,23 @@ fn new_directory_paths() {
         let url = Url::from_directory_path(Path::new(r"C:\foo\bar")).unwrap();
         assert_eq!(url.host(), None);
         assert_eq!(url.path(), "/C:/foo/bar/");
+    }
+}
+
+#[test]
+fn path_caret_encoding() {
+    for base in &["http://localhost/", "thing://localhost/", "file:///"] {
+        let expected = format!("{}a%5Eb?c^d#e^f", base);
+        let mut url = Url::parse(&format!("{}a^b?c^d#e^f", base)).unwrap();
+        assert_eq!(url.as_str(), expected);
+
+        url.set_path("/a^b");
+        assert_eq!(url.as_str(), expected);
+
+        url.path_segments_mut().unwrap().clear().push("a^b");
+        assert_eq!(url.as_str(), expected);
+
+        assert_eq!(url.join("a^b").unwrap().path(), "/a%5Eb");
     }
 }
 

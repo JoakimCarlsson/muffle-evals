@@ -16,54 +16,39 @@ index 37cd500..48c3601 100644
  		}
  		w.WriteHeader(405)
 diff --git a/mux_test.go b/mux_test.go
-index 3e3b18f..177d2c2 100644
+index 3e3b18f..16310dd 100644
 --- a/mux_test.go
 +++ b/mux_test.go
-@@ -428,6 +428,50 @@ func TestMethodNotAllowed(t *testing.T) {
+@@ -428,6 +428,35 @@ func TestMethodNotAllowed(t *testing.T) {
  	})
  }
  
 +func TestMethodNotAllowedOverlappingRoutes(t *testing.T) {
-+	for _, methods := range [][]string{{"POST"}, {"POST", "PUT"}} {
-+		t.Run(fmt.Sprint(methods), func(t *testing.T) {
-+			r := NewRouter()
-+			for _, pattern := range []string{
-+				"/article/1-2-3",
-+				"/article/{a}",
-+				"/article/{b}-{c}",
-+				"/article/{b}-{c}-{d}",
-+			} {
-+				for _, method := range methods {
-+					r.MethodFunc(method, pattern, func(w http.ResponseWriter, r *http.Request) {
-+						w.WriteHeader(http.StatusOK)
-+					})
-+				}
-+			}
++	r := NewRouter()
++	handler := func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(http.StatusOK)
++	}
++	for _, pattern := range []string{
++		"/article/1-2-3",
++		"/article/{a}",
++		"/article/{b}-{c}",
++		"/article/{b}-{c}-{d}",
++	} {
++		r.Post(pattern, handler)
++	}
++	r.Put("/article/{a}", handler)
 +
-+			// Repeat requests to verify that each response gets its own Allow header.
-+			for i := 0; i < 2; i++ {
-+				resp := httptest.NewRecorder()
-+				r.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/article/1-2-3", nil))
-+				if resp.Code != http.StatusMethodNotAllowed {
-+					t.Fatalf("status = %d, want %d", resp.Code, http.StatusMethodNotAllowed)
-+				}
-+				allowed := resp.Header().Values("Allow")
-+				if len(allowed) != len(methods) {
-+					t.Fatalf("Allow = %v, want each of %v once", allowed, methods)
-+				}
-+				for _, method := range methods {
-+					count := 0
-+					for _, value := range allowed {
-+						if value == method {
-+							count++
-+						}
-+					}
-+					if count != 1 {
-+						t.Fatalf("Allow = %v, want %s once", allowed, method)
-+					}
-+				}
-+			}
-+		})
++	for i := 0; i < 2; i++ {
++		resp := httptest.NewRecorder()
++		r.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/article/1-2-3", nil))
++		if resp.Code != http.StatusMethodNotAllowed {
++			t.Fatalf("expected status 405, got %d", resp.Code)
++		}
++		allowed := resp.Header().Values("Allow")
++		if len(allowed) != 2 || !((allowed[0] == "POST" && allowed[1] == "PUT") ||
++			(allowed[0] == "PUT" && allowed[1] == "POST")) {
++			t.Fatalf("expected POST and PUT exactly once, got %v", allowed)
++		}
 +	}
 +}
 +

@@ -1,3 +1,3 @@
-Dedupe at append via helper.
+Dedupe at the handler, single point.
 
-Done. Added `Context.addMethodAllowed` in `context.go`, which skips methods already recorded. Both append sites in `tree.go` now call it. Build and existing tests pass. I didn't run your repro or add a test.
+Done. `methodNotAllowedHandler` in `mux.go` now skips methods it already added, so `Allow` lists each method once. I added `TestMethodNotAllowedNoDuplicateAllow` for your example, and `go test .` passes. Nothing committed.

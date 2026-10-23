@@ -259,7 +259,7 @@ const IMPORT_NAMED_TYPE_RE =
  * @example `export const num = 1, str = 'hello'; export class Example {}`
  */
 export const EXPORT_DECAL_RE =
-  /\bexport\s+(?<declaration>(?:async function\s*\*?|function\s*\*?|let|const enum|const|enum|var|class))\s+\*?(?<name>[\w$]+)(?<extraNames>.*,\s*[\s\w:[\]{}]*[\w$\]}]+)*(?=(?<extraTail>.*))/g;
+  /\bexport\s+(?<declaration>(?:async function\s*\*?|function\s*\*?|let|const enum|const|enum|var|class))\s+\*?(?<name>[\w$]+)(?<extraNames>.*,\s*[\s\w:[\]{}]*[\w$\]}]+)*/g;
 /**
  * Regular expression to match export declarations specifically for types, interfaces, and type aliases in TypeScript.
  * @example `export type Result = { success: boolean; }; export interface User { name: string; age: number; };`
@@ -395,6 +395,25 @@ export function parseTypeImport(
  * @param {string} extraNamesStr - The string containing the extra variable declarations to parse.
  * @returns {string[]} An array of variable names extracted from the declaration list.
  */
+/**
+ * Finds the `>` closing the generic type arguments opened at `start`, if they are
+ * followed by a call, so comparisons such as `a<b, c = 1` are not mistaken for generics.
+ * Returns -1 when there is no such call; input cut off inside the arguments counts as generic.
+ */
+function _findGenericEnd(code: string, start: number): number {
+  let depth = 0;
+  for (let i = start; i < code.length; i++) {
+    if (code[i] === "<") {
+      depth++;
+    } else if (code[i] === ">" && code[i - 1] !== "=" && --depth === 0) {
+      return /^\s*\(/.test(code.slice(i + 1)) ? i : -1;
+    } else if (code[i] === ";" || code[i] === "\n") {
+      return -1;
+    }
+  }
+  return code.length;
+}
+
 function _extractExtraNames(extraNamesStr: string): string[] {
   const names: string[] = [];
   let depth = 0;
@@ -441,17 +460,19 @@ function _extractExtraNames(extraNamesStr: string): string[] {
       continue;
     }
     if (inTypeAnnotation && char === ">" && angleDepth > 0) {
-      angleDepth--;
+      if (extraNamesStr[i - 1] !== "=") {
+        angleDepth--;
+      }
       continue;
     }
-
-    // Skip generic type arguments of calls like `new Map<string, X>()`
-    if (char === "<" && !inTypeAnnotation) {
-      const generic = extraNamesStr
-        .slice(i)
-        .match(/^<[\w$\s,.[\]|&<>?:'"{}]*?>(?=\s*\()/);
-      if (generic) {
-        i += generic[0].length - 1;
+    if (
+      !inTypeAnnotation &&
+      char === "<" &&
+      /[A-Z_a-z$]/.test(extraNamesStr[i - 1] || "")
+    ) {
+      const end = _findGenericEnd(extraNamesStr, i);
+      if (end > 0) {
+        i = end;
         continue;
       }
     }
@@ -495,15 +516,16 @@ export function findExports(code: string): ESMExport[] {
     if (/^export\s+(?:async\s+)?function/.test(declaredExport.code)) {
       continue;
     }
-    const { extraNames: extraNamesStr, extraTail } = declaredExport as any;
+    const extraNamesStr = (declaredExport as any).extraNames as
+      | string
+      | undefined;
     if (extraNamesStr) {
-      const extraNames = _extractExtraNames(extraNamesStr + extraTail);
+      const extraNames = _extractExtraNames(extraNamesStr);
       if (extraNames.length > 0) {
         declaredExport.names = [declaredExport.name, ...extraNames];
       }
     }
     delete (declaredExport as any).extraNames;
-    delete (declaredExport as any).extraTail;
   }
 
   // Find named exports

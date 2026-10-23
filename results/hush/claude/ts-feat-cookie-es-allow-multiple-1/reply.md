@@ -1,1 +1,1 @@
-Done. `parse()` now takes `allowMultiple`. Repeated names become ordered arrays and single names stay strings. Return type is `MultiCookies` when the option is `true`. All 99 tests pass, including new ones. `tsc` only reports an existing `esModuleInterop` config error.
+Done. `parse()` now takes `allowMultiple`, with a `CookiesMultiple` return type via overload. Tests pass (98). `tsc` only reports an existing tsconfig deprecation error, which I left alone. Nothing committed.

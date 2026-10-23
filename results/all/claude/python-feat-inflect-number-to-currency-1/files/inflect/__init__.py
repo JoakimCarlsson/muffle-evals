@@ -14,7 +14,7 @@ methods:
     compare compare_nouns compare_verbs compare_adjs
     present_participle
     ordinal
-    number_to_words number_to_currency
+    number_to_words
     join
     defnoun defverb defadj defa defan
 
@@ -36,7 +36,7 @@ ARTICLES:
     classical inflect num a an
 
 NUMERICAL:
-    ordinal number_to_words number_to_currency
+    ordinal number_to_words
 
 USER_DEFINED:
     defnoun defverb defadj defa defan
@@ -61,7 +61,7 @@ import functools
 import itertools
 import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
+from decimal import ROUND_HALF_UP, Context, Decimal, InvalidOperation
 from numbers import Number
 from re import Match
 from typing import (
@@ -4053,26 +4053,28 @@ class engine:
     @typechecked
     def number_to_currency(self, num: Number | str, andword: str = "and") -> str:
         """
-        Return an amount in words with the cents as a fraction of 100.
+        Return an amount as check-style words with the cents as a fraction of 100.
 
         The amount is rounded half up to the cent, going by the number as written.
-        Raise BadNumValueError if num is not a finite number.
+        andword: as for number_to_words; the "and" before the cents is always used.
 
-        >>> engine().number_to_currency(100_020.56)
-        'one hundred thousand and twenty and 56/100'
+        >>> engine().number_to_currency(1234.5)
+        'one thousand, two hundred and thirty-four and 50/100'
+
+        Raise BadNumValueError for anything that is not a finite number.
         """
         try:
-            amount = Decimal(str(num).strip())
+            amount = num if isinstance(num, Decimal) else Decimal(str(num))
+            if not amount.is_finite():
+                raise BadNumValueError
+            context = Context(prec=max(28, amount.adjusted() + 4), rounding=ROUND_HALF_UP)
+            rounded = amount.quantize(Decimal("0.01"), context=context)
         except InvalidOperation as err:
             raise BadNumValueError from err
-        if not amount.is_finite():
-            raise BadNumValueError
-        with localcontext() as ctx:
-            ctx.prec = len(amount.as_tuple().digits) + max(amount.adjusted(), 0) + 4
-            total_cents = int((amount * 100).to_integral_value(ROUND_HALF_UP))
-        whole, cents = divmod(abs(total_cents), 100)
+        whole = int(rounded)
+        cents = abs(int(rounded.scaleb(2, context=context))) % 100
+        sign = "minus " if rounded < 0 and not whole else ""
         words = self.number_to_words(whole, andword=andword)
-        sign = "minus " * (total_cents < 0)
         return f"{sign}{words} and {cents:02d}/100"
 
     @staticmethod

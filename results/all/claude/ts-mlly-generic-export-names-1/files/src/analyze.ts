@@ -387,26 +387,23 @@ export function parseTypeImport(
 }
 
 /**
- * Finds the end of generic type arguments of a call such as `foo<A, B>(x)`.
- * Comparisons like `1<2, b = 3` have no closing `>` followed by `(`, so they are not matched.
+ * Finds the `>` closing a generic argument list opened at `start`, only when a
+ * call follows it (`foo<A, B>(...)`), so comparisons like `1<2, b` are not matched.
  * @param {string} str - The declaration list.
  * @param {number} start - Index of the opening `<`.
- * @returns {number} Index of the closing `>`, or -1 if this is not a generic call.
+ * @returns {number} Index of the closing `>`, or -1 when this is not a generic call.
  */
 function _findGenericCallEnd(str: string, start: number): number {
-  let angleDepth = 0;
+  let nesting = 0;
   for (let i = start; i < str.length; i++) {
     const char = str[i];
-    if (char === "=" && str[i + 1] === ">") {
-      i++;
-    } else if (char === "<") {
-      angleDepth++;
-    } else if (char === ">") {
-      angleDepth--;
-      if (angleDepth === 0) {
+    if (char === "<") {
+      nesting++;
+    } else if (char === ">" && str[i - 1] !== "=") {
+      if (--nesting === 0) {
         return /^\s*\(/.test(str.slice(i + 1)) ? i : -1;
       }
-    } else if (!/[\w$\s,.[\]|&?:'"(){};]/.test(char)) {
+    } else if (char === ";" || (char === "=" && str[i + 1] !== ">")) {
       return -1;
     }
   }
@@ -420,13 +417,9 @@ function _findGenericCallEnd(str: string, start: number): number {
  * For `export const foo = fn('a', bar), baz = 2`, only `baz` should be
  * extracted — commas inside `fn(...)` or `Handler<A, B>` are not declaration separators.
  * @param {string} extraNamesStr - The string containing the extra variable declarations to parse.
- * @param {number} matchedLength - Only separators before this index count; the rest is lookahead to close generics.
  * @returns {string[]} An array of variable names extracted from the declaration list.
  */
-function _extractExtraNames(
-  extraNamesStr: string,
-  matchedLength = extraNamesStr.length,
-): string[] {
+function _extractExtraNames(extraNamesStr: string): string[] {
   const names: string[] = [];
   let depth = 0;
   let angleDepth = 0;
@@ -467,24 +460,25 @@ function _extractExtraNames(
     ) {
       inTypeAnnotation = false;
     }
-    if (char === "=" && extraNamesStr[i + 1] === ">") {
-      i++;
-      continue;
-    }
     if (inTypeAnnotation && char === "<") {
       angleDepth++;
       continue;
     }
-    if (char === "<" && depth === 0) {
+    if (
+      inTypeAnnotation &&
+      char === ">" &&
+      extraNamesStr[i - 1] !== "=" &&
+      angleDepth > 0
+    ) {
+      angleDepth--;
+      continue;
+    }
+    if (!inTypeAnnotation && char === "<") {
       const end = _findGenericCallEnd(extraNamesStr, i);
       if (end > 0) {
         i = end;
         continue;
       }
-    }
-    if (inTypeAnnotation && char === ">" && angleDepth > 0) {
-      angleDepth--;
-      continue;
     }
 
     // Track bracket nesting
@@ -495,12 +489,7 @@ function _extractExtraNames(
     }
 
     // A comma at depth 0 (outside generics) is a real declaration separator
-    if (
-      char === "," &&
-      depth === 0 &&
-      angleDepth === 0 &&
-      i < matchedLength
-    ) {
+    if (char === "," && depth === 0 && angleDepth === 0) {
       // Extract the identifier that follows this comma
       const rest = extraNamesStr.slice(i + 1);
       const match = rest.match(/^\s*([\w$]+)/);
@@ -535,12 +524,10 @@ export function findExports(code: string): ESMExport[] {
       | string
       | undefined;
     if (extraNamesStr) {
-      const lookahead = code
-        .slice(declaredExport.end)
-        .match(/^[^\n;]*/)![0];
+      const lineEnd = code.indexOf("\n", declaredExport.end);
       const extraNames = _extractExtraNames(
-        extraNamesStr + lookahead,
-        extraNamesStr.length,
+        extraNamesStr +
+          code.slice(declaredExport.end, lineEnd === -1 ? undefined : lineEnd),
       );
       if (extraNames.length > 0) {
         declaredExport.names = [declaredExport.name, ...extraNames];

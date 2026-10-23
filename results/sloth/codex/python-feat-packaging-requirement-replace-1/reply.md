@@ -1,9 +1,13 @@
-I’ll check how `Requirement` is parsed and copied, add `__replace__`, then run the existing tests and build checks.
+I’ll check how requirements are parsed and tested, then add `__replace__` with validation and independent specifier copies.
 
-The change needs to reach `Requirement`, its API documentation, and the changelog; no callers, exports, fixtures, or configuration need changes. I’ll follow the existing `Version.__replace__` keyword-only API, reparse to validate the result, and copy specifiers separately to preserve their prerelease settings. No new options or dependencies are needed.
+The change needs to reach `Requirement`, its existing tests, and the requirements documentation; no caller, export, fixture, or configuration changes are needed. I’ll reuse parsing for validation, check that fields don’t get reinterpreted, and copy specifiers separately to preserve prerelease settings. No new dependency or option is needed.
 
-The implementation, lint, type check, and package build pass. The test suite initially stopped because test dependencies were missing; those are installed and the suite is running again. I’m also checking field-injection rejection, mutable-object isolation, prerelease settings, and subclass initialization directly.
+The requirement tests pass, including `copy.replace()` on Python 3.14. I’m checking two remaining edge cases: field values with the wrong type, and duplicate specifiers with different prerelease overrides. Then I’ll run the full suite and build the package.
 
-Added `Requirement.__replace__` with keyword-only fields, parsing validation, normalization, independent mutable fields, preserved prerelease settings, and subclass initialization. Updated documentation and changelog.
+The specifier copy now preserves duplicate entries and each entry’s prerelease override. Lint, type checks, documentation examples, and the package build pass. The full test suite is still running.
 
-Validation passed: 62,493 existing tests, direct behavior checks, doctests, lint, type checking, and wheel/source builds.
+Added `Requirement.__replace__` with validation, normalization, independent specifier copies, preserved prerelease settings, and subclass initialization. It also works through `copy.replace()` on Python 3.13+.
+
+Added tests, documentation, and a changelog entry.
+
+Validation passed: 62,515 tests, lint, type checks, documentation examples, and package build.

@@ -26,8 +26,14 @@ SOFTWARE.
 package mapset
 
 import (
+	"database/sql"
 	"database/sql/driver"
 	"sync"
+)
+
+var (
+	_ driver.Valuer = (*threadSafeSet[string])(nil)
+	_ sql.Scanner   = (*threadSafeSet[string])(nil)
 )
 
 type threadSafeSet[T comparable] struct {
@@ -356,19 +362,17 @@ func (t *threadSafeSet[T]) UnmarshalJSON(p []byte) error {
 // Value implements driver.Valuer. It returns the set as a JSON array ([]byte).
 func (t *threadSafeSet[T]) Value() (driver.Value, error) {
 	t.RLock()
-	v, err := t.uss.Value()
-	t.RUnlock()
+	defer t.RUnlock()
 
-	return v, err
+	return t.uss.Value()
 }
 
 // Scan implements sql.Scanner. It replaces the contents of the set with the
-// JSON array in src (string or []byte). A nil src empties the set. On error
-// the set is left unchanged.
+// JSON array in src, which must be a string or []byte. A nil src (SQL NULL)
+// empties the set. On error the set is left unchanged.
 func (t *threadSafeSet[T]) Scan(src any) error {
 	t.Lock()
-	err := t.uss.Scan(src)
-	t.Unlock()
+	defer t.Unlock()
 
-	return err
+	return t.uss.Scan(src)
 }

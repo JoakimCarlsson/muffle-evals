@@ -884,14 +884,13 @@ impl BytesMut {
         }
     }
 
-    /// Appends a copy of the bytes in `range` to this `BytesMut`.
-    ///
-    /// The buffer is grown as needed.
+    /// Appends a copy of the bytes in `range` to this `BytesMut`, growing the
+    /// buffer as needed.
     ///
     /// # Panics
     ///
-    /// Panics if the range start is greater than its end or the range end is
-    /// greater than the current length.
+    /// Panics if the range's start is greater than its end or if the range
+    /// is out of bounds for the current length.
     ///
     /// # Examples
     ///
@@ -903,11 +902,11 @@ impl BytesMut {
     /// buf.extend_from_within(3..6);
     /// assert_eq!(&buf[..], b"aaabbb_bbb");
     /// ```
+    #[inline]
     pub fn extend_from_within(&mut self, range: impl RangeBounds<usize>) {
         use core::ops::Bound;
 
-        let len = self.len();
-        let begin = match range.start_bound() {
+        let start = match range.start_bound() {
             Bound::Included(&n) => n,
             Bound::Excluded(&n) => n.checked_add(1).expect("out of range"),
             Bound::Unbounded => 0,
@@ -915,28 +914,17 @@ impl BytesMut {
         let end = match range.end_bound() {
             Bound::Included(&n) => n.checked_add(1).expect("out of range"),
             Bound::Excluded(&n) => n,
-            Bound::Unbounded => len,
+            Bound::Unbounded => self.len,
         };
+        assert!(start <= end, "range start must not be greater than end");
+        assert!(end <= self.len, "range end out of bounds");
 
-        assert!(
-            begin <= end,
-            "range start must not be greater than end: {:?} <= {:?}",
-            begin,
-            end,
-        );
-        assert!(
-            end <= len,
-            "range end out of bounds: {:?} <= {:?}",
-            end,
-            len,
-        );
-
-        let cnt = end - begin;
-        self.reserve(cnt);
+        let count = end - start;
+        self.reserve(count);
         unsafe {
             let ptr = self.ptr.as_ptr();
-            ptr::copy_nonoverlapping(ptr.add(begin), ptr.add(len), cnt);
-            self.advance_mut(cnt);
+            ptr::copy_nonoverlapping(ptr.add(start), ptr.add(self.len), count);
+            self.set_len(self.len + count);
         }
     }
 

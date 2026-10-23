@@ -613,59 +613,69 @@ fn extend_from_within_mut() {
 
     let ranges = [
         (Included(3), Excluded(6)),
+        (Included(3), Included(5)),
+        (Excluded(2), Excluded(6)),
+        (Unbounded, Excluded(3)),
+        (Included(3), Unbounded),
         (Unbounded, Unbounded),
-        (Unbounded, Included(2)),
-        (Excluded(2), Unbounded),
         (Included(7), Excluded(7)),
         (Included(0), Excluded(0)),
     ];
-    for range in ranges {
-        for capacity in [7, 64] {
-            let mut bytes = BytesMut::with_capacity(capacity);
-            bytes.extend_from_slice(b"aaabbb_");
-            let mut expected = bytes.to_vec();
+    for capacity in [0, 64] {
+        for range in ranges {
+            let mut buf = BytesMut::with_capacity(capacity);
+            buf.extend_from_slice(b"aaabbb_");
+            let mut expected = buf.to_vec();
             expected.extend_from_within(range);
-            bytes.extend_from_within(range);
-            assert_eq!(&bytes[..], &expected[..]);
+            buf.extend_from_within(range);
+            assert_eq!(&buf[..], &expected[..]);
         }
     }
 
     let mut empty = BytesMut::new();
     empty.extend_from_within(..);
     assert!(empty.is_empty());
-
-    // Exercise relocation when reclaiming consumed capacity.
-    let mut bytes = BytesMut::with_capacity(16);
-    bytes.extend_from_slice(b"0123456789abcdef");
-    bytes.advance(10);
-    bytes.extend_from_within(1..5);
-    assert_eq!(&bytes[..], b"abcdefbcde");
-
-    // Growing a split buffer must preserve the other view.
-    let mut bytes = BytesMut::from(&b"aaabbb_"[..]);
-    let other = bytes.split_off(3);
-    bytes.extend_from_within(..);
-    assert_eq!(&bytes[..], b"aaaaaa");
-    assert_eq!(&other[..], b"bbb_");
 }
 
 #[test]
-fn extend_from_within_mut_invalid_ranges() {
+fn extend_from_within_shared_mut() {
+    for capacity in [16, 128] {
+        let mut buf = BytesMut::with_capacity(capacity);
+        buf.extend_from_slice(b"prefix:aaabbb_");
+        let prefix = buf.split_to(7);
+        buf.extend_from_within(..);
+        assert_eq!(&buf[..], b"aaabbb_aaabbb_");
+        assert_eq!(&prefix[..], b"prefix:");
+    }
+
+    // Reserving can reclaim the space before the current view.
+    let mut buf = BytesMut::with_capacity(64);
+    buf.extend_from_slice(&[b'x'; 64]);
+    buf.advance(56);
+    buf.extend_from_within(..);
+    assert_eq!(&buf[..], &[b'x'; 16]);
+}
+
+#[test]
+fn extend_from_within_invalid_range_mut() {
     use std::ops::Bound::{Excluded, Included, Unbounded};
 
     for range in [
-        (Included(4), Excluded(2)),
+        (Included(4), Excluded(3)),
         (Included(0), Excluded(8)),
+        (Included(8), Unbounded),
         (Included(8), Excluded(8)),
-        (Excluded(usize::MAX), Unbounded),
         (Unbounded, Included(usize::MAX)),
+        (Excluded(usize::MAX), Unbounded),
     ] {
-        let mut bytes = BytesMut::from(&b"aaabbb_"[..]);
+        let mut buf = BytesMut::from(&b"aaabbb_"[..]);
+        let capacity = buf.capacity();
         assert!(panic::catch_unwind(AssertUnwindSafe(|| {
-            bytes.extend_from_within(range);
+            buf.extend_from_within(range);
         }))
         .is_err());
-        assert_eq!(&bytes[..], b"aaabbb_");
+        assert_eq!(&buf[..], b"aaabbb_");
+        assert_eq!(buf.capacity(), capacity);
     }
 }
 

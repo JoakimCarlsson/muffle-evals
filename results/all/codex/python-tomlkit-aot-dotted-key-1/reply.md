@@ -1,2 +1,2 @@
 Done.
-AoT replacements move past dotted siblings, preserving top-level keys. 360 tests passed; round-trips checked. Conformance suite blocked by missing fixtures.
+AoT replacement preserves sibling scope. Regression tests added; 366 tests passed. Full suite blocked by missing fixtures; build blocked by missing tools.

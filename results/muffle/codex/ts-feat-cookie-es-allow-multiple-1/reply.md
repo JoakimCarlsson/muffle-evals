@@ -1,9 +1,11 @@
-I’ll check the parser and its types, add `allowMultiple`, and test that the default behavior stays unchanged.
+I’ll check the parser, types, and tests, then add `allowMultiple` while preserving the default first-value behavior.
 
+The option is implemented, and all 103 tests pass, including duplicate ordering, empty values, decoding, and filtering. The type check hit an existing TypeScript 6 configuration deprecation; I’ll suppress that diagnostic for verification, then finish the build check.
 
-The parser now collects duplicate values in order, and the return type reflects `allowMultiple`. I’ve added tests for empty values, decoding, filters, and types. Validation found a formatting issue in the unchanged serializer test; I’m continuing with the tests, type check, and build.
+Added `allowMultiple` with inferred return types and documentation.
 
+- Duplicate values become arrays in header order; single values stay strings.
+- Empty values and decoding behavior are preserved.
+- Default behavior remains first value wins.
 
-Added `allowMultiple` with inferred return types, documentation, and tests. Duplicate values become arrays in order; single values remain strings. Default behavior is unchanged.
-
-All 103 tests pass, lint passes, and the build succeeds. Full formatting and type checks encounter existing issues in unrelated tests and TypeScript configuration; changed files pass formatting.
+All 103 tests and the build pass. Full type checking remains blocked by existing configuration and unrelated test errors.

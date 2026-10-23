@@ -187,6 +187,7 @@ pub mod free;
 #[doc(inline)]
 pub use crate::free::*;
 mod all_equal_value_err;
+mod strip_prefix_err;
 #[cfg(feature = "use_alloc")]
 mod combinations;
 #[cfg(feature = "use_alloc")]
@@ -236,7 +237,6 @@ mod rciter_impl;
 mod repeatn;
 mod size_hint;
 mod sources;
-mod strip_prefix_err;
 mod take_while_inclusive;
 #[cfg(feature = "use_alloc")]
 mod tee;
@@ -2533,14 +2533,14 @@ pub trait Itertools: Iterator {
         }
     }
 
-    /// Remove `prefix` from the start of the iterator, like [`str::strip_prefix`].
+    /// Strip `prefix` from the start of the iterator, like [`str::strip_prefix`].
     ///
-    /// If the iterator starts with all of the items of `prefix`, in order,
-    /// return `Ok` with the iterator advanced past the prefix.
-    /// An empty prefix returns the whole iterator.
+    /// If the iterator starts with all of the items of `prefix`, in order, return
+    /// `Ok` with the iterator advanced past the prefix. An empty prefix returns
+    /// the whole iterator.
     ///
-    /// Otherwise return a [`StripPrefixError`] holding the consumed iterator,
-    /// the rest of the prefix and the mismatching pair of items.
+    /// Otherwise, return a [`StripPrefixError`] with the consumed iterator, the
+    /// rest of the prefix and the mismatching items.
     ///
     /// ```
     /// use itertools::Itertools;
@@ -2556,17 +2556,18 @@ pub trait Itertools: Iterator {
     /// let err = (1..3).strip_prefix([1, 2, 3]).unwrap_err();
     /// assert_eq!(err.mismatch, (None, 3));
     /// assert_eq!(err.iterator.count(), 0);
-    ///
-    /// assert_eq!("hello".chars().strip_prefix("he".chars()).unwrap().collect::<String>(), "llo");
     /// ```
     #[allow(clippy::type_complexity)]
-    fn strip_prefix<P>(self, prefix: P) -> Result<Self, StripPrefixError<Self, P::IntoIter>>
+    fn strip_prefix<P>(
+        self,
+        prefix: P,
+    ) -> Result<Self, StripPrefixError<Self, <P as IntoIterator>::IntoIter>>
     where
         Self: Sized,
         P: IntoIterator,
         Self::Item: PartialEq<P::Item>,
     {
-        self.strip_prefix_by(prefix, |x, p| x == p)
+        self.strip_prefix_by(prefix, |x, y| x == y)
     }
 
     /// Like [`strip_prefix`](Itertools::strip_prefix), but compares items with
@@ -2575,19 +2576,19 @@ pub trait Itertools: Iterator {
     /// ```
     /// use itertools::Itertools;
     ///
-    /// let rest = ["1", "2", "3"]
+    /// let rest = ["a", "bb", "ccc"]
     ///     .iter()
-    ///     .strip_prefix_by([1, 2], |s, n| s.parse::<i32>() == Ok(*n))
+    ///     .strip_prefix_by([1, 2], |s, n| s.len() == *n)
     ///     .unwrap()
     ///     .collect_vec();
-    /// assert_eq!(rest, [&"3"]);
+    /// assert_eq!(rest, [&"ccc"]);
     /// ```
     #[allow(clippy::type_complexity)]
     fn strip_prefix_by<P, F>(
         mut self,
         prefix: P,
         mut eq: F,
-    ) -> Result<Self, StripPrefixError<Self, P::IntoIter>>
+    ) -> Result<Self, StripPrefixError<Self, <P as IntoIterator>::IntoIter>>
     where
         Self: Sized,
         P: IntoIterator,
@@ -2597,11 +2598,11 @@ pub trait Itertools: Iterator {
         while let Some(p) = prefix.next() {
             match self.next() {
                 Some(x) if eq(&x, &p) => {}
-                other => {
+                item => {
                     return Err(StripPrefixError {
                         iterator: self,
                         prefix,
-                        mismatch: (other, p),
+                        mismatch: (item, p),
                     })
                 }
             }

@@ -1254,32 +1254,39 @@ func (d Decimal) Ln(precision int32) (Decimal, error) {
 // NumDigits returns the number of digits of the decimal coefficient (d.Value)
 func (d Decimal) NumDigits() int {
 	v := d.getValue()
-	if v.IsInt64() {
-		i64 := v.Int64()
-		if i64 == 0 {
-			return 1
-		}
-		// exact integer comparison; math.Log10 is inexact near powers of ten
-		u := uint64(i64)
-		if i64 < 0 {
-			u = -u
+	if v.IsUint64() || v.IsInt64() {
+		// exact integer comparison, float64 log10 is not exact for powers of 10
+		u := v.Uint64()
+		if v.Sign() < 0 {
+			u = -uint64(v.Int64())
 		}
 		n := 1
-		for u >= 10 {
-			u /= 10
+		for p := uint64(10); u >= p; p *= 10 {
 			n++
+			if p > math.MaxUint64/10 {
+				break
+			}
 		}
 		return n
 	}
 
 	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
+	if estimatedNumDigits < 1 {
+		estimatedNumDigits = 1
+	}
 
-	// estimatedNumDigits (lg10) may be off by 1, need to verify
-	digitsBigInt := big.NewInt(int64(estimatedNumDigits))
-	errorCorrectionUnit := digitsBigInt.Exp(tenInt, digitsBigInt, nil)
-
-	if v.CmpAbs(errorCorrectionUnit) >= 0 {
-		return estimatedNumDigits + 1
+	// the estimate may be off by 1 in either direction, need to verify
+	pow := new(big.Int).Exp(tenInt, big.NewInt(int64(estimatedNumDigits)), nil)
+	for v.CmpAbs(pow) >= 0 {
+		estimatedNumDigits++
+		pow.Mul(pow, tenInt)
+	}
+	for estimatedNumDigits > 1 {
+		pow.Quo(pow, tenInt)
+		if v.CmpAbs(pow) >= 0 {
+			break
+		}
+		estimatedNumDigits--
 	}
 
 	return estimatedNumDigits

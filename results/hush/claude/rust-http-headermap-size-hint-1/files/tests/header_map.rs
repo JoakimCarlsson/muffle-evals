@@ -774,21 +774,18 @@ fn into_iter_drop_panic_after_yielding_extra_value_double_drops() {
 }
 
 #[test]
-fn iter_size_hint_exact_at_end() {
-    let mut m = HeaderMap::new();
+fn iter_size_hint_lower_bound_is_accurate() {
+    let mut m: HeaderMap<HeaderValue> = HeaderMap::new();
     assert_eq!(m.iter().size_hint().0, 0);
-    m.insert(HOST, "x".parse().unwrap());
-    m.append(HOST, "y".parse().unwrap());
+    assert_eq!(m.iter_mut().size_hint().0, 0);
+    m.insert(HOST, HeaderValue::from_static("x"));
     let mut it = m.iter();
-    let mut left = 2;
-    loop {
-        assert_eq!(it.size_hint().0.min(1), if left > 0 { 1 } else { 0 });
-        if it.next().is_none() {
-            break;
-        }
-        left -= 1;
-    }
+    assert_eq!(it.size_hint().0, 1);
+    it.next();
+    assert_eq!(it.size_hint().0, 0);
+    assert!(it.next().is_none());
     let mut it = m.iter_mut();
-    while it.next().is_some() {}
+    assert_eq!(it.size_hint().0, 1);
+    it.next();
     assert_eq!(it.size_hint().0, 0);
 }

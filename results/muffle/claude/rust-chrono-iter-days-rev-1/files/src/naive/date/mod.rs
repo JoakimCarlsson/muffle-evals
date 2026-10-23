@@ -1348,7 +1348,7 @@ impl NaiveDate {
     /// ```
     #[inline]
     pub const fn iter_days(&self) -> NaiveDateDaysIterator {
-        NaiveDateDaysIterator { value: *self, end: NaiveDate::MAX }
+        NaiveDateDaysIterator { value: *self, end: NaiveDate::MAX, done: false }
     }
 
     /// Returns an iterator that steps by weeks across all representable dates.
@@ -1379,7 +1379,13 @@ impl NaiveDate {
     /// ```
     #[inline]
     pub const fn iter_weeks(&self) -> NaiveDateWeeksIterator {
-        NaiveDateWeeksIterator { value: *self, end: NaiveDate::MAX }
+        let remaining_days = NaiveDate::MAX.num_days_from_ce() - self.num_days_from_ce();
+        // `remaining_days` is within `0..=MAX - MIN`, so stepping back never leaves the range.
+        let end = match NaiveDate::MAX.add_days(-(remaining_days % 7)) {
+            Some(end) => end,
+            None => NaiveDate::MAX,
+        };
+        NaiveDateWeeksIterator { value: *self, end, done: false }
     }
 
     /// Returns the [`NaiveWeek`] that the date belongs to, starting with the [`Weekday`]
@@ -2211,42 +2217,38 @@ impl From<NaiveDateTime> for NaiveDate {
 
 /// Iterator over `NaiveDate` with a step size of one day.
 ///
-/// Iterates over the inclusive range from the starting date to `NaiveDate::MAX`. Both ends can be
-/// consumed; the iterator is exhausted when they meet.
+/// Yields every date from the starting date up to and including `NaiveDate::MAX`. Iterating from
+/// the back starts at `NaiveDate::MAX`.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Eq, Ord)]
 pub struct NaiveDateDaysIterator {
-    // Inclusive bounds. The iterator is empty when `value > end`.
+    // Inclusive bounds of the remaining range; `done` is set once it is empty (needed because
+    // `NaiveDate::MAX` has no successor and `NaiveDate::MIN` no predecessor).
     value: NaiveDate,
     end: NaiveDate,
-}
-
-impl NaiveDateDaysIterator {
-    const fn exhausted(&mut self) {
-        self.value = NaiveDate::MAX;
-        self.end = NaiveDate::MIN;
-    }
+    done: bool,
 }
 
 impl Iterator for NaiveDateDaysIterator {
     type Item = NaiveDate;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.value > self.end {
+        if self.done {
             return None;
         }
         let current = self.value;
         match current.succ_opt() {
             Some(next) if current < self.end => self.value = next,
-            _ => self.exhausted(),
+            _ => self.done = true,
         }
         Some(current)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        if self.value > self.end {
-            return (0, Some(0));
-        }
-        let exact_size = self.end.signed_duration_since(self.value).num_days() as usize + 1;
+        let exact_size = if self.done {
+            0
+        } else {
+            (self.end.num_days_from_ce() - self.value.num_days_from_ce()) as usize + 1
+        };
         (exact_size, Some(exact_size))
     }
 }
@@ -2255,13 +2257,13 @@ impl ExactSizeIterator for NaiveDateDaysIterator {}
 
 impl DoubleEndedIterator for NaiveDateDaysIterator {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.value > self.end {
+        if self.done {
             return None;
         }
         let current = self.end;
         match current.pred_opt() {
             Some(prev) if self.value < current => self.end = prev,
-            _ => self.exhausted(),
+            _ => self.done = true,
         }
         Some(current)
     }
@@ -2271,50 +2273,38 @@ impl FusedIterator for NaiveDateDaysIterator {}
 
 /// Iterator over `NaiveDate` with a step size of one week.
 ///
-/// Iterates from the starting date towards `NaiveDate::MAX` in steps of one week. Both ends can be
-/// consumed; the iterator is exhausted when they meet.
+/// Yields the starting date and every date a whole number of weeks after it that is not past
+/// `NaiveDate::MAX`. Iterating from the back starts at the last of those dates.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Eq, Ord)]
 pub struct NaiveDateWeeksIterator {
-    // Inclusive bounds, `end` is not necessarily a whole number of weeks after `value`.
-    // The iterator is empty when `value > end`.
+    // Inclusive bounds of the remaining range, a whole number of weeks apart; see
+    // `NaiveDateDaysIterator` for `done`.
     value: NaiveDate,
     end: NaiveDate,
-}
-
-impl NaiveDateWeeksIterator {
-    const fn exhausted(&mut self) {
-        self.value = NaiveDate::MAX;
-        self.end = NaiveDate::MIN;
-    }
-
-    /// The last date that will be yielded. Must not be called on an empty iterator.
-    fn last_date(&self) -> NaiveDate {
-        let weeks = self.end.signed_duration_since(self.value).num_weeks();
-        // Can't fail: the result lies between `value` and `end`.
-        self.value.checked_add_days(Days::new(weeks as u64 * 7)).unwrap_or(self.value)
-    }
+    done: bool,
 }
 
 impl Iterator for NaiveDateWeeksIterator {
     type Item = NaiveDate;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.value > self.end {
+        if self.done {
             return None;
         }
         let current = self.value;
         match current.checked_add_days(Days::new(7)) {
-            Some(next) if next <= self.end => self.value = next,
-            _ => self.exhausted(),
+            Some(next) if current < self.end => self.value = next,
+            _ => self.done = true,
         }
         Some(current)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        if self.value > self.end {
-            return (0, Some(0));
-        }
-        let exact_size = self.end.signed_duration_since(self.value).num_weeks() as usize + 1;
+        let exact_size = if self.done {
+            0
+        } else {
+            ((self.end.num_days_from_ce() - self.value.num_days_from_ce()) / 7) as usize + 1
+        };
         (exact_size, Some(exact_size))
     }
 }
@@ -2323,13 +2313,13 @@ impl ExactSizeIterator for NaiveDateWeeksIterator {}
 
 impl DoubleEndedIterator for NaiveDateWeeksIterator {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.value > self.end {
+        if self.done {
             return None;
         }
-        let current = self.last_date();
+        let current = self.end;
         match current.checked_sub_days(Days::new(7)) {
-            Some(prev) if prev >= self.value => self.end = prev,
-            _ => self.exhausted(),
+            Some(prev) if self.value < current => self.end = prev,
+            _ => self.done = true,
         }
         Some(current)
     }

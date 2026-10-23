@@ -2259,8 +2259,8 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
 			}
 			if !tagged || tagName(tag) == "" {
 				// Embedded structs without an explicit name are flattened,
-				// even when their type is unexported: only their own
-				// exported fields are reachable.
+				// even when their type is unexported: only their own exported
+				// fields are reachable. Tag options do not change this.
 				embedded = append(embedded, f)
 				continue
 			}

@@ -1722,7 +1722,7 @@ fn bytes_mut_reserve_overflow() {
 }
 
 #[test]
-fn extend_from_within_mut() {
+fn bytes_mut_extend_from_within() {
     let mut buf = BytesMut::new();
     buf.extend_from_slice(b"aaabbb_");
     buf.extend_from_within(3..6);
@@ -1730,27 +1730,28 @@ fn extend_from_within_mut() {
 
     buf.extend_from_within(..=1);
     assert_eq!(&buf[..], b"aaabbb_bbbaa");
-    buf.extend_from_within(12..);
+    buf.extend_from_within(10..);
+    assert_eq!(&buf[..], b"aaabbb_bbbaaaa");
     buf.extend_from_within(5..5);
-    assert_eq!(&buf[..], b"aaabbb_bbbaa");
+    assert_eq!(buf.len(), 14);
 
-    // Forces reallocation while the source lives in the old buffer.
-    let mut buf = BytesMut::from(&LONG[..]);
+    // forces reallocation
+    let mut buf = BytesMut::with_capacity(4);
+    buf.extend_from_slice(b"abcd");
     buf.extend_from_within(..);
-    assert_eq!(&buf[..LONG.len()], LONG);
-    assert_eq!(&buf[LONG.len()..], LONG);
+    assert_eq!(&buf[..], b"abcdabcd");
 }
 
 #[test]
 #[should_panic]
-fn extend_from_within_out_of_bounds() {
+fn bytes_mut_extend_from_within_out_of_bounds() {
     let mut buf = BytesMut::from(&b"abc"[..]);
     buf.extend_from_within(1..4);
 }
 
 #[test]
 #[should_panic]
-fn extend_from_within_inverted_range() {
+fn bytes_mut_extend_from_within_inverted() {
     let mut buf = BytesMut::from(&b"abc"[..]);
     #[allow(clippy::reversed_empty_ranges)]
     buf.extend_from_within(2..1);

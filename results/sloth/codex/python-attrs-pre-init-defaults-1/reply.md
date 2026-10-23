@@ -1,11 +1,11 @@
-I’ll check how attrs generates the pre-init call, fix the argument forwarding, and run the existing tests.
+I’ll check how attrs generates the pre-init call, fix the argument forwarding, and add a regression test.
 
-The generator reuses parameter declarations such as `val2=100` in the pre-init call, which passes the default again. I’ll strip defaults from the forwarded arguments, as the code already does for keyword-only arguments.
+The pre-init call reuses parameter declarations such as `val2=100`, so Python treats the defaults as keyword arguments. The fix is in the shared initializer generator, which serves both `__init__` and `__attrs_init__`; the existing test file is the only other place that needs changing. No signatures, exports, fixtures, or configuration need changes.
 
-This shared fix covers both `__init__` and `__attrs_init__`. No callers, fixtures, config, exports, or documentation need changes; I’ll use the existing tests without adding new ones.
+I’ll test positional and keyword values, omitted defaults, factory fields, aliases, and keyword-only fields, preserving the existing behavior for omitted factory arguments.
 
-The fix is in place and the wheel builds successfully. The test run passed 1,336 tests; four packaging tests failed because attrs has no installed package metadata in this environment. I’ll install the built wheel and rerun the suite.
+Fixed the shared initializer generator so `__attrs_pre_init__` receives supplied values instead of default expressions.
 
-Fixed in [src/attr/_make.py](src/attr/_make.py:2325). The generated pre-init call now forwards argument values instead of reusing default expressions, including for factory-backed fields.
+Added regression coverage for positional and keyword arguments, omitted defaults, factories, aliases, and keyword-only fields.
 
-Wheel build succeeded. Existing tests: **1,340 passed, 5 skipped, 3 expected failures**.
+Validation: 1,343 tests passed, 5 skipped, 3 expected failures. Wheel build succeeded.

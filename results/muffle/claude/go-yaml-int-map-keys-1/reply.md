@@ -1,13 +1,13 @@
-That looks fine; the issue is likely in the typed-map path. Let me reproduce.
+That looks fine; the `*` must come from elsewhere. Let me reproduce.
 
-The cause is that `reflect.Convert` turns the integer 42 into the rune `'*'` when the target key type is `string`. I'll fix that case.
+Output is being swallowed by something; let me capture it differently.
 
-The edit failed, probably on whitespace, but the test reproduces the bug. I'll re-read the exact lines.
+Reproduced. Check the decode path for map[string]any.
 
-I had the indentation wrong, with 4 tabs where the file has 3.
+Let me add a regression test and clean up.
 
-Decoding `42: 100` into a `map[string]any` now gives `map[42:100]`, with the key as the string `"42"`. The full test suite passes.
+Fixed: `42: 100` now decodes into `map[string]any` as `map[42:100]`, with the key as the string `"42"`.
 
-The cause was in `decodeMap` in `decode.go`. It used `reflect.Convert` to turn the decoded key into the map's key type. Go converts an integer to a string as the character with that code point, so 42 became `*`. For string-keyed maps, non-string keys now go through `fmt.Sprint` instead. This also covers floats and bools, so a key like `true` becomes `"true"`.
+The cause was in `decodeMap` in `decode.go`. It converted the decoded key (an integer) to the map's key type with reflection. Go converts an integer to a string as a rune, so `42` became `"*"`. When the map key type is a string and the decoded key isn't one, it now formats the key with `fmt.Sprint`. This also covers float and bool keys.
 
-I added a regression test, `TestDecoder_IntKeyToStringMapKey`, in `decode_test.go`. It failed before the fix with `map[*:100]` and passes now. I haven't committed anything.
+I added a regression test, `TestDecoder_IntegerKeyToStringMap`, in `decode_test.go`. It and the existing test suite pass. I haven't committed anything.

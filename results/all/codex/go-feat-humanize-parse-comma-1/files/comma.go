@@ -8,6 +8,26 @@ import (
 	"strings"
 )
 
+// ParseComma parses a base-10 integer, ignoring commas.
+// It returns zero and an error if s is invalid or outside the int64 range.
+func ParseComma(s string) (int64, error) {
+	v, err := strconv.ParseInt(strings.ReplaceAll(s, ",", ""), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
+// ParseCommaf parses a floating-point number, ignoring commas.
+// It returns zero and an error if s is invalid or outside the float64 range.
+func ParseCommaf(s string) (float64, error) {
+	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
 // Comma produces a string form of the given number in base 10 with
 // commas after every three orders of magnitude.
 //
@@ -106,26 +126,6 @@ func Commaf(v float64) string {
 // e.g. CommafWithDigits(834142.32, 1) -> 834,142.3
 func CommafWithDigits(f float64, decimals int) string {
 	return stripTrailingDigits(Commaf(f), decimals)
-}
-
-// ParseComma parses a base-10 integer with optional commas.
-// It returns zero and an error if the input is invalid or out of range.
-func ParseComma(s string) (int64, error) {
-	v, err := strconv.ParseInt(strings.ReplaceAll(s, ",", ""), 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	return v, nil
-}
-
-// ParseCommaf parses a floating-point number with optional commas.
-// It returns zero and an error if the input is invalid or out of range.
-func ParseCommaf(s string) (float64, error) {
-	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
-	if err != nil {
-		return 0, err
-	}
-	return v, nil
 }
 
 // BigComma produces a string form of the given big.Int in base 10

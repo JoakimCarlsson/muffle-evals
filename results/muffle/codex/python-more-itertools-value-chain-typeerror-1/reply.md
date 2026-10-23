@@ -1,5 +1,5 @@
-I’ll check `value_chain` and its tests, then separate iterable detection from iteration so errors raised during iteration propagate.
+I’ll check `value_chain` and its tests, then adjust it so iteration errors propagate while non-iterable arguments remain single values.
 
-Fixed `value_chain` to catch `TypeError` only when calling `iter()` on an argument. Errors raised during iteration now propagate; non-iterable arguments still yield as single values.
+Fixed `value_chain` to catch `TypeError` only when obtaining an iterator. Errors raised during iteration now propagate; non-iterable arguments still yield as single values.
 
-Added regression tests for the reported `map` case and a generator error. All 908 tests passed, with 5 skipped.
+Added regression coverage for failures before and after yielding items. All 907 tests pass (5 skipped).

@@ -1,7 +1,11 @@
-I’ll check the existing range handling and growth code, add the method in the same style, then build and run the existing tests.
+I’ll check the existing buffer growth and range handling code, add the method and focused tests, then run the build and test suite.
 
-This only needs a change in `src/bytes_mut.rs`; no callers, exports, fixtures, or configuration need updating. I’ll use the existing range-checking conventions and reserve capacity before taking copy pointers, since growing the buffer can move its contents. No extra API or dependencies are needed.
+This needs changes in `src/bytes_mut.rs` and the existing `tests/test_bytes.rs`; there are no callers or exports to update. I’ll follow the range handling used by `Bytes::slice` and reserve capacity before taking the copy pointers, since growth can move the buffer. No dependency or configuration changes are needed.
 
-Added `BytesMut::extend_from_within` with range validation, automatic growth, and a documented example. It copies directly within the buffer without a temporary allocation.
+The method and regression test are in place. All 1,303 all-feature tests pass, including range checks against `Vec::extend_from_within` and copies from shared buffers. The build and tests without default features are still running.
 
-Build, existing tests with all features and without default features, and formatting checks all passed.
+Added `BytesMut::extend_from_within` with range validation, automatic growth, and a documentation example.
+
+Tests cover empty ranges, invalid bounds, overflow, growth, and shared buffers.
+
+Validation passed: build, formatting, 1,303 all-feature tests, and 1,176 tests without default features.

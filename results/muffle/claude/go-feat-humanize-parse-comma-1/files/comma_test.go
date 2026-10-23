@@ -159,32 +159,48 @@ func TestHumanizeBigIntMutation(t *testing.T) {
 }
 
 func TestParseComma(t *testing.T) {
-	for _, n := range []int64{0, 7, 10, 999, 1000, -1000, 834142, 123456789, -834142, math.MinInt64, math.MaxInt64} {
-		got, err := ParseComma(Comma(n))
-		if err != nil || got != n {
-			t.Errorf("ParseComma(%q) = %d, %v; want %d", Comma(n), got, err, n)
+	good := map[string]int64{
+		"0": 0, "10": 10, "123,456,789": 123456789, "-834,142": -834142,
+		"1234567": 1234567, "-9,223,372,036,854,775,808": math.MinInt64,
+		"9,223,372,036,854,775,807": math.MaxInt64,
+	}
+	for in, want := range good {
+		if got, err := ParseComma(in); err != nil || got != want {
+			t.Errorf("ParseComma(%q) = %d, %v; want %d", in, got, err, want)
 		}
 	}
-	for _, s := range []string{"", "-", "abc", "123a456", "1.5", "1.2.3", "1,23", "1234,567", "1,2345", ",123", "123,", "9,223,372,036,854,775,808"} {
-		if got, err := ParseComma(s); err == nil || got != 0 {
-			t.Errorf("ParseComma(%q) = %d, %v; want 0, error", s, got, err)
+	for _, in := range []string{"", "-", "abc", "123a456", "1.5", "1.2.3", "1,23", "1,2345", ",123", "123,", "1,,234", "+5", "9,223,372,036,854,775,808", " 1"} {
+		if got, err := ParseComma(in); err == nil || got != 0 {
+			t.Errorf("ParseComma(%q) = %d, %v; want 0, error", in, got, err)
+		}
+	}
+	for _, n := range []int64{math.MinInt64, math.MaxInt64, -1000, 999, 1000, 0, 7, 8} {
+		if got, err := ParseComma(Comma(n)); err != nil || got != n {
+			t.Errorf("round trip %d: got %d, %v", n, got, err)
 		}
 	}
 }
 
 func TestParseCommaf(t *testing.T) {
-	for _, f := range []float64{0, 10.11, -834142.32, 123456789, 1e21, 1e-7, math.MaxFloat64, math.Inf(1), math.Inf(-1)} {
-		got, err := ParseCommaf(Commaf(f))
-		if err != nil || got != f {
-			t.Errorf("ParseCommaf(%q) = %v, %v; want %v", Commaf(f), got, err, f)
+	good := map[string]float64{
+		"10": 10, "10.11": 10.11, "-834,142.32": -834142.32, "123,456,789": 123456789, "0.5": 0.5,
+	}
+	for in, want := range good {
+		if got, err := ParseCommaf(in); err != nil || got != want {
+			t.Errorf("ParseCommaf(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "abc", "123a456", "1.2.3", "1.", ".5", "1.2,3", "1,23.5", "-", "1e5"} {
+		if got, err := ParseCommaf(in); err == nil || got != 0 {
+			t.Errorf("ParseCommaf(%q) = %v, %v; want 0, error", in, got, err)
+		}
+	}
+	for _, f := range []float64{0, 1.5, -834142.32, 1e21, 5e-324, math.MaxFloat64, math.Inf(1), math.Inf(-1)} {
+		if got, err := ParseCommaf(Commaf(f)); err != nil || got != f {
+			t.Errorf("round trip %v: got %v, %v", f, got, err)
 		}
 	}
 	if got, err := ParseCommaf(Commaf(math.NaN())); err != nil || !math.IsNaN(got) {
-		t.Errorf("ParseCommaf(NaN) = %v, %v", got, err)
-	}
-	for _, s := range []string{"", "abc", "123a456", "1.2.3", "1.", ".5", "1e5", "1,23.4", "1.2,345"} {
-		if got, err := ParseCommaf(s); err == nil || got != 0 {
-			t.Errorf("ParseCommaf(%q) = %v, %v; want 0, error", s, got, err)
-		}
+		t.Errorf("NaN round trip: got %v, %v", got, err)
 	}
 }

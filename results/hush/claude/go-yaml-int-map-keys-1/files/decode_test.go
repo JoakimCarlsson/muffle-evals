@@ -3854,7 +3854,7 @@ func TestSetNullValue(t *testing.T) {
 	}
 }
 
-func TestDecoder_IntKeyToStringMap(t *testing.T) {
+func TestDecoder_IntegerKeyToStringMap(t *testing.T) {
 	var d map[string]any
 	if err := yaml.Unmarshal([]byte("42: 100\n"), &d); err != nil {
 		t.Fatal(err)

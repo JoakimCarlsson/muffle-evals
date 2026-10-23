@@ -1,5 +1,4 @@
-`value_chain` needs narrower `TypeError` handling. Checking implementation and tests.
-
+`value_chain` must catch `TypeError` from `iter()`, then let iteration errors propagate.
 
 Done.
-`value_chain` catches `TypeError` only from `iter()`. Iteration errors propagate. Added map/generator regression tests. Tests: 907 passed, 5 skipped.
+`value_chain` now propagates iteration errors; noniterables remain single values. Regression tests added. Suite: 908 tests, 5 skipped.

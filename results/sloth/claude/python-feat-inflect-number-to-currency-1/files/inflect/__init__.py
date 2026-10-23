@@ -36,7 +36,7 @@ ARTICLES:
     classical inflect num a an
 
 NUMERICAL:
-    ordinal number_to_words
+    ordinal number_to_words number_to_currency
 
 USER_DEFINED:
     defnoun defverb defadj defa defan
@@ -3931,34 +3931,6 @@ class engine:
         return {'+': 'plus', '-': 'minus'}.get(num.lstrip()[0], '')
 
     @typechecked
-    def number_to_currency(self, num: Number | str, andword: str = "and") -> str:
-        """
-        Return an amount in words with the cents as a fraction of 100.
-
-        e.g. 100020.56 -> "one hundred thousand and twenty and 56/100"
-
-        The amount is rounded half up to the cent, going by the number as
-        written. The "and" before the cents is always written; andword only
-        affects the whole amount, as in number_to_words.
-
-        Raise BadNumValueError if num is not a finite number.
-        """
-        try:
-            amount = Decimal(str(num))
-            if not amount.is_finite():
-                raise BadNumValueError
-            amount = amount.quantize(
-                Decimal("0.01"),
-                rounding=ROUND_HALF_UP,
-                context=Context(prec=max(28, amount.adjusted() + 4)),
-            )
-        except InvalidOperation as err:
-            raise BadNumValueError from err
-        whole, cents = f"{amount:f}".split(".")
-        words = self.number_to_words(whole, andword=andword)
-        return f"{words} and {cents}/100"
-
-    @typechecked
     def number_to_words(  # noqa: C901
         self,
         num: Number | Word,
@@ -4077,6 +4049,34 @@ class engine:
             else ''.join(self._render(numchunks, decimal, resolved_comma))
         )
         return signout + valout
+
+    @typechecked
+    def number_to_currency(self, num: Number | str, andword: str = "and") -> str:
+        """
+        Return an amount in words with the cents as a fraction of 100.
+
+        e.g. 100020.56 gives "one hundred thousand and twenty and 56/100"
+
+        The amount is rounded half up to the cent, going by the number as written.
+        andword is passed to number_to_words; the "and" before the cents is fixed.
+
+        Raise BadNumValueError if num is not a finite number.
+        """
+        try:
+            amount = Decimal(str(num))
+        except InvalidOperation as err:
+            raise BadNumValueError from err
+        if not amount.is_finite():
+            raise BadNumValueError
+        rounded = amount.quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP,
+            context=Context(prec=max(28, amount.adjusted() + 4)),
+        )
+        sign = "-" if rounded < 0 else ""
+        whole, cents = f"{rounded.copy_abs():f}".split(".")
+        words = self.number_to_words(sign + whole, andword=andword)
+        return f"{words} and {cents}/100"
 
     @staticmethod
     def _render(chunks, decimal, comma):

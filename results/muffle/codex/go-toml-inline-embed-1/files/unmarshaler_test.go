@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,60 +16,6 @@ import (
 	"github.com/pelletier/go-toml/v2/internal/assert"
 	"github.com/pelletier/go-toml/v2/unstable"
 )
-
-func TestUnmarshalEmbeddedStructWithoutTagName(t *testing.T) {
-	type Base struct {
-		Region string
-		Name   string
-		BsPort int
-	}
-	base := Base{Region: "us", Name: "srv1", BsPort: 100}
-	const document = "Region = 'us'\nName = 'srv1'\nBsPort = 100\nPID = 42\n"
-	for _, tt := range []struct {
-		name string
-		new  func() any
-		want any
-	}{
-		{"inline", func() any {
-			return &struct {
-				Base  `toml:",inline"`
-				PID   uint32
-				index int `toml:"-"`
-			}{}
-		}, &struct {
-			Base  `toml:",inline"`
-			PID   uint32
-			index int `toml:"-"`
-		}{Base: base, PID: 42}},
-		{"pointer", func() any {
-			return &struct {
-				*Base `toml:",inline"`
-				PID   uint32
-			}{}
-		}, &struct {
-			*Base `toml:",inline"`
-			PID   uint32
-		}{Base: &base, PID: 42}},
-		{"empty tag", func() any {
-			return &struct {
-				Base `toml:""`
-				PID  uint32
-			}{}
-		}, &struct {
-			Base `toml:""`
-			PID  uint32
-		}{Base: base, PID: 42}},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.new()
-			assert.NoError(t, toml.Unmarshal([]byte(document), got))
-			assert.Equal(t, tt.want, got)
-			got = tt.new()
-			assert.NoError(t, toml.NewDecoder(strings.NewReader(document)).DisallowUnknownFields().Decode(got))
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
 
 type unmarshalTextKey struct {
 	A string
@@ -4333,6 +4280,45 @@ func TestUnmarshal_RecursiveTableArray(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, e.expected, string(j))
 			}
+		})
+	}
+}
+
+func TestUnmarshalEmbeddedStructWithOptions(t *testing.T) {
+	type Base struct {
+		Region string
+		Name   string
+		BsPort int
+	}
+	want := Base{Region: "us", Name: "srv1", BsPort: 100}
+	for _, tt := range []struct {
+		name  string
+		value interface{}
+	}{
+		{"inline", &struct {
+			Base `toml:",inline"`
+			PID  uint32
+		}{Base: want, PID: 42}},
+		{"inline pointer", &struct {
+			*Base `toml:",inline"`
+			PID   uint32
+		}{Base: &want, PID: 42}},
+		{"empty tag", &struct {
+			Base `toml:""`
+			PID  uint32
+		}{Base: want, PID: 42}},
+		{"named inline", &struct {
+			Base `toml:"base,inline"`
+			PID  uint32
+		}{Base: want, PID: 42}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := toml.Marshal(tt.value)
+			assert.NoError(t, err)
+			got := reflect.New(reflect.TypeOf(tt.value).Elem()).Interface()
+			err = toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields().Decode(got)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.value, got)
 		})
 	}
 }

@@ -1,1 +1,1 @@
-Done. Added `isUnderBase` in `src/utils.ts`: the base must be followed by end, `/`, `?` or `#`. `withBase` and `withoutBase` use it. Existing tests pass. I added no new test for `/admin-dashboard`.
+Done. Added `isUnderBase` in `src/utils.ts`: base match needs end of input, `/`, `?` or `#` next. `withBase` and `withoutBase` use it. Added `/admin-dashboard` cases to `test/base.test.ts`; full suite passed before the test edit, `base.test.ts` passes after. Not committed.

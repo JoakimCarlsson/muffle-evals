@@ -83,39 +83,6 @@ func ExampleEval_bytes_literal() {
 	// Output: [97 98 99]
 }
 
-func TestFindLastInMap(t *testing.T) {
-	for _, builtin := range []string{"findLast", "findLastIndex"} {
-		for _, tt := range []struct {
-			name      string
-			array     string
-			predicate string
-			value     any
-			index     any
-		}{
-			{"last", "[1.0, 2.0, 3.0, 4.0, 5.0]", "# > 3", 5.0, 4},
-			{"middle", "[1.0, 2.0, 3.0, 4.0, 5.0]", "# < 4", 3.0, 2},
-			{"first", "[1.0, 2.0, 3.0]", "# == 1", 1.0, 0},
-			{"no match", "[1.0, 2.0, 3.0]", "# > 3", nil, nil},
-			{"empty", "[]", "# > 3", nil, nil},
-		} {
-			for _, optimize := range []bool{false, true} {
-				t.Run(fmt.Sprintf("%s/%s/optimize=%t", builtin, tt.name, optimize), func(t *testing.T) {
-					code := fmt.Sprintf(`{"before": 42, "r": %s(%s, %s), "after": 99}`, builtin, tt.array, tt.predicate)
-					program, err := expr.Compile(code, expr.Optimize(optimize))
-					require.NoError(t, err)
-					out, err := expr.Run(program, nil)
-					require.NoError(t, err)
-					want := tt.value
-					if builtin == "findLastIndex" {
-						want = tt.index
-					}
-					assert.Equal(t, map[string]any{"before": 42, "r": want, "after": 99}, out)
-				})
-			}
-		}
-	}
-}
-
 func TestDisableIfOperator_AllowsIfFunction(t *testing.T) {
 	env := map[string]any{
 		"if": func(x int) int { return x + 1 },
@@ -1494,6 +1461,39 @@ func TestExpr(t *testing.T) {
 				assert.Equal(t, tt.want, got, code)
 			}
 		})
+	}
+}
+
+func TestExpr_findLast_mapValue(t *testing.T) {
+	for _, builtin := range []string{"findLast", "findLastIndex"} {
+		for _, tt := range []struct {
+			name      string
+			array     string
+			predicate string
+			value     any
+			index     any
+		}{
+			{"last element", `[1.0, 2.0, 3.0, 4.0, 5.0]`, `# > 3`, 5.0, 4},
+			{"earlier element", `[1.0, 2.0, 3.0, 4.0, 5.0]`, `# < 4`, 3.0, 2},
+			{"first element", `[1.0, 2.0, 3.0, 4.0, 5.0]`, `# == 1`, 1.0, 0},
+			{"no match", `[1.0, 2.0, 3.0, 4.0, 5.0]`, `# > 5`, nil, nil},
+			{"empty array", `[]`, `# > 3`, nil, nil},
+		} {
+			for _, optimize := range []bool{true, false} {
+				t.Run(fmt.Sprintf("%s/%s/optimize=%v", builtin, tt.name, optimize), func(t *testing.T) {
+					code := fmt.Sprintf(`{"r": %s(%s, %s)}`, builtin, tt.array, tt.predicate)
+					program, err := expr.Compile(code, expr.Optimize(optimize))
+					require.NoError(t, err)
+					got, err := expr.Run(program, nil)
+					require.NoError(t, err)
+					want := tt.value
+					if builtin == "findLastIndex" {
+						want = tt.index
+					}
+					assert.Equal(t, map[string]any{"r": want}, got)
+				})
+			}
+		}
 	}
 }
 

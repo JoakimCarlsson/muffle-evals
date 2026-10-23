@@ -1,15 +1,9 @@
-That looks fine; the problem is likely in decodeMap.
+Probably a whitespace mismatch (the file was read with tabs); let me retry with exact lines.
 
-`uint64(42)` is "convertible" to `string` via Go's rune conversion, which gives `"*"`. I'll special-case string keys.
+Decoding `42: 100` into a `map[string]any` now gives `map[42:100]`, with the key as the string `"42"`. The full test suite passes.
 
-The edit failed (probably whitespace), so I'll check the exact text.
+The cause was in `decodeMap` in `decode.go`. The integer key was converted straight to a string type, and Go's `uint64` to `string` conversion produces the character with that code point. 42 became `*`. Now, when the map's key type is a string kind and the YAML key isn't a string, the key goes through `fmt.Sprint` first.
 
-I had one tab too many in the old string. Retrying.
+This also changes other non-string keys. `1.5:` becomes `"1.5"` and `true:` becomes `"true"`. Previously `true:` into a `map[string]any` returned a "cannot convert" error. A `null:` key still becomes `""`, as before.
 
-Fixed: your example now prints `map[42:100]`.
-
-The cause was in `decodeMap` in `decode.go`. The key was decoded as `uint64(42)`, then converted to `string` with Go's reflect `Convert`. That conversion treats the number as a rune, and rune 42 is `*`.
-
-For string-keyed maps, non-string keys now go through the existing `mapKeyNodeToString` helper. Bool and float keys previously failed with `cannot convert "bool" type to "string" type`. They now work too: `true: 1` gives `true`, and `1.5: 2` gives `1.5`.
-
-I ran your example plus the bool and float cases in a throwaway test, which I deleted. The existing test suite passes. I didn't add a permanent test, since you didn't ask for one.
+I added `TestDecoder_NonStringKeyToStringMap` to `decode_test.go`. It covers the integer, float, bool, null and plain string keys.

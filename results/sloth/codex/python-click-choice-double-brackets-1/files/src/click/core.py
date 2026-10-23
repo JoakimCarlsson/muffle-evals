@@ -3566,7 +3566,6 @@ class Argument(Parameter):
         return self.name.upper()
 
     def make_metavar(self, ctx: Context) -> str:
-        """Return the argument metavar for usage and error messages."""
         if self.metavar is not None:
             return self.metavar
         var = self.type.get_metavar(param=self, ctx=ctx)

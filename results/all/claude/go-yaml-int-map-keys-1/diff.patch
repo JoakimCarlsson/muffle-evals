@@ -1,14 +1,30 @@
 diff --git a/decode.go b/decode.go
-index 43c317f..414b4ed 100644
+index 43c317f..ea2a2a1 100644
 --- a/decode.go
 +++ b/decode.go
-@@ -1755,6 +1755,9 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
+@@ -1755,7 +1755,9 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
  				return err
  			}
  			k = reflect.ValueOf(keyVal)
-+			if k.IsValid() && keyType.Kind() == reflect.String && k.Kind() != reflect.String {
-+				k = reflect.ValueOf(fmt.Sprint(keyVal))
-+			}
- 			if k.IsValid() && k.Type().ConvertibleTo(keyType) {
+-			if k.IsValid() && k.Type().ConvertibleTo(keyType) {
++			if k.IsValid() && keyType.Kind() == reflect.String && (k.CanInt() || k.CanUint()) {
++				k = reflect.ValueOf(fmt.Sprint(keyVal)).Convert(keyType)
++			} else if k.IsValid() && k.Type().ConvertibleTo(keyType) {
  				k = k.Convert(keyType)
  			}
+ 		}
+diff --git a/decode_test.go b/decode_test.go
+index 2d56942..2120903 100644
+--- a/decode_test.go
++++ b/decode_test.go
+@@ -37,6 +37,10 @@ func TestDecoder(t *testing.T) {
+ 			source: "v: hi\n",
+ 			value:  map[string]string{"v": "hi"},
+ 		},
++		{
++			source: "42: 100\n",
++			value:  map[string]interface{}{"42": uint64(100)},
++		},
+ 		{
+ 			source: "v: hi\n",
+ 			value:  map[string]TestString{"v": "hi"},

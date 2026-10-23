@@ -26,15 +26,15 @@ export function parse(
   str: string,
   options?: CookieParseOptions & { allowMultiple?: false },
 ): Cookies;
-/**
- * Parse a `Cookie` header, optionally collecting duplicate values in arrays.
- */
-export function parse(str: string, options: CookieParseOptions): Cookies<true>;
-/**
- * Parse a `Cookie` header using the supplied options.
- */
-export function parse(str: string, options?: CookieParseOptions): Cookies<boolean> {
-  const obj: Cookies<true> = new NullObject();
+export function parse(
+  str: string,
+  options?: CookieParseOptions,
+): Record<string, string | string[] | undefined>;
+export function parse(
+  str: string,
+  options?: CookieParseOptions,
+): Record<string, string | string[] | undefined> {
+  const obj: Record<string, string | string[] | undefined> = new NullObject();
   const len = str.length;
   // RFC 6265 sec 4.1.1, RFC 2616 2.2 defines a cookie name consists of one char minimum, plus '='.
   if (len < 2) return obj;
@@ -61,16 +61,18 @@ export function parse(str: string, options?: CookieParseOptions): Cookies<boolea
       continue;
     }
 
-    if (options?.allowMultiple && Object.hasOwn(obj, key)) {
-      const value = dec(valueSlice(str, eqIdx + 1, endIdx));
-      const previous = obj[key];
-      if (Array.isArray(previous)) {
-        previous.push(value);
-      } else {
-        obj[key] = [previous, value];
-      }
-    } else if (obj[key] === undefined) {
+    if (obj[key] === undefined) {
       obj[key] = dec(valueSlice(str, eqIdx + 1, endIdx));
+    } else if (options?.allowMultiple) {
+      const value = dec(valueSlice(str, eqIdx + 1, endIdx));
+      if (value !== undefined) {
+        const previous = obj[key];
+        if (Array.isArray(previous)) {
+          previous.push(value);
+        } else {
+          obj[key] = [previous, value];
+        }
+      }
     }
 
     index = endIdx + 1;

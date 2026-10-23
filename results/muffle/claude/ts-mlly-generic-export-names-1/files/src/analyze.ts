@@ -387,30 +387,6 @@ export function parseTypeImport(
 }
 
 /**
- * Returns the index of the `>` closing the generic argument list opened at `start`
- * if it is followed by `(` and contains only type-like characters, otherwise -1.
- */
-function _findGenericEnd(str: string, start: number): number {
-  let level = 0;
-  for (let i = start; i < str.length; i++) {
-    const char = str[i];
-    if (char === "<") {
-      level++;
-    } else if (char === ">") {
-      if (str[i - 1] === "=") {
-        continue;
-      }
-      if (--level === 0) {
-        return /^\s*\(/.test(str.slice(i + 1)) ? i : -1;
-      }
-    } else if (!/[\w$\s,.[\]|&?:{}()='";*-]/.test(char)) {
-      return -1;
-    }
-  }
-  return -1;
-}
-
-/**
  * Extracts extra variable names from a comma-separated declaration list,
  * ignoring commas nested inside parentheses, brackets, braces, generics, or strings.
  *
@@ -419,6 +395,32 @@ function _findGenericEnd(str: string, start: number): number {
  * @param {string} extraNamesStr - The string containing the extra variable declarations to parse.
  * @returns {string[]} An array of variable names extracted from the declaration list.
  */
+/**
+ * Heuristically checks whether the `<` at `index` opens type arguments in an
+ * initializer (`new Map<string, X>()`, `foo<A, B>(x)`) rather than being a
+ * comparison (`1<2`). It must follow an identifier and its matching `>` must be
+ * followed by `(` or a template literal.
+ */
+function _isGenericOpen(str: string, index: number): boolean {
+  if (!/[A-Za-z_$]/.test(/[\w$]+$/.exec(str.slice(0, index))?.[0] ?? "")) {
+    return false;
+  }
+  let depth = 0;
+  for (let i = index; i < str.length; i++) {
+    const char = str[i];
+    if (char === "<") {
+      depth++;
+    } else if (char === ">" && str[i - 1] !== "=") {
+      if (--depth === 0) {
+        return /^\s*[(`]/.test(str.slice(i + 1));
+      }
+    } else if (char === ";" || (char === "=" && str[i + 1] !== ">")) {
+      return false;
+    }
+  }
+  return false;
+}
+
 function _extractExtraNames(extraNamesStr: string): string[] {
   const names: string[] = [];
   let depth = 0;
@@ -460,34 +462,16 @@ function _extractExtraNames(extraNamesStr: string): string[] {
     ) {
       inTypeAnnotation = false;
     }
-    if (inTypeAnnotation && char === "<") {
+    if (
+      char === "<" &&
+      (inTypeAnnotation || _isGenericOpen(extraNamesStr, i))
+    ) {
       angleDepth++;
       continue;
     }
-    if (
-      inTypeAnnotation &&
-      char === ">" &&
-      extraNamesStr[i - 1] !== "=" &&
-      angleDepth > 0
-    ) {
+    if (char === ">" && angleDepth > 0 && extraNamesStr[i - 1] !== "=") {
       angleDepth--;
       continue;
-    }
-
-    // Generic call/instantiation in an expression, e.g. `new Map<string, A>()` or `fn<A, B>(x)`.
-    // Only treated as generics when the matching `>` is directly followed by `(`;
-    // otherwise (e.g. `1<2, b = 3`) it is a comparison.
-    if (
-      !inTypeAnnotation &&
-      char === "<" &&
-      depth >= 0 &&
-      /[A-Za-z_$]/.test(extraNamesStr[i - 1] || "")
-    ) {
-      const end = _findGenericEnd(extraNamesStr, i);
-      if (end > 0) {
-        i = end;
-        continue;
-      }
     }
 
     // Track bracket nesting
@@ -497,7 +481,7 @@ function _extractExtraNames(extraNamesStr: string): string[] {
       depth--;
     }
 
-    // A statement terminator ends the declaration list
+    // A semicolon at depth 0 ends the statement
     if (char === ";" && depth === 0 && angleDepth === 0) {
       break;
     }
@@ -538,18 +522,17 @@ export function findExports(code: string): ESMExport[] {
       | string
       | undefined;
     if (extraNamesStr) {
-      // The regex capture ends at the last identifier after a comma, which cuts
-      // generic calls like `new Map<A, B>()` short, so scan the rest of the line.
-      const nameEnd =
-        declaredExport.start +
-        declaredExport.code.indexOf(
-          declaredExport.name,
-          "export".length + declaredExport.declaration.length,
-        ) +
-        declaredExport.name.length;
-      const lineEnd = code.indexOf("\n", nameEnd);
+      // The regex capture stops at the last name; scan the whole line instead
+      const lineEnd = code.indexOf("\n", declaredExport.end);
+      const rest = code.slice(
+        declaredExport.end,
+        lineEnd === -1 ? undefined : lineEnd,
+      );
       const extraNames = _extractExtraNames(
-        code.slice(nameEnd, lineEnd === -1 ? undefined : lineEnd),
+        declaredExport.code.slice(
+          declaredExport.code.indexOf(declaredExport.name) +
+            declaredExport.name.length,
+        ) + rest,
       );
       if (extraNames.length > 0) {
         declaredExport.names = [declaredExport.name, ...extraNames];

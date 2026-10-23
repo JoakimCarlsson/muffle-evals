@@ -1,5 +1,3 @@
-Currency method needs decimal rounding and existing word formatting. Checking engine and validation.
+Currency method needs decimal rounding and focused tests.
 
-
-Done.
-Added `number_to_currency`, half-up rounding, input validation. Currency checks passed; 278 tests passed, 16 xfailed. Build blocked: missing `build` module.
+Done. Added currency conversion, half-up rounding, validation. Tests: 305 passed. Build and lint tools unavailable.

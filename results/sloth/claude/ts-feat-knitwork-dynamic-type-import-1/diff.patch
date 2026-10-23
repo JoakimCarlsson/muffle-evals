@@ -1,64 +1,98 @@
 diff --git a/README.md b/README.md
-index 3db6980..608021f 100644
+index 3db6980..4a95b10 100644
 --- a/README.md
 +++ b/README.md
-@@ -177,6 +177,10 @@ Generate a string with double or single quotes and handle escapes.
+@@ -66,6 +66,10 @@ import {} from "https://esm.sh/knitwork";
  
- Generate typescript `declare module` augmentation.
+ Generate an ESM dynamic `import()` statement.
  
 +### `genDynamicTypeImport(specifier, name?, options)`
 +
 +Generate a typescript `typeof import()` type, optionally for a named export.
 +
- ### `genInlineTypeImport(specifier, name, options)`
+ ### `genExport(specifier, exports?, options)`
  
- Generate an typescript `typeof import()` statement for default import.
-diff --git a/src/typescript.ts b/src/typescript.ts
-index 27fbbe7..1863ac9 100644
---- a/src/typescript.ts
-+++ b/src/typescript.ts
-@@ -1,5 +1,10 @@
- import { _genStatement } from "./_utils";
--import { ESMCodeGenOptions, ESMImport, genDynamicImport } from "./esm";
-+import {
-+  DynamicImportOptions,
-+  ESMCodeGenOptions,
-+  ESMImport,
-+  genDynamicImport,
-+} from "./esm";
- import { genString } from "./string";
- import { genObjectKey, wrapInDelimiters } from "./utils";
- 
-@@ -40,6 +45,32 @@ export function genInlineTypeImport(
-   })}.${name}`;
+ Generate an ESM `export` statement.
+diff --git a/src/esm.ts b/src/esm.ts
+index 75242ce..bc41c0e 100644
+--- a/src/esm.ts
++++ b/src/esm.ts
+@@ -115,8 +115,29 @@ export function genDynamicImport(
+   )}${commentString}${optionsString})${ineropString}`;
  }
  
-+const PROPERTY_NAME_RE = /^[$A-Z_a-z][\w$]*$/;
-+
 +/**
 + * Generate a typescript `typeof import()` type, optionally for a named export.
 + *
-+ * @group Typescript
++ * @group ESM
 + */
 +export function genDynamicTypeImport(
 +  specifier: string,
 +  name?: string,
-+  options: Pick<DynamicImportOptions, "comment" | "attributes"> = {},
++  options: Omit<DynamicImportOptions, "wrapper" | "interopDefault"> = {},
 +) {
-+  const importString = genDynamicImport(specifier, {
-+    comment: options.comment,
-+    attributes: options.attributes,
-+    wrapper: false,
-+  });
++  const importType = `typeof ${genDynamicImport(specifier, { ...options, wrapper: false })}`;
 +  if (name === undefined) {
-+    return `typeof ${importString}`;
++    return importType;
 +  }
-+  const accessor = PROPERTY_NAME_RE.test(name)
-+    ? `.${name}`
-+    : `[${genString(name)}]`;
-+  return `typeof ${importString}${accessor}`;
++  return VALID_PROPERTY_NAME_RE.test(name)
++    ? `${importType}.${name}`
++    : `${importType}[${genString(name)}]`;
 +}
 +
- /**
-  * Generate typescript object type.
-  *
+ // --- internal ---
+ 
++const VALID_PROPERTY_NAME_RE = /^[$A-Z_a-z][\w$]*$/;
++
+ function _genDynamicImportAttributes(options: DynamicImportOptions = {}) {
+   // TODO: Remove deprecated `assert` in the next major release
+   if (typeof options.assert?.type === "string") {
+diff --git a/test/esm.test.ts b/test/esm.test.ts
+index dbe9e4f..bf20b67 100644
+--- a/test/esm.test.ts
++++ b/test/esm.test.ts
+@@ -3,6 +3,7 @@ import {
+   genImport,
+   genExport,
+   genDynamicImport,
++  genDynamicTypeImport,
+   genSafeVariableName,
+ } from "../src";
+ import { genTestTitle } from "./_utils";
+@@ -109,6 +110,36 @@ describe("genDynamicImport", () => {
+   }
+ });
+ 
++const genDynamicTypeImportTests: Array<{
++  name?: string;
++  opts?: Parameters<typeof genDynamicTypeImport>[2];
++  code: string;
++}> = [
++  { code: 'typeof import("pkg")' },
++  { name: "foo", code: 'typeof import("pkg").foo' },
++  { name: "foo-bar", code: 'typeof import("pkg")["foo-bar"]' },
++  { name: "1a", code: 'typeof import("pkg")["1a"]' },
++  { name: "default", code: 'typeof import("pkg").default' },
++  {
++    name: "foo",
++    opts: { comment: 'webpackChunkName: "chunks/dynamic"' },
++    code: 'typeof import("pkg" /* webpackChunkName: "chunks/dynamic" */).foo',
++  },
++  {
++    name: "foo",
++    opts: { attributes: { type: "json" } },
++    code: 'typeof import("pkg", { with: { type: "json" } }).foo',
++  },
++];
++
++describe("genDynamicTypeImport", () => {
++  for (const t of genDynamicTypeImportTests) {
++    it(genTestTitle(t.code), () => {
++      expect(genDynamicTypeImport("pkg", t.name, t.opts)).to.equal(t.code);
++    });
++  }
++});
++
+ const genSafeVariableNameTests = [
+   { key: "valid_import", code: "valid_import" },
+   { key: "for", code: "_for" },

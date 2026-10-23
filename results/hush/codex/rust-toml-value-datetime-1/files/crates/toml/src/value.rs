@@ -613,7 +613,7 @@ impl<'de> de::Deserializer<'de> for Value {
         name: &'static str,
         _fields: &'static [&'static str],
         visitor: V,
-    ) -> Result<V::Value, Self::Error>
+    ) -> Result<V::Value, crate::de::Error>
     where
         V: de::Visitor<'de>,
     {

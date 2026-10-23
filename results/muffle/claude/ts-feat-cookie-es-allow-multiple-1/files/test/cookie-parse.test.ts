@@ -58,6 +58,27 @@ describe("cookie.parse(str)", () => {
 });
 
 describe("cookie.parse(str, options)", () => {
+  describe('with "allowMultiple" option', () => {
+    it("should collect duplicate names into arrays in order", () => {
+      expect(parse("foo=a;bar=bar;foo=b;foo=c", { allowMultiple: true })).toEqual({
+        foo: ["a", "b", "c"],
+        bar: "bar",
+      });
+      expect(parse("foo=;bar=bar;foo=boo", { allowMultiple: true })).toEqual({
+        foo: ["", "boo"],
+        bar: "bar",
+      });
+    });
+
+    it("should decode values", () => {
+      expect(parse("foo=%1;foo=boo", { allowMultiple: true })).toEqual({ foo: ["%1", "boo"] });
+    });
+
+    it("should keep first value by default", () => {
+      expect(parse("foo=a;foo=b")).toEqual({ foo: "a" });
+    });
+  });
+
   describe('with "decode" option', () => {
     it("should specify alternative value decoder", () => {
       expect(
@@ -67,14 +88,6 @@ describe("cookie.parse(str, options)", () => {
           },
         }),
       ).toMatchObject({ foo: "bar" });
-    });
-
-    it("allowMultiple collects repeated names", () => {
-      const o = { allowMultiple: true } as const;
-      expect(parse("foo=a;bar=bar;foo=b;foo=c", o)).toEqual({ foo: ["a", "b", "c"], bar: "bar" });
-      expect(parse("foo=;bar=bar;foo=boo", o)).toEqual({ foo: ["", "boo"], bar: "bar" });
-      expect(parse("foo=%1;foo=boo", o)).toEqual({ foo: ["%1", "boo"] });
-      expect(parse("foo=a;foo=b")).toEqual({ foo: "a" });
     });
 
     it("parse filter key", () => {

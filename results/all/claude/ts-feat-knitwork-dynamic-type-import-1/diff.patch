@@ -1,5 +1,5 @@
 diff --git a/README.md b/README.md
-index 3db6980..3d8f545 100644
+index 3db6980..608021f 100644
 --- a/README.md
 +++ b/README.md
 @@ -177,6 +177,10 @@ Generate a string with double or single quotes and handle escapes.
@@ -8,13 +8,13 @@ index 3db6980..3d8f545 100644
  
 +### `genDynamicTypeImport(specifier, name?, options)`
 +
-+Generate a typescript `typeof import()` type, using dot access for valid identifiers.
++Generate a typescript `typeof import()` type, optionally for a named export.
 +
  ### `genInlineTypeImport(specifier, name, options)`
  
  Generate an typescript `typeof import()` statement for default import.
 diff --git a/src/typescript.ts b/src/typescript.ts
-index 27fbbe7..a41e3fa 100644
+index 27fbbe7..187d413 100644
 --- a/src/typescript.ts
 +++ b/src/typescript.ts
 @@ -1,5 +1,10 @@
@@ -29,20 +29,19 @@ index 27fbbe7..a41e3fa 100644
  import { genString } from "./string";
  import { genObjectKey, wrapInDelimiters } from "./utils";
  
-@@ -40,6 +45,29 @@ export function genInlineTypeImport(
+@@ -40,6 +45,27 @@ export function genInlineTypeImport(
    })}.${name}`;
  }
  
 +/**
-+ * Generate a typescript `typeof import()` type, using dot access for valid identifiers.
++ * Generate a typescript `typeof import()` type, optionally for a named export.
 + *
 + * @group Typescript
 + */
 +export function genDynamicTypeImport(
 +  specifier: string,
 +  name?: string,
-+  options: Pick<DynamicImportOptions, "comment" | "attributes"> &
-+    ESMCodeGenOptions = {},
++  options: Pick<DynamicImportOptions, "comment" | "attributes"> = {},
 +) {
 +  const importType = `typeof ${genDynamicImport(specifier, {
 +    ...options,
@@ -51,11 +50,50 @@ index 27fbbe7..a41e3fa 100644
 +  if (name === undefined) {
 +    return importType;
 +  }
-+  return /^[$A-Z_a-z][\w$]*$/.test(name)
-+    ? `${importType}.${name}`
-+    : `${importType}[${genString(name, options)}]`;
++  const key = genObjectKey(name);
++  return key === name ? `${importType}.${name}` : `${importType}[${key}]`;
 +}
 +
  /**
   * Generate typescript object type.
   *
+diff --git a/test/typescript.test.ts b/test/typescript.test.ts
+index 1f32db2..38db433 100644
+--- a/test/typescript.test.ts
++++ b/test/typescript.test.ts
+@@ -3,6 +3,7 @@ import {
+   genInterface,
+   genAugmentation,
+   genInlineTypeImport,
++  genDynamicTypeImport,
+   genTypeImport,
+   genTypeExport,
+ } from "../src";
+@@ -116,6 +117,27 @@ const genInlineTypeImportTests: Array<{
+   },
+ ];
+ 
++describe("genDynamicTypeImport", () => {
++  const tests: Array<[Parameters<typeof genDynamicTypeImport>, string]> = [
++    [["pkg", undefined], 'typeof import("pkg")'],
++    [["pkg", "foo"], 'typeof import("pkg").foo'],
++    [["pkg", "foo-bar"], 'typeof import("pkg")["foo-bar"]'],
++    [
++      ["pkg", "foo", { comment: 'webpackChunkName: "chunks/dynamic"' }],
++      'typeof import("pkg" /* webpackChunkName: "chunks/dynamic" */).foo',
++    ],
++    [
++      ["pkg", "foo", { attributes: { type: "json" } }],
++      'typeof import("pkg", { with: { type: "json" } }).foo',
++    ],
++  ];
++  for (const [input, code] of tests) {
++    it(genTestTitle(code), () => {
++      expect(genDynamicTypeImport(...input)).to.equal(code);
++    });
++  }
++});
++
+ describe("genInlineTypeImport", () => {
+   for (const t of genInlineTypeImportTests) {
+     it(genTestTitle(t.code), () => {

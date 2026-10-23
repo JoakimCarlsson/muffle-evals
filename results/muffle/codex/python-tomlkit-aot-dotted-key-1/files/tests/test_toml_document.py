@@ -1170,21 +1170,24 @@ x = 9
     assert parse(doc.as_string()) == {"c": {"d": 2}, "a": {"x": 9}}
 
 
-@pytest.mark.parametrize("suffix", ["", "e = 3\n", "[f]\ng = 4\n"])
-def test_replace_dotted_key_with_aot_keeps_following_siblings(suffix: str) -> None:
-    doc = parse("a.b = 1\nc.d = 2\n" + suffix)
-    aot = tomlkit.aot()
-    table = tomlkit.table()
-    table["x"] = 9
-    aot.append(table)
-    doc["a"] = aot
+@pytest.mark.parametrize("table_count", [1, 2])
+@pytest.mark.parametrize("following", ["c.d = 2\n", "c.d = 2\n\n[e]\nf = 3\n"])
+def test_replace_dotted_key_with_aot_keeps_following_sibling(
+    table_count: int, following: str
+) -> None:
+    doc = parse("a.b = 1\n" + following)
+    replacement = tomlkit.aot()
+    for x in range(table_count):
+        entry = tomlkit.table()
+        entry["x"] = x
+        replacement.append(entry)
 
-    rendered = tomlkit.dumps(doc)
-    assert rendered.index("c.d = 2") < rendered.index("[[a]]")
-    expected = {"c": {"d": 2}, "a": [{"x": 9}]}
-    expected.update(parse(suffix).unwrap())
+    doc["a"] = replacement
+
+    expected = parse(following).unwrap()
+    expected["a"] = [{"x": x} for x in range(table_count)]
     assert doc.unwrap() == expected
-    assert parse(rendered).unwrap() == expected
+    assert parse(tomlkit.dumps(doc)).unwrap() == expected
 
 
 def test_replace_value_with_table_keeps_following_dotted_sibling() -> None:

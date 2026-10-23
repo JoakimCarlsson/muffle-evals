@@ -6,9 +6,8 @@ Changelog
 
 Features:
 
-* Add :meth:`Requirement.__replace__ <packaging.requirements.Requirement.__replace__>`
-  to copy requirements with selected fields changed, including support for
-  :func:`copy.replace` on Python 3.13 and later.
+* Add ``Requirement.__replace__`` for validated copies with selected fields
+  changed, including support for ``copy.replace()`` on Python 3.13+.
 
 Removals:
 

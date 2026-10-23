@@ -2232,6 +2232,7 @@ func buildPlan(t reflect.Type) *structPlan {
 	return plan
 }
 
+// addFields indexes named and promoted fields of t in plan.
 func addFields(plan *structPlan, t reflect.Type, prefix []int) {
 	var embedded []reflect.StructField
 	for i := 0; i < t.NumField(); i++ {
@@ -2244,7 +2245,8 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
 				continue
 			}
 			parts := strings.SplitN(tag, ",", 2)
-			if parts[0] != "" {
+			tagged = parts[0] != ""
+			if tagged {
 				name = parts[0]
 			}
 		}
@@ -2257,14 +2259,14 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
 				// Embedded non-struct fields are not decoded into.
 				continue
 			}
-			if !tagged || tagName(tag) == "" {
+			if !tagged {
 				// Embedded structs without a tag name are flattened, even when their
 				// type is unexported: only their own exported fields are
 				// reachable.
 				embedded = append(embedded, f)
 				continue
 			}
-			// An embedded struct with a tag name acts as a regular named field.
+			// An explicitly named embedded struct acts as a regular named field.
 		} else if f.PkgPath != "" {
 			// unexported
 			continue

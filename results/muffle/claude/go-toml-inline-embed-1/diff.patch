@@ -1,38 +1,21 @@
 diff --git a/unmarshaler.go b/unmarshaler.go
-index d497669..cc5a5f5 100644
+index d497669..59117a4 100644
 --- a/unmarshaler.go
 +++ b/unmarshaler.go
-@@ -2232,6 +2232,12 @@ func buildPlan(t reflect.Type) *structPlan {
- 	return plan
- }
- 
-+// parts0 returns the name part of a toml struct tag.
-+func parts0(tag string) string {
-+	name, _, _ := strings.Cut(tag, ",")
-+	return name
-+}
-+
- func addFields(plan *structPlan, t reflect.Type, prefix []int) {
- 	var embedded []reflect.StructField
- 	for i := 0; i < t.NumField(); i++ {
-@@ -2257,10 +2263,11 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
+@@ -2257,8 +2257,9 @@ func addFields(plan *structPlan, t reflect.Type, prefix []int) {
  				// Embedded non-struct fields are not decoded into.
  				continue
  			}
 -			if !tagged {
 -				// Untagged embedded structs are flattened, even when their
--				// type is unexported: only their own exported fields are
--				// reachable.
-+			if !tagged || parts0(tag) == "" {
-+				// Embedded structs without a tag name (untagged, or with
-+				// only options such as ",inline") are flattened, even when
-+				// their type is unexported: only their own exported fields
-+				// are reachable. This mirrors the encoder.
++			if !tagged || tagName(tag) == "" {
++				// Embedded structs without a tag name (untagged, or only
++				// options such as ",inline") are flattened, even when their
+ 				// type is unexported: only their own exported fields are
+ 				// reachable.
  				embedded = append(embedded, f)
- 				continue
- 			}
 diff --git a/unmarshaler_test.go b/unmarshaler_test.go
-index fbefca8..ed32381 100644
+index fbefca8..2175a0f 100644
 --- a/unmarshaler_test.go
 +++ b/unmarshaler_test.go
 @@ -5603,3 +5603,25 @@ e = 1
@@ -56,8 +39,8 @@ index fbefca8..ed32381 100644
 +	if err != nil {
 +		t.Fatal(err)
 +	}
-+	if c.Region != "us" || c.Name != "srv1" || c.BsPort != 100 || c.PID != 42 {
-+		t.Fatalf("unexpected result: %+v", c)
++	want := Config{Base: Base{Region: "us", Name: "srv1", BsPort: 100}, PID: 42}
++	if c != want {
++		t.Fatalf("got %+v, want %+v", c, want)
 +	}
-+	_ = c.index
 +}

@@ -1097,9 +1097,17 @@ fn strftime_compound_equivalence(#[case] strftime: &str, #[case] custom: &str) -
 #[case("%-", 2)]
 #[case("%0", 2)]
 #[case("a%_", 3)]
-fn strftime_missing_component(#[case] strftime: &str, #[case] expected_index: usize) {
+fn strftime_missing_component_error(#[case] strftime: &str, #[case] expected_index: usize) {
     assert!(matches!(
         format_description::parse_strftime_borrowed(strftime),
+        Err(InvalidFormatDescription::Expected {
+            what: "valid escape sequence",
+            index,
+            ..
+        }) if index == expected_index
+    ));
+    assert!(matches!(
+        format_description::parse_strftime_owned(strftime),
         Err(InvalidFormatDescription::Expected {
             what: "valid escape sequence",
             index,

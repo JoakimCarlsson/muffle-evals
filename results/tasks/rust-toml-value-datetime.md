@@ -109,15 +109,15 @@ index 892d2d8..214ca36 100644
 | agent | setup | hidden tests | lines +/- (code) | test lines | output tokens | cost |
 |---|---|---|---:|---:|---:|---:|
 | claude | base | pass | +18/-1 | 0 | 3,051 | $0.119 |
-| claude | muffle | pass | +18/-1 | 22 | 2,719 | $0.103 |
-| claude | hush | pass | +18/-1 | 0 | 1,963 | $0.092 |
-| claude | sloth | pass | +19/-1 | 0 | 2,455 | $0.093 |
-| claude | all | pass | +19/-1 | 0 | 2,736 | $0.114 |
+| claude | muffle | pass | +18/-1 | 27 | 2,599 | $0.106 |
+| claude | hush | pass | +18/-1 | 25 | 2,283 | $0.104 |
+| claude | sloth | pass | +18/-1 | 18 | 2,913 | $0.116 |
+| claude | all | pass | +17/-1 | 14 | 2,276 | $0.091 |
 | codex | base | pass | +19/-1 | 41 | 1,492 | - |
-| codex | muffle | pass | +32/-2 | 53 | 1,705 | - |
-| codex | hush | pass | +18/-1 | 42 | 1,151 | - |
-| codex | sloth | pass | +34/-2 | 0 | 1,547 | - |
-| codex | all | pass | +19/-1 | 0 | 878 | - |
+| codex | muffle | pass | +19/-1 | 58 | 1,755 | - |
+| codex | hush | pass | +18/-1 | 45 | 1,268 | - |
+| codex | sloth | pass | +19/-1 | 52 | 2,169 | - |
+| codex | all | pass | +19/-1 | 50 | 1,649 | - |
 
 ### claude, base: pass
 
@@ -178,7 +178,7 @@ The existing test suite passes. I didn't add a regression test, since I checked 
 
 ### claude, muffle: pass
 
-Files: [crates/toml/src/value.rs](../muffle/claude/rust-toml-value-datetime-1/files/crates/toml/src/value.rs), [crates/toml/tests/testsuite/value.rs](../muffle/claude/rust-toml-value-datetime-1/files/crates/toml/tests/testsuite/value.rs)
+Files: [crates/toml/src/value.rs](../muffle/claude/rust-toml-value-datetime-1/files/crates/toml/src/value.rs), [crates/toml/tests/testsuite/de_value_datetime.rs](../muffle/claude/rust-toml-value-datetime-1/files/crates/toml/tests/testsuite/de_value_datetime.rs), [crates/toml/tests/testsuite/main.rs](../muffle/claude/rust-toml-value-datetime-1/files/crates/toml/tests/testsuite/main.rs)
 
 <details><summary>diff</summary>
 
@@ -215,73 +215,88 @@ index 892d2d8..7707403 100644
          tuple ignored_any identifier
      }
  }
-diff --git a/crates/toml/tests/testsuite/value.rs b/crates/toml/tests/testsuite/value.rs
-index 46513da..a43b1ff 100644
---- a/crates/toml/tests/testsuite/value.rs
-+++ b/crates/toml/tests/testsuite/value.rs
-@@ -25,3 +25,25 @@ fn display() {
-         str!["{ test = 2, test2 = 3 }"].raw()
-     );
- }
+diff --git a/crates/toml/tests/testsuite/de_value_datetime.rs b/crates/toml/tests/testsuite/de_value_datetime.rs
+new file mode 100644
+index 0000000..9bffbbd
+--- /dev/null
++++ b/crates/toml/tests/testsuite/de_value_datetime.rs
+@@ -0,0 +1,26 @@
++use serde::Deserialize;
++
++#[derive(Deserialize, Debug)]
++struct Settings {
++    last_updated: toml::value::Datetime,
++    minimum_interval: i64,
++}
 +
 +#[test]
-+fn deserialize_datetime_from_value() {
-+    #[derive(serde::Deserialize)]
-+    struct Settings {
-+        last_updated: toml::value::Datetime,
-+        minimum_interval: i64,
-+    }
-+
-+    let v: toml::Table = toml::from_str(
++fn value_into_struct_with_datetime() {
++    let v: toml::value::Table = toml::from_str(
 +        "[settings]\nlast_updated = 2023-01-15T11:42:14-06:00\nminimum_interval = 3600\n",
 +    )
 +    .unwrap();
-+    let s = v["settings"].clone().try_into::<Settings>().unwrap();
-+    assert_eq!(s.last_updated.to_string(), "2023-01-15T11:42:14-06:00");
-+    assert_eq!(s.minimum_interval, 3600);
++    let x = v.get("settings").unwrap().clone();
++    let n = Settings::deserialize(x).unwrap();
++    assert_eq!(n.last_updated.to_string(), "2023-01-15T11:42:14-06:00");
++    assert_eq!(n.minimum_interval, 3600);
++}
 +
-+    let d = toml::Value::Datetime("1979-05-27".parse().unwrap())
-+        .try_into::<toml::value::Datetime>()
-+        .unwrap();
++#[test]
++fn value_try_into_datetime() {
++    let v: toml::Value = toml::from_str("a = 1979-05-27").unwrap();
++    let d: toml::value::Datetime = v["a"].clone().try_into().unwrap();
 +    assert_eq!(d.to_string(), "1979-05-27");
 +}
+diff --git a/crates/toml/tests/testsuite/main.rs b/crates/toml/tests/testsuite/main.rs
+index e6d3379..05f7bee 100644
+--- a/crates/toml/tests/testsuite/main.rs
++++ b/crates/toml/tests/testsuite/main.rs
+@@ -7,6 +7,7 @@ macro_rules! map( ($($k:expr => $v:expr),*) => ({
+     _m
+ }) );
+ 
++mod de_value_datetime;
+ mod macros;
+ mod table;
+ mod value;
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Fix is in and builds. Next I'm adding a regression test and running the suite.
+Fixing `Value`'s deserializer; now checking `Table` wrapper and testing.
 
-Deserializing a `toml::Value` datetime into a struct now works. That covers `Settings::deserialize(value)` and `value.try_into::<Datetime>()`. The full test suite passes.
+Table is never a datetime, so it's fine. Add a test and run.
 
-**Cause:** the `Deserializer` impl for `Value` forwarded `deserialize_struct` to `deserialize_any`. A datetime reached the visitor as a plain string. `Datetime`'s own `Deserialize` expects the special datetime map, so it rejected the string.
+Deserializing a `toml::Value` datetime into `toml::value::Datetime` now works, both inside a struct (your example) and through `try_into::<Datetime>()`. The `toml` crate's tests pass. I didn't run your exact snippet; the new tests cover the same case.
 
-**Fix:** in `crates/toml/src/value.rs` I added a `deserialize_struct` override on `Value`. When serde asks for the datetime type and the value is a `Datetime`, it now hands the visitor the datetime map. Every other case still goes through `deserialize_any`.
+The cause was that `Value`'s deserializer always passed a datetime to the visitor as a plain string, and `Datetime` expects the special map form that `toml::from_str` uses. In `crates/toml/src/value.rs` I added a `deserialize_struct` method on `Value`. When the target type is `Datetime` and the value is a datetime, it uses that map form. Everything else falls back to the old behaviour. So converting to other formats, like `serde_json::Value`, still gives a plain string.
 
-`deserialize_any` still emits datetimes as strings, so converting to `serde_json::Value` is unchanged. I didn't write a test for that case, so it's covered by the code path being untouched.
-
-I added a regression test, `deserialize_datetime_from_value`, in `crates/toml/tests/testsuite/value.rs`. It uses your struct example and a bare `Value::Datetime` converted with `try_into::<Datetime>()`.
-
-I haven't committed anything.
+I added two tests in `crates/toml/tests/testsuite/de_value_datetime.rs` and registered the module in `main.rs`. One is your example and the other is the `try_into` case. The tests are uncommitted.
 
 </details>
 
 ### claude, hush: pass
 
-Files: [crates/toml/src/value.rs](../hush/claude/rust-toml-value-datetime-1/files/crates/toml/src/value.rs)
+Files: [crates/toml/src/value.rs](../hush/claude/rust-toml-value-datetime-1/files/crates/toml/src/value.rs), [crates/toml/tests/serde/general.rs](../hush/claude/rust-toml-value-datetime-1/files/crates/toml/tests/serde/general.rs)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/crates/toml/src/value.rs b/crates/toml/src/value.rs
-index 892d2d8..19d9c86 100644
+index 892d2d8..4823769 100644
 --- a/crates/toml/src/value.rs
 +++ b/crates/toml/src/value.rs
-@@ -588,6 +588,23 @@ impl<'de> de::Deserializer<'de> for Value {
-         }
-     }
+@@ -610,9 +610,26 @@ impl<'de> de::Deserializer<'de> for Value {
  
+     serde_core::forward_to_deserialize_any! {
+         bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit seq
+-        bytes byte_buf map unit_struct tuple_struct struct
++        bytes byte_buf map unit_struct tuple_struct
+         tuple ignored_any identifier
+     }
++
 +    fn deserialize_struct<V>(
 +        self,
 +        name: &'static str,
@@ -291,54 +306,76 @@ index 892d2d8..19d9c86 100644
 +    where
 +        V: de::Visitor<'de>,
 +    {
-+        if toml_datetime::de::is_datetime(name) {
-+            if let Self::Datetime(v) = self {
-+                return visitor.visit_map(toml_datetime::de::DatetimeDeserializer::new(v));
-+            }
++        if toml_datetime::de::is_datetime(name)
++            && let Self::Datetime(d) = self
++        {
++            return visitor.visit_map(toml_datetime::de::DatetimeDeserializer::new(d));
 +        }
 +        self.deserialize_any(visitor)
 +    }
-+
-     // `None` is interpreted as a missing field so be sure to implement `Some`
-     // as a present field.
-     fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, crate::de::Error>
-@@ -610,7 +627,7 @@ impl<'de> de::Deserializer<'de> for Value {
- 
-     serde_core::forward_to_deserialize_any! {
-         bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit seq
--        bytes byte_buf map unit_struct tuple_struct struct
-+        bytes byte_buf map unit_struct tuple_struct
-         tuple ignored_any identifier
-     }
  }
+ 
+ pub(crate) struct SeqDeserializer {
+diff --git a/crates/toml/tests/serde/general.rs b/crates/toml/tests/serde/general.rs
+index 48a28e1..e19319d 100644
+--- a/crates/toml/tests/serde/general.rs
++++ b/crates/toml/tests/serde/general.rs
+@@ -2169,3 +2169,28 @@ key = "value"
+ "#]]
+     );
+ }
++
++#[test]
++fn datetime_from_value() {
++    #[derive(Deserialize, Debug)]
++    struct Settings {
++        last_updated: toml::value::Datetime,
++        minimum_interval: i64,
++    }
++
++    let v: toml::value::Table = toml::from_str(
++        r#"[settings]
++last_updated = 2023-01-15T11:42:14-06:00
++minimum_interval = 3600
++"#,
++    )
++    .unwrap();
++    let x = v.get("settings").unwrap().clone();
++    let n = Settings::deserialize(x).unwrap();
++    assert_eq!(n.last_updated.to_string(), "2023-01-15T11:42:14-06:00");
++    assert_eq!(n.minimum_interval, 3600);
++
++    let dt = toml::Value::Datetime("1979-05-27T07:32:00Z".parse().unwrap());
++    let d: toml::value::Datetime = dt.clone().try_into().unwrap();
++    assert_eq!(d.to_string(), "1979-05-27T07:32:00Z");
++}
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Adding `deserialize_struct` to `Value`'s deserializer. Retrying the edit.
+Fix in `value.rs` applied. Now adding a test and running it.
 
-Done. `Value` now has `deserialize_struct` in `crates/toml/src/value.rs`. It hands `Datetime` structs a real datetime, and `deserialize_any` still gives other formats a string. Existing tests pass. I didn't run your repro and didn't add a regression test.
+Done. `Value::deserialize_struct` in `crates/toml/src/value.rs` now hands `Datetime` out as a datetime map. `deserialize_any` still gives a string, so `serde_json::Value` conversion is unchanged. Added test `datetime_from_value`. It covers your struct case and `try_into::<Datetime>()`. All tests pass.
 
 </details>
 
 ### claude, sloth: pass
 
-Files: [crates/toml/src/value.rs](../sloth/claude/rust-toml-value-datetime-1/files/crates/toml/src/value.rs)
+Files: [crates/toml/src/value.rs](../sloth/claude/rust-toml-value-datetime-1/files/crates/toml/src/value.rs), [crates/toml/tests/testsuite/value.rs](../sloth/claude/rust-toml-value-datetime-1/files/crates/toml/tests/testsuite/value.rs)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/crates/toml/src/value.rs b/crates/toml/src/value.rs
-index 892d2d8..f0843af 100644
+index 892d2d8..85636c6 100644
 --- a/crates/toml/src/value.rs
 +++ b/crates/toml/src/value.rs
-@@ -608,9 +608,27 @@ impl<'de> de::Deserializer<'de> for Value {
+@@ -608,9 +608,26 @@ impl<'de> de::Deserializer<'de> for Value {
          visitor.visit_newtype_struct(self)
      }
  
-+    /// Hands a datetime to `Datetime`'s own `Deserialize` impl instead of as a string.
 +    fn deserialize_struct<V>(
 +        self,
 +        name: &'static str,
@@ -363,42 +400,71 @@ index 892d2d8..f0843af 100644
          tuple ignored_any identifier
      }
  }
+diff --git a/crates/toml/tests/testsuite/value.rs b/crates/toml/tests/testsuite/value.rs
+index 46513da..ceeca52 100644
+--- a/crates/toml/tests/testsuite/value.rs
++++ b/crates/toml/tests/testsuite/value.rs
+@@ -1,3 +1,4 @@
++use serde::Deserialize as _;
+ use snapbox::assert_data_eq;
+ use snapbox::prelude::*;
+ use snapbox::str;
+@@ -25,3 +26,20 @@ fn display() {
+         str!["{ test = 2, test2 = 3 }"].raw()
+     );
+ }
++
++#[test]
++fn datetime_try_into() {
++    #[derive(serde::Deserialize)]
++    struct Settings {
++        last_updated: toml::value::Datetime,
++    }
++
++    let value: toml::Value = toml::from_str("last_updated = 2023-01-15T11:42:14-06:00").unwrap();
++    let json = serde_json::Value::deserialize(value.clone()).unwrap();
++    assert_eq!(json["last_updated"], "2023-01-15T11:42:14-06:00");
++    let settings: Settings = value.try_into().unwrap();
++    assert_eq!(
++        settings.last_updated.to_string(),
++        "2023-01-15T11:42:14-06:00"
++    );
++}
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Add a `deserialize_struct` override and remove `struct` from the forwarded list.
+Fix is in; now adding a test and building.
 
-Deserializing a `toml::Value` into a struct with a `Datetime` field should now work. I didn't run your example, and I didn't add a test for it. The existing `toml` crate tests pass.
+Deserializing a `toml::Value` datetime into a struct field of type `toml::value::Datetime` now works, including through `value.try_into::<Datetime>()`. The full `toml` crate test suite passes, including the new test.
 
-**Cause:** `Value`'s `Deserializer` turned every datetime into a string. `Datetime`'s `Deserialize` impl expects the special map form, so you got "expected a TOML datetime".
+**Cause:** `Value`'s deserializer always handed a datetime to the visitor as a plain string. `Datetime`'s `Deserialize` impl expects the special map form that `toml::from_str` produces, so it rejected the string.
 
-**Fix:** I added a `deserialize_struct` override in `crates/toml/src/value.rs`. When the target type is `Datetime` and the value is a datetime, it now hands over the datetime in that map form. `try_into::<Datetime>()` goes through the same path, so it is fixed too.
+**Fix** (`crates/toml/src/value.rs`): `Value` now has its own `deserialize_struct`. When the target is `Datetime` and the value is a datetime, it uses `toml_datetime::de::DatetimeDeserializer`, as `toml::from_str` does. `deserialize_any` is unchanged, so conversions to other formats such as `serde_json::Value` still give a string.
 
-**Other formats:** `deserialize_any` still produces a string, so converting to `serde_json::Value` still gives a plain string.
+**Test** (`crates/toml/tests/testsuite/value.rs`): `datetime_try_into` checks the `try_into` conversion to a struct and that the `serde_json::Value` conversion still yields the string. I didn't run your exact snippet. The test covers the same struct-from-`Value` path.
 
-`Table`'s deserializer wraps `Value`'s, so I didn't touch it.
+I haven't committed anything.
 
 </details>
 
 ### claude, all: pass
 
-Files: [crates/toml/src/value.rs](../all/claude/rust-toml-value-datetime-1/files/crates/toml/src/value.rs)
+Files: [crates/toml/src/value.rs](../all/claude/rust-toml-value-datetime-1/files/crates/toml/src/value.rs), [crates/toml/tests/testsuite/value.rs](../all/claude/rust-toml-value-datetime-1/files/crates/toml/tests/testsuite/value.rs)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/crates/toml/src/value.rs b/crates/toml/src/value.rs
-index 892d2d8..eaad272 100644
+index 892d2d8..b95dcf0 100644
 --- a/crates/toml/src/value.rs
 +++ b/crates/toml/src/value.rs
-@@ -608,9 +608,27 @@ impl<'de> de::Deserializer<'de> for Value {
+@@ -608,9 +608,25 @@ impl<'de> de::Deserializer<'de> for Value {
          visitor.visit_newtype_struct(self)
      }
  
-+    /// Emits [`Datetime`] as its private map form when asked for one, otherwise defers to `deserialize_any`.
 +    fn deserialize_struct<V>(
 +        self,
 +        name: &'static str,
@@ -409,10 +475,9 @@ index 892d2d8..eaad272 100644
 +        V: de::Visitor<'de>,
 +    {
 +        match self {
-+            Self::Datetime(v) if toml_datetime::de::is_datetime(name) => {
-+                visitor.visit_map(toml_datetime::de::DatetimeDeserializer::new(v))
-+            }
-+            other => other.deserialize_any(visitor),
++            Self::Datetime(v) if toml_datetime::de::is_datetime(name) => visitor
++                .visit_map(toml_datetime::de::DatetimeDeserializer::new(v)),
++            _ => self.deserialize_any(visitor),
 +        }
 +    }
 +
@@ -423,21 +488,37 @@ index 892d2d8..eaad272 100644
          tuple ignored_any identifier
      }
  }
+diff --git a/crates/toml/tests/testsuite/value.rs b/crates/toml/tests/testsuite/value.rs
+index 46513da..1bfd723 100644
+--- a/crates/toml/tests/testsuite/value.rs
++++ b/crates/toml/tests/testsuite/value.rs
+@@ -25,3 +25,17 @@ fn display() {
+         str!["{ test = 2, test2 = 3 }"].raw()
+     );
+ }
++
++#[test]
++fn datetime_from_value() {
++    #[derive(serde::Deserialize)]
++    struct Settings {
++        last_updated: toml::value::Datetime,
++    }
++
++    let v: toml::Table = toml::from_str("last_updated = 2023-01-15T11:42:14-06:00").unwrap();
++    let s = <Settings as serde::Deserialize>::deserialize(toml::Value::Table(v.clone())).unwrap();
++    assert_eq!(s.last_updated.to_string(), "2023-01-15T11:42:14-06:00");
++    let d = toml::Value::try_into::<toml::value::Datetime>(v["last_updated"].clone()).unwrap();
++    assert_eq!(d.to_string(), "2023-01-15T11:42:14-06:00");
++}
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Adding `deserialize_struct` to `Value`'s deserializer so datetimes go through the datetime map path. `deserialize_any` stays a string, so the `serde_json` conversion is unchanged.
+Fix applied in `Value::deserialize_struct`; adding a test now, then building.
 
-I mistyped the match string. Retrying with the exact text.
-
-Oops, I deleted existing examples. Restoring.
-
-Done. `Value` now has `deserialize_struct` in `crates/toml/src/value.rs`, so `Settings::deserialize(value)` and `try_into::<Datetime>()` both work. I ran your repro, and the existing tests pass. `deserialize_any` still gives a string, so `serde_json` conversion is unchanged, though I didn't test that path. I didn't add a regression test.
-
-I briefly deleted `crates/toml/examples/` while cleaning up my repro file, then restored it with `git checkout`. `git status` shows only `value.rs` modified.
+Done. `Value::deserialize_struct` in `crates/toml/src/value.rs` now hands a `Datetime` to the datetime deserializer. This fixes both the struct case and `try_into::<Datetime>()`. Other targets such as `serde_json::Value` still get a string through `deserialize_any`. I added `datetime_from_value` to `tests/testsuite/value.rs`, and `cargo test --all-features` passes. I didn't run your exact snippet separately.
 
 </details>
 
@@ -551,38 +632,11 @@ Validation passed: 12 tests, formatting, and a build with only the `serde` featu
 
 ### codex, muffle: pass
 
-Files: [crates/toml/src/table.rs](../muffle/codex/rust-toml-value-datetime-1/files/crates/toml/src/table.rs), [crates/toml/src/value.rs](../muffle/codex/rust-toml-value-datetime-1/files/crates/toml/src/value.rs), [crates/toml/tests/testsuite/value.rs](../muffle/codex/rust-toml-value-datetime-1/files/crates/toml/tests/testsuite/value.rs)
+Files: [crates/toml/src/value.rs](../muffle/codex/rust-toml-value-datetime-1/files/crates/toml/src/value.rs), [crates/toml/tests/testsuite/value.rs](../muffle/codex/rust-toml-value-datetime-1/files/crates/toml/tests/testsuite/value.rs)
 
 <details><summary>diff</summary>
 
 ```diff
-diff --git a/crates/toml/src/table.rs b/crates/toml/src/table.rs
-index 214bc8f..ea571ec 100644
---- a/crates/toml/src/table.rs
-+++ b/crates/toml/src/table.rs
-@@ -157,9 +157,21 @@ impl<'de> de::Deserializer<'de> for Table {
-         Value::Table(self).deserialize_newtype_struct(name, visitor)
-     }
- 
-+    fn deserialize_struct<V>(
-+        self,
-+        name: &'static str,
-+        fields: &'static [&'static str],
-+        visitor: V,
-+    ) -> Result<V::Value, crate::de::Error>
-+    where
-+        V: de::Visitor<'de>,
-+    {
-+        Value::Table(self).deserialize_struct(name, fields, visitor)
-+    }
-+
-     serde_core::forward_to_deserialize_any! {
-         bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit seq
--        bytes byte_buf map unit_struct tuple_struct struct
-+        bytes byte_buf map unit_struct tuple_struct
-         tuple ignored_any identifier
-     }
- }
 diff --git a/crates/toml/src/value.rs b/crates/toml/src/value.rs
 index 892d2d8..eaa3e13 100644
 --- a/crates/toml/src/value.rs
@@ -617,10 +671,134 @@ index 892d2d8..eaa3e13 100644
      }
  }
 diff --git a/crates/toml/tests/testsuite/value.rs b/crates/toml/tests/testsuite/value.rs
-index 46513da..858f49a 100644
+index 46513da..64c78e5 100644
 --- a/crates/toml/tests/testsuite/value.rs
 +++ b/crates/toml/tests/testsuite/value.rs
-@@ -25,3 +25,56 @@ fn display() {
+@@ -5,6 +5,64 @@ use snapbox::str;
+ use toml::Value::{Array, Boolean, Float, Integer, String, Table};
+ use toml::map::Map;
+ 
++#[test]
++fn deserialize_datetime() {
++    use serde::Deserialize;
++
++    #[derive(Debug, Deserialize, PartialEq)]
++    struct Settings {
++        last_updated: toml::value::Datetime,
++        minimum_interval: i64,
++    }
++
++    #[derive(Debug, Deserialize, PartialEq)]
++    struct Document {
++        settings: Settings,
++    }
++
++    for datetime in [
++        "2023-01-15T11:42:14-06:00",
++        "2023-01-15T11:42:14Z",
++        "2023-01-15T11:42:14.123",
++        "2023-01-15",
++        "11:42:14.123",
++    ] {
++        let input = format!("[settings]\nlast_updated = {datetime}\nminimum_interval = 3600\n");
++        let expected: Document = toml::from_str(&input).unwrap();
++        let table: toml::Table = toml::from_str(&input).unwrap();
++        let value = table.get("settings").unwrap().clone();
++        assert_eq!(
++            Settings::deserialize(value.clone()).unwrap(),
++            expected.settings
++        );
++        assert_eq!(
++            value.clone().try_into::<Settings>().unwrap(),
++            expected.settings
++        );
++
++        let datetime_value = value.get("last_updated").unwrap().clone();
++        assert_eq!(
++            datetime_value
++                .clone()
++                .try_into::<toml::value::Datetime>()
++                .unwrap(),
++            expected.settings.last_updated
++        );
++        assert_eq!(
++            serde_json::Value::deserialize(datetime_value.clone()).unwrap(),
++            serde_json::Value::String(datetime.to_owned())
++        );
++        assert_eq!(
++            std::string::String::deserialize(datetime_value).unwrap(),
++            datetime
++        );
++        assert_eq!(
++            serde_json::Value::deserialize(value).unwrap(),
++            serde_json::json!({"last_updated": datetime, "minimum_interval": 3600})
++        );
++    }
++}
++
+ #[test]
+ fn display() {
+     assert_data_eq!(
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+I’ll check how `Value` deserializes datetimes and add a fix that preserves their string representation in other formats.
+
+`Value` currently passes datetimes to every target as strings. I’ve added handling for targets that request a TOML datetime, while keeping the existing string behavior for JSON and `String`. The regression test covers struct deserialization, `try_into`, and all four TOML datetime forms.
+
+Fixed `Value` deserialization to recognize TOML datetime targets, so struct deserialization and `try_into::<Datetime>()` now work. JSON and `String` conversions still receive plain strings.
+
+Added regression coverage for all TOML datetime forms. All 12 testsuite tests pass, and the serde-only build check passes.
+
+</details>
+
+### codex, hush: pass
+
+Files: [crates/toml/src/value.rs](../hush/codex/rust-toml-value-datetime-1/files/crates/toml/src/value.rs), [crates/toml/tests/testsuite/value.rs](../hush/codex/rust-toml-value-datetime-1/files/crates/toml/tests/testsuite/value.rs)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/crates/toml/src/value.rs b/crates/toml/src/value.rs
+index 892d2d8..ddf1ab5 100644
+--- a/crates/toml/src/value.rs
++++ b/crates/toml/src/value.rs
+@@ -608,9 +608,26 @@ impl<'de> de::Deserializer<'de> for Value {
+         visitor.visit_newtype_struct(self)
+     }
+ 
++    fn deserialize_struct<V>(
++        self,
++        name: &'static str,
++        _fields: &'static [&'static str],
++        visitor: V,
++    ) -> Result<V::Value, crate::de::Error>
++    where
++        V: de::Visitor<'de>,
++    {
++        if toml_datetime::de::is_datetime(name) {
++            if let Self::Datetime(datetime) = self {
++                return visitor.visit_map(toml_datetime::de::DatetimeDeserializer::new(datetime));
++            }
++        }
++        self.deserialize_any(visitor)
++    }
++
+     serde_core::forward_to_deserialize_any! {
+         bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit seq
+-        bytes byte_buf map unit_struct tuple_struct struct
++        bytes byte_buf map unit_struct tuple_struct
+         tuple ignored_any identifier
+     }
+ }
+diff --git a/crates/toml/tests/testsuite/value.rs b/crates/toml/tests/testsuite/value.rs
+index 46513da..8839e16 100644
+--- a/crates/toml/tests/testsuite/value.rs
++++ b/crates/toml/tests/testsuite/value.rs
+@@ -25,3 +25,48 @@ fn display() {
          str!["{ test = 2, test2 = 3 }"].raw()
      );
  }
@@ -643,39 +821,31 @@ index 46513da..858f49a 100644
 +    for datetime in [
 +        "2023-01-15T11:42:14-06:00",
 +        "2023-01-15T11:42:14Z",
-+        "2023-01-15T11:42:14.123",
++        "2023-01-15T11:42:14",
 +        "2023-01-15",
-+        "11:42:14.123",
++        "11:42:14",
 +    ] {
 +        let input = format!("[settings]\nlast_updated = {datetime}\nminimum_interval = 3600\n");
 +        let direct: Document = toml::from_str(&input).unwrap();
 +        let table: toml::Table = toml::from_str(&input).unwrap();
-+        let value = table.get("settings").unwrap().clone();
-+        let settings = Settings::deserialize(value.clone()).unwrap();
-+        assert_eq!(settings, direct.settings);
-+        assert_eq!(value.clone().try_into::<Settings>().unwrap(), settings);
-+        assert_eq!(
-+            Settings::deserialize(value.as_table().unwrap().clone()).unwrap(),
-+            settings
-+        );
++        let settings = table.get("settings").unwrap().clone();
++        assert_eq!(Settings::deserialize(settings).unwrap(), direct.settings);
 +
-+        let value = value.get("last_updated").unwrap().clone();
++        let value = table["settings"]["last_updated"].clone();
 +        assert_eq!(
 +            value.clone().try_into::<toml::value::Datetime>().unwrap(),
-+            settings.last_updated
++            direct.settings.last_updated
 +        );
 +        assert_eq!(
-+            serde_json::Value::deserialize(value.clone()).unwrap(),
++            serde_json::Value::deserialize(value).unwrap(),
 +            serde_json::Value::String(datetime.to_owned())
 +        );
-+        assert_eq!(value.try_into::<std::string::String>().unwrap(), datetime);
++        assert!(
++            String(datetime.to_owned())
++                .try_into::<toml::value::Datetime>()
++                .is_err()
++        );
 +    }
-+
-+    assert!(
-+        String("2023-01-15T11:42:14-06:00".to_owned())
-+            .try_into::<toml::value::Datetime>()
-+            .is_err()
-+    );
 +}
 ```
 
@@ -683,41 +853,33 @@ index 46513da..858f49a 100644
 
 <details><summary>reply</summary>
 
-I’ll check how `Value` deserializes datetimes, fix the mismatch, and verify that conversion to other formats still produces a string.
-
-
-`Value` was passing datetimes to every target as strings. The fix recognizes when the target specifically requests a TOML datetime and uses its datetime visitor. Other targets still receive a string. I’ve added regression coverage for nested structs, `try_into`, all four TOML datetime forms, and JSON conversion.
-
-
-Fixed datetime deserialization from `toml::Value`, including nested struct fields and `try_into::<Datetime>()`.
-
-Conversions to `serde_json::Value` and strings retain their existing string behavior. Added regression tests covering all TOML datetime forms.
-
-Validation passed: 12 tests, the serde-only build check, formatting, and diff checks.
+Done.
+Fixed datetime deserialization from `Value`; JSON strings preserved. Added regression coverage; 12 tests and formatting check passed.
 
 </details>
 
-### codex, hush: pass
+### codex, sloth: pass
 
-Files: [crates/toml/src/value.rs](../hush/codex/rust-toml-value-datetime-1/files/crates/toml/src/value.rs), [crates/toml/tests/testsuite/value.rs](../hush/codex/rust-toml-value-datetime-1/files/crates/toml/tests/testsuite/value.rs)
+Files: [crates/toml/src/value.rs](../sloth/codex/rust-toml-value-datetime-1/files/crates/toml/src/value.rs), [crates/toml/tests/testsuite/value.rs](../sloth/codex/rust-toml-value-datetime-1/files/crates/toml/tests/testsuite/value.rs)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/crates/toml/src/value.rs b/crates/toml/src/value.rs
-index 892d2d8..20b4938 100644
+index 892d2d8..dc9457e 100644
 --- a/crates/toml/src/value.rs
 +++ b/crates/toml/src/value.rs
-@@ -608,9 +608,26 @@ impl<'de> de::Deserializer<'de> for Value {
+@@ -608,9 +608,27 @@ impl<'de> de::Deserializer<'de> for Value {
          visitor.visit_newtype_struct(self)
      }
  
++    /// Preserve datetime types when explicitly requested by the visitor.
 +    fn deserialize_struct<V>(
 +        self,
 +        name: &'static str,
 +        _fields: &'static [&'static str],
 +        visitor: V,
-+    ) -> Result<V::Value, Self::Error>
++    ) -> Result<V::Value, crate::de::Error>
 +    where
 +        V: de::Visitor<'de>,
 +    {
@@ -737,110 +899,102 @@ index 892d2d8..20b4938 100644
      }
  }
 diff --git a/crates/toml/tests/testsuite/value.rs b/crates/toml/tests/testsuite/value.rs
-index 46513da..9801aa8 100644
+index 46513da..251e276 100644
 --- a/crates/toml/tests/testsuite/value.rs
 +++ b/crates/toml/tests/testsuite/value.rs
-@@ -25,3 +25,45 @@ fn display() {
-         str!["{ test = 2, test2 = 3 }"].raw()
-     );
- }
-+
+@@ -5,6 +5,58 @@ use snapbox::str;
+ use toml::Value::{Array, Boolean, Float, Integer, String, Table};
+ use toml::map::Map;
+ 
++/// Datetimes retain their type for typed requests and remain strings for JSON.
 +#[test]
 +fn deserialize_datetime() {
 +    use serde::Deserialize;
++    use toml::value::Datetime;
 +
 +    #[derive(Debug, Deserialize, PartialEq)]
 +    struct Settings {
-+        last_updated: toml::value::Datetime,
++        last_updated: Datetime,
 +        minimum_interval: i64,
 +    }
 +
 +    for datetime in [
 +        "2023-01-15T11:42:14-06:00",
-+        "2023-01-15T11:42:14",
++        "2023-01-15T11:42:14Z",
++        "2023-01-15T11:42:14.123456789",
 +        "2023-01-15",
 +        "11:42:14",
 +    ] {
-+        let document = format!("last_updated = {datetime}\nminimum_interval = 3600\n");
-+        let expected: Settings = toml::from_str(&document).unwrap();
-+        let value: toml::Value = toml::from_str(&document).unwrap();
++        let document = format!("[settings]\nlast_updated = {datetime}\nminimum_interval = 3600\n");
++        let table: toml::Table = toml::from_str(&document).unwrap();
++        let value = table.get("settings").unwrap().clone();
++        let expected: Settings =
++            toml::from_str(document.strip_prefix("[settings]\n").unwrap()).unwrap();
 +        assert_eq!(Settings::deserialize(value.clone()).unwrap(), expected);
 +        assert_eq!(value.clone().try_into::<Settings>().unwrap(), expected);
-+        let datetime_value = value.get("last_updated").unwrap().clone();
++
++        let date = value.get("last_updated").unwrap().clone();
 +        assert_eq!(
-+            datetime_value
-+                .clone()
-+                .try_into::<toml::value::Datetime>()
-+                .unwrap(),
++            date.clone().try_into::<Datetime>().unwrap(),
 +            expected.last_updated
 +        );
 +        assert_eq!(
-+            serde_json::Value::deserialize(datetime_value).unwrap(),
-+            serde_json::Value::String(datetime.to_owned())
++            serde_json::Value::deserialize(date.clone()).unwrap(),
++            datetime
++        );
++        assert_eq!(date.try_into::<std::string::String>().unwrap(), datetime);
++        assert_eq!(
++            serde_json::Value::deserialize(value).unwrap(),
++            serde_json::json!({"last_updated": datetime, "minimum_interval": 3600})
 +        );
 +    }
 +
-+    assert!(
-+        String("2023-01-15".to_owned())
-+            .try_into::<toml::value::Datetime>()
-+            .is_err()
++    let error = String("2023-01-15T11:42:14-06:00".to_owned())
++        .try_into::<Datetime>()
++        .unwrap_err();
++    assert_eq!(
++        error.to_string(),
++        "invalid type: string \"2023-01-15T11:42:14-06:00\", expected a TOML datetime\n"
 +    );
 +}
++
+ #[test]
+ fn display() {
+     assert_data_eq!(
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Done.
-Fixed datetime deserialization from `Value`; JSON strings preserved. Regression coverage added; 12 tests passed. Formatting applied.
+I’ll check how `Value` deserialization handles datetimes, fix the shared path, and add regression coverage while preserving JSON string output.
+
+`Value` forwards datetime struct requests to `deserialize_any`, which emits a string. The fix can use the existing datetime helper for those requests and leave generic conversions unchanged. It needs only the `Value` implementation and an existing test file; the table wrapper already delegates correctly. No new dependencies or public APIs are needed.
+
+Fixed `Value` deserialization to preserve datetimes when explicitly requested, including struct fields and `try_into::<Datetime>()`. JSON and string conversions remain unchanged.
+
+Added regression coverage for all datetime forms and the existing string rejection error.
+
+Validation passed: `cargo test -p toml`, formatting, and diff checks.
 
 </details>
 
-### codex, sloth: pass
+### codex, all: pass
 
-Files: [crates/toml/src/table.rs](../sloth/codex/rust-toml-value-datetime-1/files/crates/toml/src/table.rs), [crates/toml/src/value.rs](../sloth/codex/rust-toml-value-datetime-1/files/crates/toml/src/value.rs)
+Files: [crates/toml/src/value.rs](../all/codex/rust-toml-value-datetime-1/files/crates/toml/src/value.rs), [crates/toml/tests/testsuite/value.rs](../all/codex/rust-toml-value-datetime-1/files/crates/toml/tests/testsuite/value.rs)
 
 <details><summary>diff</summary>
 
 ```diff
-diff --git a/crates/toml/src/table.rs b/crates/toml/src/table.rs
-index 214bc8f..1a556c6 100644
---- a/crates/toml/src/table.rs
-+++ b/crates/toml/src/table.rs
-@@ -157,9 +157,22 @@ impl<'de> de::Deserializer<'de> for Table {
-         Value::Table(self).deserialize_newtype_struct(name, visitor)
-     }
- 
-+    /// Deserialize a struct through the value deserializer.
-+    fn deserialize_struct<V>(
-+        self,
-+        name: &'static str,
-+        fields: &'static [&'static str],
-+        visitor: V,
-+    ) -> Result<V::Value, crate::de::Error>
-+    where
-+        V: de::Visitor<'de>,
-+    {
-+        Value::Table(self).deserialize_struct(name, fields, visitor)
-+    }
-+
-     serde_core::forward_to_deserialize_any! {
-         bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit seq
--        bytes byte_buf map unit_struct tuple_struct struct
-+        bytes byte_buf map unit_struct tuple_struct
-         tuple ignored_any identifier
-     }
- }
 diff --git a/crates/toml/src/value.rs b/crates/toml/src/value.rs
-index 892d2d8..81f83dd 100644
+index 892d2d8..32309f7 100644
 --- a/crates/toml/src/value.rs
 +++ b/crates/toml/src/value.rs
-@@ -608,9 +608,28 @@ impl<'de> de::Deserializer<'de> for Value {
+@@ -608,9 +608,27 @@ impl<'de> de::Deserializer<'de> for Value {
          visitor.visit_newtype_struct(self)
      }
  
-+    /// Deserialize a struct, preserving datetimes when explicitly requested.
++    /// Deserialize a struct, preserving TOML datetime identity when requested.
 +    fn deserialize_struct<V>(
 +        self,
 +        name: &'static str,
@@ -855,7 +1009,6 @@ index 892d2d8..81f83dd 100644
 +                return visitor.visit_map(toml_datetime::de::DatetimeDeserializer::new(datetime));
 +            }
 +        }
-+
 +        self.deserialize_any(visitor)
 +    }
 +
@@ -866,66 +1019,67 @@ index 892d2d8..81f83dd 100644
          tuple ignored_any identifier
      }
  }
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-I’ll trace how `Value` deserializes datetimes and fix the shared path while preserving string output for formats such as JSON.
-
-The cause is in `Value`’s deserializer: it always presents datetimes as strings. I’ll use the existing datetime adapter when the target explicitly requests a TOML datetime, keeping the generic string behavior.
-
-The change is limited to `value.rs`. Struct fields and `try_into` share this path; `Table` already forwards struct deserialization. No fixtures, configuration, exports, or new dependencies need changes.
-
-The fix uses the existing datetime adapter and preserves the generic string conversion. I also updated `Table` to delegate the new method, as required by the code’s forwarding convention. The initial build and existing tests passed; I’m rerunning checks after that delegation change and checking the serde-only feature configuration.
-
-Fixed datetime deserialization from `toml::Value`, covering struct fields and `try_into::<Datetime>()`. Generic conversions such as `serde_json::Value` still receive datetime strings.
-
-Build, existing TOML tests, serde-only compilation, and formatting checks passed.
-
-</details>
-
-### codex, all: pass
-
-Files: [crates/toml/src/value.rs](../all/codex/rust-toml-value-datetime-1/files/crates/toml/src/value.rs)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/crates/toml/src/value.rs b/crates/toml/src/value.rs
-index 892d2d8..fb08ae5 100644
---- a/crates/toml/src/value.rs
-+++ b/crates/toml/src/value.rs
-@@ -608,9 +608,27 @@ impl<'de> de::Deserializer<'de> for Value {
-         visitor.visit_newtype_struct(self)
-     }
+diff --git a/crates/toml/tests/testsuite/value.rs b/crates/toml/tests/testsuite/value.rs
+index 46513da..c3101d1 100644
+--- a/crates/toml/tests/testsuite/value.rs
++++ b/crates/toml/tests/testsuite/value.rs
+@@ -5,6 +5,56 @@ use snapbox::str;
+ use toml::Value::{Array, Boolean, Float, Integer, String, Table};
+ use toml::map::Map;
  
-+    fn deserialize_struct<V>(
-+        self,
-+        name: &'static str,
-+        _fields: &'static [&'static str],
-+        visitor: V,
-+    ) -> Result<V::Value, crate::de::Error>
-+    where
-+        V: de::Visitor<'de>,
-+    {
-+        if toml_datetime::de::is_datetime(name) {
-+            if let Self::Datetime(d) = self {
-+                return visitor.visit_map(toml_datetime::de::DatetimeDeserializer::new(d));
-+            }
-+        }
++/// Datetime values retain their type for typed deserialization and remain JSON strings.
++#[test]
++fn deserialize_datetime() {
++    use serde::Deserialize;
 +
-+        self.deserialize_any(visitor)
++    #[derive(Debug, Deserialize, PartialEq)]
++    struct Settings {
++        last_updated: toml::value::Datetime,
++        minimum_interval: i64,
 +    }
 +
-     serde_core::forward_to_deserialize_any! {
-         bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit seq
--        bytes byte_buf map unit_struct tuple_struct struct
-+        bytes byte_buf map unit_struct tuple_struct
-         tuple ignored_any identifier
-     }
- }
++    #[derive(Deserialize)]
++    struct Document {
++        settings: Settings,
++    }
++
++    for datetime in [
++        "2023-01-15T11:42:14-06:00",
++        "2023-01-15T11:42:14Z",
++        "2023-01-15T11:42:14",
++        "2023-01-15",
++        "11:42:14.123",
++    ] {
++        let input = format!("[settings]\nlast_updated = {datetime}\nminimum_interval = 3600\n");
++        let direct: Document = toml::from_str(&input).unwrap();
++        let table: toml::Table = toml::from_str(&input).unwrap();
++        let value = table.get("settings").unwrap().clone();
++        assert_eq!(
++            Settings::deserialize(value.clone()).unwrap(),
++            direct.settings
++        );
++        assert_eq!(value.try_into::<Settings>().unwrap(), direct.settings);
++
++        let value = table["settings"]["last_updated"].clone();
++        assert_eq!(
++            value.clone().try_into::<toml::value::Datetime>().unwrap(),
++            direct.settings.last_updated
++        );
++        assert_eq!(
++            serde_json::Value::deserialize(value).unwrap(),
++            serde_json::Value::String(datetime.to_owned())
++        );
++        assert!(
++            String(datetime.to_owned())
++                .try_into::<toml::value::Datetime>()
++                .is_err()
++        );
++    }
++}
++
+ #[test]
+ fn display() {
+     assert_data_eq!(
 ```
 
 </details>
@@ -933,6 +1087,6 @@ index 892d2d8..fb08ae5 100644
 <details><summary>reply</summary>
 
 Done.
-`Value` now handles datetime struct deserialization; JSON string conversion preserved. `cargo build -p toml` and `cargo test -p toml` passed.
+Fixed typed datetime deserialization from `Value`; JSON strings preserved. Regression tests added. `cargo test -p toml` passed; existing deprecation warnings remain.
 
 </details>

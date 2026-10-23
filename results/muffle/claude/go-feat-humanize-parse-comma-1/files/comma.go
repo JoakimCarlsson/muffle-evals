@@ -140,84 +140,88 @@ func BigComma(bin *big.Int) string {
 	return sign + strings.Join(parts[j:], ",")
 }
 
-// splitComma validates s as an optionally signed decimal number whose
-// integer part is either plain digits or digits grouped by commas in
-// threes, optionally followed by '.' and digits. It returns s with the
-// commas removed.
-func splitComma(s string) (string, bool) {
-	body := s
-	if body != "" && (body[0] == '-' || body[0] == '+') {
-		body = body[1:]
+// parseCommaDigits validates a number formatted like the output of Comma
+// or Commaf and returns it with the thousands separators removed. Commas
+// are optional, but when present they must separate groups of exactly
+// three digits. A fractional part is only accepted if frac is true.
+func parseCommaDigits(s string, frac bool) (string, error) {
+	err := &strconv.NumError{Func: "ParseComma", Num: s, Err: strconv.ErrSyntax}
+
+	body := strings.TrimPrefix(s, "-")
+	intPart, fracPart, hasFrac := strings.Cut(body, ".")
+	if hasFrac && (!frac || fracPart == "") {
+		return "", err
 	}
-	intPart, frac, hasFrac := strings.Cut(body, ".")
-	if hasFrac && !isDigits(frac) {
-		return "", false
+	for i := 0; i < len(fracPart); i++ {
+		if fracPart[i] < '0' || fracPart[i] > '9' {
+			return "", err
+		}
 	}
 
 	groups := strings.Split(intPart, ",")
-	if len(groups) > 1 {
-		if len(groups[0]) > 3 {
-			return "", false
+	for i, g := range groups {
+		if len(groups) > 1 && ((i == 0 && len(g) > 3) || (i > 0 && len(g) != 3)) {
+			return "", err
 		}
-		for _, g := range groups[1:] {
-			if len(g) != 3 {
-				return "", false
+		if g == "" {
+			return "", err
+		}
+		for j := 0; j < len(g); j++ {
+			if g[j] < '0' || g[j] > '9' {
+				return "", err
 			}
 		}
 	}
-	for _, g := range groups {
-		if !isDigits(g) {
-			return "", false
-		}
+
+	out := strings.Join(groups, "")
+	if s[0] == '-' {
+		out = "-" + out
 	}
-	return s[:len(s)-len(body)] + strings.Join(groups, "") + s[len(s)-len(body)+len(intPart):], true
+	if hasFrac {
+		out += "." + fracPart
+	}
+	return out, nil
 }
 
-func isDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-// ParseComma parses a string produced by Comma back into an int64.
-// Plain numbers without commas are accepted too. On error it returns 0.
+// ParseComma parses a string produced by Comma, or a plain base 10
+// integer, back into an int64. It returns 0 and an error if s is not a
+// valid number or does not fit in an int64.
 //
 // e.g. ParseComma("834,142") -> 834142
 func ParseComma(s string) (int64, error) {
-	clean, ok := splitComma(s)
-	if !ok || strings.Contains(clean, ".") {
-		return 0, &strconv.NumError{Func: "ParseComma", Num: s, Err: strconv.ErrSyntax}
-	}
-	n, err := strconv.ParseInt(clean, 10, 64)
+	clean, err := parseCommaDigits(s, false)
 	if err != nil {
-		return 0, &strconv.NumError{Func: "ParseComma", Num: s, Err: err.(*strconv.NumError).Err}
+		return 0, err
 	}
-	return n, nil
+	v, err := strconv.ParseInt(clean, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
 }
 
-// ParseCommaf parses a string produced by Commaf back into a float64.
-// Plain numbers without commas, and "NaN", "+Inf" and "-Inf", are
-// accepted too. On error it returns 0.
+// ParseCommaf parses a string produced by Commaf, or a plain base 10
+// number, back into a float64. "NaN", "+Inf" and "-Inf" are accepted as
+// Commaf produces them. It returns 0 and an error if s is not a valid
+// number or does not fit in a float64.
 //
 // e.g. ParseCommaf("834,142.32") -> 834142.32
 func ParseCommaf(s string) (float64, error) {
 	switch s {
-	case "NaN", "+Inf", "-Inf":
-		return strconv.ParseFloat(s, 64)
+	case "NaN":
+		return math.NaN(), nil
+	case "+Inf":
+		return math.Inf(1), nil
+	case "-Inf":
+		return math.Inf(-1), nil
 	}
-	clean, ok := splitComma(s)
-	if !ok {
-		return 0, &strconv.NumError{Func: "ParseCommaf", Num: s, Err: strconv.ErrSyntax}
-	}
-	f, err := strconv.ParseFloat(clean, 64)
+	clean, err := parseCommaDigits(s, true)
 	if err != nil {
-		return 0, &strconv.NumError{Func: "ParseCommaf", Num: s, Err: err.(*strconv.NumError).Err}
+		return 0, err
 	}
-	return f, nil
+	v, err := strconv.ParseFloat(clean, 64)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
 }

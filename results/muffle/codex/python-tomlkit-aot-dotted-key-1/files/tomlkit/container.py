@@ -860,16 +860,12 @@ class Container(_CustomDict):  # type: ignore[type-arg]
         assert k is not None
         # A dotted key renders its value inline (e.g. ``a.b = 1``), which is only
         # consistent with a super table. When the replacement value renders with
-        # its own header instead (a non-super table or array of tables), keeping
-        # the dotted key duplicates the prefix onto the header (#524). Drop it so the
+        # its own header instead (a non-super table or AoT), keeping the dotted key
+        # duplicates the prefix onto the header (#524). Drop the dotted key so the
         # replacement renders with its own header.
-        dotted_to_header = (
-            k.is_dotted()
-            and (
-                isinstance(value, AoT)
-                or isinstance(value, Table)
-                and not value.is_super_table()
-            )
+        dotted_to_header = k.is_dotted() and (
+            isinstance(value, AoT)
+            or (isinstance(value, Table) and not value.is_super_table())
         )
         # That new header also captures every sibling that renders inline -- plain
         # values and dotted keys -- if any still follow it (#513), so it must be

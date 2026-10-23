@@ -58,15 +58,15 @@ index 64ce8c9..813353f 100644
 | agent | setup | hidden tests | lines +/- (code) | test lines | output tokens | cost |
 |---|---|---|---:|---:|---:|---:|
 | claude | base | pass | +90/-0 | 34 | 3,153 | $0.094 |
-| claude | muffle | pass | +82/-0 | 31 | 3,067 | $0.082 |
-| claude | hush | pass | +86/-0 | 28 | 2,681 | $0.081 |
-| claude | sloth | pass | +24/-0 | 0 | 1,873 | $0.069 |
-| claude | all | pass | +30/-0 | 0 | 1,437 | $0.067 |
+| claude | muffle | pass | +86/-0 | 47 | 3,351 | $0.088 |
+| claude | hush | pass | +77/-0 | 37 | 2,779 | $0.073 |
+| claude | sloth | pass | +24/-0 | 26 | 2,273 | $0.072 |
+| claude | all | pass | +53/-0 | 29 | 3,067 | $0.098 |
 | codex | base | pass | +21/-0 | 38 | 1,510 | - |
-| codex | muffle | pass | +21/-0 | 58 | 1,747 | - |
-| codex | hush | pass | +21/-0 | 39 | 1,246 | - |
-| codex | sloth | pass | +20/-0 | 0 | 721 | - |
-| codex | all | pass | +20/-0 | 0 | 648 | - |
+| codex | muffle | pass | +21/-0 | 63 | 1,786 | - |
+| codex | hush | pass | +21/-0 | 39 | 1,283 | - |
+| codex | sloth | pass | +20/-0 | 30 | 1,376 | - |
+| codex | all | pass | +20/-0 | 42 | 1,529 | - |
 
 ### claude, base: pass
 
@@ -241,163 +241,7 @@ Files: [comma.go](../muffle/claude/go-feat-humanize-parse-comma-1/files/comma.go
 
 ```diff
 diff --git a/comma.go b/comma.go
-index 64ce8c9..4dfa460 100644
---- a/comma.go
-+++ b/comma.go
-@@ -139,3 +139,85 @@ func BigComma(bin *big.Int) string {
- 	parts[j] = strconv.Itoa(int(b.Int64()))
- 	return sign + strings.Join(parts[j:], ",")
- }
-+
-+// splitComma validates s as an optionally signed decimal number whose
-+// integer part is either plain digits or digits grouped by commas in
-+// threes, optionally followed by '.' and digits. It returns s with the
-+// commas removed.
-+func splitComma(s string) (string, bool) {
-+	body := s
-+	if body != "" && (body[0] == '-' || body[0] == '+') {
-+		body = body[1:]
-+	}
-+	intPart, frac, hasFrac := strings.Cut(body, ".")
-+	if hasFrac && !isDigits(frac) {
-+		return "", false
-+	}
-+
-+	groups := strings.Split(intPart, ",")
-+	if len(groups) > 1 {
-+		if len(groups[0]) > 3 {
-+			return "", false
-+		}
-+		for _, g := range groups[1:] {
-+			if len(g) != 3 {
-+				return "", false
-+			}
-+		}
-+	}
-+	for _, g := range groups {
-+		if !isDigits(g) {
-+			return "", false
-+		}
-+	}
-+	return s[:len(s)-len(body)] + strings.Join(groups, "") + s[len(s)-len(body)+len(intPart):], true
-+}
-+
-+func isDigits(s string) bool {
-+	if s == "" {
-+		return false
-+	}
-+	for i := 0; i < len(s); i++ {
-+		if s[i] < '0' || s[i] > '9' {
-+			return false
-+		}
-+	}
-+	return true
-+}
-+
-+// ParseComma parses a string produced by Comma back into an int64.
-+// Plain numbers without commas are accepted too. On error it returns 0.
-+//
-+// e.g. ParseComma("834,142") -> 834142
-+func ParseComma(s string) (int64, error) {
-+	clean, ok := splitComma(s)
-+	if !ok || strings.Contains(clean, ".") {
-+		return 0, &strconv.NumError{Func: "ParseComma", Num: s, Err: strconv.ErrSyntax}
-+	}
-+	n, err := strconv.ParseInt(clean, 10, 64)
-+	if err != nil {
-+		return 0, &strconv.NumError{Func: "ParseComma", Num: s, Err: err.(*strconv.NumError).Err}
-+	}
-+	return n, nil
-+}
-+
-+// ParseCommaf parses a string produced by Commaf back into a float64.
-+// Plain numbers without commas, and "NaN", "+Inf" and "-Inf", are
-+// accepted too. On error it returns 0.
-+//
-+// e.g. ParseCommaf("834,142.32") -> 834142.32
-+func ParseCommaf(s string) (float64, error) {
-+	switch s {
-+	case "NaN", "+Inf", "-Inf":
-+		return strconv.ParseFloat(s, 64)
-+	}
-+	clean, ok := splitComma(s)
-+	if !ok {
-+		return 0, &strconv.NumError{Func: "ParseCommaf", Num: s, Err: strconv.ErrSyntax}
-+	}
-+	f, err := strconv.ParseFloat(clean, 64)
-+	if err != nil {
-+		return 0, &strconv.NumError{Func: "ParseCommaf", Num: s, Err: err.(*strconv.NumError).Err}
-+	}
-+	return f, nil
-+}
-diff --git a/comma_test.go b/comma_test.go
-index 7c629eb..4c5a4a5 100644
---- a/comma_test.go
-+++ b/comma_test.go
-@@ -157,3 +157,34 @@ func TestHumanizeBigIntMutation(t *testing.T) {
- 		t.Fail()
- 	}
- }
-+
-+func TestParseComma(t *testing.T) {
-+	for _, n := range []int64{0, 7, 10, 999, 1000, -1000, 834142, 123456789, -834142, math.MinInt64, math.MaxInt64} {
-+		got, err := ParseComma(Comma(n))
-+		if err != nil || got != n {
-+			t.Errorf("ParseComma(%q) = %d, %v; want %d", Comma(n), got, err, n)
-+		}
-+	}
-+	for _, s := range []string{"", "-", "abc", "123a456", "1.5", "1.2.3", "1,23", "1234,567", "1,2345", ",123", "123,", "9,223,372,036,854,775,808"} {
-+		if got, err := ParseComma(s); err == nil || got != 0 {
-+			t.Errorf("ParseComma(%q) = %d, %v; want 0, error", s, got, err)
-+		}
-+	}
-+}
-+
-+func TestParseCommaf(t *testing.T) {
-+	for _, f := range []float64{0, 10.11, -834142.32, 123456789, 1e21, 1e-7, math.MaxFloat64, math.Inf(1), math.Inf(-1)} {
-+		got, err := ParseCommaf(Commaf(f))
-+		if err != nil || got != f {
-+			t.Errorf("ParseCommaf(%q) = %v, %v; want %v", Commaf(f), got, err, f)
-+		}
-+	}
-+	if got, err := ParseCommaf(Commaf(math.NaN())); err != nil || !math.IsNaN(got) {
-+		t.Errorf("ParseCommaf(NaN) = %v, %v", got, err)
-+	}
-+	for _, s := range []string{"", "abc", "123a456", "1.2.3", "1.", ".5", "1e5", "1,23.4", "1.2,345"} {
-+		if got, err := ParseCommaf(s); err == nil || got != 0 {
-+			t.Errorf("ParseCommaf(%q) = %v, %v; want 0, error", s, got, err)
-+		}
-+	}
-+}
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-I added `ParseComma` and `ParseCommaf` to `comma.go`, with tests in `comma_test.go`. The tests pass.
-
-- **Round trips:** `ParseComma(Comma(n))` gives back `n`, including `math.MinInt64` and `math.MaxInt64`. `ParseCommaf(Commaf(f))` gives back `f`, including `1e21`, `math.MaxFloat64` and `±Inf`. `NaN` parses back to NaN.
-- **Accepted input:** negative numbers and plain numbers without commas (`"10"`, `"10.11"`) work. A leading `+` is also accepted.
-- **Errors:** `""`, `"abc"`, `"123a456"`, `"1.2.3"` and `"1.5"` (for `ParseComma`) return `0` and an error. So does a value that overflows `int64`.
-
-Both functions reject commas that `Comma` would never produce: `"1,23"`, `"1234,567"`, `",123"` and `"123,"` all return an error. They also reject `"1e5"`, `"1."` and `".5"`. A string like `"1234,567"` is more likely a typo than a number someone meant. If you'd rather accept any comma placement, I can loosen it.
-
-Errors are `*strconv.NumError` values with `ParseComma` or `ParseCommaf` as the function name, so `errors.Is(err, strconv.ErrSyntax)` and `errors.Is(err, strconv.ErrRange)` work.
-
-I haven't committed anything.
-
-</details>
-
-### claude, hush: pass
-
-Files: [comma.go](../hush/claude/go-feat-humanize-parse-comma-1/files/comma.go), [comma_test.go](../hush/claude/go-feat-humanize-parse-comma-1/files/comma_test.go)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/comma.go b/comma.go
-index 64ce8c9..40326a1 100644
+index 64ce8c9..a72c1eb 100644
 --- a/comma.go
 +++ b/comma.go
 @@ -139,3 +139,89 @@ func BigComma(bin *big.Int) string {
@@ -405,59 +249,70 @@ index 64ce8c9..40326a1 100644
  	return sign + strings.Join(parts[j:], ",")
  }
 +
-+// stripCommas validates the integer part of s as produced by Comma
-+// (optional leading '-', then either plain digits or digit groups
-+// separated by commas) and returns s without commas. The returned
-+// index is the position of the first non-integer byte in the result.
-+func stripCommas(s string) (string, int, bool) {
-+	start := 0
-+	if strings.HasPrefix(s, "-") {
-+		start = 1
++// parseCommaDigits validates a number formatted like the output of Comma
++// or Commaf and returns it with the thousands separators removed. Commas
++// are optional, but when present they must separate groups of exactly
++// three digits. A fractional part is only accepted if frac is true.
++func parseCommaDigits(s string, frac bool) (string, error) {
++	err := &strconv.NumError{Func: "ParseComma", Num: s, Err: strconv.ErrSyntax}
++
++	body := strings.TrimPrefix(s, "-")
++	intPart, fracPart, hasFrac := strings.Cut(body, ".")
++	if hasFrac && (!frac || fracPart == "") {
++		return "", err
 +	}
-+	end := start
-+	for end < len(s) && (s[end] == ',' || (s[end] >= '0' && s[end] <= '9')) {
-+		end++
-+	}
-+	intPart := s[start:end]
-+	if intPart == "" {
-+		return "", 0, false
-+	}
-+	if strings.Contains(intPart, ",") {
-+		groups := strings.Split(intPart, ",")
-+		if len(groups[0]) < 1 || len(groups[0]) > 3 {
-+			return "", 0, false
++	for i := 0; i < len(fracPart); i++ {
++		if fracPart[i] < '0' || fracPart[i] > '9' {
++			return "", err
 +		}
-+		for _, g := range groups[1:] {
-+			if len(g) != 3 {
-+				return "", 0, false
++	}
++
++	groups := strings.Split(intPart, ",")
++	for i, g := range groups {
++		if len(groups) > 1 && ((i == 0 && len(g) > 3) || (i > 0 && len(g) != 3)) {
++			return "", err
++		}
++		if g == "" {
++			return "", err
++		}
++		for j := 0; j < len(g); j++ {
++			if g[j] < '0' || g[j] > '9' {
++				return "", err
 +			}
 +		}
-+		intPart = strings.Join(groups, "")
 +	}
-+	out := s[:start] + intPart
-+	return out + s[end:], len(out), true
++
++	out := strings.Join(groups, "")
++	if s[0] == '-' {
++		out = "-" + out
++	}
++	if hasFrac {
++		out += "." + fracPart
++	}
++	return out, nil
 +}
 +
-+// ParseComma parses a string produced by Comma back into an int64.
-+// Plain numbers without commas are accepted too. It returns 0 and an
-+// error if s is not a valid integer or does not fit in an int64.
++// ParseComma parses a string produced by Comma, or a plain base 10
++// integer, back into an int64. It returns 0 and an error if s is not a
++// valid number or does not fit in an int64.
 +//
 +// e.g. ParseComma("834,142") -> 834142
 +func ParseComma(s string) (int64, error) {
-+	clean, n, ok := stripCommas(s)
-+	if !ok || n != len(clean) {
-+		return 0, &strconv.NumError{Func: "ParseComma", Num: s, Err: strconv.ErrSyntax}
++	clean, err := parseCommaDigits(s, false)
++	if err != nil {
++		return 0, err
 +	}
 +	v, err := strconv.ParseInt(clean, 10, 64)
 +	if err != nil {
-+		return 0, &strconv.NumError{Func: "ParseComma", Num: s, Err: err.(*strconv.NumError).Err}
++		return 0, err
 +	}
 +	return v, nil
 +}
 +
-+// ParseCommaf parses a string produced by Commaf back into a float64.
-+// Plain numbers without commas are accepted too. It returns 0 and an
-+// error if s is not a valid number.
++// ParseCommaf parses a string produced by Commaf, or a plain base 10
++// number, back into a float64. "NaN", "+Inf" and "-Inf" are accepted as
++// Commaf produces them. It returns 0 and an error if s is not a valid
++// number or does not fit in a float64.
 +//
 +// e.g. ParseCommaf("834,142.32") -> 834142.32
 +func ParseCommaf(s string) (float64, error) {
@@ -469,35 +324,201 @@ index 64ce8c9..40326a1 100644
 +	case "-Inf":
 +		return math.Inf(-1), nil
 +	}
-+	syntax := &strconv.NumError{Func: "ParseCommaf", Num: s, Err: strconv.ErrSyntax}
-+	clean, n, ok := stripCommas(s)
-+	if !ok {
-+		return 0, syntax
-+	}
-+	if rest := clean[n:]; rest != "" {
-+		if rest[0] != '.' || len(rest) < 2 {
-+			return 0, syntax
-+		}
-+		for i := 1; i < len(rest); i++ {
-+			if rest[i] < '0' || rest[i] > '9' {
-+				return 0, syntax
-+			}
-+		}
++	clean, err := parseCommaDigits(s, true)
++	if err != nil {
++		return 0, err
 +	}
 +	v, err := strconv.ParseFloat(clean, 64)
 +	if err != nil {
-+		return 0, &strconv.NumError{Func: "ParseCommaf", Num: s, Err: err.(*strconv.NumError).Err}
++		return 0, err
 +	}
 +	return v, nil
 +}
 diff --git a/comma_test.go b/comma_test.go
-index 7c629eb..e5d633e 100644
+index 7c629eb..5b212c5 100644
 --- a/comma_test.go
 +++ b/comma_test.go
-@@ -157,3 +157,31 @@ func TestHumanizeBigIntMutation(t *testing.T) {
+@@ -157,3 +157,50 @@ func TestHumanizeBigIntMutation(t *testing.T) {
  		t.Fail()
  	}
  }
++
++func TestParseComma(t *testing.T) {
++	good := map[string]int64{
++		"0": 0, "10": 10, "123,456,789": 123456789, "-834,142": -834142,
++		"1234567": 1234567, "-9,223,372,036,854,775,808": math.MinInt64,
++		"9,223,372,036,854,775,807": math.MaxInt64,
++	}
++	for in, want := range good {
++		if got, err := ParseComma(in); err != nil || got != want {
++			t.Errorf("ParseComma(%q) = %d, %v; want %d", in, got, err, want)
++		}
++	}
++	for _, in := range []string{"", "-", "abc", "123a456", "1.5", "1.2.3", "1,23", "1,2345", ",123", "123,", "1,,234", "+5", "9,223,372,036,854,775,808", " 1"} {
++		if got, err := ParseComma(in); err == nil || got != 0 {
++			t.Errorf("ParseComma(%q) = %d, %v; want 0, error", in, got, err)
++		}
++	}
++	for _, n := range []int64{math.MinInt64, math.MaxInt64, -1000, 999, 1000, 0, 7, 8} {
++		if got, err := ParseComma(Comma(n)); err != nil || got != n {
++			t.Errorf("round trip %d: got %d, %v", n, got, err)
++		}
++	}
++}
++
++func TestParseCommaf(t *testing.T) {
++	good := map[string]float64{
++		"10": 10, "10.11": 10.11, "-834,142.32": -834142.32, "123,456,789": 123456789, "0.5": 0.5,
++	}
++	for in, want := range good {
++		if got, err := ParseCommaf(in); err != nil || got != want {
++			t.Errorf("ParseCommaf(%q) = %v, %v; want %v", in, got, err, want)
++		}
++	}
++	for _, in := range []string{"", "abc", "123a456", "1.2.3", "1.", ".5", "1.2,3", "1,23.5", "-", "1e5"} {
++		if got, err := ParseCommaf(in); err == nil || got != 0 {
++			t.Errorf("ParseCommaf(%q) = %v, %v; want 0, error", in, got, err)
++		}
++	}
++	for _, f := range []float64{0, 1.5, -834142.32, 1e21, 5e-324, math.MaxFloat64, math.Inf(1), math.Inf(-1)} {
++		if got, err := ParseCommaf(Commaf(f)); err != nil || got != f {
++			t.Errorf("round trip %v: got %v, %v", f, got, err)
++		}
++	}
++	if got, err := ParseCommaf(Commaf(math.NaN())); err != nil || !math.IsNaN(got) {
++		t.Errorf("NaN round trip: got %v, %v", got, err)
++	}
++}
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+I added `ParseComma` and `ParseCommaf` to `comma.go`, with tests in `comma_test.go`. `go vet` and `go test` pass.
+
+- **Round trips:** `ParseComma(Comma(n))` gives back `n` for every `int64`, including `math.MinInt64` and `math.MaxInt64`. `ParseCommaf(Commaf(f))` gives back `f`, including very large and very small values.
+- **`ParseCommaf` extras:** it also accepts `NaN`, `+Inf` and `-Inf`, since `Commaf` can produce them.
+- **Accepted input:** negative numbers and plain numbers without commas (`"10"`, `"10.11"`, `"1234567"`) work.
+- **Errors:** `""`, `"abc"`, `"123a456"`, `"1.2.3"` and `"1.5"` for `ParseComma` all return `0` and an error. Values that don't fit in an `int64` or `float64` do too.
+- **Strict comma placement:** commas must sit between groups of exactly three digits, so `"1,23"` and `"123,"` are errors. Strings like `"1234,567"` are rejected rather than guessed at.
+- **Other rejected formats:** a leading `+`, whitespace, and exponent notation such as `"1e5"` are also errors. Say so if you'd rather be more lenient with pasted input.
+
+I made no commit.
+
+</details>
+
+### claude, hush: pass
+
+Files: [comma.go](../hush/claude/go-feat-humanize-parse-comma-1/files/comma.go), [parsecomma_test.go](../hush/claude/go-feat-humanize-parse-comma-1/files/parsecomma_test.go)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/comma.go b/comma.go
+index 64ce8c9..cb77107 100644
+--- a/comma.go
++++ b/comma.go
+@@ -2,6 +2,7 @@ package humanize
+ 
+ import (
+ 	"bytes"
++	"errors"
+ 	"math"
+ 	"math/big"
+ 	"strconv"
+@@ -139,3 +140,79 @@ func BigComma(bin *big.Int) string {
+ 	parts[j] = strconv.Itoa(int(b.Int64()))
+ 	return sign + strings.Join(parts[j:], ",")
+ }
++
++var errBadComma = errors.New("humanize: invalid comma-formatted number")
++
++// uncomma validates s as the output of Comma or Commaf and returns it
++// with the commas removed. Commas are only allowed in the integer part,
++// in groups of three.
++func uncomma(s string) (string, bool) {
++	sign := ""
++	if s != "" && (s[0] == '-' || s[0] == '+') {
++		sign, s = s[:1], s[1:]
++	}
++	intPart, frac, hasFrac := strings.Cut(s, ".")
++	if hasFrac {
++		if frac == "" {
++			return "", false
++		}
++		for i := 0; i < len(frac); i++ {
++			if frac[i] < '0' || frac[i] > '9' {
++				return "", false
++			}
++		}
++	}
++	groups := strings.Split(intPart, ",")
++	for i, g := range groups {
++		if len(g) == 0 || (i == 0 && len(g) > 3 && len(groups) > 1) || (i > 0 && len(g) != 3) {
++			return "", false
++		}
++		for j := 0; j < len(g); j++ {
++			if g[j] < '0' || g[j] > '9' {
++				return "", false
++			}
++		}
++	}
++	out := sign + strings.Join(groups, "")
++	if hasFrac {
++		out += "." + frac
++	}
++	return out, true
++}
++
++// ParseComma parses a string produced by Comma back into an int64.
++// Plain numbers without commas are accepted too.
++//
++// e.g. ParseComma("834,142") -> 834142
++func ParseComma(s string) (int64, error) {
++	plain, ok := uncomma(s)
++	if !ok || strings.Contains(plain, ".") {
++		return 0, errBadComma
++	}
++	n, err := strconv.ParseInt(plain, 10, 64)
++	if err != nil {
++		return 0, err
++	}
++	return n, nil
++}
++
++// ParseCommaf parses a string produced by Commaf back into a float64.
++// Plain numbers without commas are accepted too, as are the "NaN",
++// "+Inf" and "-Inf" forms that Commaf produces.
++//
++// e.g. ParseCommaf("834,142.32") -> 834142.32
++func ParseCommaf(s string) (float64, error) {
++	switch s {
++	case "NaN", "+Inf", "-Inf":
++		return strconv.ParseFloat(s, 64)
++	}
++	plain, ok := uncomma(s)
++	if !ok {
++		return 0, errBadComma
++	}
++	f, err := strconv.ParseFloat(plain, 64)
++	if err != nil {
++		return 0, err
++	}
++	return f, nil
++}
+diff --git a/parsecomma_test.go b/parsecomma_test.go
+new file mode 100644
+index 0000000..3b04d69
+--- /dev/null
++++ b/parsecomma_test.go
+@@ -0,0 +1,37 @@
++package humanize
++
++import (
++	"math"
++	"testing"
++)
 +
 +func TestParseComma(t *testing.T) {
 +	for _, n := range []int64{0, 7, 10, -1, 999, 1000, -834142, 123456789, math.MinInt64, math.MaxInt64} {
@@ -506,7 +527,7 @@ index 7c629eb..e5d633e 100644
 +			t.Errorf("ParseComma(%q) = %d, %v; want %d", Comma(n), got, err, n)
 +		}
 +	}
-+	for _, s := range []string{"", "-", "abc", "123a456", "1.2.3", "1.5", "1,23", "1234,567", ",123", "123,", "9223372036854775808", "+1"} {
++	for _, s := range []string{"", "abc", "123a456", "1.2.3", "1.5", "1,23", "1234,567", ",123", "123,", "-", "9,223,372,036,854,775,808"} {
 +		if got, err := ParseComma(s); err == nil || got != 0 {
 +			t.Errorf("ParseComma(%q) = %d, %v; want 0, error", s, got, err)
 +		}
@@ -514,13 +535,16 @@ index 7c629eb..e5d633e 100644
 +}
 +
 +func TestParseCommaf(t *testing.T) {
-+	for _, f := range []float64{0, 10, 10.11, -834142.32, 123456789.5, 1e21, math.Inf(1), math.Inf(-1)} {
++	for _, f := range []float64{0, 10.11, -834142.32, 123456789.5, 1e21, math.MaxFloat64, math.SmallestNonzeroFloat64, math.Inf(1), math.Inf(-1)} {
 +		got, err := ParseCommaf(Commaf(f))
 +		if err != nil || got != f {
 +			t.Errorf("ParseCommaf(%q) = %v, %v; want %v", Commaf(f), got, err, f)
 +		}
 +	}
-+	for _, s := range []string{"", "-", "abc", "123a456", "1.2.3", "1.", ".5", "1,23.5", "1.5,000", "1e5"} {
++	if got, err := ParseCommaf("NaN"); err != nil || !math.IsNaN(got) {
++		t.Errorf("ParseCommaf(NaN) = %v, %v", got, err)
++	}
++	for _, s := range []string{"", "abc", "123a456", "1.2.3", "1.", ".5", "0x1p4", "1e5", "1,23.4"} {
 +		if got, err := ParseCommaf(s); err == nil || got != 0 {
 +			t.Errorf("ParseCommaf(%q) = %v, %v; want 0, error", s, got, err)
 +		}
@@ -532,30 +556,31 @@ index 7c629eb..e5d633e 100644
 
 <details><summary>reply</summary>
 
-Done. Added `ParseComma` and `ParseCommaf` to `comma.go`, with tests in `comma_test.go`. `go test .` passes.
+ParseInt returns the clamped value on range error; force 0.
 
-Parsing is strict: bad comma grouping like `"1,23"` errors. `ParseCommaf` also accepts `NaN`, `+Inf` and `-Inf`.
+Done. Added `ParseComma` and `ParseCommaf` to `comma.go`, with tests in `parsecomma_test.go`. Tests pass.
+
+Both reject misplaced commas, so `"1,23"` errors. `ParseCommaf` also takes `NaN`, `+Inf` and `-Inf`, since `Commaf` can output them. Nothing is committed.
 
 </details>
 
 ### claude, sloth: pass
 
-Files: [comma.go](../sloth/claude/go-feat-humanize-parse-comma-1/files/comma.go)
+Files: [comma.go](../sloth/claude/go-feat-humanize-parse-comma-1/files/comma.go), [comma_test.go](../sloth/claude/go-feat-humanize-parse-comma-1/files/comma_test.go)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/comma.go b/comma.go
-index 64ce8c9..539f47f 100644
+index 64ce8c9..bfc611f 100644
 --- a/comma.go
 +++ b/comma.go
-@@ -139,3 +139,27 @@ func BigComma(bin *big.Int) string {
- 	parts[j] = strconv.Itoa(int(b.Int64()))
- 	return sign + strings.Join(parts[j:], ",")
+@@ -100,6 +100,30 @@ func Commaf(v float64) string {
+ 	return buf.String()
  }
-+
+ 
 +// ParseComma parses a string produced by Comma back into an int64.
-+// It returns 0 and an error if s is not a valid number.
++// It returns 0 and an error if s is not a valid integer.
 +//
 +// e.g. ParseComma("834,142") -> 834142
 +func ParseComma(s string) (int64, error) {
@@ -577,69 +602,171 @@ index 64ce8c9..539f47f 100644
 +	}
 +	return v, nil
 +}
++
+ // CommafWithDigits works like the Commaf but limits the resulting
+ // string to the given number of decimal places.
+ //
+diff --git a/comma_test.go b/comma_test.go
+index 7c629eb..59a21ee 100644
+--- a/comma_test.go
++++ b/comma_test.go
+@@ -77,6 +77,32 @@ func TestCommafs(t *testing.T) {
+ 	}.validate(t)
+ }
+ 
++func TestParseComma(t *testing.T) {
++	for _, n := range []int64{0, 10, 1000, 123456789, -834142, math.MinInt64, math.MaxInt64} {
++		if got, err := ParseComma(Comma(n)); err != nil || got != n {
++			t.Errorf("ParseComma(Comma(%d)) = %d, %v", n, got, err)
++		}
++	}
++	for _, s := range []string{"", "abc", "123a456", "1.5", "9,223,372,036,854,775,808"} {
++		if got, err := ParseComma(s); err == nil || got != 0 {
++			t.Errorf("ParseComma(%q) = %d, %v; want 0 and an error", s, got, err)
++		}
++	}
++}
++
++func TestParseCommaf(t *testing.T) {
++	for _, f := range []float64{0, 10, 10.11, 834142.32, -834142.32, math.MaxFloat64, math.SmallestNonzeroFloat64, math.Inf(1), math.Inf(-1)} {
++		if got, err := ParseCommaf(Commaf(f)); err != nil || got != f {
++			t.Errorf("ParseCommaf(Commaf(%v)) = %v, %v", f, got, err)
++		}
++	}
++	for _, s := range []string{"", "abc", "123a456", "1.2.3"} {
++		if got, err := ParseCommaf(s); err == nil || got != 0 {
++			t.Errorf("ParseCommaf(%q) = %v, %v; want 0 and an error", s, got, err)
++		}
++	}
++}
++
+ func BenchmarkCommas(b *testing.B) {
+ 	for i := 0; i < b.N; i++ {
+ 		Comma(1234567890)
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-I added `ParseComma` and `ParseCommaf` to `comma.go`. Both strip the commas and hand the rest to `strconv`. It builds and the existing tests pass. I didn't write new tests because you didn't ask for any, so the round-trip and error cases are untested.
+I added `ParseComma` and `ParseCommaf` to `comma.go`, and `go test .` passes. Each one strips the commas and then calls `strconv.ParseInt` or `strconv.ParseFloat`. On any error they return `0` and the error.
 
-- **Error cases:** `""`, `"abc"`, `"123a456"`, `"1.2.3"` and `"1.5"` (for `ParseComma`) all fail in `strconv`. Both functions return `0` with the error.
-- **Range:** an out-of-range value also returns `0` and an error, instead of the clamped value `strconv` would give. `math.MinInt64` and `math.MaxInt64` fit, so they round-trip.
-- **Non-finite floats:** `ParseCommaf` accepts `"NaN"`, `"+Inf"` and `"-Inf"`, so `ParseCommaf(Commaf(f))` works for those too.
+I added `TestParseComma` and `TestParseCommaf` to `comma_test.go`:
+- **Round trips:** `ParseComma(Comma(n))` returns `n` for `0`, `10`, `1000`, `123456789`, `-834142`, `math.MinInt64` and `math.MaxInt64`. `ParseCommaf(Commaf(f))` returns `f` for `0`, `10`, `10.11`, `834142.32`, `-834142.32`, the largest and smallest float64 values, and `±Inf`.
+- **Errors:** `""`, `"abc"`, `"123a456"`, and `"1.2.3"` (for `ParseCommaf`) return `0` and an error. For `ParseComma`, `"1.5"` and `"9,223,372,036,854,775,808"` (one past `MaxInt64`) do the same.
 
-Two things are more lenient than you might expect:
-
-- **Comma placement:** it isn't checked, so `"1,2,3"` parses as `123`. Checking it would take a small extra validation step. I left it out because you didn't ask for it.
-- **`strconv` formats:** `ParseCommaf` also accepts anything else `strconv.ParseFloat` does, such as `"1e5"` and hex floats.
+- **Comma placement:** The parsers don't check where the commas are, so `"1,2,3"` parses as `123`. I left this out because you didn't ask for it. Checking would take a few more lines.
+- **`NaN`:** `ParseCommaf("NaN")` returns `NaN`, which is what `Commaf` produces for it. I didn't add a round-trip test for it, since `NaN != NaN`.
 
 </details>
 
 ### claude, all: pass
 
-Files: [comma.go](../all/claude/go-feat-humanize-parse-comma-1/files/comma.go)
+Files: [comma.go](../all/claude/go-feat-humanize-parse-comma-1/files/comma.go), [comma_test.go](../all/claude/go-feat-humanize-parse-comma-1/files/comma_test.go)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/comma.go b/comma.go
-index 64ce8c9..f8259a4 100644
+index 64ce8c9..e383edd 100644
 --- a/comma.go
 +++ b/comma.go
-@@ -139,3 +139,33 @@ func BigComma(bin *big.Int) string {
- 	parts[j] = strconv.Itoa(int(b.Int64()))
- 	return sign + strings.Join(parts[j:], ",")
+@@ -100,6 +100,59 @@ func Commaf(v float64) string {
+ 	return buf.String()
  }
+ 
++// uncomma removes the commas from s, reporting false unless they sit
++// between groups of three digits in the integer part.
++func uncomma(s string) (string, bool) {
++	if !strings.Contains(s, ",") {
++		return s, true
++	}
++	whole, frac, _ := strings.Cut(s, ".")
++	if strings.Contains(frac, ",") {
++		return "", false
++	}
++	whole = strings.TrimPrefix(strings.TrimPrefix(whole, "-"), "+")
++	for i, group := range strings.Split(whole, ",") {
++		if len(group) != 3 && (i > 0 || len(group) < 1 || len(group) > 3) {
++			return "", false
++		}
++	}
++	return strings.ReplaceAll(s, ",", ""), true
++}
 +
-+// ParseComma parses a string produced by Comma back into an int64.
-+// It returns 0 and an error if the string is not a valid integer.
++// ParseComma parses a string produced by Comma, or a plain base 10
++// integer, back into an int64. It returns 0 and an error if s is not
++// a valid number or does not fit in an int64.
 +//
 +// e.g. ParseComma("834,142") -> 834142
 +func ParseComma(s string) (int64, error) {
-+	v, err := strconv.ParseInt(strings.ReplaceAll(s, ",", ""), 10, 64)
++	plain, ok := uncomma(s)
++	if !ok {
++		return 0, &strconv.NumError{Func: "ParseComma", Num: s, Err: strconv.ErrSyntax}
++	}
++	v, err := strconv.ParseInt(plain, 10, 64)
 +	if err != nil {
 +		return 0, err
 +	}
 +	return v, nil
 +}
 +
-+// ParseCommaf parses a string produced by Commaf back into a float64.
-+// Commas are only accepted before the decimal point. It returns 0 and
-+// an error if the string is not a valid number.
++// ParseCommaf parses a string produced by Commaf, or a plain base 10
++// number, back into a float64. It returns 0 and an error if s is not
++// a valid number.
 +//
 +// e.g. ParseCommaf("834,142.32") -> 834142.32
 +func ParseCommaf(s string) (float64, error) {
-+	whole, frac, hasFrac := strings.Cut(s, ".")
-+	cleaned := strings.ReplaceAll(whole, ",", "")
-+	if hasFrac {
-+		cleaned += "." + frac
++	plain, ok := uncomma(s)
++	if !ok {
++		return 0, &strconv.NumError{Func: "ParseCommaf", Num: s, Err: strconv.ErrSyntax}
 +	}
-+	v, err := strconv.ParseFloat(cleaned, 64)
++	v, err := strconv.ParseFloat(plain, 64)
 +	if err != nil {
 +		return 0, err
 +	}
 +	return v, nil
++}
++
+ // CommafWithDigits works like the Commaf but limits the resulting
+ // string to the given number of decimal places.
+ //
+diff --git a/comma_test.go b/comma_test.go
+index 7c629eb..27ce346 100644
+--- a/comma_test.go
++++ b/comma_test.go
+@@ -157,3 +157,32 @@ func TestHumanizeBigIntMutation(t *testing.T) {
+ 		t.Fail()
+ 	}
+ }
++
++func TestParseComma(t *testing.T) {
++	for _, n := range []int64{0, 7, 10, 1000, -123456789, math.MinInt64, math.MaxInt64} {
++		if got, err := ParseComma(Comma(n)); err != nil || got != n {
++			t.Errorf("ParseComma(Comma(%d)) = %d, %v", n, got, err)
++		}
++	}
++	if got, err := ParseComma("1000"); err != nil || got != 1000 {
++		t.Errorf("ParseComma(1000) = %d, %v", got, err)
++	}
++	for _, s := range []string{"", "abc", "123a456", "1.5", "1,23", "1234,567", ",123", "123,", "9,223,372,036,854,775,808"} {
++		if got, err := ParseComma(s); err == nil || got != 0 {
++			t.Errorf("ParseComma(%q) = %d, %v; want 0, error", s, got, err)
++		}
++	}
++}
++
++func TestParseCommaf(t *testing.T) {
++	for _, f := range []float64{0, 10.11, -834142.32, 1234567890.83584, math.MaxFloat64, math.Inf(1), math.Inf(-1)} {
++		if got, err := ParseCommaf(Commaf(f)); err != nil || got != f {
++			t.Errorf("ParseCommaf(Commaf(%v)) = %v, %v", f, got, err)
++		}
++	}
++	for _, s := range []string{"", "abc", "123a456", "1.2.3", "1.2,345", "12,34.5"} {
++		if got, err := ParseCommaf(s); err == nil || got != 0 {
++			t.Errorf("ParseCommaf(%q) = %v, %v; want 0, error", s, got, err)
++		}
++	}
 +}
 ```
 
@@ -647,9 +774,9 @@ index 64ce8c9..f8259a4 100644
 
 <details><summary>reply</summary>
 
-Done. `ParseComma` and `ParseCommaf` added to `comma.go`. Build, existing tests and a throwaway check of your cases passed. I deleted the check, so no tests were added.
+Done. Added `ParseComma` and `ParseCommaf` to `comma.go`, with tests in `comma_test.go`. Build, vet and tests pass.
 
-Both are lenient about comma placement: `ParseComma("1,2,3")` returns 123. `ParseCommaf` rejects commas after the decimal point.
+Both reject misplaced commas (`"1,23"`, `",123"`, `"1.2,345"`). `ParseCommaf` also round-trips `NaN`, `+Inf` and `-Inf`. README not updated.
 
 </details>
 
@@ -758,7 +885,129 @@ Files: [comma.go](../muffle/codex/go-feat-humanize-parse-comma-1/files/comma.go)
 
 ```diff
 diff --git a/comma.go b/comma.go
-index 64ce8c9..cec3078 100644
+index 64ce8c9..75ede8a 100644
+--- a/comma.go
++++ b/comma.go
+@@ -8,6 +8,27 @@ import (
+ 	"strings"
+ )
+ 
++// ParseComma parses a base-10 integer, ignoring commas.
++// It returns zero and an error if s is invalid or out of range for int64.
++func ParseComma(s string) (int64, error) {
++	v, err := strconv.ParseInt(strings.ReplaceAll(s, ",", ""), 10, 64)
++	if err != nil {
++		return 0, err
++	}
++	return v, nil
++}
++
++// ParseCommaf parses a floating-point number, ignoring commas.
++// It accepts the special values NaN, +Inf, and -Inf produced by Commaf.
++// It returns zero and an error if s is invalid or out of range for float64.
++func ParseCommaf(s string) (float64, error) {
++	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
++	if err != nil {
++		return 0, err
++	}
++	return v, nil
++}
++
+ // Comma produces a string form of the given number in base 10 with
+ // commas after every three orders of magnitude.
+ //
+diff --git a/parse_comma_test.go b/parse_comma_test.go
+new file mode 100644
+index 0000000..722884a
+--- /dev/null
++++ b/parse_comma_test.go
+@@ -0,0 +1,63 @@
++package humanize
++
++import (
++	"math"
++	"testing"
++)
++
++func TestParseComma(t *testing.T) {
++	for _, want := range []int64{0, 1, -1, 10, -10, 999, 1000, -1000, 123456789, -123456789, math.MinInt64, math.MaxInt64} {
++		s := Comma(want)
++		if got, err := ParseComma(s); err != nil || got != want {
++			t.Errorf("ParseComma(%q) = %d, %v; want %d, nil", s, got, err, want)
++		}
++	}
++	for _, tt := range []struct {
++		s    string
++		want int64
++	}{
++		{"10", 10},
++		{"-10", -10},
++		{"+123,456", 123456},
++		{"9223372036854775807", math.MaxInt64},
++		{"-9223372036854775808", math.MinInt64},
++	} {
++		if got, err := ParseComma(tt.s); err != nil || got != tt.want {
++			t.Errorf("ParseComma(%q) = %d, %v; want %d, nil", tt.s, got, err, tt.want)
++		}
++	}
++	for _, s := range []string{"", "abc", "123a456", "1.2.3", "1.5", ",", "1,234a", "9,223,372,036,854,775,808", "-9,223,372,036,854,775,809"} {
++		if got, err := ParseComma(s); err == nil || got != 0 {
++			t.Errorf("ParseComma(%q) = %d, %v; want 0 and an error", s, got, err)
++		}
++	}
++}
++
++func TestParseCommaf(t *testing.T) {
++	for _, want := range []float64{0, math.Copysign(0, -1), 10.11, -10.11, 1000, 834142.32, -834142.32, math.MaxFloat64, -math.MaxFloat64, math.SmallestNonzeroFloat64, -math.SmallestNonzeroFloat64, math.Inf(1), math.Inf(-1), math.NaN()} {
++		s := Commaf(want)
++		got, err := ParseCommaf(s)
++		equal := math.Float64bits(got) == math.Float64bits(want) || (math.IsNaN(got) && math.IsNaN(want))
++		if err != nil || !equal {
++			t.Errorf("ParseCommaf(%q) = %g, %v; want %g, nil", s, got, err, want)
++		}
++	}
++	for _, tt := range []struct {
++		s    string
++		want float64
++	}{
++		{"10", 10},
++		{"10.11", 10.11},
++		{"-834,142.32", -834142.32},
++		{"123,456,789", 123456789},
++	} {
++		if got, err := ParseCommaf(tt.s); err != nil || got != tt.want {
++			t.Errorf("ParseCommaf(%q) = %g, %v; want %g, nil", tt.s, got, err, tt.want)
++		}
++	}
++	for _, s := range []string{"", "abc", "123a456", "1.2.3", ",", "1,234a", "1e309", "-1e309"} {
++		if got, err := ParseCommaf(s); err == nil || got != 0 {
++			t.Errorf("ParseCommaf(%q) = %g, %v; want 0 and an error", s, got, err)
++		}
++	}
++}
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+I’ll check how `Comma` and `Commaf` format numbers, then add parsers and tests for round trips, limits, and invalid input.
+
+Added `humanize.ParseComma` and `humanize.ParseCommaf`. Both ignore commas and return `0` with an error for invalid or out-of-range input.
+
+Tests cover round trips, integer limits, float extremes, negative numbers, and invalid inputs. `go test ./...` passes.
+
+</details>
+
+### codex, hush: pass
+
+Files: [comma.go](../hush/codex/go-feat-humanize-parse-comma-1/files/comma.go), [parse_comma_test.go](../hush/codex/go-feat-humanize-parse-comma-1/files/parse_comma_test.go)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/comma.go b/comma.go
+index 64ce8c9..452a097 100644
 --- a/comma.go
 +++ b/comma.go
 @@ -8,6 +8,27 @@ import (
@@ -777,7 +1026,7 @@ index 64ce8c9..cec3078 100644
 +
 +// ParseCommaf parses a floating-point number, ignoring commas.
 +// It accepts the special values NaN, +Inf, and -Inf produced by Commaf.
-+// It returns zero and an error if s is invalid or out of range.
++// It returns zero and an error if s is invalid or overflows float64.
 +func ParseCommaf(s string) (float64, error) {
 +	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
 +	if err != nil {
@@ -791,32 +1040,25 @@ index 64ce8c9..cec3078 100644
  //
 diff --git a/parse_comma_test.go b/parse_comma_test.go
 new file mode 100644
-index 0000000..f306bc4
+index 0000000..00f1172
 --- /dev/null
 +++ b/parse_comma_test.go
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,39 @@
 +package humanize
 +
 +import (
 +	"math"
++	"strconv"
 +	"testing"
 +)
 +
 +func TestParseComma(t *testing.T) {
-+	for _, want := range []int64{0, 1, -1, 10, -10, 999, 1000, -1000, 123456789, math.MinInt64, math.MaxInt64} {
-+		s := Comma(want)
-+		got, err := ParseComma(s)
-+		if err != nil || got != want {
-+			t.Errorf("ParseComma(%q) = %d, %v; want %d, nil", s, got, err, want)
-+		}
-+	}
-+	for _, s := range []string{"10", "-10", "+10"} {
-+		want := int64(10)
-+		if s == "-10" {
-+			want = -10
-+		}
-+		if got, err := ParseComma(s); err != nil || got != want {
-+			t.Errorf("ParseComma(%q) = %d, %v; want %d, nil", s, got, err, want)
++	for _, want := range []int64{0, 1, -1, 10, -10, 123456789, -123456789, math.MinInt64, math.MaxInt64} {
++		for _, s := range []string{Comma(want), strconv.FormatInt(want, 10)} {
++			got, err := ParseComma(s)
++			if err != nil || got != want {
++				t.Errorf("ParseComma(%q) = %d, %v; want %d, nil", s, got, err, want)
++			}
 +		}
 +	}
 +	for _, s := range []string{"", "abc", "123a456", "1.2.3", "1.5", ",", "9,223,372,036,854,775,808", "-9,223,372,036,854,775,809"} {
@@ -827,24 +1069,12 @@ index 0000000..f306bc4
 +}
 +
 +func TestParseCommaf(t *testing.T) {
-+	for _, want := range []float64{0, math.Copysign(0, -1), 10, -10, 10.11, 834142.32, -834142.32, math.MaxFloat64, -math.MaxFloat64, math.SmallestNonzeroFloat64, -math.SmallestNonzeroFloat64, math.Inf(1), math.Inf(-1), math.NaN()} {
-+		s := Commaf(want)
-+		got, err := ParseCommaf(s)
-+		if err != nil || math.Float64bits(got) != math.Float64bits(want) && !(math.IsNaN(got) && math.IsNaN(want)) {
-+			t.Errorf("ParseCommaf(%q) = %g, %v; want %g, nil", s, got, err, want)
-+		}
-+	}
-+	for _, tt := range []struct {
-+		s    string
-+		want float64
-+	}{
-+		{"10", 10},
-+		{"10.11", 10.11},
-+		{"-10.11", -10.11},
-+		{"-834,142.32", -834142.32},
-+	} {
-+		if got, err := ParseCommaf(tt.s); err != nil || got != tt.want {
-+			t.Errorf("ParseCommaf(%q) = %g, %v; want %g, nil", tt.s, got, err, tt.want)
++	for _, want := range []float64{0, math.Copysign(0, -1), 10, 10.11, -10.11, 123456789, -834142.32, math.MaxFloat64, -math.MaxFloat64, math.SmallestNonzeroFloat64, -math.SmallestNonzeroFloat64, math.Inf(1), math.Inf(-1), math.NaN()} {
++		for _, s := range []string{Commaf(want), strconv.FormatFloat(want, 'f', -1, 64)} {
++			got, err := ParseCommaf(s)
++			if err != nil || (got != want && !(math.IsNaN(got) && math.IsNaN(want))) {
++				t.Errorf("ParseCommaf(%q) = %g, %v; want %g, nil", s, got, err, want)
++			}
 +		}
 +	}
 +	for _, s := range []string{"", "abc", "123a456", "1.2.3", ",", "1e309", "-1e309"} {
@@ -859,33 +1089,28 @@ index 0000000..f306bc4
 
 <details><summary>reply</summary>
 
-I’ll check the comma formatters and test conventions, add the parsers, and verify round trips and invalid inputs.
-
-Added `ParseComma` and `ParseCommaf`. Both ignore commas and return `0` with an error for invalid or out-of-range input.
-
-Tests cover round trips, integer limits, float extremes, negative numbers, plain numbers, and invalid inputs.
-
-`go test ./...` passes.
+Done.
+Added `ParseComma` and `ParseCommaf`; errors return zero. Tests cover round trips, limits, negatives, invalid input, overflow. `go test ./...` passed.
 
 </details>
 
-### codex, hush: pass
+### codex, sloth: pass
 
-Files: [comma.go](../hush/codex/go-feat-humanize-parse-comma-1/files/comma.go), [parse_comma_test.go](../hush/codex/go-feat-humanize-parse-comma-1/files/parse_comma_test.go)
+Files: [comma.go](../sloth/codex/go-feat-humanize-parse-comma-1/files/comma.go), [comma_test.go](../sloth/codex/go-feat-humanize-parse-comma-1/files/comma_test.go)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/comma.go b/comma.go
-index 64ce8c9..bb7c2a0 100644
+index 64ce8c9..f6e53ea 100644
 --- a/comma.go
 +++ b/comma.go
-@@ -8,6 +8,27 @@ import (
+@@ -8,6 +8,26 @@ import (
  	"strings"
  )
  
-+// ParseComma parses a base-10 integer after removing commas.
-+// It returns zero and an error if the number is invalid or out of range.
++// ParseComma parses a base-10 integer, ignoring commas.
++// It returns zero and an error if s cannot be parsed as an int64.
 +func ParseComma(s string) (int64, error) {
 +	v, err := strconv.ParseInt(strings.ReplaceAll(s, ",", ""), 10, 64)
 +	if err != nil {
@@ -894,9 +1119,8 @@ index 64ce8c9..bb7c2a0 100644
 +	return v, nil
 +}
 +
-+// ParseCommaf parses a floating-point number after removing commas.
-+// It accepts the special values NaN, +Inf, and -Inf produced by Commaf.
-+// It returns zero and an error if the number is invalid or out of range.
++// ParseCommaf parses a floating-point number, ignoring commas.
++// It returns zero and an error if s cannot be parsed as a float64.
 +func ParseCommaf(s string) (float64, error) {
 +	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
 +	if err != nil {
@@ -908,79 +1132,82 @@ index 64ce8c9..bb7c2a0 100644
  // Comma produces a string form of the given number in base 10 with
  // commas after every three orders of magnitude.
  //
-diff --git a/parse_comma_test.go b/parse_comma_test.go
-new file mode 100644
-index 0000000..990f50f
---- /dev/null
-+++ b/parse_comma_test.go
-@@ -0,0 +1,39 @@
-+package humanize
-+
-+import (
-+	"math"
-+	"testing"
-+)
-+
+diff --git a/comma_test.go b/comma_test.go
+index 7c629eb..0ce2e93 100644
+--- a/comma_test.go
++++ b/comma_test.go
+@@ -6,6 +6,36 @@ import (
+ 	"testing"
+ )
+ 
++// TestParseComma checks integer round trips, plain inputs, and invalid inputs.
 +func TestParseComma(t *testing.T) {
-+	for _, want := range []int64{0, 10, -10, 1000, -1000, 123456789, math.MinInt64, math.MaxInt64} {
-+		s := Comma(want)
-+		got, err := ParseComma(s)
++	for _, want := range []int64{0, 10, -10, 123456789, -123456789, math.MinInt64, math.MaxInt64} {
++		got, err := ParseComma(Comma(want))
 +		if err != nil || got != want {
-+			t.Errorf("ParseComma(%q) = %d, %v; want %d, nil", s, got, err, want)
++			t.Errorf("ParseComma(%q) = %d, %v; want %d, nil", Comma(want), got, err, want)
 +		}
 +	}
-+	if got, err := ParseComma("10"); err != nil || got != 10 {
-+		t.Errorf("ParseComma(10) = %d, %v; want 10, nil", got, err)
-+	}
-+	for _, s := range []string{"", "abc", "123a456", "1.2.3", "1.5", "9,223,372,036,854,775,808", "-9,223,372,036,854,775,809"} {
++	for _, s := range []string{"", ",", "abc", "123a456", "1.2.3", "1.5", "9,223,372,036,854,775,808", "-9,223,372,036,854,775,809"} {
 +		if got, err := ParseComma(s); err == nil || got != 0 {
 +			t.Errorf("ParseComma(%q) = %d, %v; want 0 and an error", s, got, err)
 +		}
 +	}
 +}
 +
++// TestParseCommaf checks float round trips, plain inputs, and invalid inputs.
 +func TestParseCommaf(t *testing.T) {
-+	for _, want := range []float64{0, math.Copysign(0, -1), 10, 10.11, -10.11, 834142.32, -834142.32, math.MaxFloat64, -math.MaxFloat64, math.SmallestNonzeroFloat64, -math.SmallestNonzeroFloat64, math.Inf(1), math.Inf(-1), math.NaN()} {
-+		s := Commaf(want)
-+		got, err := ParseCommaf(s)
-+		if err != nil || (got != want && !(math.IsNaN(got) && math.IsNaN(want))) || math.Signbit(got) != math.Signbit(want) {
-+			t.Errorf("ParseCommaf(%q) = %v, %v; want %v, nil", s, got, err, want)
++	for _, want := range []float64{0, math.Copysign(0, -1), 10, 10.11, -10.11, 123456789, -834142.32, math.MaxFloat64, -math.MaxFloat64, math.SmallestNonzeroFloat64, math.Inf(1), math.Inf(-1), math.NaN()} {
++		got, err := ParseCommaf(Commaf(want))
++		if err != nil || math.Float64bits(got) != math.Float64bits(want) && !(math.IsNaN(got) && math.IsNaN(want)) {
++			t.Errorf("ParseCommaf(%q) = %g, %v; want %g, nil", Commaf(want), got, err, want)
 +		}
 +	}
-+	for _, s := range []string{"", "abc", "123a456", "1.2.3", "1e309", "-1e309"} {
++	for _, s := range []string{"", ",", "abc", "123a456", "1.2.3", "1e309", "-1e309"} {
 +		if got, err := ParseCommaf(s); err == nil || got != 0 {
-+			t.Errorf("ParseCommaf(%q) = %v, %v; want 0 and an error", s, got, err)
++			t.Errorf("ParseCommaf(%q) = %g, %v; want 0 and an error", s, got, err)
 +		}
 +	}
 +}
++
+ func TestCommas(t *testing.T) {
+ 	testList{
+ 		{"0", Comma(0), "0"},
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Done.
-Added `ParseComma` and `ParseCommaf`; errors return zero. Tests cover round trips, numeric limits, invalid input, overflow. `go test ./...` passed.
+I’ll check the existing formatters and tests, add the parsers in the same style, and run the build and test suite.
+
+The change needs two exported functions in `comma.go` and tests in `comma_test.go`; no existing callers, fixtures, or configuration need changes. I’ll remove commas and use Go’s standard numeric parsers, returning zero on errors, including overflow. Comma placement validation and locale options are outside this request.
+
+Added `ParseComma` and `ParseCommaf`. Both ignore commas and return zero with an error for invalid or overflowing input.
+
+Tests cover round trips, integer limits, float extremes, negative and plain numbers, and invalid inputs.
+
+`go build ./...` and `go test ./...` pass.
 
 </details>
 
-### codex, sloth: pass
+### codex, all: pass
 
-Files: [comma.go](../sloth/codex/go-feat-humanize-parse-comma-1/files/comma.go)
+Files: [comma.go](../all/codex/go-feat-humanize-parse-comma-1/files/comma.go), [comma_test.go](../all/codex/go-feat-humanize-parse-comma-1/files/comma_test.go)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/comma.go b/comma.go
-index 64ce8c9..7e63e51 100644
+index 64ce8c9..342bbbe 100644
 --- a/comma.go
 +++ b/comma.go
-@@ -57,6 +57,26 @@ func Comma(v int64) string {
- 	return string(output)
- }
+@@ -8,6 +8,26 @@ import (
+ 	"strings"
+ )
  
 +// ParseComma parses a base-10 integer, ignoring commas.
-+// It returns zero and an error if the input is invalid or out of range for int64.
++// It returns zero and an error if s is invalid or outside the int64 range.
 +func ParseComma(s string) (int64, error) {
 +	v, err := strconv.ParseInt(strings.ReplaceAll(s, ",", ""), 10, 64)
 +	if err != nil {
@@ -990,7 +1217,7 @@ index 64ce8c9..7e63e51 100644
 +}
 +
 +// ParseCommaf parses a floating-point number, ignoring commas.
-+// It returns zero and an error if the input is invalid or out of range for float64.
++// It returns zero and an error if s is invalid or outside the float64 range.
 +func ParseCommaf(s string) (float64, error) {
 +	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
 +	if err != nil {
@@ -999,63 +1226,62 @@ index 64ce8c9..7e63e51 100644
 +	return v, nil
 +}
 +
- // Commaf produces a string form of the given number in base 10 with
+ // Comma produces a string form of the given number in base 10 with
  // commas after every three orders of magnitude.
  //
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-I’ll check the comma formatters and package conventions, add the parsers, then build and run the existing tests.
-
-Both functions can live in `comma.go` using the existing `strings` and `strconv` imports. No callers, fixtures, config, or export lists need changes. I’ll remove commas and parse the result, returning zero on any error, including overflow. This leaves the formatters unchanged and adds no dependencies or options.
-
-Added `ParseComma` and `ParseCommaf` in `comma.go`. Both ignore commas, support plain and negative numbers, and return zero with an error for invalid or overflowing input.
-
-Validation passed: `go build ./...`, `go test ./...`, and `git diff --check`.
-
-</details>
-
-### codex, all: pass
-
-Files: [comma.go](../all/codex/go-feat-humanize-parse-comma-1/files/comma.go)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/comma.go b/comma.go
-index 64ce8c9..97d62da 100644
---- a/comma.go
-+++ b/comma.go
-@@ -108,6 +108,26 @@ func CommafWithDigits(f float64, decimals int) string {
- 	return stripTrailingDigits(Commaf(f), decimals)
- }
+diff --git a/comma_test.go b/comma_test.go
+index 7c629eb..2e911e2 100644
+--- a/comma_test.go
++++ b/comma_test.go
+@@ -6,6 +6,48 @@ import (
+ 	"testing"
+ )
  
-+// ParseComma parses a base-10 integer with optional commas.
-+// It returns zero and an error if the input is invalid or out of range.
-+func ParseComma(s string) (int64, error) {
-+	v, err := strconv.ParseInt(strings.ReplaceAll(s, ",", ""), 10, 64)
-+	if err != nil {
-+		return 0, err
++// TestParseComma checks integer round trips, plain input, and invalid input.
++func TestParseComma(t *testing.T) {
++	for _, want := range []int64{0, 10, -10, 123456789, -123456789, math.MinInt64, math.MaxInt64} {
++		got, err := ParseComma(Comma(want))
++		if err != nil || got != want {
++			t.Errorf("ParseComma(%q) = %d, %v; want %d, nil", Comma(want), got, err, want)
++		}
 +	}
-+	return v, nil
++	got, err := ParseComma("10")
++	if err != nil || got != 10 {
++		t.Errorf("ParseComma(10) = %d, %v; want 10, nil", got, err)
++	}
++	for _, s := range []string{"", "abc", "123a456", "1.2.3", "1.5", ",", "9,223,372,036,854,775,808", "-9,223,372,036,854,775,809"} {
++		if got, err := ParseComma(s); err == nil || got != 0 {
++			t.Errorf("ParseComma(%q) = %d, %v; want 0, error", s, got, err)
++		}
++	}
 +}
 +
-+// ParseCommaf parses a floating-point number with optional commas.
-+// It returns zero and an error if the input is invalid or out of range.
-+func ParseCommaf(s string) (float64, error) {
-+	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
-+	if err != nil {
-+		return 0, err
++// TestParseCommaf checks floating-point round trips, plain input, and invalid input.
++func TestParseCommaf(t *testing.T) {
++	for _, want := range []float64{0, math.Copysign(0, -1), 10, 10.11, -10.11, 123456789, -834142.32, math.MaxFloat64, -math.MaxFloat64, math.SmallestNonzeroFloat64, -math.SmallestNonzeroFloat64, math.Inf(1), math.Inf(-1), math.NaN()} {
++		got, err := ParseCommaf(Commaf(want))
++		if err != nil || (got != want && !(math.IsNaN(got) && math.IsNaN(want))) || math.Signbit(got) != math.Signbit(want) {
++			t.Errorf("ParseCommaf(%q) = %g, %v; want %g, nil", Commaf(want), got, err, want)
++		}
 +	}
-+	return v, nil
++	for _, tt := range []struct {
++		in   string
++		want float64
++	}{{"10", 10}, {"10.11", 10.11}, {"-834,142.32", -834142.32}} {
++		if got, err := ParseCommaf(tt.in); err != nil || got != tt.want {
++			t.Errorf("ParseCommaf(%q) = %g, %v; want %g, nil", tt.in, got, err, tt.want)
++		}
++	}
++	for _, s := range []string{"", "abc", "123a456", "1.2.3", ",", "1e309", "-1e309"} {
++		if got, err := ParseCommaf(s); err == nil || got != 0 {
++			t.Errorf("ParseCommaf(%q) = %g, %v; want 0, error", s, got, err)
++		}
++	}
 +}
 +
- // BigComma produces a string form of the given big.Int in base 10
- // with commas after every three orders of magnitude.
- func BigComma(bin *big.Int) string {
+ func TestCommas(t *testing.T) {
+ 	testList{
+ 		{"0", Comma(0), "0"},
 ```
 
 </details>
@@ -1063,6 +1289,6 @@ index 64ce8c9..97d62da 100644
 <details><summary>reply</summary>
 
 Done.
-Added `ParseComma` and `ParseCommaf`; strip commas, return zero on parse errors. `go build ./...` and existing tests pass.
+Added `ParseComma` and `ParseCommaf`, with round-trip, boundary, and invalid-input tests. `go build ./...` and `go test ./...` pass.
 
 </details>

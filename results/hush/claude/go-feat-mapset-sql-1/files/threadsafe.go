@@ -26,15 +26,8 @@ SOFTWARE.
 package mapset
 
 import (
-	"database/sql"
 	"database/sql/driver"
 	"sync"
-)
-
-// Assert concrete type:threadSafeSet can be stored in and read from a database column.
-var (
-	_ driver.Valuer = (*threadSafeSet[string])(nil)
-	_ sql.Scanner   = (*threadSafeSet[string])(nil)
 )
 
 type threadSafeSet[T comparable] struct {
@@ -360,7 +353,7 @@ func (t *threadSafeSet[T]) UnmarshalJSON(p []byte) error {
 	return err
 }
 
-// Value implements driver.Valuer. It returns the set as a JSON array of bytes.
+// Value implements driver.Valuer, it returns the set as a JSON array ([]byte).
 func (t *threadSafeSet[T]) Value() (driver.Value, error) {
 	t.RLock()
 	defer t.RUnlock()
@@ -368,9 +361,7 @@ func (t *threadSafeSet[T]) Value() (driver.Value, error) {
 	return t.uss.Value()
 }
 
-// Scan implements sql.Scanner. It replaces the contents of the set with the
-// JSON array in src, which must be a string or []byte. A nil src empties the
-// set. On error the set is left unchanged.
+// Scan implements sql.Scanner, see threadUnsafeSet.Scan.
 func (t *threadSafeSet[T]) Scan(src any) error {
 	t.Lock()
 	defer t.Unlock()

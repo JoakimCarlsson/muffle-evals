@@ -187,7 +187,6 @@ pub mod free;
 #[doc(inline)]
 pub use crate::free::*;
 mod all_equal_value_err;
-mod strip_prefix_err;
 #[cfg(feature = "use_alloc")]
 mod combinations;
 #[cfg(feature = "use_alloc")]
@@ -237,6 +236,7 @@ mod rciter_impl;
 mod repeatn;
 mod size_hint;
 mod sources;
+mod strip_prefix_err;
 mod take_while_inclusive;
 #[cfg(feature = "use_alloc")]
 mod tee;
@@ -2506,6 +2506,70 @@ pub trait Itertools: Iterator {
         self.any(|x| x.borrow() == query)
     }
 
+    /// Remove `prefix` from the start of the iterator, like [`str::strip_prefix`].
+    ///
+    /// Returns the iterator advanced past the prefix, or a [`StripPrefixError`]
+    /// holding what was consumed if the iterator does not start with `prefix`.
+    ///
+    /// ```
+    /// use itertools::Itertools;
+    ///
+    /// assert_eq!((1..6).strip_prefix([1, 2]).unwrap().collect_vec(), [3, 4, 5]);
+    ///
+    /// let err = (1..6).strip_prefix([1, 2, 9, 4]).unwrap_err();
+    /// assert_eq!(err.mismatch, (Some(3), 9));
+    /// assert_eq!(err.prefix.collect_vec(), [4]);
+    /// assert_eq!(err.iterator.collect_vec(), [4, 5]);
+    ///
+    /// let err = (1..3).strip_prefix([1, 2, 3]).unwrap_err();
+    /// assert_eq!(err.mismatch, (None, 3));
+    /// assert_eq!(err.iterator.count(), 0);
+    /// ```
+    #[allow(clippy::type_complexity)]
+    fn strip_prefix<P>(self, prefix: P) -> Result<Self, StripPrefixError<Self, P::IntoIter>>
+    where
+        Self: Sized,
+        P: IntoIterator,
+        Self::Item: PartialEq<P::Item>,
+    {
+        self.strip_prefix_by(prefix, |a, b| a == b)
+    }
+
+    /// Like [`strip_prefix`](Itertools::strip_prefix), comparing items with `eq`.
+    ///
+    /// ```
+    /// use itertools::Itertools;
+    ///
+    /// let rest = ["1", "2", "3"].iter().strip_prefix_by([1, 2], |s, n| s.parse() == Ok(*n));
+    /// assert_eq!(rest.unwrap().collect_vec(), [&"3"]);
+    /// ```
+    #[allow(clippy::type_complexity)]
+    fn strip_prefix_by<P, F>(
+        mut self,
+        prefix: P,
+        mut eq: F,
+    ) -> Result<Self, StripPrefixError<Self, P::IntoIter>>
+    where
+        Self: Sized,
+        P: IntoIterator,
+        F: FnMut(&Self::Item, &P::Item) -> bool,
+    {
+        let mut prefix = prefix.into_iter();
+        while let Some(expected) = prefix.next() {
+            match self.next() {
+                Some(item) if eq(&item, &expected) => {}
+                item => {
+                    return Err(StripPrefixError {
+                        iterator: self,
+                        prefix,
+                        mismatch: (item, expected),
+                    })
+                }
+            }
+        }
+        Ok(self)
+    }
+
     /// Check whether all elements compare equal.
     ///
     /// Empty iterators are considered to have equal elements:
@@ -2531,75 +2595,6 @@ pub trait Itertools: Iterator {
             None => true,
             Some(a) => self.all(|x| a == x),
         }
-    }
-
-    /// Remove `prefix` from the start of the iterator, like [`str::strip_prefix`].
-    ///
-    /// If the iterator starts with all the items of `prefix`, in order, return the iterator
-    /// advanced past them. An empty prefix returns the whole iterator.
-    /// Otherwise return a [`StripPrefixError`] holding what was consumed.
-    ///
-    /// ```
-    /// use itertools::Itertools;
-    ///
-    /// assert_eq!((1..6).strip_prefix([1, 2]).unwrap().collect_vec(), [3, 4, 5]);
-    ///
-    /// let err = (1..6).strip_prefix([1, 2, 9, 4]).unwrap_err();
-    /// assert_eq!(err.mismatch, (Some(3), 9));
-    /// assert_eq!(err.prefix.collect_vec(), [4]);
-    /// assert_eq!(err.iterator.collect_vec(), [4, 5]);
-    ///
-    /// let err = (1..3).strip_prefix([1, 2, 3]).unwrap_err();
-    /// assert_eq!(err.mismatch, (None, 3));
-    /// assert_eq!(err.iterator.count(), 0);
-    /// ```
-    #[allow(clippy::type_complexity)]
-    fn strip_prefix<P>(
-        self,
-        prefix: P,
-    ) -> Result<Self, StripPrefixError<Self, P::IntoIter, P::Item>>
-    where
-        Self: Sized,
-        P: IntoIterator,
-        Self::Item: PartialEq<P::Item>,
-    {
-        self.strip_prefix_by(prefix, |a, b| a == b)
-    }
-
-    /// Like [`strip_prefix`](Itertools::strip_prefix), but compares items with `eq`,
-    /// so the prefix can have a different item type.
-    ///
-    /// ```
-    /// use itertools::Itertools;
-    ///
-    /// let rest = (1..6).strip_prefix_by(["1", "2"], |&a, b| a.to_string() == *b);
-    /// assert_eq!(rest.unwrap().collect_vec(), [3, 4, 5]);
-    /// ```
-    #[allow(clippy::type_complexity)]
-    fn strip_prefix_by<P, F>(
-        mut self,
-        prefix: P,
-        mut eq: F,
-    ) -> Result<Self, StripPrefixError<Self, P::IntoIter, P::Item>>
-    where
-        Self: Sized,
-        P: IntoIterator,
-        F: FnMut(&Self::Item, &P::Item) -> bool,
-    {
-        let mut prefix = prefix.into_iter();
-        while let Some(expected) = prefix.next() {
-            match self.next() {
-                Some(item) if eq(&item, &expected) => {}
-                found => {
-                    return Err(StripPrefixError {
-                        iterator: self,
-                        prefix,
-                        mismatch: (found, expected),
-                    })
-                }
-            }
-        }
-        Ok(self)
     }
 
     /// If there are elements and they are all equal, return a single copy of that element.

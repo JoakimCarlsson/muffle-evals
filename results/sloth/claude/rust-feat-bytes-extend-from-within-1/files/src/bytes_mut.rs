@@ -884,14 +884,12 @@ impl BytesMut {
         }
     }
 
-    /// Appends a copy of the bytes in `range` to the end of this `BytesMut`.
-    ///
-    /// If this `BytesMut` does not have enough capacity, it is resized first.
+    /// Appends a copy of the bytes in `range` to the end of the buffer,
+    /// growing it as needed.
     ///
     /// # Panics
     ///
-    /// Panics if the range is out of bounds for the current length or its
-    /// start is greater than its end.
+    /// Panics if the range is decreasing or extends past the current length.
     ///
     /// # Examples
     ///
@@ -902,46 +900,31 @@ impl BytesMut {
     /// buf.extend_from_slice(b"aaabbb_");
     /// buf.extend_from_within(3..6);
     ///
-    /// assert_eq!(&buf[..], b"aaabbb_bbb");
+    /// assert_eq!(b"aaabbb_bbb", &buf[..]);
     /// ```
     pub fn extend_from_within(&mut self, range: impl RangeBounds<usize>) {
         let len = self.len();
-
-        let begin = match range.start_bound() {
+        let start = match range.start_bound() {
             Bound::Included(&n) => n,
-            Bound::Excluded(&n) => n.checked_add(1).expect("out of range"),
+            Bound::Excluded(&n) => n.checked_add(1).expect("range start overflow"),
             Bound::Unbounded => 0,
         };
-
         let end = match range.end_bound() {
-            Bound::Included(&n) => n.checked_add(1).expect("out of range"),
+            Bound::Included(&n) => n.checked_add(1).expect("range end overflow"),
             Bound::Excluded(&n) => n,
             Bound::Unbounded => len,
         };
+        assert!(start <= end, "range start {} is greater than end {}", start, end);
+        assert!(end <= len, "range end {} is out of bounds for length {}", end, len);
 
-        assert!(
-            begin <= end,
-            "range start must not be greater than end: {:?} <= {:?}",
-            begin,
-            end,
-        );
-        assert!(
-            end <= len,
-            "range end out of bounds: {:?} <= {:?}",
-            end,
-            len,
-        );
-
-        let cnt = end - begin;
+        let cnt = end - start;
         self.reserve(cnt);
 
         unsafe {
-            // `reserve` may have moved the buffer, so take the source pointer after it.
-            let src = self.as_ptr().add(begin);
-            let dst = self.spare_capacity_mut();
-            debug_assert!(dst.len() >= cnt);
-
-            ptr::copy_nonoverlapping(src, dst.as_mut_ptr().cast(), cnt);
+            let src = self.as_ptr().add(start);
+            let dst = self.spare_capacity_mut().as_mut_ptr().cast::<u8>();
+            // `dst` is past `len`, `src..src + cnt` is within `len`: disjoint.
+            ptr::copy_nonoverlapping(src, dst, cnt);
             self.advance_mut(cnt);
         }
     }

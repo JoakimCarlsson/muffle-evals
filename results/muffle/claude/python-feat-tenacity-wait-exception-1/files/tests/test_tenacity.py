@@ -224,6 +224,23 @@ class TestWaitConditions(unittest.TestCase):
                 r = Retrying(wait=tenacity.wait_fixed(wait))
                 self.assertEqual(1, r.wait(make_retry_state(12, 6546)))
 
+    def test_wait_exception(self):
+        def predicate(exc):
+            return 5 if isinstance(exc, ValueError) else 60
+
+        r = Retrying(wait=tenacity.wait_exception(predicate))
+        for exc, expected in ((ValueError(), 5), (KeyError(), 60)):
+            retry_state = make_retry_state(1, 0)
+            retry_state.set_exception((type(exc), exc, None))
+            self.assertEqual(expected, r.wait(retry_state))
+
+    def test_wait_exception_no_exception(self):
+        r = Retrying(wait=tenacity.wait_exception(lambda exc: 1))
+        retry_state = make_retry_state(1, 0)
+        retry_state.set_result("value")
+        with pytest.raises(RuntimeError):
+            r.wait(retry_state)
+
     def test_incrementing_sleep(self):
         for start, increment in (
             (500, 100),
@@ -1795,26 +1812,3 @@ class TestMockingSleep:
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class TestWaitException(unittest.TestCase):
-    def test_wait_exception(self):
-        def predicate(exc):
-            return 5.0 if isinstance(exc, ValueError) else 60.0
-
-        r = Retrying(wait=tenacity.wait_exception(predicate))
-        for exc, expected in ((ValueError(), 5.0), (KeyError(), 60.0)):
-            fut = tenacity.Future(1)
-            fut.set_exception(exc)
-            rs = tenacity.RetryCallState(r, None, (), {})
-            rs.outcome = fut
-            self.assertEqual(expected, r.wait(rs))
-
-    def test_wait_exception_no_exception(self):
-        r = Retrying(wait=tenacity.wait_exception(lambda e: 1.0))
-        fut = tenacity.Future(1)
-        fut.set_result("x")
-        rs = tenacity.RetryCallState(r, None, (), {})
-        rs.outcome = fut
-        with self.assertRaises(RuntimeError):
-            r.wait(rs)

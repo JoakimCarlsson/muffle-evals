@@ -1,2 +1,5 @@
+405 `Allow` duplicates need deduplication. Checking route matching and existing tests.
+
+
 Done.
-`mux.go` deduplicates 405 `Allow` methods, preserving order. Build and existing tests pass.
+405 `Allow` methods deduplicated; overlapping-route regression test added. `go test ./...` and `go build ./...` passed.

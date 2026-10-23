@@ -608,7 +608,6 @@ impl<'de> de::Deserializer<'de> for Value {
         visitor.visit_newtype_struct(self)
     }
 
-    /// Hands a datetime to `Datetime`'s own `Deserialize` impl instead of as a string.
     fn deserialize_struct<V>(
         self,
         name: &'static str,

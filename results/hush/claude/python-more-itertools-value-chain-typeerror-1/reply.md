@@ -1,3 +1,3 @@
-Fix: call `iter()` first, so only non-iterables are emitted as values.
+Fixing duplicate line I added in test, then run tests.
 
-Done. `value_chain` in `more_itertools/more.py` now catches `TypeError` only from `iter(value)`, so errors raised mid-iteration reach you. Your `map` example now raises, and non-iterables are still emitted as single values. I added no regression test, and `-k value_chain` selected none of the existing tests, so the suite wasn't run.
+Done. `value_chain` in `more_itertools/more.py` now calls `iter(value)` inside the `try`, so only a non-iterable argument is emitted as a single value. A `TypeError` raised while iterating now propagates. I added `test_lazy_type_error` in `tests/test_more.py`. The 6 `ValueChain` tests pass; I didn't run the rest of the suite. Nothing is committed.

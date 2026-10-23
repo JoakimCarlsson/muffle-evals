@@ -1,9 +1,12 @@
 import { _genStatement } from "./_utils";
-import { ESMCodeGenOptions, ESMImport, genDynamicImport } from "./esm";
+import {
+  DynamicImportOptions,
+  ESMCodeGenOptions,
+  ESMImport,
+  genDynamicImport,
+} from "./esm";
 import { genString } from "./string";
 import { genObjectKey, wrapInDelimiters } from "./utils";
-
-const VALID_PROPERTY_RE = /^[$A-Z_a-z][\w$]*$/;
 
 export type TypeObject = {
   [key: string]: string | TypeObject;
@@ -42,6 +45,8 @@ export function genInlineTypeImport(
   })}.${name}`;
 }
 
+const VALID_PROPERTY_NAME_RE = /^[$A-Z_a-z][\w$]*$/;
+
 /**
  * Generate a typescript `typeof import()` statement for an optional export name.
  *
@@ -50,18 +55,20 @@ export function genInlineTypeImport(
 export function genDynamicTypeImport(
   specifier: string,
   name?: string,
-  options: ESMCodeGenOptions & { comment?: string } = {},
+  options: Pick<DynamicImportOptions, "comment" | "attributes" | "assert"> &
+    ESMCodeGenOptions = {},
 ) {
-  const importType = `typeof ${genDynamicImport(specifier, {
+  const importString = genDynamicImport(specifier, {
     ...options,
     wrapper: false,
-  })}`;
-  if (name === undefined) {
-    return importType;
-  }
-  return VALID_PROPERTY_RE.test(name)
-    ? `${importType}.${name}`
-    : `${importType}[${genString(name)}]`;
+  });
+  const accessor =
+    name === undefined
+      ? ""
+      : VALID_PROPERTY_NAME_RE.test(name)
+        ? `.${name}`
+        : `[${genString(name, options)}]`;
+  return `typeof ${importString}${accessor}`;
 }
 
 /**

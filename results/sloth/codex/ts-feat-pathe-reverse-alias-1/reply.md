@@ -1,9 +1,7 @@
-I’ll check alias normalization and exports, add the helper beside `resolveAlias`, then run the build and existing tests.
+I’ll check the alias helpers, exports, and tests, then add the reverse resolver and run the build and test suite.
 
-This only needs a change in `src/utils.ts`: the existing exports will expose the helper and its types. I’ll reuse `normalizeAliases`, normalize Windows paths on both sides, preserve aliases ending in `/`, and sort results by string length. No new options or dependencies are needed.
+The change needs to reach `src/utils.ts` and the existing utility tests. The package already exports everything from that file through `pathe/utils`, so no export or config changes are needed. I’ll reuse `normalizeAliases`, normalize Windows paths and targets, and sort the results by string length. Existing resolver behavior will stay unchanged.
 
-Added `reverseResolveAlias(path, aliases): string[]` in `src/utils.ts`, exported through `pathe/utils`.
+Added `reverseResolveAlias(path, aliases): string[]` to `pathe/utils`, with alias normalization, Windows path handling, boundary matching, trailing-slash support, and longest-first sorting.
 
-It reuses alias normalization, handles Windows paths and trailing slashes, matches separator boundaries, and sorts results longest first.
-
-Build, lint, type checks, all 362 existing tests, and direct checks of your examples passed.
+Validation passed: 363 tests, lint, formatting, TypeScript checks, and build.

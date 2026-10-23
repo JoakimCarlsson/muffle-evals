@@ -235,16 +235,22 @@ class wait_exponential_jitter(wait_base):
 
 
 class wait_exception(wait_base):
-    """Wait strategy that waits the time returned by a function of the last exception.
+    """Wait strategy that waits the time returned by a function of the exception.
 
-    Raises RuntimeError if the last attempt did not fail with an exception.
+    The function is passed the exception raised by the last attempt and returns
+    the number of seconds to wait.
     """
 
     def __init__(self, predicate: typing.Callable[[BaseException], float]) -> None:
         self.predicate = predicate
 
     def __call__(self, retry_state: "RetryCallState") -> float:
-        exception = retry_state.outcome.exception() if retry_state.outcome else None
+        if retry_state.outcome is None:
+            raise RuntimeError("__call__() called before outcome was set")
+
+        exception = retry_state.outcome.exception()
         if exception is None:
-            raise RuntimeError("wait_exception requires the last attempt to raise an exception")
+            raise RuntimeError(
+                "wait_exception called but the last attempt did not raise"
+            )
         return self.predicate(exception)

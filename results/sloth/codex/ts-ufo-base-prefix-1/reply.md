@@ -1,7 +1,9 @@
-I’ll check both helpers and their callers, fix the shared boundary check, then run the build and existing tests.
+I’ll check both helpers and their callers, add a regression test for the path boundary, then run the tests and build.
 
-Both helpers use the same prefix-only check in `src/utils.ts`. I’ll replace it with a shared check that requires the base to end at `/`, `?`, `#`, or the end of the input. Existing exports, callers, tests, fixtures, and config need no changes; no new options or dependencies are needed.
+The change is limited to the two helpers in `src/utils.ts` and the existing base tests. There are no internal callers or signatures to update. I’ll require the prefix to end at the path’s end, `/`, `?`, or `#`, preserving query and fragment handling. No new API or dependency is needed.
 
-Fixed both helpers with a shared path-boundary check. `/admin-dashboard` now stays unchanged with `withoutBase` and becomes `/admin/admin-dashboard` with `withBase`. Exact matches, nested paths, queries, and fragments retain their behavior.
+Fixed both helpers to require a boundary after the base: end of input, `/`, `?`, or `#`.
 
-Build, lint, type checks, and all 479 existing tests passed. Also verified your examples against the built output. Used local tools because `pnpm` was unavailable.
+Your examples now return the expected results. Regression coverage includes partial prefixes, actual child paths, queries, and fragments, with and without trailing slashes on the base.
+
+Validation passed: lint, all 480 tests, type checks, and build.

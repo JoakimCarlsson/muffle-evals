@@ -1,129 +1,149 @@
 diff --git a/comma.go b/comma.go
-index 64ce8c9..4dfa460 100644
+index 64ce8c9..a72c1eb 100644
 --- a/comma.go
 +++ b/comma.go
-@@ -139,3 +139,85 @@ func BigComma(bin *big.Int) string {
+@@ -139,3 +139,89 @@ func BigComma(bin *big.Int) string {
  	parts[j] = strconv.Itoa(int(b.Int64()))
  	return sign + strings.Join(parts[j:], ",")
  }
 +
-+// splitComma validates s as an optionally signed decimal number whose
-+// integer part is either plain digits or digits grouped by commas in
-+// threes, optionally followed by '.' and digits. It returns s with the
-+// commas removed.
-+func splitComma(s string) (string, bool) {
-+	body := s
-+	if body != "" && (body[0] == '-' || body[0] == '+') {
-+		body = body[1:]
++// parseCommaDigits validates a number formatted like the output of Comma
++// or Commaf and returns it with the thousands separators removed. Commas
++// are optional, but when present they must separate groups of exactly
++// three digits. A fractional part is only accepted if frac is true.
++func parseCommaDigits(s string, frac bool) (string, error) {
++	err := &strconv.NumError{Func: "ParseComma", Num: s, Err: strconv.ErrSyntax}
++
++	body := strings.TrimPrefix(s, "-")
++	intPart, fracPart, hasFrac := strings.Cut(body, ".")
++	if hasFrac && (!frac || fracPart == "") {
++		return "", err
 +	}
-+	intPart, frac, hasFrac := strings.Cut(body, ".")
-+	if hasFrac && !isDigits(frac) {
-+		return "", false
++	for i := 0; i < len(fracPart); i++ {
++		if fracPart[i] < '0' || fracPart[i] > '9' {
++			return "", err
++		}
 +	}
 +
 +	groups := strings.Split(intPart, ",")
-+	if len(groups) > 1 {
-+		if len(groups[0]) > 3 {
-+			return "", false
++	for i, g := range groups {
++		if len(groups) > 1 && ((i == 0 && len(g) > 3) || (i > 0 && len(g) != 3)) {
++			return "", err
 +		}
-+		for _, g := range groups[1:] {
-+			if len(g) != 3 {
-+				return "", false
++		if g == "" {
++			return "", err
++		}
++		for j := 0; j < len(g); j++ {
++			if g[j] < '0' || g[j] > '9' {
++				return "", err
 +			}
 +		}
 +	}
-+	for _, g := range groups {
-+		if !isDigits(g) {
-+			return "", false
-+		}
++
++	out := strings.Join(groups, "")
++	if s[0] == '-' {
++		out = "-" + out
 +	}
-+	return s[:len(s)-len(body)] + strings.Join(groups, "") + s[len(s)-len(body)+len(intPart):], true
++	if hasFrac {
++		out += "." + fracPart
++	}
++	return out, nil
 +}
 +
-+func isDigits(s string) bool {
-+	if s == "" {
-+		return false
-+	}
-+	for i := 0; i < len(s); i++ {
-+		if s[i] < '0' || s[i] > '9' {
-+			return false
-+		}
-+	}
-+	return true
-+}
-+
-+// ParseComma parses a string produced by Comma back into an int64.
-+// Plain numbers without commas are accepted too. On error it returns 0.
++// ParseComma parses a string produced by Comma, or a plain base 10
++// integer, back into an int64. It returns 0 and an error if s is not a
++// valid number or does not fit in an int64.
 +//
 +// e.g. ParseComma("834,142") -> 834142
 +func ParseComma(s string) (int64, error) {
-+	clean, ok := splitComma(s)
-+	if !ok || strings.Contains(clean, ".") {
-+		return 0, &strconv.NumError{Func: "ParseComma", Num: s, Err: strconv.ErrSyntax}
-+	}
-+	n, err := strconv.ParseInt(clean, 10, 64)
++	clean, err := parseCommaDigits(s, false)
 +	if err != nil {
-+		return 0, &strconv.NumError{Func: "ParseComma", Num: s, Err: err.(*strconv.NumError).Err}
++		return 0, err
 +	}
-+	return n, nil
++	v, err := strconv.ParseInt(clean, 10, 64)
++	if err != nil {
++		return 0, err
++	}
++	return v, nil
 +}
 +
-+// ParseCommaf parses a string produced by Commaf back into a float64.
-+// Plain numbers without commas, and "NaN", "+Inf" and "-Inf", are
-+// accepted too. On error it returns 0.
++// ParseCommaf parses a string produced by Commaf, or a plain base 10
++// number, back into a float64. "NaN", "+Inf" and "-Inf" are accepted as
++// Commaf produces them. It returns 0 and an error if s is not a valid
++// number or does not fit in a float64.
 +//
 +// e.g. ParseCommaf("834,142.32") -> 834142.32
 +func ParseCommaf(s string) (float64, error) {
 +	switch s {
-+	case "NaN", "+Inf", "-Inf":
-+		return strconv.ParseFloat(s, 64)
++	case "NaN":
++		return math.NaN(), nil
++	case "+Inf":
++		return math.Inf(1), nil
++	case "-Inf":
++		return math.Inf(-1), nil
 +	}
-+	clean, ok := splitComma(s)
-+	if !ok {
-+		return 0, &strconv.NumError{Func: "ParseCommaf", Num: s, Err: strconv.ErrSyntax}
-+	}
-+	f, err := strconv.ParseFloat(clean, 64)
++	clean, err := parseCommaDigits(s, true)
 +	if err != nil {
-+		return 0, &strconv.NumError{Func: "ParseCommaf", Num: s, Err: err.(*strconv.NumError).Err}
++		return 0, err
 +	}
-+	return f, nil
++	v, err := strconv.ParseFloat(clean, 64)
++	if err != nil {
++		return 0, err
++	}
++	return v, nil
 +}
 diff --git a/comma_test.go b/comma_test.go
-index 7c629eb..4c5a4a5 100644
+index 7c629eb..5b212c5 100644
 --- a/comma_test.go
 +++ b/comma_test.go
-@@ -157,3 +157,34 @@ func TestHumanizeBigIntMutation(t *testing.T) {
+@@ -157,3 +157,50 @@ func TestHumanizeBigIntMutation(t *testing.T) {
  		t.Fail()
  	}
  }
 +
 +func TestParseComma(t *testing.T) {
-+	for _, n := range []int64{0, 7, 10, 999, 1000, -1000, 834142, 123456789, -834142, math.MinInt64, math.MaxInt64} {
-+		got, err := ParseComma(Comma(n))
-+		if err != nil || got != n {
-+			t.Errorf("ParseComma(%q) = %d, %v; want %d", Comma(n), got, err, n)
++	good := map[string]int64{
++		"0": 0, "10": 10, "123,456,789": 123456789, "-834,142": -834142,
++		"1234567": 1234567, "-9,223,372,036,854,775,808": math.MinInt64,
++		"9,223,372,036,854,775,807": math.MaxInt64,
++	}
++	for in, want := range good {
++		if got, err := ParseComma(in); err != nil || got != want {
++			t.Errorf("ParseComma(%q) = %d, %v; want %d", in, got, err, want)
 +		}
 +	}
-+	for _, s := range []string{"", "-", "abc", "123a456", "1.5", "1.2.3", "1,23", "1234,567", "1,2345", ",123", "123,", "9,223,372,036,854,775,808"} {
-+		if got, err := ParseComma(s); err == nil || got != 0 {
-+			t.Errorf("ParseComma(%q) = %d, %v; want 0, error", s, got, err)
++	for _, in := range []string{"", "-", "abc", "123a456", "1.5", "1.2.3", "1,23", "1,2345", ",123", "123,", "1,,234", "+5", "9,223,372,036,854,775,808", " 1"} {
++		if got, err := ParseComma(in); err == nil || got != 0 {
++			t.Errorf("ParseComma(%q) = %d, %v; want 0, error", in, got, err)
++		}
++	}
++	for _, n := range []int64{math.MinInt64, math.MaxInt64, -1000, 999, 1000, 0, 7, 8} {
++		if got, err := ParseComma(Comma(n)); err != nil || got != n {
++			t.Errorf("round trip %d: got %d, %v", n, got, err)
 +		}
 +	}
 +}
 +
 +func TestParseCommaf(t *testing.T) {
-+	for _, f := range []float64{0, 10.11, -834142.32, 123456789, 1e21, 1e-7, math.MaxFloat64, math.Inf(1), math.Inf(-1)} {
-+		got, err := ParseCommaf(Commaf(f))
-+		if err != nil || got != f {
-+			t.Errorf("ParseCommaf(%q) = %v, %v; want %v", Commaf(f), got, err, f)
++	good := map[string]float64{
++		"10": 10, "10.11": 10.11, "-834,142.32": -834142.32, "123,456,789": 123456789, "0.5": 0.5,
++	}
++	for in, want := range good {
++		if got, err := ParseCommaf(in); err != nil || got != want {
++			t.Errorf("ParseCommaf(%q) = %v, %v; want %v", in, got, err, want)
++		}
++	}
++	for _, in := range []string{"", "abc", "123a456", "1.2.3", "1.", ".5", "1.2,3", "1,23.5", "-", "1e5"} {
++		if got, err := ParseCommaf(in); err == nil || got != 0 {
++			t.Errorf("ParseCommaf(%q) = %v, %v; want 0, error", in, got, err)
++		}
++	}
++	for _, f := range []float64{0, 1.5, -834142.32, 1e21, 5e-324, math.MaxFloat64, math.Inf(1), math.Inf(-1)} {
++		if got, err := ParseCommaf(Commaf(f)); err != nil || got != f {
++			t.Errorf("round trip %v: got %v, %v", f, got, err)
 +		}
 +	}
 +	if got, err := ParseCommaf(Commaf(math.NaN())); err != nil || !math.IsNaN(got) {
-+		t.Errorf("ParseCommaf(NaN) = %v, %v", got, err)
-+	}
-+	for _, s := range []string{"", "abc", "123a456", "1.2.3", "1.", ".5", "1e5", "1,23.4", "1.2,345"} {
-+		if got, err := ParseCommaf(s); err == nil || got != 0 {
-+			t.Errorf("ParseCommaf(%q) = %v, %v; want 0, error", s, got, err)
-+		}
++		t.Errorf("NaN round trip: got %v, %v", got, err)
 +	}
 +}

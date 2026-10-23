@@ -1,7 +1,11 @@
-I’ll check the prototype comparison and its callers, then make the smallest fix that preserves class-instance distinctions.
+I’ll check the prototype comparison and existing tests, then make a focused fix that preserves class-instance comparisons.
 
-The fix belongs in the shared recursive implementation, so it will cover both argument orders, nested values, curried calls, and `hasSubObject`. I’ll treat `null` and `Object.prototype` as equivalent during the prototype check; other prototypes will still have to match. No exports, fixtures, config, or caller changes are needed. I’ll keep this to the fix and run the existing tests without adding new ones.
+The change belongs in the shared comparator, with regression coverage in its existing test file. Callers, exports, signatures, fixtures, and config need no changes. I’ll treat `null` and `Object.prototype` as equivalent in the prototype check, while keeping other prototype differences unequal. Tests will cover both argument orders, nesting, curried calls, unequal contents, and class and built-in boundaries.
 
-Fixed `isDeepEqual` to treat null-prototype objects like plain objects, including both argument orders, curried calls, and nested values. Different class prototypes still compare unequal.
+The fix passes the full test suite, including type tests, and the build succeeds. Lint caught style issues in the new regression test; I’ve corrected them and am rerunning lint, the source type check, and the focused test.
 
-Validation passed: build, TypeScript check, all 305 existing test files, and manual checks using `querystring.parse`.
+Fixed `isDeepEqual` to treat null-prototype objects like plain objects, in both argument orders, nested comparisons, and curried calls. Different class prototypes remain unequal.
+
+Added regression coverage for both examples and edge cases.
+
+Validation passed: all 305 test files, type checks, build, and lint.

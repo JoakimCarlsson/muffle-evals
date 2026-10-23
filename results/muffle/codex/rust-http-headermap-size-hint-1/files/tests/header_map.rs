@@ -2,6 +2,40 @@ use http::header::*;
 use http::*;
 
 #[test]
+fn iter_size_hint() {
+    fn check(mut iter: impl Iterator, len: usize) {
+        for remaining in (0..=len).rev() {
+            let (lower, upper) = iter.size_hint();
+            assert!(lower <= remaining);
+            if let Some(upper) = upper {
+                assert!(upper >= remaining);
+            }
+            assert_eq!(iter.next().is_some(), remaining > 0);
+        }
+        assert_eq!(iter.size_hint().0, 0);
+        assert!(iter.next().is_none());
+    }
+
+    let mut headers = HeaderMap::new();
+    for values in [
+        vec![],
+        vec!["host"],
+        vec!["host", "host"],
+        vec!["host", "accept", "accept", "host", "via"],
+    ] {
+        headers.clear();
+        for name in values {
+            headers.append(HeaderName::from_static(name), HeaderValue::from_static("x"));
+        }
+        let len = headers.len();
+        check(headers.iter(), len);
+        check(headers.iter_mut(), len);
+        check(headers.values(), len);
+        check(headers.values_mut(), len);
+    }
+}
+
+#[test]
 fn smoke() {
     let mut headers = HeaderMap::new();
 
@@ -771,38 +805,4 @@ fn into_iter_drop_panic_after_yielding_extra_value_double_drops() {
     drop(iter.next().unwrap());
 
     let _ = catch_unwind(AssertUnwindSafe(|| drop(iter)));
-}
-
-#[test]
-fn iter_size_hint() {
-    fn check(mut iter: impl Iterator, len: usize) {
-        for remaining in (0..=len).rev() {
-            let (lower, upper) = iter.size_hint();
-            assert!(
-                lower <= remaining,
-                "lower bound {lower} exceeds {remaining}"
-            );
-            if let Some(upper) = upper {
-                assert!(upper >= remaining, "upper bound {upper} below {remaining}");
-            }
-            assert_eq!(iter.next().is_some(), remaining != 0);
-        }
-        // The estimate must remain valid after next() returns None.
-        assert_eq!(iter.size_hint().0, 0);
-        assert!(iter.next().is_none());
-    }
-
-    for counts in [&[][..], &[1], &[3], &[1, 1, 1], &[3, 1, 2]] {
-        let mut map = HeaderMap::<usize>::default();
-        for (name, &count) in [HOST, ACCEPT, CONTENT_TYPE].iter().zip(counts) {
-            for value in 0..count {
-                map.append(name, value);
-            }
-        }
-        let len = map.len();
-        check(map.iter(), len);
-        check(map.iter_mut(), len);
-        check(map.values(), len);
-        check(map.values_mut(), len);
-    }
 }

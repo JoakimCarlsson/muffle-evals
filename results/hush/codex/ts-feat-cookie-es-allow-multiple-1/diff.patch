@@ -1,13 +1,12 @@
 diff --git a/README.md b/README.md
-index 0644a07..61ac6da 100644
+index 0644a07..bb3f8bb 100644
 --- a/README.md
 +++ b/README.md
-@@ -35,6 +35,14 @@ import { parse, serialize, parseSetCookie, splitSetCookieString } from "cookie-e
+@@ -35,6 +35,13 @@ import { parse, serialize, parseSetCookie, splitSetCookieString } from "cookie-e
  import { parse, serialize, parseSetCookie, splitSetCookieString } from "https://esm.sh/cookie-es";
  ```
  
-+Pass `allowMultiple: true` to preserve duplicate cookie values in order. Names that
-+appear once remain strings. By default, the first value wins.
++To collect duplicate cookie values in order, enable `allowMultiple`. Names that appear once remain strings. By default, the first value wins.
 +
 +```js
 +parse("foo=a;bar=bar;foo=b;foo=c", { allowMultiple: true });
@@ -18,7 +17,7 @@ index 0644a07..61ac6da 100644
  
  [MIT](./LICENSE)
 diff --git a/src/cookie/parse.ts b/src/cookie/parse.ts
-index c80c0f9..0d739d6 100644
+index c80c0f9..7afdc98 100644
 --- a/src/cookie/parse.ts
 +++ b/src/cookie/parse.ts
 @@ -22,8 +22,12 @@ const NullObject = /* @__PURE__ */ (() => {
@@ -36,37 +35,38 @@ index c80c0f9..0d739d6 100644
    const len = str.length;
    // RFC 6265 sec 4.1.1, RFC 2616 2.2 defines a cookie name consists of one char minimum, plus '='.
    if (len < 2) return obj;
-@@ -50,8 +54,16 @@ export function parse(str: string, options?: CookieParseOptions): Cookies {
+@@ -50,9 +54,18 @@ export function parse(str: string, options?: CookieParseOptions): Cookies {
        continue;
      }
  
 -    // only assign once
 -    if (obj[key] === undefined) {
-+    // Preserve the first value unless duplicate values are requested.
 +    const previous = obj[key];
-+    if (options?.allowMultiple && Object.hasOwn(obj, key)) {
-+      const value = dec(valueSlice(str, eqIdx + 1, endIdx));
-+      if (Array.isArray(previous)) {
-+        previous.push(value);
-+      } else {
-+        obj[key] = [previous, value];
-+      }
-+    } else if (previous === undefined) {
++    if (previous === undefined) {
        obj[key] = dec(valueSlice(str, eqIdx + 1, endIdx));
++    } else if (options?.allowMultiple) {
++      const value = dec(valueSlice(str, eqIdx + 1, endIdx));
++      if (value !== undefined) {
++        if (Array.isArray(previous)) {
++          previous.push(value);
++        } else {
++          obj[key] = [previous, value];
++        }
++      }
      }
  
+     index = endIdx + 1;
 diff --git a/src/cookie/types.ts b/src/cookie/types.ts
-index 51b39f5..73a4dea 100644
+index 51b39f5..4c646b6 100644
 --- a/src/cookie/types.ts
 +++ b/src/cookie/types.ts
-@@ -6,6 +6,14 @@
+@@ -6,6 +6,13 @@
   * Parse options.
   */
  export interface CookieParseOptions {
 +  /**
-+   * Preserve duplicate cookie values in order as an array.
-+   * Cookies that appear once remain strings.
-+   *
++   * Collect duplicate cookie values in an array, preserving their order.
++   * Names that appear once keep a single string value.
 +   * @default false
 +   */
 +  allowMultiple?: boolean;
@@ -74,20 +74,20 @@ index 51b39f5..73a4dea 100644
    /**
     * Specifies a function that will be used to decode a [cookie-value](https://datatracker.ietf.org/doc/html/rfc6265#section-4.1.1).
     * Since the value of a cookie has a limited character set (and must be a simple string), this function can be used to decode
-@@ -28,7 +36,10 @@ export interface CookieParseOptions {
+@@ -28,7 +35,10 @@ export interface CookieParseOptions {
  /**
   * Cookies object.
   */
 -export type Cookies = Record<string, string | undefined>;
 +export type Cookies<AllowMultiple extends boolean = false> = Record<
 +  string,
-+  string | undefined | (true extends AllowMultiple ? (string | undefined)[] : never)
++  string | undefined | (AllowMultiple extends true ? string[] : never)
 +>;
  
  /**
   * Stringify options.
 diff --git a/test/cookie-parse.test.ts b/test/cookie-parse.test.ts
-index 30228ee..10922a9 100644
+index 30228ee..01ffba2 100644
 --- a/test/cookie-parse.test.ts
 +++ b/test/cookie-parse.test.ts
 @@ -3,7 +3,7 @@
@@ -99,7 +99,7 @@ index 30228ee..10922a9 100644
  import { parse } from "../src";
  
  describe("cookie.parse(str)", () => {
-@@ -80,3 +80,46 @@ describe("cookie.parse(str, options)", () => {
+@@ -80,3 +80,50 @@ describe("cookie.parse(str, options)", () => {
      });
    });
  });
@@ -110,39 +110,43 @@ index 30228ee..10922a9 100644
 +    ["foo=;bar=bar;foo=boo", { foo: ["", "boo"], bar: "bar" }],
 +    ["foo=%1;foo=boo", { foo: ["%1", "boo"] }],
 +    ["foo=%20;foo=%2F", { foo: [" ", "/"] }],
-+    ["foo=a", { foo: "a" }],
-+    ["", {}],
++    ["foo=a;foo=a", { foo: ["a", "a"] }],
 +    ["__proto__=a;__proto__=b", { ["__proto__"]: ["a", "b"] }],
-+  ])("should preserve values from %s", (header, expected) => {
++    ["", {}],
++  ])("collects values from %s", (header, expected) => {
 +    expect(parse(header, { allowMultiple: true })).toEqual(expected);
 +  });
 +
-+  it("should support custom decoders and filters", () => {
++  it("keeps the first value when disabled", () => {
++    expect(parse("foo=;foo=b", { allowMultiple: false })).toEqual({ foo: "" });
++  });
++
++  it("supports custom decoding and filtering", () => {
 +    expect(
-+      parse("foo=a;bar=b;foo=c;bar=d", {
++      parse("foo=a;bar=x;foo=b;bar=y", {
 +        allowMultiple: true,
 +        decode: (value) => value.toUpperCase(),
 +        filter: (key) => key === "foo",
 +      }),
-+    ).toEqual({ foo: ["A", "C"] });
-+    expect(parse("foo=a;foo=b", { allowMultiple: true, decode: () => undefined })).toEqual({
-+      foo: [undefined, undefined],
-+    });
++    ).toEqual({ foo: ["A", "B"] });
 +  });
 +
-+  it("should keep the first value when disabled", () => {
-+    expect(parse("foo=;foo=b", { allowMultiple: false })).toEqual({ foo: "" });
++  it("preserves undefined decoder behavior", () => {
++    expect(
++      parse("foo=skip;foo=a;foo=skip;foo=b", {
++        allowMultiple: true,
++        decode: (value) => (value === "skip" ? undefined : value),
++      }),
++    ).toEqual({ foo: ["a", "b"] });
 +  });
 +
-+  it("should infer return types from the option", () => {
-+    expectTypeOf(parse("foo=a").foo).toEqualTypeOf<string | undefined>();
-+    expectTypeOf(parse("foo=a", { allowMultiple: false }).foo).toEqualTypeOf<string | undefined>();
-+    expectTypeOf(parse("foo=a", { allowMultiple: true }).foo).toEqualTypeOf<
-+      string | undefined | (string | undefined)[]
++  it("infers return types from options", () => {
++    expectTypeOf(parse("").foo).toEqualTypeOf<string | undefined>();
++    expectTypeOf(parse("", { allowMultiple: false }).foo).toEqualTypeOf<string | undefined>();
++    expectTypeOf(parse("", { allowMultiple: true }).foo).toEqualTypeOf<
++      string | string[] | undefined
 +    >();
 +    const options: import("../src").CookieParseOptions = {};
-+    expectTypeOf(parse("foo=a", options).foo).toEqualTypeOf<
-+      string | undefined | (string | undefined)[]
-+    >();
++    expectTypeOf(parse("", options).foo).toEqualTypeOf<string | string[] | undefined>();
 +  });
 +});

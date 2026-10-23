@@ -1203,7 +1203,7 @@ func (c *compiler) emitLoop(body func()) {
 	c.patchJump(end)
 }
 
-// emitLoopBackwards emits a reverse loop, consuming each boundary-check result.
+// emitLoopBackwards emits a reverse loop over the current scope's collection.
 func (c *compiler) emitLoopBackwards(body func()) {
 	c.emit(OpGetLen)
 	c.emit(OpInt, 1)

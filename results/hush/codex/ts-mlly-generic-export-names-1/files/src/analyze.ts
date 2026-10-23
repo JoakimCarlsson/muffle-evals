@@ -386,61 +386,6 @@ export function parseTypeImport(
   } as ParsedStaticImport;
 }
 
-/** Checks whether an initializer's angle brackets introduce a generic call. */
-function _isGenericCall(source: string): boolean {
-  let angleDepth = 0;
-  let depth = 0;
-  let quote = "";
-  for (let i = 0; i < source.length; i++) {
-    const char = source[i];
-    if (quote) {
-      if (char === "\\") {
-        i++;
-      } else if (char === quote) {
-        quote = "";
-      }
-      continue;
-    }
-    switch (char) {
-      case '"':
-      case "'":
-      case "`": {
-        quote = char;
-
-        break;
-      }
-      case "(":
-      case "[":
-      case "{": {
-        depth++;
-
-        break;
-      }
-      case ")":
-      case "]":
-      case "}": {
-        if (--depth < 0) {
-          return false;
-        }
-
-        break;
-      }
-      default: {
-        if (depth === 0 && char === "<") {
-          angleDepth++;
-        } else if (depth === 0 && char === ">" && source[i - 1] !== "=") {
-          if (--angleDepth === 0) {
-            return /^\s*\(/.test(source.slice(i + 1));
-          }
-        } else if (char === ";") {
-          return false;
-        }
-      }
-    }
-  }
-  return false;
-}
-
 /**
  * Extracts extra variable names from a comma-separated declaration list,
  * ignoring commas nested inside parentheses, brackets, braces, generics, or strings.
@@ -450,7 +395,7 @@ function _isGenericCall(source: string): boolean {
  * @param {string} extraNamesStr - The string containing the extra variable declarations to parse.
  * @returns {string[]} An array of variable names extracted from the declaration list.
  */
-function _extractExtraNames(extraNamesStr: string, source: string): string[] {
+function _extractExtraNames(extraNamesStr: string, suffix = ""): string[] {
   const names: string[] = [];
   let depth = 0;
   let angleDepth = 0;
@@ -493,7 +438,7 @@ function _extractExtraNames(extraNamesStr: string, source: string): string[] {
     }
     if (
       char === "<" &&
-      (inTypeAnnotation || angleDepth > 0 || _isGenericCall(source.slice(i)))
+      (inTypeAnnotation || _hasTypeArguments(extraNamesStr + suffix, i))
     ) {
       angleDepth++;
       continue;
@@ -524,6 +469,27 @@ function _extractExtraNames(extraNamesStr: string, source: string): string[] {
   return names;
 }
 
+// In expressions, require a matching closing angle and a valid continuation.
+// An unmatched comparison such as `1<2` must not hide later declarations.
+function _hasTypeArguments(code: string, start: number): boolean {
+  if (!/[\w$)\]]\s*$/.test(code.slice(0, start))) {
+    return false;
+  }
+  let depth = 1;
+  for (const match of code.slice(start + 1).matchAll(/=>|[<>;]/g)) {
+    if (match[0] === ";") {
+      return false;
+    }
+    if (match[0] === "<") {
+      depth++;
+    } else if (match[0] === ">" && --depth === 0) {
+      const rest = code.slice(start + 1 + match.index + 1);
+      return /^\s*(?:[(`.,;)}\]]|$)/.test(rest);
+    }
+  }
+  return false;
+}
+
 /**
  * Identifies all export statements in the supplied source code and categorises them into different types such as declarations, named, default and star exports.
  * This function processes the code to capture different forms of export statements and normalise their representation for further processing.
@@ -548,11 +514,7 @@ export function findExports(code: string): ESMExport[] {
     if (extraNamesStr) {
       const extraNames = _extractExtraNames(
         extraNamesStr,
-        code.slice(
-          declaredExport.start +
-            declaredExport.code.length -
-            extraNamesStr.length,
-        ),
+        code.slice(declaredExport.end),
       );
       if (extraNames.length > 0) {
         declaredExport.names = [declaredExport.name, ...extraNames];

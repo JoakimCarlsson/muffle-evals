@@ -78,23 +78,18 @@ describe("cookie.parse(str, options)", () => {
 
       expect(parse("a=1;b=2")).toEqual({ a: "1", b: "2" });
     });
-  });
-});
 
-describe("parse allowMultiple", () => {
-  it("collects duplicates in order", () => {
-    expect(parse("foo=a;bar=bar;foo=b;foo=c", { allowMultiple: true })).toEqual({
-      foo: ["a", "b", "c"],
-      bar: "bar",
+    it("parse allowMultiple", () => {
+      expect(parse("foo=a;bar=bar;foo=b;foo=c", { allowMultiple: true })).toEqual({
+        foo: ["a", "b", "c"],
+        bar: "bar",
+      });
+      expect(parse("foo=;bar=bar;foo=boo", { allowMultiple: true })).toEqual({
+        foo: ["", "boo"],
+        bar: "bar",
+      });
+      expect(parse("foo=%1;foo=boo", { allowMultiple: true })).toEqual({ foo: ["%1", "boo"] });
+      expect(parse("foo=a;foo=b")).toEqual({ foo: "a" });
     });
-    expect(parse("foo=;bar=bar;foo=boo", { allowMultiple: true })).toEqual({
-      foo: ["", "boo"],
-      bar: "bar",
-    });
-    expect(parse("foo=%1;foo=boo", { allowMultiple: true })).toEqual({ foo: ["%1", "boo"] });
-  });
-
-  it("keeps first value by default", () => {
-    expect(parse("foo=a;foo=b")).toEqual({ foo: "a" });
   });
 });

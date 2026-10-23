@@ -200,20 +200,19 @@ Note: This returns a single string.
     >>> p.number_to_words(p.ordinal(1234))
     'one thousand, two hundred and thirty-fourth'
 
-Write Check Amounts
-^^^^^^^^^^^^^^^^^^
-``number_to_currency`` rounds half up to the nearest cent and writes cents
-as a two-digit fraction. It accepts integers, floats, Decimals, and numeric
-strings. Invalid or non-finite amounts raise ``BadNumValueError``.
-``andword`` controls the whole amount; the separator before cents is always
-``and``.
+Write Currency Amounts
+^^^^^^^^^^^^^^^^^^^^^
+``number_to_currency`` accepts integers, floats, ``Decimal`` values, and numeric
+strings. It rounds half up to the nearest cent and writes cents as a fraction.
+``andword`` controls conjunctions in the whole amount; the cents always use "and".
+Invalid and non-finite amounts raise ``inflect.BadNumValueError``.
 
 .. code-block:: python
 
-    >>> p.number_to_currency(1234)
-    'one thousand, two hundred and thirty-four and 00/100'
-    >>> p.number_to_currency(2.675)
-    'two and 68/100'
+    >>> p.number_to_currency(100_020.56)
+    'one hundred thousand and twenty and 56/100'
+    >>> p.number_to_currency(101.01, andword="")
+    'one hundred one and 01/100'
 
 Retrieve Words as List of Parts
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

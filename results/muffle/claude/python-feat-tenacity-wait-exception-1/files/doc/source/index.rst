@@ -187,21 +187,6 @@ remote endpoints.
         print("Wait at least 3 seconds, and add up to 2 seconds of random delay")
         raise Exception
 
-The wait time can also depend on the exception raised by the last attempt,
-for example to honour a server's ``Retry-After`` header.
-
-.. testcode::
-
-    def http_error(exception):
-        response = getattr(exception, "response", None)
-        if response is not None and response.status_code == 429:
-            return float(response.headers.get("Retry-After", "1"))
-        return 60.0
-
-    @retry(wait=wait_exception(http_error))
-    def wait_on_exception():
-        raise Exception
-
 When multiple processes are in contention for a shared resource, exponentially
 increasing jitter helps minimise collisions.
 
@@ -210,6 +195,21 @@ increasing jitter helps minimise collisions.
     @retry(wait=wait_random_exponential(multiplier=1, max=60))
     def wait_exponential_jitter():
         print("Randomly wait up to 2^x * 1 seconds between each retry until the range reaches 60 seconds, then randomly up to 60 seconds afterwards")
+        raise Exception
+
+
+The wait time can also depend on the exception raised by the last attempt.
+The function is given the exception and returns the number of seconds to wait.
+
+.. testcode::
+
+    def wait_for_error(exception):
+        if isinstance(exception, ConnectionError):
+            return 1
+        return 60
+
+    @retry(wait=wait_exception(wait_for_error))
+    def wait_depending_on_exception():
         raise Exception
 
 

@@ -1,9 +1,9 @@
-I'll dedupe where the methods are appended, so custom 405 handlers also get unique values.
+Simplest: dedupe at the append sites via a helper on the context.
 
-Each method now appears only once in the `Allow` header. Your example returns `Allow: POST`, and `go test .` passes.
+Fixed: the 405 `Allow` header now lists each method once. Your example gives `Allow: [POST]`, and `go test ./...` passes.
 
-Routing can reach the same leaf through several wildcard branches, and each visit appended that leaf's methods again. I added `Context.addMethodAllowed` in `context.go`, which skips a method already recorded. The two append sites in `tree.go` now call it. Because the fix is in the routing context, custom `MethodNotAllowed` handlers also see a deduplicated `methodsAllowed`.
+The cause was in route matching (`tree.go`). It appends the allowed methods each time it reaches a leaf node that matches the path. With several overlapping wildcard routes, it reaches several such leaves, so the same method was added more than once. I added `Context.addAllowedMethod` in `context.go`, which skips methods already recorded. Both append sites in `tree.go` now call it.
 
-I also added a regression test, `TestMethodNotAllowedNoDuplicateAllow`, using your four routes. It's in a new file, `dup_test.go`, and you may want to move it into `mux_test.go`.
+I also added a regression test using your example, in a new file, `dup_test.go`. You may want to move it into an existing test file.
 
 I haven't committed anything.
