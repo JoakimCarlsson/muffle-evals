@@ -1,0 +1,499 @@
+$ git show HEAD
+ef48a7d5 2026-10-22 evals: base
+=== .github/FUNDING.yml
+new file mode 100644
+@@ -0,0 +1,1 @@
++github: seanmonstar
+=== .github/workflows/ci.yml
+new file mode 100644
+@@ -0,0 +1,153 @@
++name: CI
++on:
++  pull_request:
++  push:
++    branches:
++      - master
++
++env:
++  RUST_BACKTRACE: 1
++
++jobs:
++  ci-pass:
++    name: CI is green
++    runs-on: ubuntu-latest
++    needs:
++      - style
++      - test
++      - msrv
++      - wasm
++      - minimal-versions
++      - miri
++      - semver
++    steps:
++      - run: exit 0
++
++  style:
++    name: Check Style
++    runs-on: ubuntu-latest
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v6
++
++      - name: Install Rust
++        uses: dtolnay/rust-toolchain@stable
++        with:
++          components: rustfmt
++
++      - run: cargo fmt --all --check
++
++  test:
++    name: Test ${{ matrix.rust }}
++    #needs: [style]
++    strategy:
++      matrix:
++        rust:
++          - stable
++          - beta
++          - nightly
++
++        include:
++          - rust: nightly
++            benches: true
++
++    runs-on: ubuntu-latest
++
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v6
++
++      - name: Install Rust (${{ matrix.rust }})
++        uses: dtolnay/rust-toolchain@master
++        with:
++          toolchain: ${{ matrix.rust }}
++
++      - name: Test
++        run: cargo test
++
++      - name: Test all benches
++        if: matrix.benches
++        run: cargo test --benches ${{ matrix.features }}
++
++  msrv:
++    name: Check MSRV
++    runs-on: ubuntu-latest
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v6
++
++      - uses: dtolnay/rust-toolchain@stable
++
++      - uses: taiki-e/install-action@cargo-hack
++
++      - name: Remove dev-dependencies
++        run: cargo hack --remove-dev-deps update
++
++      - name: Pin deps
++        run: cargo update -p itoa --precise 1.0.15
++
++      - name: Get MSRV from package metadata
++        id: metadata
++        run: echo "msrv=$(yq '.package.rust-version' Cargo.toml)" >> $GITHUB_OUTPUT
++
++      - name: Install Rust (${{ steps.metadata.outputs.msrv }})
++        uses: dtolnay/rust-toolchain@master
++        with:
++          toolchain: ${{ steps.metadata.outputs.msrv }}
++
++      - name: Test
++        run: cargo check -p http
++
++  wasm:
++    name: WASM
++    #needs: [style]
++
++    runs-on: ubuntu-latest
++
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v6
++
++      - name: Install Rust
++        uses: dtolnay/rust-toolchain@stable
++        with:
++          targets: wasm32-unknown-unknown
++
++      - name: Check
++        run: cargo check --target wasm32-unknown-unknown
++
++  minimal-versions:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v6
++      - uses: dtolnay/rust-toolchain@nightly
++      - uses: dtolnay/rust-toolchain@stable
++      - uses: taiki-e/install-action@cargo-hack
++      - uses: taiki-e/install-action@cargo-minimal-versions
++      - run: cargo minimal-versions check
++
++  miri:
++    name: Miri
++    runs-on: ubuntu-latest
++
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v6
++
++      - name: Install Rust
++        uses: dtolnay/rust-toolchain@nightly
++        with:
++          components: miri
++
++      - name: Test
++        run: MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-ignore-leaks" cargo miri test
++
++  semver:
++    name: semver
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v6
++      - name: Check semver
++        uses: obi1kenobi/cargo-semver-checks-action@v2
++        with:
++          release-type: minor
+=== .gitignore
+new file mode 100644
+@@ -0,0 +1,2 @@
++target
++Cargo.lock
+=== CHANGELOG.md
+new file mode 100644
+@@ -0,0 +1,269 @@
++# 1.5.0 (July 29, 2026)
++
++- Add `Method::QUERY` constant for the new QUERY method defined in RFC 10008.
++- Fix `uri::Builder::path_and_query()` to allow empty strings to mean no path.
++- Fix `uri::PathAndQuery` parsing to enforce URI max length.
++
++# 1.4.2 (June 8, 2026)
++
++- Fix `uri::Builder` to allow `"*"` as the path when scheme and authority are also set, used in HTTP/2 requests.
++- Fix `Uri` to properly reject `DEL` characters.
++
++# 1.4.1 (May 25, 2026)
++
++- Fix `PathAndQuery::from_static()` and `from_shared()` to reject inputs that do not start with `/`.
++- Fix `Extend` for `HeaderMap` to clamp max size hint and not overflow.
++- Fix `header::IntoIter` that could use-after-free if the generic value type could panic on drop.
++- Fix `header::{IterMut, ValuesIterMut}` to not violate stacked borrows.
++
++# 1.4.0 (November 24, 2025)
++
++- Add `StatusCode::EARLY_HINTS` constant for 103 Early Hints.
++- Make `StatusCode::from_u16` now a `const fn`.
++- Make `Authority::from_static` now a `const fn`.
++- Make `PathAndQuery::from_static` now a `const fn`.
++- MSRV increased to 1.57 (allows legible const fn panic messages).
++
++# 1.3.1 (March 11, 2025)
++
++* Fix validation that all characters are UTF-8 in URI path and query.
++
++# 1.3.0 (March 11, 2025)
++
++* Allow most UTF-8 characters in URI path and query.
++* Fix `HeaderMap::reserve()` to allocate sufficient capacity.
++
++# 1.2.0 (December 3, 2024)
++
++* Add `StatusCode::TOO_EARLY` constant for 425 status.
++* Loosen `TryFrom<HashMap>` for `HeaderMap` to work with any state generic.
++* Change `Builder` methods to use `TryInto` instead of `TryFrom` arguments.
++* Make `StatusCode::as_u16` a `const` function.
++* Fix `Method` parsing to allow `#$%&'` characters.
++* Fix `HeaderName` parsing to reject `"` characters.
++* Fix off by 1 error in `Method::from_bytes` that could cause extra allocations.
++
++# 1.1.0 (March 4, 2024)
++
++* Add methods to allow trying to allocate in the `HeaderMap`, returning an error if oversize instead of panicking.
++* Add `Extensions::get_or_insert()` method.
++* Implement `From<Uri>` for `uri::Builder`.
++* Fix `HeaderName::from_lowercase` that could allow NUL bytes in some cases.
++
++# 1.0.0 (November 15, 2023)
++
++- Implement `Clone` for `Request`, `Response`, and `Extensions`. This breaking change requires
++  that all extensions now implement `Clone`.
++- Add a default-on `std` feature. Disabling it currently is not supported.
++- Fix MIRI warnings in `HeaderMap::iter()`.
++
++# 0.2.10 (November 10, 2023)
++
++* Fix parsing of `Authority` to handle square brackets in incorrect order.
++* Fix `HeaderMap::with_capacity()` to handle arithmetic overflow.
++
++# 0.2.9 (February 17, 2023)
++
++* Add `HeaderName` constants for `cache-status` and `cdn-cache-control`.
++* Implement `Hash` for `PathAndQuery`.
++* Re-export `HeaderName` at crate root.
++
++# 0.2.8 (June 6, 2022)
++
++* Fix internal usage of uninitialized memory to use `MaybeUninit` inside `HeaderName`.
++
++# 0.2.7 (April 28, 2022)
++
++* MSRV bumped to `1.49`.
++* Add `extend()` method to `Extensions`.
++* Add `From<Authority>` and `From<PathAndQuery>` impls for `Uri`.
++* Make `HeaderName::from_static` a `const fn`.
++
++# 0.2.6 (December 30, 2021)
++
++* Upgrade internal `itoa` dependency to 1.0.
++
++# 0.2.5 (September 21, 2021)
++
++* Add `is_empty()` and `len()` methods to `Extensions`.
++* Add `version_ref()` method to `request::Builder`.
++* Implement `TryFrom<Vec<u8>>` and `TryFrom<String>` for `Authority`, `Uri`, `PathAndQuery`, and `HeaderName`.
++* Make `HeaderValue::from_static` a `const fn`.
++
++# 0.2.4 (April 4, 2021)
++
++* Fix `Uri` parsing to allow `{`, `"`, and `}` in paths.
++
++# 0.2.3 (January 7, 2021)
++
++* Upgrade internal (private) `bytes` dependency to 1.0.
++
++# 0.2.2 (December 14, 2020)
++
++* Fix (potential double) panic of (`HeaderMap`) `OccupiedEntry::remove_entry` and
++  `remove_entry_mult` when multiple values are present. ([#446], [#449] dekellum)
++* Safety audits of (priv) `ByteStr` and refactor of `Authority` ([#408], [#414] sbosnick)
++* Fix `HeaderName` to error instead of panic when input is too long ([#432] [#433] acfoltzer)
++* Allow `StatusCode` to encode values 100-999 without error. Use of the
++  unclassified range 600-999 remains discouraged. ([#144], [#438], [#443] quininer dekellum)
++* Add `String` and `&String` fallible conversions to `PathAndQuery` ([#450] mkindahl)
++* Fix `Authority` (and `Uri`) to error instead of panic on unbalanced brackets
++  ([#435], [#445] aeryz)
++
++# 0.2.1 (March 25, 2020)
++
++* Add `extensions_ref` and `extensions_mut` to `request::Builder` and `response::Builder`.
++
++# 0.2.0 (December 2, 2019)
++
++* Add `Version::HTTP_3` constant.
++* Add `HeaderValue::from_maybe_shared`, `HeaderValue::from_maybe_shared_unchecked`, `Uri::from_maybe_shared`, `Authority::from_maybe_shared`, and `PathAndQuery::from_maybe_shared`.
++* Change `request::Builder`, `response::Builder`, and `uri::Builder` to use by-value methods instead of by-ref.
++* Change from `HttpTryFrom` trait to `std::convert::TryFrom`.
++* Change `HeaderMap::entry` to no longer return a `Result`.
++* Change `HeaderMap::drain` iterator to match the behavior of `IntoIter`.
++* Change `Authority::port` to return an `Option<Port>` instead of `Option<u16>`.
++* Change `Uri::scheme` to return `Option<&Scheme>` instead of `Option<&str>`.
++* Change `Uri::authority` to return `Option<&Authority>` instead of `Option<&str>`.
++* Remove `InvalidUriBytes`, `InvalidHeaderNameBytes`, and `InvalidHeaderValueBytes` error types.
++* Remove `HeaderValue::from_shared`, `HeaderValue::from_shared_unchecked`, `Uri::from_shared`, `Authority::from_shared`, `Scheme::from_shared`, and `PathAndQuery::from_shared`.
++* Remove `Authority::port_part`.
++* Remove `Uri::scheme_part` and `Uri::authority_part`.
++
++# 0.1.20 (November 26, 2019)
++
++* Fix possible double-free if `header::Drain` iterator is `std::mem::forgot`en (#357).
++* Fix possible data race if multiple `header::ValueDrain`s are iterated on different threads (#362).
++* Fix `HeaderMap::reserve` capacity overflows (#360).
++* Fix parsing long authority-form `Uri`s (#351).
++
++# 0.1.19 (October 15, 2019)
++
++* Allow `%` in IPv6 addresses in `Uri` (#343).
++
++# 0.1.18 (July 26, 2019)
++
++* Fix compilation of `HeaderName` parsing on WASM targets (#324).
++* Implement `HttpTryFrom<HashMap>` for `HeaderMap` (#326).
++* Export `http::header::HeaderValue` as `http::HeaderValue`.
++
++# 0.1.17 (April 5, 2019)
++
++* Add `Error::inner_ref()` to view the kind of error (#303)
++* Add `headers_ref()` and `headers_mut()` methods to `request::Builder` and `response::Builder` (#293)
++
++# 0.1.16 (February 19, 2019)
++
++* Fix `Uri` to permit more characters in the `path` (#296)
++
++# 0.1.15 (January 22, 2019)
++
++* Fix `Uri::host()` to include brackets of IPv6 literals (#292)
++* Add `scheme_str` and `port_u16` methods to `Uri` (#287)
++* Add `method_ref`, `uri_ref`, and `headers_ref` to `request::Builder` (#284)
++
++# 0.1.14 (November 21, 2018)
++
++* Add `Port` struct (#252, #255, #265)
++* Introduce `Uri` builder (#219)
++* Empty `Method` no longer considered valid (#262)
++* Fix `Uri` equality when terminating question mark is present (#270)
++* Allow % character in userinfo (#269)
++* Support additional tokens for header names (#271)
++* Export `http::headers::{IterMut, ValuesMut}` (#278)
++
++# 0.1.13 (September 14, 2018)
++
++* impl `fmt::Display` for `HeaderName` (#249)
++* Fix `uri::Authority` parsing when there is no host after an `@` (#248)
++* Fix `Uri` parsing to allow more characters in query strings (#247)
++
++# 0.1.12 (September 7, 2018)
++
++* Fix `HeaderValue` parsing to allow HTABs (#244)
++
++# 0.1.11 (September 5, 2018)
++
++* Add `From<&Self>` for `HeaderValue`, `Method`, and `StatusCode` (#238)
++* Add `Uri::from_static` (#240)
++
++# 0.1.10 (August 8, 2018)
++
++* `impl HttpTryFrom<String>` for HeaderValue (#236)
++
++# 0.1.9 (August 7, 2018)
++
++* Fix double percent encoding (#233)
++* Add additional HttpTryFrom impls (#234)
++
++# 0.1.8 (July 23, 2018)
+[+70 more diff lines]
+=== Cargo.toml
+new file mode 100644
+@@ -0,0 +1,47 @@
++[package]
++name = "http"
++# When releasing to crates.io:
++# - Update html_root_url in lib.rs.
++# - Update CHANGELOG.md.
++# - Create git tag
++version = "1.5.0"
++readme = "README.md"
++documentation = "https://docs.rs/http"
++repository = "https://github.com/hyperium/http"
++license = "MIT OR Apache-2.0"
++authors = [
++  "Alex Crichton <alex@alexcrichton.com>",
++  "Carl Lerche <me@carllerche.com>",
++  "Sean McArthur <sean@seanmonstar.com>",
++]
++description = """
++A set of types for representing HTTP requests and responses.
++"""
++keywords = ["http"]
++categories = ["web-programming"]
++edition = "2021"
++rust-version = "1.57.0"
++
++[workspace]
++members = [
++  ".",
++]
++exclude = [
++  "fuzz",
++  "benches"
++]
++
++[features]
++default = ["std"]
++std = []
++
++[dependencies]
++bytes = "1"
++itoa = "1"
+[+7 more diff lines]
+=== LICENSE-APACHE +201 -0
+new file mode 100644
+=== LICENSE-MIT +25 -0
+new file mode 100644
+=== README.md +80 -0
+new file mode 100644
+=== benches/Cargo.toml +52 -0
+new file mode 100644
+=== benches/src/header_map/basic.rs +597 -0
+new file mode 100644
+=== benches/src/header_map/mod.rs +6 -0
+new file mode 100644
+=== benches/src/header_map/vec_map.rs +107 -0
+new file mode 100644
+=== benches/src/header_name.rs +296 -0
+new file mode 100644
+=== benches/src/header_name2.rs +52 -0
+new file mode 100644
+=== benches/src/header_value.rs +46 -0
+new file mode 100644
+=== benches/src/method.rs +40 -0
+new file mode 100644
+=== benches/src/opt_paths.rs +68 -0
+new file mode 100644
+=== benches/src/uri.rs +32 -0
+new file mode 100644
+=== fuzz/Cargo.toml +22 -0
+new file mode 100644
+=== fuzz/src/fuzz_http.rs +27 -0
+new file mode 100644
+=== src/byte_str.rs +91 -0
+new file mode 100644
+=== src/convert.rs +17 -0
+new file mode 100644
+=== src/error.rs +167 -0
+new file mode 100644
+=== src/extensions.rs +358 -0
+new file mode 100644
+=== src/header/map.rs +4053 -0
+new file mode 100644
+=== src/header/mod.rs +142 -0
+new file mode 100644
+=== src/header/name.rs +1922 -0
+new file mode 100644
+=== src/header/value.rs +816 -0
+new file mode 100644
+=== src/lib.rs +210 -0
+new file mode 100644
+=== src/method.rs +521 -0
+new file mode 100644
+=== src/request.rs +1072 -0
+new file mode 100644
+=== src/response.rs +781 -0
+new file mode 100644
+=== src/status.rs +596 -0
+new file mode 100644
+=== src/uri/authority.rs +725 -0
+new file mode 100644
+=== src/uri/builder.rs +261 -0
+new file mode 100644
+=== src/uri/mod.rs +1132 -0
+new file mode 100644
+=== src/uri/path.rs +709 -0
+new file mode 100644
+=== src/uri/port.rs +151 -0
+new file mode 100644
+=== src/uri/scheme.rs +361 -0
+new file mode 100644
+=== src/uri/tests.rs +519 -0
+new file mode 100644
+=== src/version.rs +75 -0
+new file mode 100644
+=== tests/header_map.rs +774 -0
+new file mode 100644
+=== tests/header_map_fuzz.rs +365 -0
+new file mode 100644
+=== tests/status_code.rs +82 -0
+new file mode 100644
+=== util/Cargo.toml +4 -0
+new file mode 100644
+=== util/README.md +1 -0
+new file mode 100644
+=== util/src/main.rs +1040 -0
+new file mode 100644
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-o4rvd3vs.log]

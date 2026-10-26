@@ -1,0 +1,497 @@
+$ git show HEAD
+f1bb864f 2026-10-22 evals: base
+=== .github/workflows/ci.yml
+new file mode 100644
+@@ -0,0 +1,211 @@
++name: CI
++
++on:
++  pull_request:
++    branches:
++      - master
++  push:
++    branches:
++      - master
++  schedule:
++    - cron: '0 2 * * 0'
++
++env:
++  RUSTFLAGS: -Dwarnings
++  RUST_BACKTRACE: 1
++  nightly: nightly-2024-09-15
++
++defaults:
++  run:
++    shell: bash
++
++jobs:
++  # Check formatting
++  rustfmt:
++    name: rustfmt
++    runs-on: ubuntu-latest
++    steps:
++    - uses: actions/checkout@v4
++    - name: Install Rust
++      run: rustup update stable
++    - name: Check formatting
++      run: cargo fmt --all --check
++
++  # TODO
++  # # Apply clippy lints
++  # clippy:
++  #   name: clippy
++  #   runs-on: ubuntu-latest
++  #   steps:
++  #   - uses: actions/checkout@v4
++  #   - name: Apply clippy lints
++  #     run: cargo clippy --all-features
++
++  # This represents the minimum Rust version supported by
++  # Bytes. Updating this should be done in a dedicated PR.
++  #
++  # Tests are not run as tests may require newer versions of
++  # rust.
++  minrust:
++    name: minrust
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install cargo-hack
++        uses: taiki-e/install-action@cargo-hack
++      - name: Check
++        run: cargo hack check --feature-powerset --optional-deps --rust-version
++
++  # Stable
++  stable:
++    name: stable
++    strategy:
++      matrix:
++        os:
++          - ubuntu-latest
++          - ubuntu-22.04-arm # TODO: update to 24.04 when https://github.com/rust-lang/rust/issues/135867 solved
++          - macos-latest
++          - windows-latest
++    runs-on: ${{ matrix.os }}
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        # --no-self-update is necessary because the windows environment cannot self-update rustup.exe.
++        run: rustup update stable --no-self-update
++      - name: Install cargo-hack
++        uses: taiki-e/install-action@cargo-hack
++      - name: Test
++        run: ci/test-stable.sh test
++
++  # Nightly
++  nightly:
++    name: nightly
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update $nightly && rustup default $nightly
++      - name: Install cargo-hack
++        uses: taiki-e/install-action@cargo-hack
++      - name: Test
++        run: ci/test-stable.sh test
++
++  panic-abort:
++    name: panic=abort tests
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update $nightly && rustup default $nightly
++      - name: Run tests with -Cpanic=abort
++        run: ci/panic-abort.sh
++
++  # Run tests on some extra platforms
++  cross:
++    name: cross
++    strategy:
++      matrix:
++        include:
++          - target: i686-unknown-linux-gnu
++            os: ubuntu-latest
++          - target: armv7-unknown-linux-gnueabihf
++            os: ubuntu-22.04-arm # TODO: update to 24.04 when https://github.com/rust-lang/rust/issues/135867 solved
++          - target: powerpc-unknown-linux-gnu
++            os: ubuntu-latest
++          - target: powerpc64-unknown-linux-gnu
++            os: ubuntu-latest
++          - target: wasm32-wasip1
++            os: ubuntu-latest
++    runs-on: ${{ matrix.os }}
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update stable
++      - uses: taiki-e/setup-cross-toolchain-action@v1
++        with:
++          target: ${{ matrix.target }}
++      - name: Test
++        run: cargo test --target ${{ matrix.target }}
++
++  # Build for no_std environment.
++  no-std:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update stable
++      - name: Install cargo-hack
++        uses: taiki-e/install-action@cargo-hack
++      # thumbv6m-none-eabi supports atomic, but not atomic CAS.
++      # thumbv7m-none-eabi supports atomic CAS.
++      - run: rustup target add thumbv6m-none-eabi thumbv7m-none-eabi
++      # * --optional-deps is needed for serde feature
++      # * --no-dev-deps is needed to avoid https://github.com/rust-lang/cargo/issues/4866
++      - run: cargo hack build --target thumbv7m-none-eabi --feature-powerset --skip std,default --optional-deps --no-dev-deps
++      # A sound way to provide atomic CAS on platforms without native atomic CAS is system-dependent.
++      # portable-atomic provides major ways via cfgs and accepts user-defined implementations via critical-section feature.
++      - run: cargo hack build --target thumbv6m-none-eabi --feature-powerset --skip std,default --optional-deps --no-dev-deps --features extra-platforms,extra-platforms/critical-section
++
++  # Sanitizers
++  tsan:
++    name: tsan
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update $nightly && rustup default $nightly
++      - name: Install rust-src
++        run: rustup component add rust-src
++      - name: ASAN / TSAN
++        run: ci/tsan.sh
++
++  miri:
++    name: miri
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update $nightly && rustup default $nightly
++      - name: Miri
++        run: ci/miri.sh
++
++  # Loom
++  loom:
++    name: loom
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update $nightly && rustup default $nightly
++      - name: Loom tests
++        run: RUSTFLAGS="--cfg loom -Dwarnings" cargo test --lib
++
++  publish_docs:
++    name: Publish Documentation
++    needs:
++      - rustfmt
++      # - clippy
++      - stable
++      - nightly
++      - minrust
++      - cross
++      - tsan
++      - miri
++      - loom
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update $nightly && rustup default $nightly
+[+12 more diff lines]
+=== .gitignore
+new file mode 100644
+@@ -0,0 +1,2 @@
++/target
++/Cargo.lock
+=== CHANGELOG.md
+new file mode 100644
+@@ -0,0 +1,449 @@
++# 1.11.1 (February 3rd, 2026)
++
++- Fix integer overflow in `BytesMut::reserve`
++
++# 1.11.0 (November 14th, 2025)
++
++- Bump MSRV to 1.57 (#788)
++
++### Fixed
++
++- fix: `BytesMut` only reuse if src has remaining (#803)
++- Specialize `BytesMut::put::<Bytes>` (#793)
++- Reserve capacity in `BytesMut::put` (#794)
++- Change `BytesMut::remaining_mut` to use `isize::MAX` instead of `usize::MAX` (#795)
++
++### Internal changes
++
++- Guarantee address in `slice()` for empty slices. (#780)
++- Rename `Vtable::to_*` -> `Vtable::into_*` (#776)
++- Fix latest clippy warnings (#787)
++- Ignore `BytesMut::freeze` doctest on wasm (#790)
++- Move `drop_fn` of `from_owner` into vtable (#801)
++
++# 1.10.1 (March 5th, 2025)
++
++### Fixed
++
++- Fix memory leak when using `to_vec` with `Bytes::from_owner` (#773)
++
++# 1.10.0 (February 3rd, 2025)
++
++### Added
++
++- Add feature to support platforms without atomic CAS (#467)
++- `try_get_*` methods for `Buf` trait (#753)
++- Implement `Buf::chunks_vectored` for `Take` (#617)
++- Implement `Buf::chunks_vectored` for `VecDeque<u8>` (#708)
++
++### Fixed
++
++- Remove incorrect guarantee for `chunks_vectored` (#754)
++- Ensure that tests pass under `panic=abort` (#749)
++
++# 1.9.0 (November 27, 2024)
++
++### Added
++
++- Add `Bytes::from_owner` to enable externally-allocated memory (#742)
++
++### Documented
++
++- Fix typo in Buf::chunk() comment (#744)
++
++### Internal changes
++
++- Replace BufMut::put with BufMut::put_slice in Writer impl (#745)
++- Rename hex_impl! to fmt_impl! and reuse it for fmt::Debug (#743)
++
++# 1.8.0 (October 21, 2024)
++
++- Guarantee address in `split_off`/`split_to` for empty slices (#740)
++
++# 1.7.2 (September 17, 2024)
++
++### Fixed
++
++- Fix default impl of `Buf::{get_int, get_int_le}` (#732)
++
++### Documented
++
++- Fix double spaces in comments and doc comments (#731)
++
++### Internal changes
++
++- Ensure BytesMut::advance reduces capacity (#728)
++
++# 1.7.1 (August 1, 2024)
++
++This release reverts the following change due to a regression:
++
++- Reuse capacity when possible in `<BytesMut as Buf>::advance` impl (#698)
++
++The revert can be found at #726.
++
++# 1.7.0 (July 31, 2024)
++
++### Added
++
++- Add conversion from `Bytes` to `BytesMut` (#695, #710)
++- Add reclaim method without additional allocation (#686)
++
++### Documented
++
++- Clarify how `BytesMut::zeroed` works (#714)
++- Clarify the behavior of `Buf::chunk` (#717)
++
++### Changed
++
++- Change length condition of `BytesMut::truncate`
++- Reuse capacity when possible in `<BytesMut as Buf>::advance` impl (#698)
++- Improve `must_use` suggestion of `BytesMut::split` (#699)
++
++### Internal changes
++
++- Use `ManuallyDrop` instead of `mem::forget` (#678)
++- Don't set `len` in `BytesMut::reserve` (#682)
++- Optimize `Bytes::copy_to_bytes` (#688)
++- Refactor `BytesMut::truncate` (#694)
++- Refactor `BytesMut::resize` (#696)
++- Reorder assertion in `Bytes::split_to`, `Bytes::split_off` (#689, #693)
++- Use `offset_from` in more places (#705)
++- Correct the wrong usage of `IntoIter` (#707)
++
++# 1.6.1 (July 13, 2024)
++
++This release fixes a bug where `Bytes::is_unique` returns incorrect values when
++the `Bytes` originates from a shared `BytesMut`. (#718)
++
++# 1.6.0 (March 22, 2024)
++
++### Added
++
++- Add `Bytes::is_unique` (#643)
++
++### Documented
++
++- Fix changelog typo (#628)
++- Fix some spelling mistakes (#633)
++- Typo fix (#637)
++- Fix broken links (#639)
++- Add security policy (#649)
++
++### Internal changes
++
++- Move comment to correct constant (#629)
++- Various cleanup (#635)
++- Simplify `UninitSlice::as_uninit_slice_mut()` logic (#644)
++- Use `self.` instead of `Self::` (#642)
++- `BytesMut`: Assert alignment of `Shared` (#652)
++- Remove unnecessary namespace qualifier (#660)
++- Remove an unnecessary else branch (#662)
++- Remove unreachable else branch (#661)
++- make parameter mut in `From<Vec>` (#667)
++- Restore commented tests (#665)
++- Use `sub` instead of `offset` (#668)
++- Calculate original capacity only if necessary (#666)
++- `set_vec_pos` does not need a second parameter (#672)
++- `get_vec_pos`: use `&self` instead of `&mut self` (#670)
++- Refactor `split_at`/`split_to` (#663)
++- Use `Iterator` from the prelude (#673)
++- `copy_to_bytes`: Add panic section to docs (#676)
++- Remove redundant reserve call (#674)
++- Use `ManuallyDrop` instead of `mem::forget` (#675)
++
++
++# 1.5.0 (September 7, 2023)
++
++### Added
++
++- Add `UninitSlice::{new,uninit}` (#598, #599)
++- Implement `BufMut` for `&mut [MaybeUninit<u8>]` (#597)
++
++### Changed
++
++- Mark `BytesMut::extend_from_slice` as inline (#595)
++
++# 1.4.0 (January 31, 2023)
++
++### Added
++
++- Make `IntoIter` constructor public (#581)
++
++### Fixed
++
++- Avoid large reallocations when freezing `BytesMut` (#592)
++
++### Documented
++
++- Document which functions require `std` (#591)
++- Fix duplicate "the the" typos (#585)
++
++# 1.3.0 (November 20, 2022)
++
++### Added
++
++- Rename and expose `BytesMut::spare_capacity_mut` (#572)
++- Implement native-endian get and put functions for `Buf` and `BufMut` (#576)
++
++### Fixed
++
++- Don't have important data in unused capacity when calling reserve (#563)
++
++### Documented
++
++- `Bytes::new` etc should return `Self` not `Bytes` (#568)
++
+[+253 more diff lines]
+=== Cargo.toml +46 -0
+new file mode 100644
+=== LICENSE +25 -0
+new file mode 100644
+=== README.md +73 -0
+new file mode 100644
+=== SECURITY.md +9 -0
+new file mode 100644
+=== benches/buf.rs +186 -0
+new file mode 100644
+=== benches/bytes.rs +120 -0
+new file mode 100644
+=== benches/bytes_mut.rs +266 -0
+new file mode 100644
+=== ci/miri.sh +13 -0
+new file mode 100755
+=== ci/panic-abort.sh +4 -0
+new file mode 100755
+=== ci/test-stable.sh +25 -0
+new file mode 100755
+=== ci/tsan.sh +13 -0
+new file mode 100755
+=== clippy.toml +1 -0
+new file mode 100644
+=== src/buf/buf_impl.rs +2967 -0
+new file mode 100644
+=== src/buf/buf_mut.rs +1671 -0
+new file mode 100644
+=== src/buf/chain.rs +240 -0
+new file mode 100644
+=== src/buf/iter.rs +127 -0
+new file mode 100644
+=== src/buf/limit.rs +75 -0
+new file mode 100644
+=== src/buf/mod.rs +39 -0
+new file mode 100644
+=== src/buf/reader.rs +81 -0
+new file mode 100644
+=== src/buf/take.rs +187 -0
+new file mode 100644
+=== src/buf/uninit_slice.rs +257 -0
+new file mode 100644
+=== src/buf/vec_deque.rs +40 -0
+new file mode 100644
+=== src/buf/writer.rs +88 -0
+new file mode 100644
+=== src/bytes.rs +1666 -0
+new file mode 100644
+=== src/bytes_mut.rs +1974 -0
+new file mode 100644
+=== src/fmt/debug.rs +40 -0
+new file mode 100644
+=== src/fmt/hex.rs +27 -0
+new file mode 100644
+=== src/fmt/mod.rs +15 -0
+new file mode 100644
+=== src/lib.rs +182 -0
+new file mode 100644
+=== src/loom.rs +33 -0
+new file mode 100644
+=== src/serde.rs +89 -0
+new file mode 100644
+=== tests/test_buf.rs +461 -0
+new file mode 100644
+=== tests/test_buf_mut.rs +284 -0
+new file mode 100644
+=== tests/test_bytes.rs +1722 -0
+new file mode 100644
+=== tests/test_bytes_odd_alloc.rs +147 -0
+new file mode 100644
+=== tests/test_bytes_vec_alloc.rs +146 -0
+new file mode 100644
+=== tests/test_chain.rs +177 -0
+new file mode 100644
+=== tests/test_debug.rs +35 -0
+new file mode 100644
+=== tests/test_iter.rs +21 -0
+new file mode 100644
+=== tests/test_limit.rs +86 -0
+new file mode 100644
+=== tests/test_reader.rs +38 -0
+new file mode 100644
+=== tests/test_serde.rs +20 -0
+new file mode 100644
+=== tests/test_take.rs +84 -0
+new file mode 100644
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-nyibdp0k.log]

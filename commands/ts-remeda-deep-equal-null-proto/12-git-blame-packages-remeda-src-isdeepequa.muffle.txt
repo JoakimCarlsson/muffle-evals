@@ -1,0 +1,234 @@
+$ git blame packages/remeda/src/isDeepEqual.ts
+86c5c84 evals 2026-10-22
+1	import { purry } from "./purry";
+2	
+3	/**
+4	 * Performs a *deep structural* comparison between two values to determine if
+5	 * they are equivalent. For primitive values this is equivalent to `===`, for
+6	 * arrays the check would be performed on every item recursively, in order, and
+7	 * for objects all props will be compared recursively.
+8	 *
+9	 * The built-in Date and RegExp are special-cased and will be compared by their
+10	 * values.
+11	 *
+12	 * !IMPORTANT: TypedArrays and symbol properties of objects are not supported
+13	 * right now and might result in unexpected behavior. Please open an issue in
+14	 * the Remeda github project if you need support for these types.
+15	 *
+16	 * The result would be narrowed to the second value so that the function can be
+17	 * used as a type guard.
+18	 *
+19	 * See:
+20	 * - `isStrictEqual` if you don't need a deep comparison and just want to
+21	 * check for simple (`===`, `Object.is`) equality.
+22	 * - `isShallowEqual` if you need to compare arrays and objects "by-value" but
+23	 * don't want to recurse into their values.
+24	 *
+25	 * @param data - The first value to compare.
+26	 * @param other - The second value to compare.
+27	 * @signature
+28	 *    isDeepEqual(data, other)
+29	 * @example
+30	 *    isDeepEqual(1, 1) //=> true
+31	 *    isDeepEqual(1, '1') //=> false
+32	 *    isDeepEqual([1, 2, 3], [1, 2, 3]) //=> true
+33	 * @dataFirst
+34	 * @category Guard
+35	 */
+36	export function isDeepEqual<T, S extends T>(
+37	  data: T,
+38	  other: T extends Exclude<T, S> ? S : never,
+39	): data is S;
+40	export function isDeepEqual<T>(data: T, other: T): boolean;
+41	
+42	/**
+43	 * Performs a *deep structural* comparison between two values to determine if
+44	 * they are equivalent. For primitive values this is equivalent to `===`, for
+45	 * arrays the check would be performed on every item recursively, in order, and
+46	 * for objects all props will be compared recursively.
+47	 *
+48	 * The built-in Date and RegExp are special-cased and will be compared by their
+49	 * values.
+50	 *
+51	 * !IMPORTANT: TypedArrays and symbol properties of objects are not supported
+52	 * right now and might result in unexpected behavior. Please open an issue in
+53	 * the Remeda github project if you need support for these types.
+54	 *
+55	 * The result would be narrowed to the second value so that the function can be
+56	 * used as a type guard.
+57	 *
+58	 * See:
+59	 * - `isStrictEqual` if you don't need a deep comparison and just want to
+60	 * check for simple (`===`, `Object.is`) equality.
+61	 * - `isShallowEqual` if you need to compare arrays and objects "by-value" but
+62	 * don't want to recurse into their values.
+63	 *
+64	 * @param other - The second value to compare.
+65	 * @signature
+66	 *    isDeepEqual(other)(data)
+67	 * @example
+68	 *    pipe(1, isDeepEqual(1)); //=> true
+69	 *    pipe(1, isDeepEqual('1')); //=> false
+70	 *    pipe([1, 2, 3], isDeepEqual([1, 2, 3])); //=> true
+71	 * @dataLast
+72	 * @category Guard
+73	 */
+74	export function isDeepEqual<T, S extends T>(
+75	  other: T extends Exclude<T, S> ? S : never,
+76	): (data: T) => data is S;
+77	export function isDeepEqual<T>(other: T): (data: T) => boolean;
+78	
+79	export function isDeepEqual(...args: readonly unknown[]): unknown {
+80	  return purry(isDeepEqualImplementation, args);
+81	}
+82	
+83	function isDeepEqualImplementation<T>(data: unknown, other: T): data is T {
+84	  if (data === other) {
+85	    return true;
+86	  }
+87	
+88	  if (Object.is(data, other)) {
+89	    // We want to ignore the slight differences between `===` and `Object.is` as
+90	    // both of them largely define equality from a semantic point-of-view.
+91	    return true;
+92	  }
+93	
+94	  if (typeof data !== "object" || typeof other !== "object") {
+95	    return false;
+96	  }
+97	
+98	  if (data === null || other === null) {
+99	    return false;
+100	  }
+101	
+102	  if (Object.getPrototypeOf(data) !== Object.getPrototypeOf(other)) {
+103	    // If the objects don't share a prototype it's unlikely that they are
+104	    // semantically equal. It is technically possible to build 2 prototypes that
+105	    // act the same but are not equal (at the reference level, checked via
+106	    // `===`) and then create 2 objects that are equal although we would fail on
+107	    // them. Because this is so unlikely, the optimization we gain here for the
+108	    // rest of the function by assuming that `other` is of the same type as
+109	    // `data` is more than worth it.
+110	    return false;
+111	  }
+112	
+113	  if (Array.isArray(data)) {
+114	    return isDeepEqualArrays(data, other as unknown as readonly unknown[]);
+115	  }
+116	
+117	  if (data instanceof Map) {
+118	    return isDeepEqualMaps(data, other as unknown as Map<unknown, unknown>);
+119	  }
+120	
+121	  if (data instanceof Set) {
+122	    return isDeepEqualSets(data, other as unknown as Set<unknown>);
+123	  }
+124	
+125	  if (data instanceof Date) {
+126	    return data.getTime() === (other as unknown as Date).getTime();
+127	  }
+128	
+129	  if (data instanceof RegExp) {
+130	    return data.toString() === (other as unknown as RegExp).toString();
+131	  }
+132	
+133	  // At this point we only know that the 2 objects share a prototype and are not
+134	  // any of the previous types. They could be plain objects (Object.prototype),
+135	  // they could be classes, they could be other built-ins, or they could be
+136	  // something weird. We assume that comparing values by keys is enough to judge
+137	  // their equality.
+138	
+139	  if (Object.keys(data).length !== Object.keys(other).length) {
+140	    return false;
+141	  }
+142	
+143	  for (const [key, value] of Object.entries(data)) {
+144	    if (!(key in other)) {
+145	      return false;
+146	    }
+147	
+148	    if (
+149	      !isDeepEqualImplementation(
+150	        value,
+151	        // @ts-expect-error [ts7053] - We already checked that `other` has `key`
+152	        other[key],
+153	      )
+154	    ) {
+155	      return false;
+156	    }
+157	  }
+158	
+159	  return true;
+160	}
+161	
+162	function isDeepEqualArrays(
+163	  data: readonly unknown[],
+164	  other: readonly unknown[],
+165	): boolean {
+166	  if (data.length !== other.length) {
+167	    return false;
+168	  }
+169	
+170	  for (const [index, item] of data.entries()) {
+171	    if (!isDeepEqualImplementation(item, other[index])) {
+172	      return false;
+173	    }
+174	  }
+175	
+176	  return true;
+177	}
+178	
+179	function isDeepEqualMaps(
+180	  data: ReadonlyMap<unknown, unknown>,
+181	  other: ReadonlyMap<unknown, unknown>,
+182	): boolean {
+183	  if (data.size !== other.size) {
+184	    return false;
+185	  }
+186	
+187	  for (const [key, value] of data.entries()) {
+188	    if (!other.has(key)) {
+189	      return false;
+190	    }
+191	
+192	    if (!isDeepEqualImplementation(value, other.get(key))) {
+193	      return false;
+194	    }
+195	  }
+196	
+197	  return true;
+198	}
+199	
+200	function isDeepEqualSets(
+201	  data: ReadonlySet<unknown>,
+202	  other: ReadonlySet<unknown>,
+203	): boolean {
+204	  if (data.size !== other.size) {
+205	    return false;
+206	  }
+207	
+208	  // To ensure we only count each item once we need to "remember" which items of
+209	  // the other set we've already matched against. We do this by creating a copy
+210	  // of the other set and removing items from it as we find them in the data
+211	  // set.
+212	  const otherCopy = [...other];
+213	
+214	  for (const dataItem of data) {
+215	    let isFound = false;
+216	
+217	    for (const [index, otherItem] of otherCopy.entries()) {
+218	      if (isDeepEqualImplementation(dataItem, otherItem)) {
+219	        isFound = true;
+220	        otherCopy.splice(index, 1);
+221	        break;
+222	      }
+223	    }
+224	
+225	    if (!isFound) {
+226	      return false;
+227	    }
+228	  }
+229	
+230	  return true;
+231	}
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-ozz7ayva.log]

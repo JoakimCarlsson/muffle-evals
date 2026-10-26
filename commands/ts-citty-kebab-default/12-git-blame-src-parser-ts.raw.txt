@@ -1,0 +1,177 @@
+$ git blame src/_parser.ts
+^7360983 (evals 2026-10-22 10:55:23 +0200   1) import { parseArgs } from "node:util";
+^7360983 (evals 2026-10-22 10:55:23 +0200   2) 
+^7360983 (evals 2026-10-22 10:55:23 +0200   3) export interface ParseOptions {
+^7360983 (evals 2026-10-22 10:55:23 +0200   4)   boolean?: string[];
+^7360983 (evals 2026-10-22 10:55:23 +0200   5)   string?: string[];
+^7360983 (evals 2026-10-22 10:55:23 +0200   6)   alias?: Record<string, string[]>;
+^7360983 (evals 2026-10-22 10:55:23 +0200   7)   default?: Record<string, any>;
+^7360983 (evals 2026-10-22 10:55:23 +0200   8) }
+^7360983 (evals 2026-10-22 10:55:23 +0200   9) 
+^7360983 (evals 2026-10-22 10:55:23 +0200  10) export type Argv<T = Record<string, any>> = T & {
+^7360983 (evals 2026-10-22 10:55:23 +0200  11)   _: string[];
+^7360983 (evals 2026-10-22 10:55:23 +0200  12) };
+^7360983 (evals 2026-10-22 10:55:23 +0200  13) 
+^7360983 (evals 2026-10-22 10:55:23 +0200  14) export function parseRawArgs<T = Record<string, any>>(
+^7360983 (evals 2026-10-22 10:55:23 +0200  15)   args: string[] = [],
+^7360983 (evals 2026-10-22 10:55:23 +0200  16)   opts: ParseOptions = {},
+^7360983 (evals 2026-10-22 10:55:23 +0200  17) ): Argv<T> {
+^7360983 (evals 2026-10-22 10:55:23 +0200  18)   const booleans = new Set(opts.boolean || []);
+^7360983 (evals 2026-10-22 10:55:23 +0200  19)   const strings = new Set(opts.string || []);
+^7360983 (evals 2026-10-22 10:55:23 +0200  20)   const aliasMap = opts.alias || {};
+^7360983 (evals 2026-10-22 10:55:23 +0200  21)   const defaults = opts.default || {};
+^7360983 (evals 2026-10-22 10:55:23 +0200  22) 
+^7360983 (evals 2026-10-22 10:55:23 +0200  23)   // Build a normalized alias map where we track primary -> aliases relationships
+^7360983 (evals 2026-10-22 10:55:23 +0200  24)   // The input format is { alias: primary } or { alias: [primary1, primary2] }
+^7360983 (evals 2026-10-22 10:55:23 +0200  25)   // We also need to handle { primary: alias } format used by args.ts
+^7360983 (evals 2026-10-22 10:55:23 +0200  26)   const aliasToMain: Map<string, string> = new Map();
+^7360983 (evals 2026-10-22 10:55:23 +0200  27)   const mainToAliases: Map<string, string[]> = new Map();
+^7360983 (evals 2026-10-22 10:55:23 +0200  28) 
+^7360983 (evals 2026-10-22 10:55:23 +0200  29)   for (const [key, value] of Object.entries(aliasMap)) {
+^7360983 (evals 2026-10-22 10:55:23 +0200  30)     const targets = value;
+^7360983 (evals 2026-10-22 10:55:23 +0200  31)     for (const target of targets) {
+^7360983 (evals 2026-10-22 10:55:23 +0200  32)       // key is an alias for target
+^7360983 (evals 2026-10-22 10:55:23 +0200  33)       aliasToMain.set(key, target);
+^7360983 (evals 2026-10-22 10:55:23 +0200  34)       if (!mainToAliases.has(target)) {
+^7360983 (evals 2026-10-22 10:55:23 +0200  35)         mainToAliases.set(target, []);
+^7360983 (evals 2026-10-22 10:55:23 +0200  36)       }
+^7360983 (evals 2026-10-22 10:55:23 +0200  37)       mainToAliases.get(target)!.push(key);
+^7360983 (evals 2026-10-22 10:55:23 +0200  38) 
+^7360983 (evals 2026-10-22 10:55:23 +0200  39)       // Also set up reverse: target is an alias for key
+^7360983 (evals 2026-10-22 10:55:23 +0200  40)       aliasToMain.set(target, key);
+^7360983 (evals 2026-10-22 10:55:23 +0200  41)       if (!mainToAliases.has(key)) {
+^7360983 (evals 2026-10-22 10:55:23 +0200  42)         mainToAliases.set(key, []);
+^7360983 (evals 2026-10-22 10:55:23 +0200  43)       }
+^7360983 (evals 2026-10-22 10:55:23 +0200  44)       mainToAliases.get(key)!.push(target);
+^7360983 (evals 2026-10-22 10:55:23 +0200  45)     }
+^7360983 (evals 2026-10-22 10:55:23 +0200  46)   }
+^7360983 (evals 2026-10-22 10:55:23 +0200  47) 
+^7360983 (evals 2026-10-22 10:55:23 +0200  48)   // Build options for node:util parseArgs
+^7360983 (evals 2026-10-22 10:55:23 +0200  49)   const options: Record<
+^7360983 (evals 2026-10-22 10:55:23 +0200  50)     string,
+^7360983 (evals 2026-10-22 10:55:23 +0200  51)     {
+^7360983 (evals 2026-10-22 10:55:23 +0200  52)       type: "boolean" | "string";
+^7360983 (evals 2026-10-22 10:55:23 +0200  53)       short?: string;
+^7360983 (evals 2026-10-22 10:55:23 +0200  54)       default?: any;
+^7360983 (evals 2026-10-22 10:55:23 +0200  55)       multiple?: boolean;
+^7360983 (evals 2026-10-22 10:55:23 +0200  56)     }
+^7360983 (evals 2026-10-22 10:55:23 +0200  57)   > = {};
+^7360983 (evals 2026-10-22 10:55:23 +0200  58) 
+^7360983 (evals 2026-10-22 10:55:23 +0200  59)   // Helper to get option type
+^7360983 (evals 2026-10-22 10:55:23 +0200  60)   function getType(name: string): "boolean" | "string" {
+^7360983 (evals 2026-10-22 10:55:23 +0200  61)     if (booleans.has(name)) return "boolean";
+^7360983 (evals 2026-10-22 10:55:23 +0200  62)     // Check aliases
+^7360983 (evals 2026-10-22 10:55:23 +0200  63)     const aliases = mainToAliases.get(name) || [];
+^7360983 (evals 2026-10-22 10:55:23 +0200  64)     for (const alias of aliases) {
+^7360983 (evals 2026-10-22 10:55:23 +0200  65)       if (booleans.has(alias)) return "boolean";
+^7360983 (evals 2026-10-22 10:55:23 +0200  66)     }
+^7360983 (evals 2026-10-22 10:55:23 +0200  67)     return "string";
+^7360983 (evals 2026-10-22 10:55:23 +0200  68)   }
+^7360983 (evals 2026-10-22 10:55:23 +0200  69) 
+^7360983 (evals 2026-10-22 10:55:23 +0200  70)   // Collect all option names
+^7360983 (evals 2026-10-22 10:55:23 +0200  71)   const allOptions = new Set<string>([
+^7360983 (evals 2026-10-22 10:55:23 +0200  72)     ...booleans,
+^7360983 (evals 2026-10-22 10:55:23 +0200  73)     ...strings,
+^7360983 (evals 2026-10-22 10:55:23 +0200  74)     ...Object.keys(aliasMap),
+^7360983 (evals 2026-10-22 10:55:23 +0200  75)     ...Object.values(aliasMap).flat(),
+^7360983 (evals 2026-10-22 10:55:23 +0200  76)     ...Object.keys(defaults),
+^7360983 (evals 2026-10-22 10:55:23 +0200  77)   ]);
+^7360983 (evals 2026-10-22 10:55:23 +0200  78) 
+^7360983 (evals 2026-10-22 10:55:23 +0200  79)   // Register all options
+^7360983 (evals 2026-10-22 10:55:23 +0200  80)   for (const name of allOptions) {
+^7360983 (evals 2026-10-22 10:55:23 +0200  81)     if (!options[name]) {
+^7360983 (evals 2026-10-22 10:55:23 +0200  82)       const type = getType(name);
+^7360983 (evals 2026-10-22 10:55:23 +0200  83)       options[name] = {
+^7360983 (evals 2026-10-22 10:55:23 +0200  84)         type,
+^7360983 (evals 2026-10-22 10:55:23 +0200  85)         default: defaults[name],
+^7360983 (evals 2026-10-22 10:55:23 +0200  86)       };
+^7360983 (evals 2026-10-22 10:55:23 +0200  87)     }
+^7360983 (evals 2026-10-22 10:55:23 +0200  88)   }
+^7360983 (evals 2026-10-22 10:55:23 +0200  89) 
+^7360983 (evals 2026-10-22 10:55:23 +0200  90)   // Add short aliases (single char)
+^7360983 (evals 2026-10-22 10:55:23 +0200  91)   for (const [alias, main] of aliasToMain.entries()) {
+^7360983 (evals 2026-10-22 10:55:23 +0200  92)     if (alias.length === 1 && options[main] && !options[main].short) {
+^7360983 (evals 2026-10-22 10:55:23 +0200  93)       options[main].short = alias;
+^7360983 (evals 2026-10-22 10:55:23 +0200  94)     }
+^7360983 (evals 2026-10-22 10:55:23 +0200  95)   }
+^7360983 (evals 2026-10-22 10:55:23 +0200  96) 
+^7360983 (evals 2026-10-22 10:55:23 +0200  97)   // Handle --no- prefixed arguments by preprocessing
+^7360983 (evals 2026-10-22 10:55:23 +0200  98)   const processedArgs: string[] = [];
+^7360983 (evals 2026-10-22 10:55:23 +0200  99)   const negatedFlags: Record<string, boolean> = {};
+^7360983 (evals 2026-10-22 10:55:23 +0200 100) 
+^7360983 (evals 2026-10-22 10:55:23 +0200 101)   for (let i = 0; i < args.length; i++) {
+^7360983 (evals 2026-10-22 10:55:23 +0200 102)     const arg = args[i]!;
+^7360983 (evals 2026-10-22 10:55:23 +0200 103) 
+^7360983 (evals 2026-10-22 10:55:23 +0200 104)     if (arg === "--") {
+^7360983 (evals 2026-10-22 10:55:23 +0200 105)       // Pass through -- and everything after
+^7360983 (evals 2026-10-22 10:55:23 +0200 106)       processedArgs.push(...args.slice(i));
+^7360983 (evals 2026-10-22 10:55:23 +0200 107)       break;
+^7360983 (evals 2026-10-22 10:55:23 +0200 108)     }
+^7360983 (evals 2026-10-22 10:55:23 +0200 109) 
+^7360983 (evals 2026-10-22 10:55:23 +0200 110)     // Handle --no-flag syntax
+^7360983 (evals 2026-10-22 10:55:23 +0200 111)     if (arg.startsWith("--no-")) {
+^7360983 (evals 2026-10-22 10:55:23 +0200 112)       const flagName = arg.slice(5);
+^7360983 (evals 2026-10-22 10:55:23 +0200 113)       negatedFlags[flagName] = true;
+^7360983 (evals 2026-10-22 10:55:23 +0200 114)       continue;
+^7360983 (evals 2026-10-22 10:55:23 +0200 115)     }
+^7360983 (evals 2026-10-22 10:55:23 +0200 116) 
+^7360983 (evals 2026-10-22 10:55:23 +0200 117)     processedArgs.push(arg);
+^7360983 (evals 2026-10-22 10:55:23 +0200 118)   }
+^7360983 (evals 2026-10-22 10:55:23 +0200 119) 
+^7360983 (evals 2026-10-22 10:55:23 +0200 120)   let parsed: { values: Record<string, any>; positionals: string[] };
+^7360983 (evals 2026-10-22 10:55:23 +0200 121) 
+^7360983 (evals 2026-10-22 10:55:23 +0200 122)   try {
+^7360983 (evals 2026-10-22 10:55:23 +0200 123)     parsed = parseArgs({
+^7360983 (evals 2026-10-22 10:55:23 +0200 124)       args: processedArgs,
+^7360983 (evals 2026-10-22 10:55:23 +0200 125)       options: Object.keys(options).length > 0 ? options : undefined,
+^7360983 (evals 2026-10-22 10:55:23 +0200 126)       allowPositionals: true,
+^7360983 (evals 2026-10-22 10:55:23 +0200 127)       strict: false,
+^7360983 (evals 2026-10-22 10:55:23 +0200 128)     });
+^7360983 (evals 2026-10-22 10:55:23 +0200 129)   } catch {
+^7360983 (evals 2026-10-22 10:55:23 +0200 130)     // Fallback for parsing errors
+^7360983 (evals 2026-10-22 10:55:23 +0200 131)     parsed = { values: {}, positionals: processedArgs };
+^7360983 (evals 2026-10-22 10:55:23 +0200 132)   }
+^7360983 (evals 2026-10-22 10:55:23 +0200 133) 
+^7360983 (evals 2026-10-22 10:55:23 +0200 134)   // Build result
+^7360983 (evals 2026-10-22 10:55:23 +0200 135)   const out: Argv<T> = { _: [] as string[] } as Argv<T>;
+^7360983 (evals 2026-10-22 10:55:23 +0200 136) 
+^7360983 (evals 2026-10-22 10:55:23 +0200 137)   // Add positionals
+^7360983 (evals 2026-10-22 10:55:23 +0200 138)   out._ = parsed.positionals;
+^7360983 (evals 2026-10-22 10:55:23 +0200 139) 
+^7360983 (evals 2026-10-22 10:55:23 +0200 140)   // Add parsed values
+^7360983 (evals 2026-10-22 10:55:23 +0200 141)   for (const [key, value] of Object.entries(parsed.values)) {
+^7360983 (evals 2026-10-22 10:55:23 +0200 142)     (out as any)[key] = value;
+^7360983 (evals 2026-10-22 10:55:23 +0200 143)   }
+^7360983 (evals 2026-10-22 10:55:23 +0200 144) 
+^7360983 (evals 2026-10-22 10:55:23 +0200 145)   // Apply negated flags (with alias resolution)
+^7360983 (evals 2026-10-22 10:55:23 +0200 146)   for (const [name] of Object.entries(negatedFlags)) {
+^7360983 (evals 2026-10-22 10:55:23 +0200 147)     // Set the flag itself
+^7360983 (evals 2026-10-22 10:55:23 +0200 148)     (out as any)[name] = false;
+^7360983 (evals 2026-10-22 10:55:23 +0200 149) 
+^7360983 (evals 2026-10-22 10:55:23 +0200 150)     // Resolve to main option and apply there too (handles --no-alias)
+^7360983 (evals 2026-10-22 10:55:23 +0200 151)     const mainName = aliasToMain.get(name);
+^7360983 (evals 2026-10-22 10:55:23 +0200 152)     if (mainName) {
+^7360983 (evals 2026-10-22 10:55:23 +0200 153)       (out as any)[mainName] = false;
+^7360983 (evals 2026-10-22 10:55:23 +0200 154)     }
+^7360983 (evals 2026-10-22 10:55:23 +0200 155) 
+^7360983 (evals 2026-10-22 10:55:23 +0200 156)     // Also apply to all aliases of this name (handles --no-main for aliases)
+^7360983 (evals 2026-10-22 10:55:23 +0200 157)     const aliases = mainToAliases.get(name);
+^7360983 (evals 2026-10-22 10:55:23 +0200 158)     if (aliases) {
+^7360983 (evals 2026-10-22 10:55:23 +0200 159)       for (const alias of aliases) {
+^7360983 (evals 2026-10-22 10:55:23 +0200 160)         (out as any)[alias] = false;
+^7360983 (evals 2026-10-22 10:55:23 +0200 161)       }
+^7360983 (evals 2026-10-22 10:55:23 +0200 162)     }
+^7360983 (evals 2026-10-22 10:55:23 +0200 163)   }
+^7360983 (evals 2026-10-22 10:55:23 +0200 164) 
+^7360983 (evals 2026-10-22 10:55:23 +0200 165)   // Propagate values between aliases
+^7360983 (evals 2026-10-22 10:55:23 +0200 166)   for (const [alias, main] of aliasToMain.entries()) {
+^7360983 (evals 2026-10-22 10:55:23 +0200 167)     if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
+^7360983 (evals 2026-10-22 10:55:23 +0200 168)       (out as any)[main] = (out as any)[alias];
+^7360983 (evals 2026-10-22 10:55:23 +0200 169)     }
+^7360983 (evals 2026-10-22 10:55:23 +0200 170)     if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
+^7360983 (evals 2026-10-22 10:55:23 +0200 171)       (out as any)[alias] = (out as any)[main];
+^7360983 (evals 2026-10-22 10:55:23 +0200 172)     }
+^7360983 (evals 2026-10-22 10:55:23 +0200 173)   }
+^7360983 (evals 2026-10-22 10:55:23 +0200 174) 
+^7360983 (evals 2026-10-22 10:55:23 +0200 175)   return out;
+^7360983 (evals 2026-10-22 10:55:23 +0200 176) }

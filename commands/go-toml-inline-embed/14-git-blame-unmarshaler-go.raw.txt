@@ -1,0 +1,2335 @@
+$ git blame unmarshaler.go
+^5e2a8df (evals 2026-10-22 10:53:55 +0200    1) package toml
+^5e2a8df (evals 2026-10-22 10:53:55 +0200    2) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200    3) import (
+^5e2a8df (evals 2026-10-22 10:53:55 +0200    4) 	"encoding"
+^5e2a8df (evals 2026-10-22 10:53:55 +0200    5) 	"errors"
+^5e2a8df (evals 2026-10-22 10:53:55 +0200    6) 	"fmt"
+^5e2a8df (evals 2026-10-22 10:53:55 +0200    7) 	"io"
+^5e2a8df (evals 2026-10-22 10:53:55 +0200    8) 	"math"
+^5e2a8df (evals 2026-10-22 10:53:55 +0200    9) 	"reflect"
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   10) 	"strconv"
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   11) 	"strings"
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   12) 	"sync"
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   13) 	"time"
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   14) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   15) 	"github.com/pelletier/go-toml/v2/internal/tracker"
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   16) 	"github.com/pelletier/go-toml/v2/unstable"
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   17) )
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   18) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   19) // decoderPool recycles decoders (and their internal buffers: parser arena,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   20) // seen-tracker entries, scratch buffers) across calls to Unmarshal and
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   21) // Decode.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   22) var decoderPool = sync.Pool{
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   23) 	New: func() interface{} { return &decoder{} },
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   24) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   25) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   26) func getDecoder(strictMode, unmarshalerInterface bool) *decoder {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   27) 	d := decoderPool.Get().(*decoder)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   28) 	d.reset()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   29) 	d.strict.Enabled = strictMode
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   30) 	d.unmarshalerInterface = unmarshalerInterface
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   31) 	return d
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   32) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   33) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   34) func putDecoder(d *decoder) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   35) 	decoderPool.Put(d)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   36) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   37) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   38) // reset clears the per-document state of the decoder, keeping the allocated
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   39) // buffers for reuse.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   40) func (d *decoder) reset() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   41) 	d.seen.Reset()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   42) 	d.tableKey = d.tableKey[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   43) 	d.skipUntilTable = false
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   44) 	d.path = d.path[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   45) 	d.captures = d.captures[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   46) 	d.captureIdx = -1
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   47) 	d.segIdx = d.segIdx[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   48) 	// Reuse the array-table counter slots across documents instead of
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   49) 	// deleting them: a zeroed slot is indistinguishable from an absent one,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   50) 	// and keeping it alive means setArrayCount does not have to allocate a new
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   51) 	// *int every time the same path reappears. A safety valve bounds the table
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   52) 	// for adversarial inputs that introduce unboundedly many distinct paths.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   53) 	if len(d.arrayCounts) > 1<<14 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   54) 		d.arrayCounts = nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   55) 	} else {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   56) 		for _, p := range d.arrayCounts {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   57) 			*p = 0
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   58) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   59) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   60) 	d.tableTarget = reflect.Value{}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   61) 	d.tableTargetValid = false
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   62) 	d.tableFlush = d.tableFlush[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   63) 	d.tableParentSlot = slotWriter{}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   64) 	d.keyParts = d.keyParts[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   65) 	d.strict.Reset()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   66) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   67) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   68) // Unmarshal deserializes a TOML document into a Go value.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   69) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   70) // It is a shortcut for Decoder.Decode() with the default options.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   71) func Unmarshal(data []byte, v interface{}) error {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   72) 	d := getDecoder(false, false)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   73) 	err := d.unmarshal(data, v)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   74) 	putDecoder(d)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   75) 	return err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   76) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   77) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   78) // Decoder reads and decode a TOML document from an input stream.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   79) type Decoder struct {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   80) 	// input
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   81) 	r io.Reader
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   82) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   83) 	// global settings
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   84) 	strict bool
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   85) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   86) 	// toggles unmarshaler interface
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   87) 	unmarshalerInterface bool
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   88) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   89) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   90) // NewDecoder creates a new Decoder that will read from r.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   91) func NewDecoder(r io.Reader) *Decoder {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   92) 	return &Decoder{r: r}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   93) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   94) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   95) // DisallowUnknownFields causes the Decoder to return an error when the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   96) // destination is a struct and the input contains a key that does not match a
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   97) // non-ignored field.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   98) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200   99) // In that case, the Decoder returns a StrictMissingError that can be used to
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  100) // retrieve the individual errors as well as generate a human readable
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  101) // description of the missing fields.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  102) func (d *Decoder) DisallowUnknownFields() *Decoder {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  103) 	d.strict = true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  104) 	return d
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  105) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  106) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  107) // EnableUnmarshalerInterface allows to enable unmarshaler interface.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  108) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  109) // With this feature enabled, types implementing the unstable.Unmarshaler
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  110) // interface can be decoded from any structure of the document. It allows types
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  111) // that don't have a straightforward TOML representation to provide their own
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  112) // decoding logic.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  113) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  114) // The UnmarshalTOML method receives raw TOML bytes:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  115) //   - For single values: the raw value bytes (e.g., `"hello"` for a string)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  116) //   - For tables: all key-value lines belonging to that table
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  117) //   - For inline tables/arrays: the raw bytes of the inline structure
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  118) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  119) // The unstable.RawMessage type can be used to capture raw TOML bytes for
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  120) // later processing, similar to json.RawMessage.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  121) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  122) // *Unstable:* This method does not follow the compatibility guarantees of
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  123) // semver. It can be changed or removed without a new major version being
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  124) // issued.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  125) func (d *Decoder) EnableUnmarshalerInterface() *Decoder {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  126) 	d.unmarshalerInterface = true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  127) 	return d
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  128) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  129) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  130) // Decode the whole content of r into v.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  131) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  132) // By default, values in the document that don't exist in the target Go value
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  133) // are ignored. See Decoder.DisallowUnknownFields() to change this behavior.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  134) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  135) // When a TOML local date, time, or date-time is decoded into a time.Time, its
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  136) // value is represented in time.Local timezone. Otherwise the appropriate Local*
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  137) // structure is used. For time values, precision up to the nanosecond is
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  138) // supported by truncating extra digits.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  139) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  140) // Empty tables decoded in an interface{} create an empty initialized
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  141) // map[string]interface{}.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  142) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  143) // Types implementing the encoding.TextUnmarshaler interface are decoded from a
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  144) // TOML string.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  145) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  146) // When decoding a number, go-toml will return an error if the number is out of
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  147) // bounds for the target type (which includes negative numbers when decoding
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  148) // into an unsigned int).
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  149) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  150) // If an error occurs while decoding the content of the document, this function
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  151) // returns a toml.DecodeError, providing context about the issue. When using
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  152) // strict mode and a field is missing, a `toml.StrictMissingError` is
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  153) // returned. In any other case, this function returns a standard Go error.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  154) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  155) // # Type mapping
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  156) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  157) // List of supported TOML types and their associated accepted Go types:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  158) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  159) //	String           -> string
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  160) //	Integer          -> uint*, int*, depending on size
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  161) //	Float            -> float*, depending on size
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  162) //	Boolean          -> bool
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  163) //	Offset Date-Time -> time.Time
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  164) //	Local Date-time  -> LocalDateTime, time.Time
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  165) //	Local Date       -> LocalDate, time.Time
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  166) //	Local Time       -> LocalTime, time.Time
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  167) //	Array            -> slice and array, depending on elements types
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  168) //	Table            -> map and struct
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  169) //	Inline Table     -> same as Table
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  170) //	Array of Tables  -> same as Array and Table
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  171) func (d *Decoder) Decode(v interface{}) error {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  172) 	b, err := io.ReadAll(d.r)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  173) 	if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  174) 		return fmt.Errorf("toml: %w", err)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  175) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  176) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  177) 	dec := getDecoder(d.strict, d.unmarshalerInterface)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  178) 	err = dec.unmarshal(b, v)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  179) 	putDecoder(dec)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  180) 	return err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  181) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  182) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  183) // pathPart is one part of the key path leading to a value. Parts that come
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  184) // from the current table header only carry a name; parts that come from the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  185) // key of the current key-value expression also carry the AST node, and their
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  186) // name is materialized lazily to avoid allocations.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  187) type pathPart struct {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  188) 	name string
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  189) 	node *unstable.Node
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  190) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  191) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  192) // bytes returns the raw bytes of the key part.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  193) func (p *pathPart) bytes() []byte {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  194) 	if p.node != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  195) 		return p.node.Data
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  196) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  197) 	return []byte(p.name)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  198) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  199) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  200) // str returns the key part as a string, possibly allocating.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  201) func (p *pathPart) str() string {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  202) 	if p.node != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  203) 		return string(p.node.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  204) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  205) 	return p.name
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  206) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  207) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  208) // rawCapture accumulates the raw bytes fed to a type implementing
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  209) // unstable.Unmarshaler for a table target. The target is identified by the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  210) // parts of its key and the array-table indexes in effect when the capture
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  211) // was created, so that it can be located again once the whole document has
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  212) // been processed (the address of the target may change as slices grow).
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  213) type rawCapture struct {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  214) 	names []string
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  215) 	// indexes[i] is the index to use when reaching a slice or array right
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  216) 	// before consuming names[i]. indexes[len(names)] is the index of the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  217) 	// element when the target is an element of an array table. -1 when not
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  218) 	// relevant.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  219) 	indexes []int
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  220) 	buf     []byte
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  221) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  222) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  223) type decoder struct {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  224) 	p unstable.Parser
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  225) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  226) 	// strict mode
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  227) 	strict strict
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  228) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  229) 	// toggles unmarshaler interface
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  230) 	unmarshalerInterface bool
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  231) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  232) 	// tracks the duplicate and type consistency of the keys
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  233) 	seen tracker.SeenTracker
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  234) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  235) 	// path of the current table header, as copied strings
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  236) 	tableKey []string
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  237) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  238) 	// true when the expressions under the current table header cannot be
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  239) 	// stored anywhere and should be skipped
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  240) 	skipUntilTable bool
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  241) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  242) 	// scratch buffer for the key path of the current expression
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  243) 	path []pathPart
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  244) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  245) 	// raw captures for the unmarshaler interface, in order of first
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  246) 	// appearance. captureIdx is the index of the capture the current table
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  247) 	// belongs to, or -1.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  248) 	captures   []rawCapture
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  249) 	captureIdx int
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  250) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  251) 	// segIdx[i] records the array element index used when traversing a
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  252) 	// slice or array right before consuming the i-th part of the current
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  253) 	// table key. Reset for each table expression.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  254) 	segIdx []int
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  255) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  256) 	// arrayCounts tracks the number of elements appended to fixed-size
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  257) 	// arrays used as array tables, keyed by the NUL-joined key parts.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  258) 	// Values are pointer slots so that updating an existing path does not
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  259) 	// allocate a new key string.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  260) 	arrayCounts map[string]*int
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  261) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  262) 	// Cached target of the current table, so that key-values do not need to
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  263) 	// walk the document structure from the root for every expression.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  264) 	// tableFlush holds the write-backs to perform when leaving the table
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  265) 	// (for targets reached through map values, which are copies).
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  266) 	// tableParentSlot stores a replacement of the target itself (e.g. a nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  267) 	// map that was allocated) into its parent.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  268) 	tableTarget      reflect.Value
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  269) 	tableTargetValid bool
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  270) 	tableFlush       []flushOp
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  271) 	tableParentSlot  slotWriter
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  272) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  273) 	// strKey is a reusable string value used as map key, so that map
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  274) 	// operations with string keys do not need to allocate a boxed key for
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  275) 	// every access. It must be refreshed with stringMapKey immediately
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  276) 	// before each use: any recursive call may overwrite it.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  277) 	strKey reflect.Value
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  278) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  279) 	// interned de-duplicates key strings: documents repeat the same keys
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  280) 	// over and over, and the table survives pooling, so repeated decodes
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  281) 	// of similar documents stop allocating key strings altogether.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  282) 	interned map[string]string
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  283) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  284) 	// pathScratch is the buffer used by joinPath.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  285) 	pathScratch []byte
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  286) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  287) 	// keyParts is the reusable buffer holding the decoded parts of the key of
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  288) 	// the current expression in the fused generic decode path.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  289) 	keyParts [][]byte
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  290) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  291) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  292) // slotWriter remembers how to store a value at some location of the target
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  293) // structure. Implemented as a struct instead of a closure to avoid
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  294) // allocations.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  295) type slotWriter struct {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  296) 	kind uint8 // 0: none, 1: slot.Set, 2: m.SetMapIndex(k, ...), 3: m.SetMapIndex(string key ks, ...)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  297) 	slot reflect.Value
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  298) 	m    reflect.Value
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  299) 	k    reflect.Value
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  300) 	ks   string
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  301) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  302) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  303) func (d *decoder) storeSlot(s *slotWriter, nv reflect.Value) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  304) 	switch s.kind {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  305) 	case 1:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  306) 		if s.slot.CanSet() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  307) 			s.slot.Set(nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  308) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  309) 	case 2:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  310) 		s.m.SetMapIndex(s.k, nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  311) 	case 3:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  312) 		s.m.SetMapIndex(d.stringMapKey(s.ks), nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  313) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  314) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  315) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  316) // flushOp stores val using w when the table is flushed.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  317) type flushOp struct {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  318) 	w   slotWriter
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  319) 	val reflect.Value
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  320) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  321) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  322) // flushTable performs the pending write-backs of the cached table target, in
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  323) // reverse order so that inner copies land before their parents are stored.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  324) func (d *decoder) flushTable() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  325) 	for i := len(d.tableFlush) - 1; i >= 0; i-- {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  326) 		d.storeSlot(&d.tableFlush[i].w, d.tableFlush[i].val)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  327) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  328) 	d.tableFlush = d.tableFlush[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  329) 	d.tableTargetValid = false
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  330) 	d.tableParentSlot = slotWriter{}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  331) 	d.tableTarget = reflect.Value{}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  332) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  333) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  334) // intern returns the string corresponding to the given bytes, reusing a
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  335) // previous allocation when the same key has been seen before.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  336) func (d *decoder) intern(b []byte) string {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  337) 	if s, ok := d.interned[string(b)]; ok { // does not allocate
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  338) 		return s
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  339) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  340) 	if d.interned == nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  341) 		d.interned = make(map[string]string, 64)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  342) 	} else if len(d.interned) >= 1<<14 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  343) 		// Safety valve for adversarial inputs: do not let the table grow
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  344) 		// without bounds.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  345) 		for k := range d.interned {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  346) 			delete(d.interned, k)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  347) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  348) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  349) 	s := string(b)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  350) 	d.interned[s] = s
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  351) 	return s
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  352) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  353) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  354) // partString returns the name of a path part, interning it when it comes
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  355) // from the document.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  356) func (d *decoder) partString(p *pathPart) string {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  357) 	if p.node != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  358) 		return d.intern(p.node.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  359) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  360) 	return p.name
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  361) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  362) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  363) // stringMapKey returns a reflect.Value holding the given string, reusing the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  364) // same allocation every time. The result must be used (the map operation
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  365) // performed) before any recursive call, which may overwrite the buffer.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  366) func (d *decoder) stringMapKey(s string) reflect.Value {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  367) 	if !d.strKey.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  368) 		d.strKey = reflect.New(stringType).Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  369) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  370) 	d.strKey.SetString(s)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  371) 	return d.strKey
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  372) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  373) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  374) // joinPath builds the NUL-joined representation of a key path in the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  375) // decoder's scratch buffer. The result is only valid until the next call.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  376) func (d *decoder) joinPath(parts []string) []byte {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  377) 	d.pathScratch = d.pathScratch[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  378) 	for i, p := range parts {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  379) 		if i > 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  380) 			d.pathScratch = append(d.pathScratch, 0)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  381) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  382) 		d.pathScratch = append(d.pathScratch, p...)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  383) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  384) 	return d.pathScratch
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  385) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  386) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  387) // arrayCount returns the number of elements appended so far to the array
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  388) // table at the given path.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  389) func (d *decoder) arrayCount(key []byte) int {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  390) 	if d.arrayCounts == nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  391) 		return 0
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  392) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  393) 	if p := d.arrayCounts[string(key)]; p != nil { // does not allocate
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  394) 		return *p
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  395) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  396) 	return 0
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  397) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  398) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  399) func (d *decoder) setArrayCount(key []byte, n int) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  400) 	if d.arrayCounts == nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  401) 		d.arrayCounts = map[string]*int{}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  402) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  403) 	if p := d.arrayCounts[string(key)]; p != nil { // does not allocate
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  404) 		*p = n
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  405) 		return
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  406) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  407) 	v := n
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  408) 	d.arrayCounts[string(key)] = &v
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  409) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  410) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  411) // resetChildArrayCounts forgets the counts of all the array tables under
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  412) // the given path, so that a new element starts fresh.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  413) func (d *decoder) resetChildArrayCounts(key []byte) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  414) 	if len(d.arrayCounts) == 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  415) 		return
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  416) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  417) 	for k, p := range d.arrayCounts {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  418) 		// Prefix match without building the prefix string: same bytes as
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  419) 		// key, followed by the NUL separator.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  420) 		if len(k) > len(key) && k[len(key)] == 0 && k[:len(key)] == string(key) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  421) 			// Zero instead of delete: the next element of the parent table
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  422) 			// will reuse the slot without allocating a new key.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  423) 			*p = 0
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  424) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  425) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  426) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  427) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  428) func (d *decoder) typeMismatchError(toml string, target reflect.Type, highlight []byte) error {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  429) 	return &typeMismatchError{
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  430) 		toml:      toml,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  431) 		target:    target,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  432) 		highlight: highlight,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  433) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  434) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  435) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  436) type typeMismatchError struct {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  437) 	toml      string
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  438) 	target    reflect.Type
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  439) 	highlight []byte
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  440) 	// key is the TOML key being processed when the mismatch occurred. It is
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  441) 	// populated lazily as the error propagates back up to the key-value
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  442) 	// handler (see contextualizeError).
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  443) 	key Key
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  444) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  445) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  446) func (e *typeMismatchError) Error() string {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  447) 	return fmt.Sprintf("cannot decode TOML %s into %s", e.toml, e.target)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  448) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  449) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  450) // contextualizeError attaches the TOML key currently being processed to errors
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  451) // raised while decoding a key-value expression, so that DecodeError.Key()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  452) // reports the offending key (e.g. on type mismatch errors). The current key is
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  453) // reconstructed from d.path; when the table target is cached, d.path holds only
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  454) // the key-value parts, so the table key prefix is prepended. This only runs on
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  455) // the error path and adds no cost to successful decodes.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  456) func (d *decoder) contextualizeError(err error, withTableKey bool) error {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  457) 	var mm *typeMismatchError
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  458) 	if errors.As(err, &mm) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  459) 		if mm.key == nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  460) 			mm.key = d.currentKey(withTableKey)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  461) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  462) 		return err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  463) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  464) 	var perr *unstable.ParserError
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  465) 	if errors.As(err, &perr) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  466) 		if perr.Key == nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  467) 			perr.Key = d.currentKey(withTableKey)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  468) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  469) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  470) 	return err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  471) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  472) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  473) // currentKey reconstructs the full TOML key being processed from the decoder's
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  474) // path. When withTableKey is true, d.path contains only the key-value parts
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  475) // (the table target is cached) and the table key is prepended.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  476) func (d *decoder) currentKey(withTableKey bool) Key {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  477) 	n := len(d.path)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  478) 	if withTableKey {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  479) 		n += len(d.tableKey)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  480) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  481) 	key := make(Key, 0, n)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  482) 	if withTableKey {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  483) 		key = append(key, d.tableKey...)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  484) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  485) 	for i := range d.path {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  486) 		key = append(key, d.path[i].str())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  487) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  488) 	return key
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  489) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  490) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  491) func (d *decoder) unmarshal(data []byte, v interface{}) error {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  492) 	r := reflect.ValueOf(v)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  493) 	if r.Kind() != reflect.Ptr {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  494) 		return fmt.Errorf("toml: decoding can only be performed into a pointer, not %s", r.Kind())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  495) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  496) 	if r.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  497) 		return errors.New("toml: decoding pointer target cannot be nil")
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  498) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  499) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  500) 	root := r.Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  501) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  502) 	d.captureIdx = -1
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  503) 	d.p.Reset(data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  504) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  505) 	// Fully generic targets (interface{} or map[string]interface{}) are
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  506) 	// decoded straight into native Go maps and slices, with no reflection on
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  507) 	// the document structure at all. This covers the common "decode arbitrary
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  508) 	// TOML into a map" case, including every standard benchmark dataset.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  509) 	if !d.unmarshalerInterface {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  510) 		if k := root.Kind(); k == reflect.Interface || (k == reflect.Map && root.Type() == mapStringInterfaceType) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  511) 			return d.unmarshalFused(root, data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  512) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  513) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  514) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  515) 	for d.p.NextExpression() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  516) 		err := d.handleRootExpression(d.p.Expression(), root)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  517) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  518) 			return d.wrapError(data, err)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  519) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  520) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  521) 	if err := d.p.Error(); err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  522) 		var perr *unstable.ParserError
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  523) 		if errors.As(err, &perr) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  524) 			return wrapDecodeError(data, perr)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  525) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  526) 		return err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  527) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  528) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  529) 	d.flushTable()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  530) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  531) 	// Deliver the accumulated raw documents to the unmarshaler-interface
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  532) 	// targets.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  533) 	for i := range d.captures {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  534) 		nv, err := d.resolveCapture(root, &d.captures[i], 0, false)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  535) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  536) 			return err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  537) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  538) 		if nv.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  539) 			root.Set(nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  540) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  541) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  542) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  543) 	// An empty document into a generic target still initializes it.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  544) 	switch root.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  545) 	case reflect.Map:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  546) 		if root.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  547) 			root.Set(reflect.MakeMap(root.Type()))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  548) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  549) 	case reflect.Interface:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  550) 		if root.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  551) 			root.Set(reflect.ValueOf(map[string]interface{}{}))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  552) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  553) 	default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  554) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  555) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  556) 	return d.strict.Error(data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  557) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  558) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  559) // setAnyKey assigns the value of a key-value into the native map m, following
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  560) // the (possibly dotted) key and creating intermediate maps as needed.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  561) func (d *decoder) setAnyKey(m map[string]interface{}, key unstable.Iterator, value *unstable.Node) error {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  562) 	cur := m
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  563) 	for key.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  564) 		name := d.intern(key.Node().Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  565) 		if key.IsLast() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  566) 			av, err := d.decodeAny(value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  567) 			if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  568) 				return err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  569) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  570) 			cur[name] = av
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  571) 			return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  572) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  573) 		cur = d.anyChildTable(cur, name)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  574) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  575) 	return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  576) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  577) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  578) // anyChildTable returns the child table at name within cur, creating it if
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  579) // absent and descending into the current (last) element when an array table
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  580) // occupies the slot. A non-container in the slot cannot occur for a document
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  581) // the seen-tracker has accepted.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  582) func (d *decoder) anyChildTable(cur map[string]interface{}, name string) map[string]interface{} {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  583) 	switch v := cur[name].(type) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  584) 	case map[string]interface{}:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  585) 		return v
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  586) 	case []interface{}:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  587) 		if len(v) > 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  588) 			if last, ok := v[len(v)-1].(map[string]interface{}); ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  589) 				return last
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  590) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  591) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  592) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  593) 	nm := map[string]interface{}{}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  594) 	cur[name] = nm
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  595) 	return nm
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  596) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  597) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  598) // wrapError gives document context to errors generated while processing an
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  599) // expression.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  600) func (d *decoder) wrapError(data []byte, err error) error {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  601) 	var perr *unstable.ParserError
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  602) 	if errors.As(err, &perr) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  603) 		return wrapDecodeError(data, perr)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  604) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  605) 	var mm *typeMismatchError
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  606) 	if errors.As(err, &mm) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  607) 		return wrapDecodeError(data, &unstable.ParserError{
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  608) 			Highlight: mm.highlight,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  609) 			Message:   mm.Error(),
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  610) 			Key:       mm.key,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  611) 		})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  612) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  613) 	return err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  614) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  615) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  616) // wrapSeenError turns an error returned by SeenTracker.CheckExpression into a
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  617) // ParserError carrying the position and key of the offending expression, so
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  618) // that redefinition and duplicate-key errors are reported as a DecodeError
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  619) // with context (see issue #668).
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  620) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  621) // The highlight spans the expression's key. Unlike Node.Raw, key nodes always
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  622) // carry a Raw range, so this works for tables and array tables too (whose own
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  623) // Raw range is not set by the parser). For a duplicate detected inside an
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  624) // inline table, node is the enclosing key-value expression, so the error
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  625) // points at that expression's key.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  626) func (d *decoder) wrapSeenError(node *unstable.Node, err error) error {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  627) 	if err == nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  628) 		return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  629) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  630) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  631) 	var key Key
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  632) 	var start, end unstable.Range
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  633) 	it := node.Key()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  634) 	for it.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  635) 		n := it.Node()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  636) 		key = append(key, string(n.Data))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  637) 		if len(key) == 1 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  638) 			start = n.Raw
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  639) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  640) 		end = n.Raw
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  641) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  642) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  643) 	var highlight []byte
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  644) 	if len(key) > 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  645) 		highlight = d.p.Raw(unstable.Range{
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  646) 			Offset: start.Offset,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  647) 			Length: end.Offset + end.Length - start.Offset,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  648) 		})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  649) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  650) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  651) 	return &unstable.ParserError{
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  652) 		Highlight: highlight,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  653) 		Message:   strings.TrimPrefix(err.Error(), "toml: "),
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  654) 		Key:       key,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  655) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  656) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  657) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  658) func (d *decoder) handleRootExpression(expr *unstable.Node, root reflect.Value) error {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  659) 	first, err := d.seen.CheckExpression(expr)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  660) 	if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  661) 		return d.wrapSeenError(expr, err)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  662) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  663) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  664) 	switch expr.Kind {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  665) 	case unstable.KeyValue:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  666) 		if d.skipUntilTable {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  667) 			return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  668) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  669) 		if d.captureIdx >= 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  670) 			d.captureKeyValue(expr)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  671) 			return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  672) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  673) 		return d.handleKeyValueExpression(expr, root)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  674) 	case unstable.Table:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  675) 		d.flushTable()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  676) 		d.skipUntilTable = false
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  677) 		d.captureIdx = -1
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  678) 		d.strict.EnterTable(expr)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  679) 		return d.handleTableExpression(expr, root, false, first)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  680) 	case unstable.ArrayTable:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  681) 		d.flushTable()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  682) 		d.skipUntilTable = false
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  683) 		d.captureIdx = -1
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  684) 		d.strict.EnterTable(expr)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  685) 		return d.handleTableExpression(expr, root, true, first)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  686) 	default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  687) 		return unstable.NewParserError(expr.Data, "unsupported expression kind %s", expr.Kind)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  688) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  689) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  690) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  691) // updateTableKey copies the parts of the key of a table expression into
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  692) // tableKey.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  693) func (d *decoder) updateTableKey(expr *unstable.Node) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  694) 	d.tableKey = d.tableKey[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  695) 	it := expr.Key()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  696) 	for it.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  697) 		d.tableKey = append(d.tableKey, d.intern(it.Node().Data))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  698) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  699) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  700) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  701) func (d *decoder) handleTableExpression(expr *unstable.Node, root reflect.Value, isArrayTable bool, first bool) error {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  702) 	d.updateTableKey(expr)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  703) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  704) 	// Check whether this table belongs to an exisiting raw capture (split
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  705) 	// tables, or children of a table assigned to an Unmarshaler).
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  706) 	if d.unmarshalerInterface {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  707) 		if d.resumeCapture(expr) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  708) 			return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  709) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  710) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  711) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  712) 	// Reset the per-segment array indexes.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  713) 	d.segIdx = d.segIdx[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  714) 	for i := 0; i <= len(d.tableKey); i++ {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  715) 		d.segIdx = append(d.segIdx, -1)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  716) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  717) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  718) 	return d.walkTable(root, expr, isArrayTable, first)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  719) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  720) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  721) // newContainerElem returns a fresh element for a slice of the given element
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  722) // type. Plain interface elements start out as an empty table.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  723) func newContainerElem(et reflect.Type) reflect.Value {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  724) 	if et == interfaceType {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  725) 		return reflect.ValueOf(map[string]interface{}{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  726) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  727) 	return reflect.New(et).Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  728) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  729) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  730) // walkTable processes a [table] or [[array table]] header: it creates the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  731) // intermediate containers, appends array-table elements, applies the strict
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  732) // policy, registers unmarshaler-interface captures, and caches the target
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  733) // container so that the key-values that follow are stored directly.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  734) //
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  735) // Map values are not addressable: when one needs in-place mutations (struct
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  736) // or array values), a copy is made and registered to be stored back when the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  737) // table changes (see flushTable). Maps and slices are references and are
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  738) // traversed without copies.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  739) func (d *decoder) walkTable(root reflect.Value, expr *unstable.Node, isArrayTable bool, first bool) error {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  740) 	v := root
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  741) 	pf := slotWriter{kind: 1, slot: root}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  742) 	idx := 0
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  743) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  744) walk:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  745) 	for {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  746) 		// Dereference pointers in place.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  747) 		for v.Kind() == reflect.Ptr {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  748) 			if v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  749) 				v.Set(reflect.New(v.Type().Elem()))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  750) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  751) 			elem := v.Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  752) 			pf = slotWriter{kind: 1, slot: elem}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  753) 			v = elem
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  754) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  755) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  756) 		// Tables assigned to a type implementing the unmarshaler interface
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  757) 		// are captured as raw bytes, delivered once the document is read.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  758) 		if d.unmarshalerInterface && hasUnmarshaler(v) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  759) 			d.startCapture(idx, expr)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  760) 			return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  761) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  762) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  763) 		if idx >= len(d.tableKey) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  764) 			break walk
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  765) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  766) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  767) 		name := d.tableKey[idx]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  768) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  769) 		switch v.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  770) 		case reflect.Interface:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  771) 			if !v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  772) 				c := v.Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  773) 				if k := c.Kind(); k == reflect.Map || k == reflect.Slice {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  774) 					// Reference types: mutations are visible through the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  775) 					// existing interface value.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  776) 					v = c
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  777) 					continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  778) 				}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  779) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  780) 			// Anything else is replaced by a fresh generic map.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  781) 			if !mapStringInterfaceType.AssignableTo(v.Type()) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  782) 				return unstable.NewParserError(d.p.Raw(expr.Raw), "cannot store a table in a %s", v.Type())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  783) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  784) 			fresh := reflect.ValueOf(map[string]interface{}{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  785) 			d.storeSlot(&pf, fresh)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  786) 			v = fresh
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  787) 		case reflect.Slice:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  788) 			if v.Len() == 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  789) 				// Implicit creation of the first element: the array table
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  790) 				// that would create it has not been seen yet (issue 995).
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  791) 				if v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  792) 					v = reflect.MakeSlice(v.Type(), 0, 4)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  793) 				}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  794) 				v = reflect.Append(v, newContainerElem(v.Type().Elem()))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  795) 				d.storeSlot(&pf, v)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  796) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  797) 			n := v.Len() - 1
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  798) 			d.segIdx[idx] = n
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  799) 			elem := v.Index(n)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  800) 			pf = slotWriter{kind: 1, slot: elem}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  801) 			v = elem
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  802) 		case reflect.Array:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  803) 			key := d.joinPath(d.tableKey[:idx])
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  804) 			cnt := d.arrayCount(key)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  805) 			if cnt == 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  806) 				cnt = 1
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  807) 				d.setArrayCount(key, 1)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  808) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  809) 			if cnt > v.Len() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  810) 				return unstable.NewParserError(d.p.Raw(expr.Raw), "cannot reach element %d of array of size %d", cnt-1, v.Len())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  811) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  812) 			d.segIdx[idx] = cnt - 1
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  813) 			elem := v.Index(cnt - 1)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  814) 			pf = slotWriter{kind: 1, slot: elem}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  815) 			v = elem
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  816) 		case reflect.Map:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  817) 			if v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  818) 				nm := reflect.MakeMap(v.Type())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  819) 				d.storeSlot(&pf, nm)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  820) 				v = nm
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  821) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  822) 			var key reflect.Value
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  823) 			var w slotWriter
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  824) 			if v.Type().Key() == stringType {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  825) 				key = d.stringMapKey(name)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  826) 				w = slotWriter{kind: 3, m: v, ks: name}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  827) 			} else {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  828) 				k, err := makeMapKey(v.Type().Key(), name)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  829) 				if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  830) 					return err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  831) 				}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  832) 				key = k
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  833) 				w = slotWriter{kind: 2, m: v, k: k}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  834) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  835) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  836) 			elem := v.MapIndex(key)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  837) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  838) 			// The last part of an array table is finalized as a slice
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  839) 			// container: do not materialize a table for it.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  840) 			if isArrayTable && idx == len(d.tableKey)-1 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  841) 				et := v.Type().Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  842) 				switch et.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  843) 				case reflect.Interface, reflect.Slice, reflect.Array:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  844) 					if elem.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  845) 						v = elem
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  846) 					} else {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  847) 						v = reflect.Zero(et)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  848) 					}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  849) 					pf = w
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  850) 					idx++
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  851) 					continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  852) 				default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  853) 				}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  854) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  855) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  856) 			if elem.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  857) 				ce := elem
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  858) 				ceIface := false
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  859) 				if ce.Kind() == reflect.Interface {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  860) 					ceIface = true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  861) 					if !ce.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  862) 						ce = ce.Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  863) 					}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  864) 				}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  865) 				switch ce.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  866) 				case reflect.Map, reflect.Slice:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  867) 					pf = w
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  868) 					v = ce
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  869) 				case reflect.Ptr:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  870) 					if ce.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  871) 						np := reflect.New(ce.Type().Elem())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  872) 						d.storeSlot(&w, np)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  873) 						ce = np
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  874) 					}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  875) 					pf = w
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  876) 					v = ce
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  877) 				case reflect.Struct, reflect.Array:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  878) 					if ceIface {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  879) 						// Interface-held non-generic content is replaced.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  880) 						fresh := reflect.ValueOf(map[string]interface{}{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  881) 						d.storeSlot(&w, fresh)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  882) 						pf = w
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  883) 						v = fresh
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  884) 					} else {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  885) 						tmp := reflect.New(elem.Type()).Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  886) 						tmp.Set(elem)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  887) 						d.tableFlush = append(d.tableFlush, flushOp{w: w, val: tmp})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  888) 						pf = slotWriter{kind: 1, slot: tmp}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  889) 						v = tmp
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  890) 					}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  891) 				default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  892) 					if !ceIface {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  893) 						return unstable.NewParserError(d.p.Raw(expr.Raw), "cannot store a table in a %s", ce.Type())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  894) 					}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  895) 					fresh := reflect.ValueOf(map[string]interface{}{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  896) 					d.storeSlot(&w, fresh)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  897) 					pf = w
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  898) 					v = fresh
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  899) 				}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  900) 			} else {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  901) 				et := v.Type().Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  902) 				switch et.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  903) 				case reflect.Interface:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  904) 					if !mapStringInterfaceType.AssignableTo(et) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  905) 						return unstable.NewParserError(d.p.Raw(expr.Raw), "cannot store a table in a %s", et)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  906) 					}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  907) 					fresh := reflect.ValueOf(map[string]interface{}{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  908) 					d.storeSlot(&w, fresh)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  909) 					pf = w
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  910) 					v = fresh
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  911) 				case reflect.Map:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  912) 					nm := reflect.MakeMap(et)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  913) 					d.storeSlot(&w, nm)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  914) 					pf = w
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  915) 					v = nm
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  916) 				case reflect.Ptr:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  917) 					np := reflect.New(et.Elem())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  918) 					d.storeSlot(&w, np)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  919) 					pf = w
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  920) 					v = np
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  921) 				case reflect.Struct, reflect.Array, reflect.Slice:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  922) 					tmp := reflect.New(et).Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  923) 					d.tableFlush = append(d.tableFlush, flushOp{w: w, val: tmp})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  924) 					pf = slotWriter{kind: 1, slot: tmp}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  925) 					v = tmp
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  926) 				default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  927) 					return unstable.NewParserError(d.p.Raw(expr.Raw), "cannot store a table in a %s", et)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  928) 				}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  929) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  930) 			idx++
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  931) 		case reflect.Struct:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  932) 			plan := planForType(v.Type())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  933) 			f, found := plan.lookup(name)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  934) 			if !found {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  935) 				d.strict.MissingTable(expr)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  936) 				d.skipUntilTable = true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  937) 				return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  938) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  939) 			fv := fieldByIndexAlloc(v, f.index)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  940) 			pf = slotWriter{kind: 1, slot: fv}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  941) 			v = fv
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  942) 			idx++
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  943) 		default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  944) 			return unstable.NewParserError(d.p.Raw(expr.Raw), "cannot store a table in a %s", v.Kind())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  945) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  946) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  947) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  948) 	if isArrayTable {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  949) 		akey := d.joinPath(d.tableKey)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  950) 		d.resetChildArrayCounts(akey)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  951) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  952) 		// Unwrap an interface container.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  953) 		if v.Kind() == reflect.Interface {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  954) 			var slice []interface{}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  955) 			if !v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  956) 				if s, ok := v.Elem().Interface().([]interface{}); ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  957) 					slice = s
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  958) 				}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  959) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  960) 			if first {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  961) 				slice = slice[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  962) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  963) 			m := map[string]interface{}{}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  964) 			slice = append(slice, m)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  965) 			sv := reflect.ValueOf(slice)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  966) 			d.storeSlot(&pf, sv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  967) 			d.setArrayCount(akey, len(slice))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  968) 			d.segIdx[len(d.tableKey)] = len(slice) - 1
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  969) 			d.tableTarget = reflect.ValueOf(m)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  970) 			d.tableParentSlot = slotWriter{kind: 1, slot: sv.Index(len(slice) - 1)}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  971) 			d.tableTargetValid = true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  972) 			return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  973) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  974) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  975) 		switch v.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  976) 		case reflect.Slice:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  977) 			if v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  978) 				v = reflect.MakeSlice(v.Type(), 0, 4)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  979) 			} else if first {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  980) 				v = v.Slice(0, 0)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  981) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  982) 			v = reflect.Append(v, newContainerElem(v.Type().Elem()))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  983) 			d.storeSlot(&pf, v)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  984) 			n := v.Len() - 1
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  985) 			d.setArrayCount(akey, n+1)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  986) 			d.segIdx[len(d.tableKey)] = n
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  987) 			elem := v.Index(n)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  988) 			if d.unmarshalerInterface && hasUnmarshaler(elem) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  989) 				d.startCapture(len(d.tableKey), expr)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  990) 				return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  991) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  992) 			pf = slotWriter{kind: 1, slot: elem}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  993) 			v = elem
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  994) 		case reflect.Array:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  995) 			cnt := d.arrayCount(akey)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  996) 			if first {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  997) 				cnt = 0
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  998) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200  999) 			if cnt >= v.Len() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1000) 				return unstable.NewParserError(d.p.Raw(expr.Raw), "array of size %d is too small to store this array table", v.Len())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1001) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1002) 			v.Index(cnt).Set(reflect.Zero(v.Type().Elem()))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1003) 			d.setArrayCount(akey, cnt+1)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1004) 			d.segIdx[len(d.tableKey)] = cnt
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1005) 			elem := v.Index(cnt)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1006) 			if d.unmarshalerInterface && hasUnmarshaler(elem) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1007) 				d.startCapture(len(d.tableKey), expr)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1008) 				return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1009) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1010) 			pf = slotWriter{kind: 1, slot: elem}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1011) 			v = elem
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1012) 		default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1013) 			return fmt.Errorf("toml: cannot store an array table in a %s", v.Kind())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1014) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1015) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1016) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1017) 	// Settle on the concrete container for the key-values that follow.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1018) 	for {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1019) 		switch v.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1020) 		case reflect.Ptr:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1021) 			if v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1022) 				if !v.CanSet() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1023) 					return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1024) 				}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1025) 				v.Set(reflect.New(v.Type().Elem()))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1026) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1027) 			elem := v.Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1028) 			pf = slotWriter{kind: 1, slot: elem}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1029) 			v = elem
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1030) 			continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1031) 		case reflect.Interface:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1032) 			if !v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1033) 				c := v.Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1034) 				if c.Type() == mapStringInterfaceType || c.Type() == sliceInterfaceType {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1035) 					v = c
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1036) 					continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1037) 				}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1038) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1039) 			if !mapStringInterfaceType.AssignableTo(v.Type()) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1040) 				return fmt.Errorf("toml: cannot store a table in a %s", v.Type())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1041) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1042) 			fresh := reflect.ValueOf(map[string]interface{}{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1043) 			d.storeSlot(&pf, fresh)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1044) 			v = fresh
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1045) 			continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1046) 		case reflect.Slice:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1047) 			if v.Len() == 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1048) 				if v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1049) 					v = reflect.MakeSlice(v.Type(), 0, 4)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1050) 				}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1051) 				v = reflect.Append(v, newContainerElem(v.Type().Elem()))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1052) 				d.storeSlot(&pf, v)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1053) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1054) 			n := v.Len() - 1
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1055) 			d.segIdx[len(d.tableKey)] = n
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1056) 			elem := v.Index(n)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1057) 			pf = slotWriter{kind: 1, slot: elem}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1058) 			v = elem
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1059) 			continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1060) 		case reflect.Map, reflect.Struct:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1061) 			d.tableTarget = v
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1062) 			d.tableParentSlot = pf
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1063) 			d.tableTargetValid = true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1064) 			return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1065) 		default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1066) 			return fmt.Errorf("toml: cannot store a table in a %s", v.Kind())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1067) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1068) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1069) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1070) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1071) // resumeCapture looks for an existing capture this table expression belongs
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1072) // to. It returns true if the expression was consumed.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1073) func (d *decoder) resumeCapture(expr *unstable.Node) bool {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1074) 	// Iterate in reverse, so that tables attach to the latest element of
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1075) 	// array tables.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1076) 	for i := len(d.captures) - 1; i >= 0; i-- {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1077) 		c := &d.captures[i]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1078) 		if len(d.tableKey) < len(c.names) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1079) 			continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1080) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1081) 		if expr.Kind == unstable.ArrayTable && len(d.tableKey) == len(c.names) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1082) 			// A new element of an array table is not part of the capture of
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1083) 			// the previous element.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1084) 			continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1085) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1086) 		match := true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1087) 		for j, p := range c.names {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1088) 			if d.tableKey[j] != p {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1089) 				match = false
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1090) 				break
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1091) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1092) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1093) 		if !match {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1094) 			continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1095) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1096) 		d.captureIdx = i
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1097) 		if len(d.tableKey) > len(c.names) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1098) 			d.appendCaptureHeader(c, expr, len(c.names))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1099) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1100) 		return true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1101) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1102) 	return false
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1103) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1104) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1105) // appendCaptureHeader writes the table header of expr in the capture buffer,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1106) // adjusted to be relative to the capture root.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1107) func (d *decoder) appendCaptureHeader(c *rawCapture, expr *unstable.Node, skip int) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1108) 	c.buf = append(c.buf, '[')
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1109) 	if expr.Kind == unstable.ArrayTable {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1110) 		c.buf = append(c.buf, '[')
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1111) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1112) 	c.buf = append(c.buf, d.rawKeySuffix(expr, skip)...)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1113) 	c.buf = append(c.buf, ']')
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1114) 	if expr.Kind == unstable.ArrayTable {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1115) 		c.buf = append(c.buf, ']')
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1116) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1117) 	c.buf = append(c.buf, '\n')
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1118) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1119) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1120) // rawKeySuffix returns the raw bytes of the key of the expression, skipping
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1121) // the first n parts.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1122) func (d *decoder) rawKeySuffix(expr *unstable.Node, n int) []byte {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1123) 	it := expr.Key()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1124) 	idx := 0
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1125) 	var start, end unstable.Range
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1126) 	for it.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1127) 		if idx >= n {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1128) 			r := it.Node().Raw
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1129) 			if start.Length == 0 && start.Offset == 0 && idx == n {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1130) 				start = r
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1131) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1132) 			end = r
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1133) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1134) 		idx++
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1135) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1136) 	return d.p.Data()[start.Offset : end.Offset+end.Length]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1137) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1138) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1139) // startCapture registers a new capture for the table at the given path
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1140) // (prefix of tableKey).
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1141) func (d *decoder) startCapture(pathLen int, expr *unstable.Node) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1142) 	names := make([]string, pathLen)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1143) 	copy(names, d.tableKey[:pathLen])
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1144) 	indexes := make([]int, pathLen+1)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1145) 	copy(indexes, d.segIdx[:pathLen+1])
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1146) 	d.captures = append(d.captures, rawCapture{
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1147) 		names:   names,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1148) 		indexes: indexes,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1149) 	})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1150) 	d.captureIdx = len(d.captures) - 1
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1151) 	if pathLen < len(d.tableKey) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1152) 		d.appendCaptureHeader(&d.captures[d.captureIdx], expr, pathLen)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1153) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1154) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1155) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1156) // resolveCapture walks back to the target of a capture and delivers the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1157) // accumulated raw bytes to its UnmarshalTOML implementation.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1158) func (d *decoder) resolveCapture(v reflect.Value, c *rawCapture, idx int, indexed bool) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1159) 	if v.Kind() == reflect.Ptr {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1160) 		if v.Type().Implements(unmarshalerType) && idx == len(c.names) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1161) 			u, _ := unmarshalerOf(v)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1162) 			return v, u.UnmarshalTOML(c.buf)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1163) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1164) 		if v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1165) 			v.Set(reflect.New(v.Type().Elem()))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1166) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1167) 		nv, err := d.resolveCapture(v.Elem(), c, idx, indexed)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1168) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1169) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1170) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1171) 		if nv.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1172) 			v.Elem().Set(nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1173) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1174) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1175) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1176) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1177) 	if !indexed && (v.Kind() == reflect.Slice || v.Kind() == reflect.Array) && c.indexes[idx] >= 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1178) 		i := c.indexes[idx]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1179) 		if i >= v.Len() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1180) 			return reflect.Value{}, errors.New("toml: internal error: capture index out of range")
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1181) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1182) 		elem := v.Index(i)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1183) 		nv, err := d.resolveCapture(elem, c, idx, true)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1184) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1185) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1186) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1187) 		if nv.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1188) 			elem.Set(nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1189) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1190) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1191) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1192) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1193) 	if idx == len(c.names) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1194) 		u, ok := unmarshalerOf(v)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1195) 		if !ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1196) 			return reflect.Value{}, errors.New("toml: internal error: capture target does not implement UnmarshalTOML")
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1197) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1198) 		return v, u.UnmarshalTOML(c.buf)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1199) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1200) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1201) 	name := c.names[idx]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1202) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1203) 	switch v.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1204) 	case reflect.Struct:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1205) 		plan := planForType(v.Type())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1206) 		f, found := plan.lookup(name)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1207) 		if !found {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1208) 			return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1209) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1210) 		fv := fieldByIndexAlloc(v, f.index)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1211) 		nv, err := d.resolveCapture(fv, c, idx+1, false)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1212) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1213) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1214) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1215) 		if nv.IsValid() && fv.CanSet() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1216) 			fv.Set(nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1217) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1218) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1219) 	case reflect.Map:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1220) 		key, err := makeMapKey(v.Type().Key(), name)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1221) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1222) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1223) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1224) 		if v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1225) 			v = reflect.MakeMap(v.Type())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1226) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1227) 		elem := reflect.New(v.Type().Elem()).Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1228) 		if existing := v.MapIndex(key); existing.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1229) 			elem.Set(existing)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1230) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1231) 		nv, err := d.resolveCapture(elem, c, idx+1, false)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1232) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1233) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1234) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1235) 		if nv.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1236) 			v.SetMapIndex(key, nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1237) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1238) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1239) 	case reflect.Interface:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1240) 		elem := elemOrNewMap(v)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1241) 		nv, err := d.resolveCapture(elem, c, idx, indexed)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1242) 		if err != nil || !nv.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1243) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1244) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1245) 		return nv, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1246) 	default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1247) 		return reflect.Value{}, fmt.Errorf("toml: internal error: cannot resolve capture target through %s", v.Kind())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1248) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1249) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1250) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1251) // captureKeyValue appends the raw bytes of a key-value expression to the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1252) // current capture.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1253) func (d *decoder) captureKeyValue(expr *unstable.Node) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1254) 	c := &d.captures[d.captureIdx]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1255) 	c.buf = append(c.buf, d.p.Raw(expr.Raw)...)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1256) 	c.buf = append(c.buf, '\n')
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1257) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1258) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1259) // hasUnmarshaler reports whether v can provide an unstable.Unmarshaler,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1260) // without allocating anything.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1261) func hasUnmarshaler(v reflect.Value) bool {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1262) 	t := v.Type()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1263) 	return t.Implements(unmarshalerType) || (v.CanAddr() && reflect.PtrTo(t).Implements(unmarshalerType))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1264) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1265) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1266) // makeMapKey converts a TOML key into a value usable as the given map key
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1267) // type.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1268) func makeMapKey(kt reflect.Type, name string) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1269) 	switch kt.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1270) 	case reflect.String:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1271) 		return reflect.ValueOf(name).Convert(kt), nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1272) 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1273) 		i, err := strconv.ParseInt(name, 10, 64)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1274) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1275) 			return reflect.Value{}, fmt.Errorf("toml: cannot parse map key %q as %s: %w", name, kt, err)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1276) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1277) 		k := reflect.New(kt).Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1278) 		if k.OverflowInt(i) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1279) 			return reflect.Value{}, fmt.Errorf("toml: map key %q overflows %s", name, kt)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1280) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1281) 		k.SetInt(i)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1282) 		return k, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1283) 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1284) 		u, err := strconv.ParseUint(name, 10, 64)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1285) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1286) 			return reflect.Value{}, fmt.Errorf("toml: cannot parse map key %q as %s: %w", name, kt, err)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1287) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1288) 		k := reflect.New(kt).Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1289) 		if k.OverflowUint(u) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1290) 			return reflect.Value{}, fmt.Errorf("toml: map key %q overflows %s", name, kt)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1291) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1292) 		k.SetUint(u)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1293) 		return k, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1294) 	case reflect.Float32, reflect.Float64:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1295) 		f, err := strconv.ParseFloat(name, 64)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1296) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1297) 			return reflect.Value{}, fmt.Errorf("toml: cannot parse map key %q as %s: %w", name, kt, err)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1298) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1299) 		k := reflect.New(kt).Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1300) 		k.SetFloat(f)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1301) 		return k, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1302) 	case reflect.Ptr:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1303) 		if kt.Implements(textUnmarshalerType) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1304) 			k := reflect.New(kt.Elem())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1305) 			err := k.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(name))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1306) 			if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1307) 				return reflect.Value{}, fmt.Errorf("toml: error unmarshaling map key %q: %w", name, err)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1308) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1309) 			return k, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1310) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1311) 	default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1312) 		if reflect.PtrTo(kt).Implements(textUnmarshalerType) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1313) 			k := reflect.New(kt)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1314) 			err := k.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(name))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1315) 			if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1316) 				return reflect.Value{}, fmt.Errorf("toml: error unmarshaling map key %q: %w", name, err)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1317) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1318) 			return k.Elem(), nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1319) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1320) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1321) 	return reflect.Value{}, fmt.Errorf("toml: cannot decode a key into a map with key type %s", kt)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1322) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1323) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1324) // elemOrNewMap unwraps an interface value to descend into it. Contents that
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1325) // can hold a table (generic maps and slices) are kept; anything else is
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1326) // replaced by a fresh map[string]interface{}. Maps and slices are reference
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1327) // types: they are returned directly, not copied.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1328) func elemOrNewMap(v reflect.Value) reflect.Value {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1329) 	if !v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1330) 		concrete := v.Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1331) 		t := concrete.Type()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1332) 		if t == mapStringInterfaceType || t == sliceInterfaceType {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1333) 			return concrete
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1334) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1335) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1336) 	return reflect.ValueOf(map[string]interface{}{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1337) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1338) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1339) // handleKeyValueExpression stores the value of a top-level key-value
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1340) // expression, relative to the current table.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1341) func (d *decoder) handleKeyValueExpression(expr *unstable.Node, root reflect.Value) error {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1342) 	d.path = d.path[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1343) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1344) 	target := root
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1345) 	useCache := d.tableTargetValid && len(d.tableKey) > 0
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1346) 	if useCache {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1347) 		target = d.tableTarget
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1348) 	} else {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1349) 		for _, name := range d.tableKey {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1350) 			d.path = append(d.path, pathPart{name: name})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1351) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1352) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1353) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1354) 	it := expr.Key()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1355) 	for it.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1356) 		d.path = append(d.path, pathPart{node: it.Node()})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1357) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1358) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1359) 	nv, err := d.descend(target, d.path, 0, expr, expr.Value())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1360) 	if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1361) 		return d.contextualizeError(err, useCache)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1362) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1363) 	if !nv.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1364) 		return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1365) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1366) 	if useCache {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1367) 		// The target may have been replaced (e.g. a nil map allocated):
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1368) 		// re-link it into its parent.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1369) 		if nv.Kind() == reflect.Map && nv.Pointer() != d.tableTarget.Pointer() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1370) 			d.storeSlot(&d.tableParentSlot, nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1371) 			d.tableTarget = nv
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1372) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1373) 	} else {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1374) 		if root.CanSet() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1375) 			root.Set(nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1376) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1377) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1378) 	return nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1379) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1380) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1381) // descend walks the given key path into v, and assigns the value at the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1382) // end. It returns the value to store back at this level. An invalid value
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1383) // means nothing should be stored (e.g. unknown field).
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1384) func (d *decoder) descend(v reflect.Value, path []pathPart, idx int, expr *unstable.Node, value *unstable.Node) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1385) 	if idx == len(path) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1386) 		return d.assignValue(v, expr, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1387) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1388) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1389) 	if v.Kind() == reflect.Ptr {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1390) 		if v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1391) 			v.Set(reflect.New(v.Type().Elem()))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1392) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1393) 		nv, err := d.descend(v.Elem(), path, idx, expr, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1394) 		if err != nil || !nv.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1395) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1396) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1397) 		v.Elem().Set(nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1398) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1399) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1400) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1401) 	// A target implementing the unmarshaler interface consumes the value,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1402) 	// whatever the remaining parts of the key are.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1403) 	if d.unmarshalerInterface {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1404) 		if u, ok := unmarshalerOf(v); ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1405) 			return v, u.UnmarshalTOML(d.rawValue(expr, value))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1406) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1407) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1408) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1409) 	part := path[idx]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1410) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1411) 	switch v.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1412) 	case reflect.Map:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1413) 		// Native fast path for the most common generic target: walk the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1414) 		// remaining dotted-key path with plain Go map operations and decode
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1415) 		// the value directly, skipping the reflect.Value round-trips
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1416) 		// (stringMapKey, MapIndex, New, SetMapIndex) entirely.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1417) 		if !d.unmarshalerInterface && v.Type() == mapStringInterfaceType {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1418) 			return d.descendStrMap(v, path, idx, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1419) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1420) 		var name string
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1421) 		var key reflect.Value
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1422) 		var err error
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1423) 		fastKey := v.Type().Key() == stringType
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1424) 		if fastKey {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1425) 			name = d.partString(&part)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1426) 			key = d.stringMapKey(name)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1427) 		} else {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1428) 			key, err = makeMapKey(v.Type().Key(), d.partString(&part))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1429) 			if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1430) 				return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1431) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1432) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1433) 		if v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1434) 			v = reflect.MakeMap(v.Type())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1435) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1436) 		elemType := v.Type().Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1437) 		existing := v.MapIndex(key)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1438) 		var elem reflect.Value
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1439) 		switch {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1440) 		case existing.IsValid():
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1441) 			elem = reflect.New(elemType).Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1442) 			elem.Set(existing)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1443) 		case idx+1 == len(path) && elemType.Kind() == reflect.Interface:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1444) 			// Fast path: a fresh interface element does not need to be
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1445) 			// materialized, the assigned value is stored directly.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1446) 			elem = reflect.Zero(elemType)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1447) 		default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1448) 			elem = reflect.New(elemType).Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1449) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1450) 		nv, err := d.descend(elem, path, idx+1, expr, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1451) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1452) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1453) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1454) 		if nv.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1455) 			if fastKey {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1456) 				// The recursion may have overwritten the key buffer.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1457) 				key = d.stringMapKey(name)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1458) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1459) 			v.SetMapIndex(key, nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1460) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1461) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1462) 	case reflect.Struct:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1463) 		plan := planForType(v.Type())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1464) 		f, found := plan.lookupBytes(part.bytes())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1465) 		if !found {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1466) 			if part.node != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1467) 				d.strict.MissingField(expr)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1468) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1469) 			return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1470) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1471) 		fv := fieldByIndexAlloc(v, f.index)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1472) 		var nv reflect.Value
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1473) 		var err error
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1474) 		if idx+1 == len(path) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1475) 			// Leaf field: assign directly. descend's first action for a
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1476) 			// fully-consumed path is exactly this call, so skipping the extra
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1477) 			// frame is equivalent and avoids a call per scalar field.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1478) 			nv, err = d.assignValue(fv, expr, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1479) 		} else {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1480) 			nv, err = d.descend(fv, path, idx+1, expr, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1481) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1482) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1483) 			var mm *typeMismatchError
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1484) 			if errors.As(err, &mm) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1485) 				err = &unstable.ParserError{
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1486) 					Highlight: mm.highlight,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1487) 					Message: fmt.Sprintf("cannot decode TOML %s into struct field %s.%s of type %s",
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1488) 						mm.toml, v.Type(), f.fieldName, mm.target),
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1489) 				}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1490) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1491) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1492) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1493) 		if nv.IsValid() && fv.CanSet() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1494) 			fv.Set(nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1495) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1496) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1497) 	case reflect.Interface:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1498) 		elem := elemOrNewMap(v)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1499) 		nv, err := d.descend(elem, path, idx, expr, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1500) 		if err != nil || !nv.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1501) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1502) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1503) 		return nv, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1504) 	case reflect.Slice:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1505) 		if v.Len() == 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1506) 			if v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1507) 				v = reflect.MakeSlice(v.Type(), 0, 4)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1508) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1509) 			v = reflect.Append(v, reflect.New(v.Type().Elem()).Elem())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1510) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1511) 		elem := v.Index(v.Len() - 1)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1512) 		nv, err := d.descend(elem, path, idx, expr, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1513) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1514) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1515) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1516) 		if nv.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1517) 			elem.Set(nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1518) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1519) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1520) 	case reflect.Array:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1521) 		names := make([]string, idx)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1522) 		for i := range names {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1523) 			names[i] = path[i].str()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1524) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1525) 		cnt := d.arrayCount(d.joinPath(names))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1526) 		if cnt == 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1527) 			cnt = 1
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1528) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1529) 		elemIdx := cnt - 1
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1530) 		if elemIdx >= v.Len() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1531) 			return reflect.Value{}, unstable.NewParserError(keyHighlight(d.p.Data(), part.node),
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1532) 				"cannot reach element %d of array of size %d", elemIdx, v.Len())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1533) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1534) 		elem := v.Index(elemIdx)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1535) 		nv, err := d.descend(elem, path, idx, expr, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1536) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1537) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1538) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1539) 		if nv.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1540) 			elem.Set(nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1541) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1542) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1543) 	default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1544) 		return reflect.Value{}, d.typeMismatchError("table", v.Type(), keyHighlight(d.p.Data(), part.node))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1545) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1546) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1547) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1548) // descendStrMap assigns into a native map[string]interface{} target, following
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1549) // the remaining dotted-key parts with plain Go map operations and decoding the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1550) // value with decodeAny. It returns the map to store back at this level: a new
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1551) // map when v was nil, otherwise v unchanged, since maps are reference types and
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1552) // are mutated in place.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1553) func (d *decoder) descendStrMap(v reflect.Value, path []pathPart, idx int, value *unstable.Node) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1554) 	var m map[string]interface{}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1555) 	if v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1556) 		m = make(map[string]interface{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1557) 		v = reflect.ValueOf(m)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1558) 	} else {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1559) 		m = v.Interface().(map[string]interface{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1560) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1561) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1562) 	// Walk intermediate parts, creating or reusing nested generic maps. A
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1563) 	// non-map value at an intermediate key can only occur in a document the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1564) 	// seen-tracker has already rejected; replacing it mirrors the reflect
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1565) 	// path (elemOrNewMap).
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1566) 	for ; idx < len(path)-1; idx++ {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1567) 		name := d.partString(&path[idx])
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1568) 		child, _ := m[name].(map[string]interface{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1569) 		if child == nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1570) 			child = make(map[string]interface{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1571) 			m[name] = child
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1572) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1573) 		m = child
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1574) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1575) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1576) 	av, err := d.decodeAny(value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1577) 	if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1578) 		return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1579) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1580) 	m[d.partString(&path[idx])] = av
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1581) 	return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1582) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1583) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1584) // keyHighlight returns a highlight for the given key part node, falling back
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1585) // to the start of the document.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1586) func keyHighlight(doc []byte, node *unstable.Node) []byte {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1587) 	if node == nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1588) 		return doc[0:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1589) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1590) 	return doc[node.Raw.Offset : node.Raw.Offset+node.Raw.Length]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1591) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1592) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1593) // rawValue returns the raw bytes of the value of a key-value expression.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1594) func (d *decoder) rawValue(expr *unstable.Node, value *unstable.Node) []byte {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1595) 	if value.Kind != unstable.InlineTable && value.Kind != unstable.Array {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1596) 		return d.p.Raw(value.Raw)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1597) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1598) 	if expr == nil || expr.Kind != unstable.KeyValue {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1599) 		// Inline container nested in another container: best effort.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1600) 		return d.p.Raw(value.Raw)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1601) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1602) 	// Reconstruct the span of the value: it starts after the equal sign
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1603) 	// following the last part of the key, and stops at the end of the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1604) 	// expression.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1605) 	var last unstable.Range
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1606) 	it := expr.Key()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1607) 	for it.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1608) 		last = it.Node().Raw
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1609) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1610) 	doc := d.p.Data()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1611) 	i := int(last.Offset + last.Length)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1612) 	for i < len(doc) && (doc[i] == ' ' || doc[i] == '\t') {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1613) 		i++
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1614) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1615) 	i++ // equal sign
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1616) 	for i < len(doc) && (doc[i] == ' ' || doc[i] == '\t') {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1617) 		i++
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1618) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1619) 	end := int(expr.Raw.Offset + expr.Raw.Length)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1620) 	return doc[i:end]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1621) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1622) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1623) // unmarshalerOf returns the unstable.Unmarshaler implementation of v, if
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1624) // any. It allocates intermediate pointers as needed.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1625) func unmarshalerOf(v reflect.Value) (unstable.Unmarshaler, bool) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1626) 	t := v.Type()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1627) 	if t.Implements(unmarshalerType) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1628) 		if v.Kind() == reflect.Ptr && v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1629) 			v.Set(reflect.New(t.Elem()))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1630) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1631) 		return v.Interface().(unstable.Unmarshaler), true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1632) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1633) 	if v.CanAddr() && reflect.PtrTo(t).Implements(unmarshalerType) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1634) 		return v.Addr().Interface().(unstable.Unmarshaler), true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1635) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1636) 	return nil, false
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1637) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1638) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1639) var unmarshalerType = reflect.TypeOf(new(unstable.Unmarshaler)).Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1640) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1641) // assignValue stores the TOML value carried by the node into v.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1642) func (d *decoder) assignValue(v reflect.Value, expr *unstable.Node, value *unstable.Node) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1643) 	if v.Kind() == reflect.Ptr {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1644) 		if d.unmarshalerInterface {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1645) 			if u, ok := unmarshalerOf(v); ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1646) 				return v, u.UnmarshalTOML(d.rawValue(expr, value))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1647) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1648) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1649) 		if v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1650) 			v.Set(reflect.New(v.Type().Elem()))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1651) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1652) 		nv, err := d.assignValue(v.Elem(), expr, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1653) 		if err != nil || !nv.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1654) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1655) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1656) 		v.Elem().Set(nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1657) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1658) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1659) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1660) 	if d.unmarshalerInterface {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1661) 		if u, ok := unmarshalerOf(v); ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1662) 			return v, u.UnmarshalTOML(d.rawValue(expr, value))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1663) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1664) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1665) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1666) 	switch value.Kind {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1667) 	case unstable.String:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1668) 		return d.assignString(v, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1669) 	case unstable.Integer:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1670) 		return d.assignInteger(v, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1671) 	case unstable.Float:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1672) 		return d.assignFloat(v, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1673) 	case unstable.Bool:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1674) 		return d.assignBool(v, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1675) 	case unstable.DateTime:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1676) 		return d.assignDateTime(v, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1677) 	case unstable.LocalDateTime:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1678) 		return d.assignLocalDateTime(v, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1679) 	case unstable.LocalDate:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1680) 		return d.assignLocalDate(v, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1681) 	case unstable.LocalTime:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1682) 		return d.assignLocalTime(v, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1683) 	case unstable.Array:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1684) 		return d.assignArray(v, expr, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1685) 	case unstable.InlineTable:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1686) 		return d.assignInlineTable(v, expr, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1687) 	default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1688) 		return reflect.Value{}, unstable.NewParserError(value.Data, "unsupported value kind %s", value.Kind)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1689) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1690) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1691) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1692) func (d *decoder) assignString(v reflect.Value, value *unstable.Node) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1693) 	switch v.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1694) 	case reflect.String:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1695) 		v.SetString(string(value.Data))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1696) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1697) 	case reflect.Interface:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1698) 		return boxInto(v, reflect.ValueOf(string(value.Data)))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1699) 	default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1700) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1701) 	if v.CanAddr() && v.Addr().Type().Implements(textUnmarshalerType) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1702) 		err := v.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText(value.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1703) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1704) 			return reflect.Value{}, unstable.NewParserError(d.p.Raw(value.Raw), "%s", err)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1705) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1706) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1707) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1708) 	return reflect.Value{}, d.typeMismatchError("string", v.Type(), d.p.Raw(value.Raw))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1709) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1710) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1711) func (d *decoder) assignInteger(v reflect.Value, value *unstable.Node) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1712) 	// Integer values targeting a float field are parsed as floats: they can
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1713) 	// represent (approximately) numbers beyond the int64 range.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1714) 	if k := v.Kind(); k == reflect.Float32 || k == reflect.Float64 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1715) 		return d.assignFloat(v, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1716) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1717) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1718) 	i, err := parseInteger(value.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1719) 	if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1720) 		return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1721) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1722) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1723) 	switch v.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1724) 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1725) 		if v.OverflowInt(i) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1726) 			return reflect.Value{}, unstable.NewParserError(value.Data, "integer value %d cannot be stored in %s", i, v.Type())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1727) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1728) 		v.SetInt(i)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1729) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1730) 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1731) 		if i < 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1732) 			return reflect.Value{}, unstable.NewParserError(value.Data, "negative integer value %d cannot be stored in %s", i, v.Type())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1733) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1734) 		if v.OverflowUint(uint64(i)) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1735) 			return reflect.Value{}, unstable.NewParserError(value.Data, "integer value %d cannot be stored in %s", i, v.Type())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1736) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1737) 		v.SetUint(uint64(i))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1738) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1739) 	case reflect.Interface:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1740) 		return boxInto(v, reflect.ValueOf(i))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1741) 	default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1742) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1743) 	if ok, err := tryTextUnmarshaler(v, value.Data); ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1744) 		return v, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1745) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1746) 	return reflect.Value{}, d.typeMismatchError("integer", v.Type(), d.p.Raw(value.Raw))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1747) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1748) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1749) // tryTextUnmarshaler attempts to deliver the raw text of a value to a target
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1750) // implementing encoding.TextUnmarshaler.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1751) func tryTextUnmarshaler(v reflect.Value, text []byte) (bool, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1752) 	if v.CanAddr() && v.Addr().Type().Implements(textUnmarshalerType) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1753) 		return true, v.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText(text)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1754) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1755) 	return false, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1756) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1757) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1758) func (d *decoder) assignFloat(v reflect.Value, value *unstable.Node) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1759) 	f, err := parseFloat(value.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1760) 	if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1761) 		return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1762) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1763) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1764) 	switch v.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1765) 	case reflect.Float64:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1766) 		v.SetFloat(f)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1767) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1768) 	case reflect.Float32:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1769) 		if !math.IsInf(f, 0) && math.Abs(f) > math.MaxFloat32 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1770) 			return reflect.Value{}, unstable.NewParserError(value.Data, "float value %f cannot be stored in float32", f)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1771) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1772) 		v.SetFloat(f)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1773) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1774) 	case reflect.Interface:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1775) 		return boxInto(v, reflect.ValueOf(f))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1776) 	default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1777) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1778) 	if ok, err := tryTextUnmarshaler(v, value.Data); ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1779) 		return v, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1780) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1781) 	return reflect.Value{}, d.typeMismatchError("float", v.Type(), d.p.Raw(value.Raw))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1782) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1783) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1784) func (d *decoder) assignBool(v reflect.Value, value *unstable.Node) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1785) 	b := value.Data[0] == 't'
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1786) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1787) 	switch v.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1788) 	case reflect.Bool:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1789) 		v.SetBool(b)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1790) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1791) 	case reflect.Interface:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1792) 		return boxInto(v, reflect.ValueOf(b))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1793) 	default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1794) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1795) 	if ok, err := tryTextUnmarshaler(v, value.Data); ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1796) 		return v, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1797) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1798) 	return reflect.Value{}, d.typeMismatchError("boolean", v.Type(), d.p.Raw(value.Raw))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1799) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1800) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1801) func (d *decoder) assignDateTime(v reflect.Value, value *unstable.Node) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1802) 	t, err := parseDateTime(value.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1803) 	if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1804) 		return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1805) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1806) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1807) 	if v.Type() == timeType {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1808) 		v.Set(reflect.ValueOf(t))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1809) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1810) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1811) 	if v.Kind() == reflect.Interface {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1812) 		return boxInto(v, reflect.ValueOf(t))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1813) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1814) 	return reflect.Value{}, d.typeMismatchError("datetime", v.Type(), d.p.Raw(value.Raw))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1815) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1816) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1817) func (d *decoder) assignLocalDateTime(v reflect.Value, value *unstable.Node) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1818) 	dt, rest, err := parseLocalDateTime(value.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1819) 	if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1820) 		return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1821) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1822) 	if len(rest) > 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1823) 		return reflect.Value{}, unstable.NewParserError(rest, "extra characters at the end of a local date time")
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1824) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1825) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1826) 	switch v.Type() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1827) 	case localDateTimeType:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1828) 		v.Set(reflect.ValueOf(dt))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1829) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1830) 	case timeType:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1831) 		v.Set(reflect.ValueOf(dt.AsTime(time.Local)))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1832) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1833) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1834) 	if v.Kind() == reflect.Interface {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1835) 		return boxInto(v, reflect.ValueOf(dt))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1836) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1837) 	return reflect.Value{}, d.typeMismatchError("local datetime", v.Type(), d.p.Raw(value.Raw))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1838) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1839) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1840) func (d *decoder) assignLocalDate(v reflect.Value, value *unstable.Node) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1841) 	date, err := parseLocalDate(value.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1842) 	if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1843) 		return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1844) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1845) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1846) 	switch v.Type() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1847) 	case localDateType:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1848) 		v.Set(reflect.ValueOf(date))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1849) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1850) 	case timeType:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1851) 		v.Set(reflect.ValueOf(date.AsTime(time.Local)))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1852) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1853) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1854) 	if v.Kind() == reflect.Interface {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1855) 		return boxInto(v, reflect.ValueOf(date))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1856) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1857) 	return reflect.Value{}, d.typeMismatchError("local date", v.Type(), d.p.Raw(value.Raw))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1858) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1859) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1860) func (d *decoder) assignLocalTime(v reflect.Value, value *unstable.Node) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1861) 	t, rest, err := parseLocalTime(value.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1862) 	if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1863) 		return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1864) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1865) 	if len(rest) > 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1866) 		return reflect.Value{}, unstable.NewParserError(rest, "extra characters at the end of a local time")
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1867) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1868) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1869) 	switch v.Type() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1870) 	case localTimeType:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1871) 		v.Set(reflect.ValueOf(t))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1872) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1873) 	case timeType:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1874) 		v.Set(reflect.ValueOf(time.Date(0, 1, 1, t.Hour, t.Minute, t.Second, t.Nanosecond, time.Local)))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1875) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1876) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1877) 	if v.Kind() == reflect.Interface {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1878) 		return boxInto(v, reflect.ValueOf(t))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1879) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1880) 	return reflect.Value{}, d.typeMismatchError("local time", v.Type(), d.p.Raw(value.Raw))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1881) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1882) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1883) func (d *decoder) assignArray(v reflect.Value, expr *unstable.Node, value *unstable.Node) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1884) 	// Count the elements to allocate the target in one go.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1885) 	count := 0
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1886) 	cit := value.Children()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1887) 	for cit.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1888) 		if cit.Node().Kind != unstable.Comment {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1889) 			count++
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1890) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1891) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1892) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1893) 	switch v.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1894) 	case reflect.Slice:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1895) 		// Allocate the backing array once at its final length and assign each
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1896) 		// element in place. This avoids a reflect.New allocation per element
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1897) 		// and the repeated growth checks of reflect.Append.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1898) 		slice := reflect.MakeSlice(v.Type(), count, count)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1899) 		i := 0
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1900) 		it := value.Children()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1901) 		for it.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1902) 			n := it.Node()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1903) 			if n.Kind == unstable.Comment {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1904) 				continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1905) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1906) 			elem := slice.Index(i)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1907) 			nv, err := d.assignValue(elem, nil, n)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1908) 			if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1909) 				return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1910) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1911) 			if nv.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1912) 				elem.Set(nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1913) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1914) 			i++
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1915) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1916) 		return slice, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1917) 	case reflect.Array:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1918) 		it := value.Children()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1919) 		i := 0
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1920) 		for it.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1921) 			n := it.Node()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1922) 			if n.Kind == unstable.Comment {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1923) 				continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1924) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1925) 			if i >= v.Len() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1926) 				// Extra elements are dropped when the target array is too
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1927) 				// small.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1928) 				break
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1929) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1930) 			elem := v.Index(i)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1931) 			nv, err := d.assignValue(elem, nil, n)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1932) 			if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1933) 				return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1934) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1935) 			elem.Set(nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1936) 			i++
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1937) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1938) 		return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1939) 	case reflect.Interface:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1940) 		// Build the []interface{} natively: each element is decoded straight
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1941) 		// into a Go value with no intermediate addressable reflect.Value and
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1942) 		// no reflect round-trip, and nested arrays recurse the same way.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1943) 		slice := make([]interface{}, 0, count)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1944) 		it := value.Children()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1945) 		for it.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1946) 			n := it.Node()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1947) 			if n.Kind == unstable.Comment {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1948) 				continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1949) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1950) 			ev, err := d.decodeAny(n)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1951) 			if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1952) 				return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1953) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1954) 			slice = append(slice, ev)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1955) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1956) 		return boxInto(v, reflect.ValueOf(slice))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1957) 	default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1958) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1959) 	return reflect.Value{}, d.typeMismatchError("array", v.Type(), d.rawValue(expr, value))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1960) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1961) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1962) // decodeAny decodes a value node into a native Go value (the representation
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1963) // used for interface{} targets), without going through reflect. Scalars and
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1964) // arrays are handled directly; inline tables still defer to the reflect-based
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1965) // path so that their dotted-key merge semantics remain identical.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1966) func (d *decoder) decodeAny(n *unstable.Node) (interface{}, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1967) 	switch n.Kind {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1968) 	case unstable.String:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1969) 		return string(n.Data), nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1970) 	case unstable.Integer:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1971) 		i, err := parseInteger(n.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1972) 		return i, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1973) 	case unstable.Float:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1974) 		f, err := parseFloat(n.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1975) 		return f, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1976) 	case unstable.Bool:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1977) 		return n.Data[0] == 't', nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1978) 	case unstable.Array:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1979) 		count := 0
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1980) 		cit := n.Children()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1981) 		for cit.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1982) 			if cit.Node().Kind != unstable.Comment {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1983) 				count++
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1984) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1985) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1986) 		slice := make([]interface{}, 0, count)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1987) 		it := n.Children()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1988) 		for it.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1989) 			c := it.Node()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1990) 			if c.Kind == unstable.Comment {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1991) 				continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1992) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1993) 			ev, err := d.decodeAny(c)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1994) 			if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1995) 				return nil, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1996) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1997) 			slice = append(slice, ev)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1998) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 1999) 		return slice, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2000) 	case unstable.InlineTable:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2001) 		// Build the map natively: navigate each (possibly dotted) key with
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2002) 		// plain Go map operations and decode each value with decodeAny. The
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2003) 		// seen-tracker has already rejected duplicate or conflicting keys, so
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2004) 		// intermediate parts can be created/merged without revalidation.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2005) 		count := 0
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2006) 		cit := n.Children()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2007) 		for cit.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2008) 			count++
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2009) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2010) 		m := make(map[string]interface{}, count)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2011) 		it := n.Children()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2012) 		for it.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2013) 			kv := it.Node()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2014) 			if err := d.setAnyKey(m, kv.Key(), kv.Value()); err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2015) 				return nil, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2016) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2017) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2018) 		return m, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2019) 	case unstable.DateTime:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2020) 		t, err := parseDateTime(n.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2021) 		return t, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2022) 	case unstable.LocalDateTime:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2023) 		dt, rest, err := parseLocalDateTime(n.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2024) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2025) 			return nil, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2026) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2027) 		if len(rest) > 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2028) 			return nil, unstable.NewParserError(rest, "extra characters at the end of a local date time")
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2029) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2030) 		return dt, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2031) 	case unstable.LocalDate:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2032) 		date, err := parseLocalDate(n.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2033) 		return date, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2034) 	case unstable.LocalTime:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2035) 		t, rest, err := parseLocalTime(n.Data)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2036) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2037) 			return nil, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2038) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2039) 		if len(rest) > 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2040) 			return nil, unstable.NewParserError(rest, "extra characters at the end of a local time")
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2041) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2042) 		return t, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2043) 	default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2044) 		return nil, unstable.NewParserError(n.Data, "unsupported value kind %s", n.Kind)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2045) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2046) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2047) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2048) func (d *decoder) assignInlineTable(v reflect.Value, expr *unstable.Node, value *unstable.Node) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2049) 	switch v.Kind() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2050) 	case reflect.Map:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2051) 		// Inline tables are self-contained: they fully replace the target.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2052) 		v = reflect.MakeMap(v.Type())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2053) 	case reflect.Struct:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2054) 		// fields are set in place
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2055) 	case reflect.Interface:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2056) 		elem := reflect.ValueOf(map[string]interface{}{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2057) 		nv, err := d.assignInlineTable(elem, expr, value)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2058) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2059) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2060) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2061) 		return boxInto(v, nv)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2062) 	default:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2063) 		return reflect.Value{}, d.typeMismatchError("inline table", v.Type(), d.rawValue(expr, value))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2064) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2065) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2066) 	it := value.Children()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2067) 	for it.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2068) 		kv := it.Node()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2069) 		// Build the path from the key of this key-value. Keys of inline
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2070) 		// tables rarely have more than a few parts.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2071) 		var pathBuf [4]pathPart
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2072) 		path := pathBuf[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2073) 		kit := kv.Key()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2074) 		for kit.Next() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2075) 			path = append(path, pathPart{node: kit.Node()})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2076) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2077) 		nv, err := d.descend(v, path, 0, kv, kv.Value())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2078) 		if err != nil {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2079) 			return reflect.Value{}, err
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2080) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2081) 		if nv.IsValid() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2082) 			v = nv
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2083) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2084) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2085) 	return v, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2086) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2087) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2088) // boxInto returns the value to store in place of the interface value v. The
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2089) // caller stores the result in the slot v was found in, which performs the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2090) // interface conversion, so the concrete value can be returned as-is.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2091) func boxInto(v reflect.Value, c reflect.Value) (reflect.Value, error) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2092) 	if !c.Type().AssignableTo(v.Type()) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2093) 		return reflect.Value{}, fmt.Errorf("toml: cannot store %s into %s", c.Type(), v.Type())
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2094) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2095) 	return c, nil
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2096) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2097) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2098) var (
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2099) 	interfaceType     = reflect.TypeOf(new(interface{})).Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2100) 	localDateType     = reflect.TypeOf(LocalDate{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2101) 	localTimeType     = reflect.TypeOf(LocalTime{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2102) 	localDateTimeType = reflect.TypeOf(LocalDateTime{})
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2103) )
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2104) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2105) // structPlan caches the mapping between TOML keys and the fields of a struct
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2106) // type. byFold, keyed by the lowercased name, resolves any key on its own when
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2107) // no two fields fold to the same name (the overwhelmingly common case, marked
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2108) // by hasCollision == false): TOML keys are usually lowercase and never match
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2109) // the exact (capitalized) Go field names, so the byName probe was always a
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2110) // wasted lookup. byName (the exact names) is only consulted, first, when
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2111) // fields do collide under folding, to preserve the exact-match-wins tiebreak.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2112) type structPlan struct {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2113) 	byName       map[string]structField
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2114) 	byFold       map[string]structField
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2115) 	hasCollision bool
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2116) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2117) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2118) type structField struct {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2119) 	index     []int
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2120) 	fieldName string
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2121) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2122) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2123) // foldBufSize bounds the stack buffer used to lowercase keys without
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2124) // allocating. Keys longer than this (extremely rare) take the strings.ToLower
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2125) // fallback.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2126) const foldBufSize = 68
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2127) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2128) // lookup and lookupBytes keep the hot path to a single inlinable byFold lookup.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2129) // byFold is indexed by both the exact field/tag names and their lowercased
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2130) // forms, so that lookup resolves the two common cases — a lowercase key, or a
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2131) // key matching the field's own casing — directly. byName is consulted first
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2132) // only for types whose fields collide under case-folding, to preserve the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2133) // exact-match-wins tiebreak. The buffer-fold for other casings lives
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2134) // out-of-line so it does not bloat the hot path.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2135) func (p *structPlan) lookup(name string) (structField, bool) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2136) 	if p.hasCollision {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2137) 		if f, ok := p.byName[name]; ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2138) 			return f, true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2139) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2140) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2141) 	if f, ok := p.byFold[name]; ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2142) 		return f, true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2143) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2144) 	return p.lookupFoldStr(name)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2145) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2146) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2147) func (p *structPlan) lookupBytes(name []byte) (structField, bool) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2148) 	if p.hasCollision {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2149) 		if f, ok := p.byName[string(name)]; ok { // does not allocate
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2150) 			return f, true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2151) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2152) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2153) 	if f, ok := p.byFold[string(name)]; ok { // does not allocate
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2154) 		return f, true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2155) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2156) 	return p.lookupFold(name)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2157) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2158) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2159) // lookupFold resolves keys whose casing matches neither the exact nor the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2160) // lowercased index: it folds to lowercase (in a stack buffer for ASCII, so no
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2161) // allocation) and retries; only non-ASCII or oversized keys hit strings.ToLower.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2162) func (p *structPlan) lookupFold(name []byte) (structField, bool) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2163) 	if len(name) <= foldBufSize {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2164) 		// Fold into a stack buffer: len(name) <= cap(buf), so the append
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2165) 		// never reallocates and nothing escapes to the heap.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2166) 		var buf [foldBufSize]byte
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2167) 		b := buf[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2168) 		ascii := true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2169) 		for _, c := range name {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2170) 			if c >= 0x80 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2171) 				ascii = false
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2172) 				break
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2173) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2174) 			if c >= 'A' && c <= 'Z' {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2175) 				c += 'a' - 'A'
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2176) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2177) 			b = append(b, c)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2178) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2179) 		if ascii {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2180) 			f, ok := p.byFold[string(b)] // does not allocate
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2181) 			return f, ok
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2182) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2183) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2184) 	f, ok := p.byFold[strings.ToLower(string(name))]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2185) 	return f, ok
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2186) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2187) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2188) func (p *structPlan) lookupFoldStr(name string) (structField, bool) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2189) 	if len(name) <= foldBufSize {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2190) 		// Fold into a stack buffer: len(name) <= cap(buf), so the append
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2191) 		// never reallocates and nothing escapes to the heap.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2192) 		var buf [foldBufSize]byte
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2193) 		b := buf[:0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2194) 		ascii := true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2195) 		for i := 0; i < len(name); i++ {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2196) 			c := name[i]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2197) 			if c >= 0x80 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2198) 				ascii = false
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2199) 				break
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2200) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2201) 			if c >= 'A' && c <= 'Z' {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2202) 				c += 'a' - 'A'
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2203) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2204) 			b = append(b, c)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2205) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2206) 		if ascii {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2207) 			f, ok := p.byFold[string(b)] // does not allocate
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2208) 			return f, ok
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2209) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2210) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2211) 	f, ok := p.byFold[strings.ToLower(name)]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2212) 	return f, ok
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2213) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2214) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2215) var structPlans sync.Map // reflect.Type -> *structPlan
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2216) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2217) func planForType(t reflect.Type) *structPlan {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2218) 	if plan, ok := structPlans.Load(t); ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2219) 		return plan.(*structPlan)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2220) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2221) 	plan := buildPlan(t)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2222) 	structPlans.Store(t, plan)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2223) 	return plan
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2224) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2225) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2226) func buildPlan(t reflect.Type) *structPlan {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2227) 	plan := &structPlan{
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2228) 		byName: map[string]structField{},
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2229) 		byFold: map[string]structField{},
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2230) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2231) 	addFields(plan, t, nil)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2232) 	return plan
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2233) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2234) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2235) func addFields(plan *structPlan, t reflect.Type, prefix []int) {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2236) 	var embedded []reflect.StructField
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2237) 	for i := 0; i < t.NumField(); i++ {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2238) 		f := t.Field(i)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2239) 		tag, tagged := f.Tag.Lookup("toml")
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2240) 		name := f.Name
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2241) 		if tagged {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2242) 			// A tag of exactly "-" drops the field. "-," names it "-".
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2243) 			if tag == "-" {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2244) 				continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2245) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2246) 			parts := strings.SplitN(tag, ",", 2)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2247) 			if parts[0] != "" {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2248) 				name = parts[0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2249) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2250) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2251) 		if f.Anonymous {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2252) 			ft := f.Type
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2253) 			if ft.Kind() == reflect.Ptr {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2254) 				ft = ft.Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2255) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2256) 			if ft.Kind() != reflect.Struct {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2257) 				// Embedded non-struct fields are not decoded into.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2258) 				continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2259) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2260) 			if !tagged {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2261) 				// Untagged embedded structs are flattened, even when their
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2262) 				// type is unexported: only their own exported fields are
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2263) 				// reachable.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2264) 				embedded = append(embedded, f)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2265) 				continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2266) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2267) 			// A tagged embedded struct acts as a regular named field.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2268) 		} else if f.PkgPath != "" {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2269) 			// unexported
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2270) 			continue
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2271) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2272) 		index := make([]int, 0, len(prefix)+1)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2273) 		index = append(index, prefix...)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2274) 		index = append(index, i)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2275) 		sf := structField{index: index, fieldName: f.Name}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2276) 		if _, ok := plan.byName[name]; !ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2277) 			plan.byName[name] = sf
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2278) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2279) 		lower := strings.ToLower(name)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2280) 		if _, ok := plan.byFold[lower]; !ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2281) 			plan.byFold[lower] = sf
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2282) 		} else {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2283) 			// Two distinct fields fold to the same name: case-insensitive
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2284) 			// matching is ambiguous, so lookups must consult byName first to
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2285) 			// keep the exact-match-wins tiebreak deterministic.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2286) 			plan.hasCollision = true
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2287) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2288) 		// Index the exact (cased) name as well, so a key written with the
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2289) 		// field's own casing resolves in a single byFold lookup. Only fields
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2290) 		// whose name is not already lowercase need this extra entry. Any name
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2291) 		// that would conflict here also collides under folding (handled
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2292) 		// above), so byName-first preserves the exact tiebreak in that case.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2293) 		if name != lower {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2294) 			if _, ok := plan.byFold[name]; !ok {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2295) 				plan.byFold[name] = sf
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2296) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2297) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2298) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2299) 	// Embedded structs are flattened after the regular fields, so that
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2300) 	// shallower fields win.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2301) 	for _, f := range embedded {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2302) 		ft := f.Type
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2303) 		if ft.Kind() == reflect.Ptr {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2304) 			ft = ft.Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2305) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2306) 		index := make([]int, 0, len(prefix)+1)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2307) 		index = append(index, prefix...)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2308) 		idx := f.Index[0]
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2309) 		index = append(index, idx)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2310) 		addFields(plan, ft, index)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2311) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2312) }
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2313) 
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2314) // fieldByIndexAlloc returns the field of v at the given index path,
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2315) // allocating intermediate embedded pointers as needed.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2316) func fieldByIndexAlloc(v reflect.Value, index []int) reflect.Value {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2317) 	// Fast path for non-embedded fields, which have a single-element index:
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2318) 	// no intermediate pointer dereferencing is possible.
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2319) 	if len(index) == 1 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2320) 		return v.Field(index[0])
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2321) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2322) 	for i, x := range index {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2323) 		if i > 0 {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2324) 			for v.Kind() == reflect.Ptr {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2325) 				if v.IsNil() {
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2326) 					v.Set(reflect.New(v.Type().Elem()))
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2327) 				}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2328) 				v = v.Elem()
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2329) 			}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2330) 		}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2331) 		v = v.Field(x)
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2332) 	}
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2333) 	return v
+^5e2a8df (evals 2026-10-22 10:53:55 +0200 2334) }

@@ -200,23 +200,22 @@ color crate, a new `contrast_ratio` method, a review round asking for symmetry a
 commit message. A run passes when the bug fixes pass the crate's tests with the tests unchanged, a hidden test of
 `contrast_ratio` passes, clippy is clean, and the document's references resolve. All 12 runs passed.
 
-| Per session | Claude Code alone | muffle, hush and sloth | muffle, hush, sloth and `--lean` |
-|---|---:|---:|---:|
-| Cost | $0.691 | $0.437 (−37%) | $0.406 (−41%) |
-| Total input tokens | 2,247,383 | 1,551,323 (−31%) | 1,167,240 (−48%) |
-| Output tokens | 20,633 | 11,778 (−43%) | 12,089 (−41%) |
-| Tool output, bytes | 82,406 | 39,145 (−52%) | 40,705 (−51%) |
-| Reply words | 2,637 | 841 (−68%) | 929 (−65%) |
-| Lines added | 247 | 92 | 99 |
+| Per session | Claude Code alone | muffle, hush and sloth |
+|---|---:|---:|
+| Cost | $0.691 | $0.437 (−37%) |
+| Total input tokens | 2,247,383 | 1,551,323 (−31%) |
+| Output tokens | 20,633 | 11,778 (−43%) |
+| Tool output, bytes | 82,406 | 39,145 (−52%) |
+| Reply words | 2,637 | 841 (−68%) |
+| Lines added | 247 | 92 |
 
-`--lean` left 8 of Claude Code's 27 tools out, which took a quarter off the input tokens of every request. These
-sessions sent about 40 KB of tool output in total, far below the 200 KB at which the proxy starts leaving items out,
+These sessions sent about 40 KB of tool output in total, far below the 200 KB at which the proxy starts leaving items out,
 so the proxy changed nothing here.
 
 ## Repeat runs, MCP results and instruction files
 
 Claude Code 2.1.305 with Sonnet 5.5 and Codex 0.163.0 with gpt-6.1-sol at low effort, 2026-10-22, every run from an
-empty configuration directory set up with `muffle init --agent <agent> --hush --sloth --lean`. "Before" is muffle without
+empty configuration directory set up with `muffle init --agent <agent> --hush --sloth`. "Before" is muffle without
 repeat runs, MCP compaction and `muffle compress`; "after" has all three, with the `AGENTS.md` of the rules task
 rewritten once by `muffle compress --agent claude` (5,369 bytes to 2,050). Fourteen tasks, three runs each per agent
 and setup: the eleven above and three new ones:

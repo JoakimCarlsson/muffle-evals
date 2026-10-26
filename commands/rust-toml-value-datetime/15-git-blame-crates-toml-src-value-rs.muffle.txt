@@ -1,0 +1,1211 @@
+$ git blame crates/toml/src/value.rs
+a844dd5 evals 2026-10-22
+1	//! Definition of a TOML [value][Value]
+2	
+3	use alloc::collections::BTreeMap;
+4	use alloc::vec;
+5	use core::fmt;
+6	use core::hash::Hash;
+7	use core::mem::discriminant;
+8	use core::ops;
+9	#[cfg(feature = "std")]
+10	use std::collections::HashMap;
+11	
+12	use serde_core::de;
+13	use serde_core::de::IntoDeserializer;
+14	use serde_core::ser;
+15	
+16	use crate::alloc_prelude::*;
+17	
+18	pub use toml_datetime::{Date, Datetime, DatetimeParseError, Offset, Time};
+19	
+20	/// Type representing a TOML array, payload of the `Value::Array` variant
+21	pub type Array = Vec<Value>;
+22	
+23	#[doc(no_inline)]
+24	pub use crate::Table;
+25	
+26	/// Representation of a TOML value.
+27	#[derive(PartialEq, Clone, Debug)]
+28	pub enum Value {
+29	    /// Represents a TOML string
+30	    String(String),
+31	    /// Represents a TOML integer
+32	    Integer(i64),
+33	    /// Represents a TOML float
+34	    Float(f64),
+35	    /// Represents a TOML boolean
+36	    Boolean(bool),
+37	    /// Represents a TOML datetime
+38	    Datetime(Datetime),
+39	    /// Represents a TOML array
+40	    Array(Array),
+41	    /// Represents a TOML table
+42	    Table(Table),
+43	}
+44	
+45	impl Value {
+46	    /// Convert a `T` into `toml::Value` which is an enum that can represent
+47	    /// any valid TOML data.
+48	    ///
+49	    /// This conversion can fail if `T`'s implementation of `Serialize` decides to
+50	    /// fail, or if `T` contains a map with non-string keys.
+51	    pub fn try_from<T>(value: T) -> Result<Self, crate::ser::Error>
+52	    where
+53	        T: ser::Serialize,
+54	    {
+55	        value.serialize(ValueSerializer)
+56	    }
+57	
+58	    /// Interpret a `toml::Value` as an instance of type `T`.
+59	    ///
+60	    /// This conversion can fail if the structure of the `Value` does not match the
+61	    /// structure expected by `T`, for example if `T` is a struct type but the
+62	    /// `Value` contains something other than a TOML table. It can also fail if the
+63	    /// structure is correct but `T`'s implementation of `Deserialize` decides that
+64	    /// something is wrong with the data, for example required struct fields are
+65	    /// missing from the TOML map or some number is too big to fit in the expected
+66	    /// primitive type.
+67	    pub fn try_into<'de, T>(self) -> Result<T, crate::de::Error>
+68	    where
+69	        T: de::Deserialize<'de>,
+70	    {
+71	        de::Deserialize::deserialize(self)
+72	    }
+73	
+74	    /// Index into a TOML array or map. A string index can be used to access a
+75	    /// value in a map, and a usize index can be used to access an element of an
+76	    /// array.
+77	    ///
+78	    /// Returns `None` if the type of `self` does not match the type of the
+79	    /// index, for example if the index is a string and `self` is an array or a
+80	    /// number. Also returns `None` if the given key does not exist in the map
+81	    /// or the given index is not within the bounds of the array.
+82	    pub fn get<I: Index>(&self, index: I) -> Option<&Self> {
+83	        index.index(self)
+84	    }
+85	
+86	    /// Mutably index into a TOML array or map. A string index can be used to
+87	    /// access a value in a map, and a usize index can be used to access an
+88	    /// element of an array.
+89	    ///
+90	    /// Returns `None` if the type of `self` does not match the type of the
+91	    /// index, for example if the index is a string and `self` is an array or a
+92	    /// number. Also returns `None` if the given key does not exist in the map
+93	    /// or the given index is not within the bounds of the array.
+94	    pub fn get_mut<I: Index>(&mut self, index: I) -> Option<&mut Self> {
+95	        index.index_mut(self)
+96	    }
+97	
+98	    /// Extracts the integer value if it is an integer.
+99	    pub fn as_integer(&self) -> Option<i64> {
+100	        match *self {
+101	            Self::Integer(i) => Some(i),
+102	            _ => None,
+103	        }
+104	    }
+105	
+106	    /// Tests whether this value is an integer.
+107	    pub fn is_integer(&self) -> bool {
+108	        self.as_integer().is_some()
+109	    }
+110	
+111	    /// Extracts the float value if it is a float.
+112	    pub fn as_float(&self) -> Option<f64> {
+113	        match *self {
+114	            Self::Float(f) => Some(f),
+115	            _ => None,
+116	        }
+117	    }
+118	
+119	    /// Tests whether this value is a float.
+120	    pub fn is_float(&self) -> bool {
+121	        self.as_float().is_some()
+122	    }
+123	
+124	    /// Extracts the boolean value if it is a boolean.
+125	    pub fn as_bool(&self) -> Option<bool> {
+126	        match *self {
+127	            Self::Boolean(b) => Some(b),
+128	            _ => None,
+129	        }
+130	    }
+131	
+132	    /// Tests whether this value is a boolean.
+133	    pub fn is_bool(&self) -> bool {
+134	        self.as_bool().is_some()
+135	    }
+136	
+137	    /// Extracts the string of this value if it is a string.
+138	    pub fn as_str(&self) -> Option<&str> {
+139	        match *self {
+140	            Self::String(ref s) => Some(&**s),
+141	            _ => None,
+142	        }
+143	    }
+144	
+145	    /// Tests if this value is a string.
+146	    pub fn is_str(&self) -> bool {
+147	        self.as_str().is_some()
+148	    }
+149	
+150	    /// Extracts the datetime value if it is a datetime.
+151	    ///
+152	    /// Note that a parsed TOML value will only contain ISO 8601 dates. An
+153	    /// example date is:
+154	    ///
+155	    /// ```notrust
+156	    /// 1979-05-27T07:32:00Z
+157	    /// ```
+158	    pub fn as_datetime(&self) -> Option<&Datetime> {
+159	        match *self {
+160	            Self::Datetime(ref s) => Some(s),
+161	            _ => None,
+162	        }
+163	    }
+164	
+165	    /// Tests whether this value is a datetime.
+166	    pub fn is_datetime(&self) -> bool {
+167	        self.as_datetime().is_some()
+168	    }
+169	
+170	    /// Extracts the array value if it is an array.
+171	    pub fn as_array(&self) -> Option<&Vec<Self>> {
+172	        match *self {
+173	            Self::Array(ref s) => Some(s),
+174	            _ => None,
+175	        }
+176	    }
+177	
+178	    /// Extracts the array value if it is an array.
+179	    pub fn as_array_mut(&mut self) -> Option<&mut Vec<Self>> {
+180	        match *self {
+181	            Self::Array(ref mut s) => Some(s),
+182	            _ => None,
+183	        }
+184	    }
+185	
+186	    /// Tests whether this value is an array.
+187	    pub fn is_array(&self) -> bool {
+188	        self.as_array().is_some()
+189	    }
+190	
+191	    /// Extracts the table value if it is a table.
+192	    pub fn as_table(&self) -> Option<&Table> {
+193	        match *self {
+194	            Self::Table(ref s) => Some(s),
+195	            _ => None,
+196	        }
+197	    }
+198	
+199	    /// Extracts the table value if it is a table.
+200	    pub fn as_table_mut(&mut self) -> Option<&mut Table> {
+201	        match *self {
+202	            Self::Table(ref mut s) => Some(s),
+203	            _ => None,
+204	        }
+205	    }
+206	
+207	    /// Tests whether this value is a table.
+208	    pub fn is_table(&self) -> bool {
+209	        self.as_table().is_some()
+210	    }
+211	
+212	    /// Tests whether this and another value have the same type.
+213	    pub fn same_type(&self, other: &Self) -> bool {
+214	        discriminant(self) == discriminant(other)
+215	    }
+216	
+217	    /// Returns a human-readable representation of the type of this value.
+218	    pub fn type_str(&self) -> &'static str {
+219	        match *self {
+220	            Self::String(..) => "string",
+221	            Self::Integer(..) => "integer",
+222	            Self::Float(..) => "float",
+223	            Self::Boolean(..) => "boolean",
+224	            Self::Datetime(..) => "datetime",
+225	            Self::Array(..) => "array",
+226	            Self::Table(..) => "table",
+227	        }
+228	    }
+229	}
+230	
+231	impl<I> ops::Index<I> for Value
+232	where
+233	    I: Index,
+234	{
+235	    type Output = Self;
+236	
+237	    fn index(&self, index: I) -> &Self {
+238	        self.get(index).expect("index not found")
+239	    }
+240	}
+241	
+242	impl<I> ops::IndexMut<I> for Value
+243	where
+244	    I: Index,
+245	{
+246	    fn index_mut(&mut self, index: I) -> &mut Self {
+247	        self.get_mut(index).expect("index not found")
+248	    }
+249	}
+250	
+251	impl<'a> From<&'a str> for Value {
+252	    #[inline]
+253	    fn from(val: &'a str) -> Self {
+254	        Self::String(val.to_owned())
+255	    }
+256	}
+257	
+258	impl<V: Into<Self>> From<Vec<V>> for Value {
+259	    fn from(val: Vec<V>) -> Self {
+260	        Self::Array(val.into_iter().map(|v| v.into()).collect())
+261	    }
+262	}
+263	
+264	impl<S: Into<String>, V: Into<Self>> From<BTreeMap<S, V>> for Value {
+265	    fn from(val: BTreeMap<S, V>) -> Self {
+266	        let table = val.into_iter().map(|(s, v)| (s.into(), v.into())).collect();
+267	
+268	        Self::Table(table)
+269	    }
+270	}
+271	
+272	#[cfg(feature = "std")]
+273	impl<S: Into<String> + Hash + Eq, V: Into<Self>> From<HashMap<S, V>> for Value {
+274	    fn from(val: HashMap<S, V>) -> Self {
+275	        let table = val.into_iter().map(|(s, v)| (s.into(), v.into())).collect();
+276	
+277	        Self::Table(table)
+278	    }
+279	}
+280	
+281	macro_rules! impl_into_value {
+282	    ($variant:ident : $T:ty) => {
+283	        impl From<$T> for Value {
+284	            #[inline]
+285	            fn from(val: $T) -> Value {
+286	                Value::$variant(val.into())
+287	            }
+288	        }
+289	    };
+290	}
+291	
+292	impl_into_value!(String: String);
+293	impl_into_value!(Integer: i64);
+294	impl_into_value!(Integer: i32);
+295	impl_into_value!(Integer: i8);
+296	impl_into_value!(Integer: u8);
+297	impl_into_value!(Integer: u32);
+298	impl_into_value!(Float: f64);
+299	impl_into_value!(Float: f32);
+300	impl_into_value!(Boolean: bool);
+301	impl_into_value!(Datetime: Datetime);
+302	impl_into_value!(Table: Table);
+303	
+304	/// Types that can be used to index a `toml::Value`
+305	///
+306	/// Currently this is implemented for `usize` to index arrays and `str` to index
+307	/// tables.
+308	///
+309	/// This trait is sealed and not intended for implementation outside of the
+310	/// `toml` crate.
+311	pub trait Index: Sealed {
+312	    #[doc(hidden)]
+313	    fn index<'a>(&self, val: &'a Value) -> Option<&'a Value>;
+314	    #[doc(hidden)]
+315	    fn index_mut<'a>(&self, val: &'a mut Value) -> Option<&'a mut Value>;
+316	}
+317	
+318	/// An implementation detail that should not be implemented, this will change in
+319	/// the future and break code otherwise.
+320	#[doc(hidden)]
+321	pub trait Sealed {}
+322	impl Sealed for usize {}
+323	impl Sealed for str {}
+324	impl Sealed for String {}
+325	impl<T: Sealed + ?Sized> Sealed for &T {}
+326	
+327	impl Index for usize {
+328	    fn index<'a>(&self, val: &'a Value) -> Option<&'a Value> {
+329	        match *val {
+330	            Value::Array(ref a) => a.get(*self),
+331	            _ => None,
+332	        }
+333	    }
+334	
+335	    fn index_mut<'a>(&self, val: &'a mut Value) -> Option<&'a mut Value> {
+336	        match *val {
+337	            Value::Array(ref mut a) => a.get_mut(*self),
+338	            _ => None,
+339	        }
+340	    }
+341	}
+342	
+343	impl Index for str {
+344	    fn index<'a>(&self, val: &'a Value) -> Option<&'a Value> {
+345	        match *val {
+346	            Value::Table(ref a) => a.get(self),
+347	            _ => None,
+348	        }
+349	    }
+350	
+351	    fn index_mut<'a>(&self, val: &'a mut Value) -> Option<&'a mut Value> {
+352	        match *val {
+353	            Value::Table(ref mut a) => a.get_mut(self),
+354	            _ => None,
+355	        }
+356	    }
+357	}
+358	
+359	impl Index for String {
+360	    fn index<'a>(&self, val: &'a Value) -> Option<&'a Value> {
+361	        self[..].index(val)
+362	    }
+363	
+364	    fn index_mut<'a>(&self, val: &'a mut Value) -> Option<&'a mut Value> {
+365	        self[..].index_mut(val)
+366	    }
+367	}
+368	
+369	impl<T> Index for &T
+370	where
+371	    T: Index + ?Sized,
+372	{
+373	    fn index<'a>(&self, val: &'a Value) -> Option<&'a Value> {
+374	        (**self).index(val)
+375	    }
+376	
+377	    fn index_mut<'a>(&self, val: &'a mut Value) -> Option<&'a mut Value> {
+378	        (**self).index_mut(val)
+379	    }
+380	}
+381	
+382	#[cfg(feature = "display")]
+383	impl fmt::Display for Value {
+384	    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+385	        use serde_core::Serialize as _;
+386	
+387	        let mut output = String::new();
+388	        let serializer = crate::ser::ValueSerializer::new(&mut output);
+389	        self.serialize(serializer).unwrap();
+390	        output.fmt(f)
+391	    }
+392	}
+393	
+394	#[cfg(feature = "parse")]
+395	impl core::str::FromStr for Value {
+396	    type Err = crate::de::Error;
+397	    fn from_str(s: &str) -> Result<Self, Self::Err> {
+398	        use serde_core::Deserialize as _;
+399	        Self::deserialize(crate::de::ValueDeserializer::parse(s)?)
+400	    }
+401	}
+402	
+403	impl ser::Serialize for Value {
+404	    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+405	    where
+406	        S: ser::Serializer,
+407	    {
+408	        match *self {
+409	            Self::String(ref s) => serializer.serialize_str(s),
+410	            Self::Integer(i) => serializer.serialize_i64(i),
+411	            Self::Float(f) => serializer.serialize_f64(f),
+412	            Self::Boolean(b) => serializer.serialize_bool(b),
+413	            Self::Datetime(ref s) => s.serialize(serializer),
+414	            Self::Array(ref a) => a.serialize(serializer),
+415	            Self::Table(ref t) => t.serialize(serializer),
+416	        }
+417	    }
+418	}
+419	
+420	impl<'de> de::Deserialize<'de> for Value {
+421	    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+422	    where
+423	        D: de::Deserializer<'de>,
+424	    {
+425	        struct ValueVisitor;
+426	
+427	        impl<'de> de::Visitor<'de> for ValueVisitor {
+428	            type Value = Value;
+429	
+430	            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+431	                formatter.write_str("any valid TOML value")
+432	            }
+433	
+434	            fn visit_bool<E>(self, value: bool) -> Result<Value, E> {
+435	                Ok(Value::Boolean(value))
+436	            }
+437	
+438	            fn visit_i64<E>(self, value: i64) -> Result<Value, E> {
+439	                Ok(Value::Integer(value))
+440	            }
+441	
+442	            fn visit_u64<E: de::Error>(self, value: u64) -> Result<Value, E> {
+443	                if i64::try_from(value).is_ok() {
+444	                    Ok(Value::Integer(value as i64))
+445	                } else {
+446	                    Err(de::Error::custom("u64 value was too large"))
+447	                }
+448	            }
+449	
+450	            fn visit_u32<E>(self, value: u32) -> Result<Value, E> {
+451	                Ok(Value::Integer(value.into()))
+452	            }
+453	
+454	            fn visit_i32<E>(self, value: i32) -> Result<Value, E> {
+455	                Ok(Value::Integer(value.into()))
+456	            }
+457	
+458	            fn visit_f64<E>(self, value: f64) -> Result<Value, E> {
+459	                Ok(Value::Float(value))
+460	            }
+461	
+462	            fn visit_str<E>(self, value: &str) -> Result<Value, E> {
+463	                Ok(Value::String(value.into()))
+464	            }
+465	
+466	            fn visit_string<E>(self, value: String) -> Result<Value, E> {
+467	                Ok(Value::String(value))
+468	            }
+469	
+470	            fn visit_some<D>(self, deserializer: D) -> Result<Value, D::Error>
+471	            where
+472	                D: de::Deserializer<'de>,
+473	            {
+474	                de::Deserialize::deserialize(deserializer)
+475	            }
+476	
+477	            fn visit_seq<V>(self, mut visitor: V) -> Result<Value, V::Error>
+478	            where
+479	                V: de::SeqAccess<'de>,
+480	            {
+481	                let mut vec = Vec::new();
+482	                while let Some(elem) = visitor.next_element()? {
+483	                    vec.push(elem);
+484	                }
+485	                Ok(Value::Array(vec))
+486	            }
+487	
+488	            fn visit_map<V>(self, mut visitor: V) -> Result<Value, V::Error>
+489	            where
+490	                V: de::MapAccess<'de>,
+491	            {
+492	                let key = match toml_datetime::de::VisitMap::next_key_seed(&mut visitor)? {
+493	                    Some(toml_datetime::de::VisitMap::Datetime(datetime)) => {
+494	                        return Ok(Value::Datetime(datetime));
+495	                    }
+496	                    None => return Ok(Value::Table(Table::new())),
+497	                    Some(toml_datetime::de::VisitMap::Key(key)) => key,
+498	                };
+499	                let mut map = Table::new();
+500	                map.insert(key.into_owned(), visitor.next_value()?);
+501	                while let Some(key) = visitor.next_key::<String>()? {
+502	                    if let crate::map::Entry::Vacant(vacant) = map.entry(&key) {
+503	                        vacant.insert(visitor.next_value()?);
+504	                    } else {
+505	                        let msg = format!("duplicate key: `{key}`");
+506	                        return Err(de::Error::custom(msg));
+507	                    }
+508	                }
+509	                Ok(Value::Table(map))
+510	            }
+511	        }
+512	
+513	        deserializer.deserialize_any(ValueVisitor)
+514	    }
+515	}
+516	
+517	// This is wrapped by `Table` and any trait methods implemented here need to be wrapped there.
+518	impl<'de> de::Deserializer<'de> for Value {
+519	    type Error = crate::de::Error;
+520	
+521	    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, crate::de::Error>
+522	    where
+523	        V: de::Visitor<'de>,
+524	    {
+525	        match self {
+526	            Self::Boolean(v) => visitor.visit_bool(v),
+527	            Self::Integer(n) => visitor.visit_i64(n),
+528	            Self::Float(n) => visitor.visit_f64(n),
+529	            Self::String(v) => visitor.visit_string(v),
+530	            Self::Datetime(v) => visitor.visit_string(v.to_string()),
+531	            Self::Array(v) => {
+532	                let len = v.len();
+533	                let mut deserializer = SeqDeserializer::new(v);
+534	                let seq = visitor.visit_seq(&mut deserializer)?;
+535	                let remaining = deserializer.iter.len();
+536	                if remaining == 0 {
+537	                    Ok(seq)
+538	                } else {
+539	                    Err(de::Error::invalid_length(len, &"fewer elements in array"))
+540	                }
+541	            }
+542	            Self::Table(v) => {
+543	                let len = v.len();
+544	                let mut deserializer = MapDeserializer::new(v);
+545	                let map = visitor.visit_map(&mut deserializer)?;
+546	                let remaining = deserializer.iter.len();
+547	                if remaining == 0 {
+548	                    Ok(map)
+549	                } else {
+550	                    Err(de::Error::invalid_length(len, &"fewer elements in map"))
+551	                }
+552	            }
+553	        }
+554	    }
+555	
+556	    #[inline]
+557	    fn deserialize_enum<V>(
+558	        self,
+559	        _name: &'static str,
+560	        _variants: &'static [&'static str],
+561	        visitor: V,
+562	    ) -> Result<V::Value, crate::de::Error>
+563	    where
+564	        V: de::Visitor<'de>,
+565	    {
+566	        match self {
+567	            Self::String(variant) => visitor.visit_enum(variant.into_deserializer()),
+568	            Self::Table(variant) => {
+569	                if variant.is_empty() {
+570	                    Err(crate::de::Error::custom(
+571	                        "wanted exactly 1 element, found 0 elements",
+572	                        None,
+573	                    ))
+574	                } else if variant.len() != 1 {
+575	                    Err(crate::de::Error::custom(
+576	                        "wanted exactly 1 element, more than 1 element",
+577	                        None,
+578	                    ))
+579	                } else {
+580	                    let deserializer = MapDeserializer::new(variant);
+581	                    visitor.visit_enum(deserializer)
+582	                }
+583	            }
+584	            _ => Err(de::Error::invalid_type(
+585	                de::Unexpected::UnitVariant,
+586	                &"string only",
+587	            )),
+588	        }
+589	    }
+590	
+591	    // `None` is interpreted as a missing field so be sure to implement `Some`
+592	    // as a present field.
+593	    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, crate::de::Error>
+594	    where
+595	        V: de::Visitor<'de>,
+596	    {
+597	        visitor.visit_some(self)
+598	    }
+599	
+600	    fn deserialize_newtype_struct<V>(
+601	        self,
+602	        _name: &'static str,
+603	        visitor: V,
+604	    ) -> Result<V::Value, crate::de::Error>
+605	    where
+606	        V: de::Visitor<'de>,
+607	    {
+608	        visitor.visit_newtype_struct(self)
+609	    }
+610	
+611	    serde_core::forward_to_deserialize_any! {
+612	        bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit seq
+613	        bytes byte_buf map unit_struct tuple_struct struct
+614	        tuple ignored_any identifier
+615	    }
+616	}
+617	
+618	pub(crate) struct SeqDeserializer {
+619	    iter: vec::IntoIter<Value>,
+620	}
+621	
+622	impl SeqDeserializer {
+623	    fn new(vec: Vec<Value>) -> Self {
+624	        Self {
+625	            iter: vec.into_iter(),
+626	        }
+627	    }
+628	}
+629	
+630	impl<'de> de::SeqAccess<'de> for SeqDeserializer {
+631	    type Error = crate::de::Error;
+632	
+633	    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, crate::de::Error>
+634	    where
+635	        T: de::DeserializeSeed<'de>,
+636	    {
+637	        match self.iter.next() {
+638	            Some(value) => seed.deserialize(value).map(Some),
+639	            None => Ok(None),
+640	        }
+641	    }
+642	
+643	    fn size_hint(&self) -> Option<usize> {
+644	        match self.iter.size_hint() {
+645	            (lower, Some(upper)) if lower == upper => Some(upper),
+646	            _ => None,
+647	        }
+648	    }
+649	}
+650	
+651	pub(crate) struct MapDeserializer {
+652	    iter: <Table as IntoIterator>::IntoIter,
+653	    value: Option<(String, Value)>,
+654	}
+655	
+656	impl MapDeserializer {
+657	    fn new(map: Table) -> Self {
+658	        Self {
+659	            iter: map.into_iter(),
+660	            value: None,
+661	        }
+662	    }
+663	}
+664	
+665	impl<'de> de::MapAccess<'de> for MapDeserializer {
+666	    type Error = crate::de::Error;
+667	
+668	    fn next_key_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, crate::de::Error>
+669	    where
+670	        T: de::DeserializeSeed<'de>,
+671	    {
+672	        match self.iter.next() {
+673	            Some((key, value)) => {
+674	                self.value = Some((key.clone(), value));
+675	                seed.deserialize(Value::String(key)).map(Some)
+676	            }
+677	            None => Ok(None),
+678	        }
+679	    }
+680	
+681	    fn next_value_seed<T>(&mut self, seed: T) -> Result<T::Value, crate::de::Error>
+682	    where
+683	        T: de::DeserializeSeed<'de>,
+684	    {
+685	        let (key, res) = match self.value.take() {
+686	            Some((key, value)) => (key, seed.deserialize(value)),
+687	            None => return Err(de::Error::custom("value is missing")),
+688	        };
+689	        res.map_err(|mut error| {
+690	            error.add_key(key);
+691	            error
+692	        })
+693	    }
+694	
+695	    fn size_hint(&self) -> Option<usize> {
+696	        match self.iter.size_hint() {
+697	            (lower, Some(upper)) if lower == upper => Some(upper),
+698	            _ => None,
+699	        }
+700	    }
+701	}
+702	
+703	impl<'de> de::EnumAccess<'de> for MapDeserializer {
+704	    type Error = crate::de::Error;
+705	    type Variant = MapEnumDeserializer;
+706	
+707	    fn variant_seed<V>(mut self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
+708	    where
+709	        V: de::DeserializeSeed<'de>,
+710	    {
+711	        use de::Error;
+712	        let (key, value) = match self.iter.next() {
+713	            Some(pair) => pair,
+714	            None => {
+715	                return Err(Error::custom(
+716	                    "expected table with exactly 1 entry, found empty table",
+717	                ));
+718	            }
+719	        };
+720	
+721	        let val = seed.deserialize(key.into_deserializer())?;
+722	
+723	        let variant = MapEnumDeserializer::new(value);
+724	
+725	        Ok((val, variant))
+726	    }
+727	}
+728	
+729	/// Deserializes table values into enum variants.
+730	pub(crate) struct MapEnumDeserializer {
+731	    value: Value,
+732	}
+733	
+734	impl MapEnumDeserializer {
+735	    pub(crate) fn new(value: Value) -> Self {
+736	        Self { value }
+737	    }
+738	}
+739	
+740	impl<'de> de::VariantAccess<'de> for MapEnumDeserializer {
+741	    type Error = crate::de::Error;
+742	
+743	    fn unit_variant(self) -> Result<(), Self::Error> {
+744	        use de::Error;
+745	        match self.value {
+746	            Value::Array(values) => {
+747	                if values.is_empty() {
+748	                    Ok(())
+749	                } else {
+750	                    Err(Error::custom("expected empty array"))
+751	                }
+752	            }
+753	            Value::Table(values) => {
+754	                if values.is_empty() {
+755	                    Ok(())
+756	                } else {
+757	                    Err(Error::custom("expected empty table"))
+758	                }
+759	            }
+760	            e => Err(Error::custom(format!(
+761	                "expected table, found {}",
+762	                e.type_str()
+763	            ))),
+764	        }
+765	    }
+766	
+767	    fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value, Self::Error>
+768	    where
+769	        T: de::DeserializeSeed<'de>,
+770	    {
+771	        seed.deserialize(self.value.into_deserializer())
+772	    }
+773	
+774	    fn tuple_variant<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
+775	    where
+776	        V: de::Visitor<'de>,
+777	    {
+778	        use de::Error;
+779	        match self.value {
+780	            Value::Array(values) => {
+781	                if values.len() == len {
+782	                    de::Deserializer::deserialize_seq(values.into_deserializer(), visitor)
+783	                } else {
+784	                    Err(Error::custom(format!("expected tuple with length {len}")))
+785	                }
+786	            }
+787	            Value::Table(values) => {
+788	                let tuple_values: Result<Vec<_>, _> = values
+789	                    .into_iter()
+790	                    .enumerate()
+791	                    .map(|(index, (key, value))| match key.parse::<usize>() {
+792	                        Ok(key_index) if key_index == index => Ok(value),
+793	                        Ok(_) | Err(_) => Err(Error::custom(format!(
+794	                            "expected table key `{index}`, but was `{key}`"
+795	                        ))),
+796	                    })
+797	                    .collect();
+798	                let tuple_values = tuple_values?;
+799	
+800	                if tuple_values.len() == len {
+801	                    de::Deserializer::deserialize_seq(tuple_values.into_deserializer(), visitor)
+802	                } else {
+803	                    Err(Error::custom(format!("expected tuple with length {len}")))
+804	                }
+805	            }
+806	            e => Err(Error::custom(format!(
+807	                "expected table, found {}",
+808	                e.type_str()
+809	            ))),
+810	        }
+811	    }
+812	
+813	    fn struct_variant<V>(
+814	        self,
+815	        fields: &'static [&'static str],
+816	        visitor: V,
+817	    ) -> Result<V::Value, Self::Error>
+818	    where
+819	        V: de::Visitor<'de>,
+820	    {
+821	        de::Deserializer::deserialize_struct(
+822	            self.value.into_deserializer(),
+823	            "", // TODO: this should be the variant name
+824	            fields,
+825	            visitor,
+826	        )
+827	    }
+828	}
+829	
+830	impl IntoDeserializer<'_, crate::de::Error> for Value {
+831	    type Deserializer = Self;
+832	
+833	    fn into_deserializer(self) -> Self {
+834	        self
+835	    }
+836	}
+837	
+838	pub(crate) struct ValueSerializer;
+839	
+840	impl ser::Serializer for ValueSerializer {
+841	    type Ok = Value;
+842	    type Error = crate::ser::Error;
+843	
+844	    type SerializeSeq = ValueSerializeVec;
+845	    type SerializeTuple = ValueSerializeVec;
+846	    type SerializeTupleStruct = ValueSerializeVec;
+847	    type SerializeTupleVariant = ValueSerializeTupleVariant;
+848	    type SerializeMap = ValueSerializeMap;
+849	    type SerializeStruct = ValueSerializeMap;
+850	    type SerializeStructVariant = ValueSerializeStructVariant;
+851	
+852	    fn serialize_bool(self, value: bool) -> Result<Value, crate::ser::Error> {
+853	        Ok(Value::Boolean(value))
+854	    }
+855	
+856	    fn serialize_i8(self, value: i8) -> Result<Value, crate::ser::Error> {
+857	        self.serialize_i64(value.into())
+858	    }
+859	
+860	    fn serialize_i16(self, value: i16) -> Result<Value, crate::ser::Error> {
+861	        self.serialize_i64(value.into())
+862	    }
+863	
+864	    fn serialize_i32(self, value: i32) -> Result<Value, crate::ser::Error> {
+865	        self.serialize_i64(value.into())
+866	    }
+867	
+868	    fn serialize_i64(self, value: i64) -> Result<Value, crate::ser::Error> {
+869	        Ok(Value::Integer(value))
+870	    }
+871	
+872	    fn serialize_u8(self, value: u8) -> Result<Value, crate::ser::Error> {
+873	        self.serialize_i64(value.into())
+874	    }
+875	
+876	    fn serialize_u16(self, value: u16) -> Result<Value, crate::ser::Error> {
+877	        self.serialize_i64(value.into())
+878	    }
+879	
+880	    fn serialize_u32(self, value: u32) -> Result<Value, crate::ser::Error> {
+881	        self.serialize_i64(value.into())
+882	    }
+883	
+884	    fn serialize_u64(self, value: u64) -> Result<Value, crate::ser::Error> {
+885	        if i64::try_from(value).is_ok() {
+886	            self.serialize_i64(value as i64)
+887	        } else {
+888	            Err(ser::Error::custom("u64 value was too large"))
+889	        }
+890	    }
+891	
+892	    fn serialize_f32(self, value: f32) -> Result<Value, crate::ser::Error> {
+893	        self.serialize_f64(value as f64)
+894	    }
+895	
+896	    fn serialize_f64(self, mut value: f64) -> Result<Value, crate::ser::Error> {
+897	        // Discard sign of NaN. See ValueSerializer::serialize_f64.
+898	        if value.is_nan() {
+899	            value = value.copysign(1.0);
+900	        }
+901	        Ok(Value::Float(value))
+902	    }
+903	
+904	    fn serialize_char(self, value: char) -> Result<Value, crate::ser::Error> {
+905	        let mut s = String::new();
+906	        s.push(value);
+907	        self.serialize_str(&s)
+908	    }
+909	
+910	    fn serialize_str(self, value: &str) -> Result<Value, crate::ser::Error> {
+911	        Ok(Value::String(value.to_owned()))
+912	    }
+913	
+914	    fn serialize_bytes(self, value: &[u8]) -> Result<Value, crate::ser::Error> {
+915	        let vec = value.iter().map(|&b| Value::Integer(b.into())).collect();
+916	        Ok(Value::Array(vec))
+917	    }
+918	
+919	    fn serialize_unit(self) -> Result<Value, crate::ser::Error> {
+920	        Err(crate::ser::Error::unsupported_type(Some("unit")))
+921	    }
+922	
+923	    fn serialize_unit_struct(self, name: &'static str) -> Result<Value, crate::ser::Error> {
+924	        Err(crate::ser::Error::unsupported_type(Some(name)))
+925	    }
+926	
+927	    fn serialize_unit_variant(
+928	        self,
+929	        _name: &'static str,
+930	        _variant_index: u32,
+931	        _variant: &'static str,
+932	    ) -> Result<Value, crate::ser::Error> {
+933	        self.serialize_str(_variant)
+934	    }
+935	
+936	    fn serialize_newtype_struct<T>(
+937	        self,
+938	        _name: &'static str,
+939	        value: &T,
+940	    ) -> Result<Value, crate::ser::Error>
+941	    where
+942	        T: ser::Serialize + ?Sized,
+943	    {
+944	        value.serialize(self)
+945	    }
+946	
+947	    fn serialize_newtype_variant<T>(
+948	        self,
+949	        _name: &'static str,
+950	        _variant_index: u32,
+951	        variant: &'static str,
+952	        value: &T,
+953	    ) -> Result<Value, crate::ser::Error>
+954	    where
+955	        T: ser::Serialize + ?Sized,
+956	    {
+957	        let value = value.serialize(Self)?;
+958	        let mut table = Table::new();
+959	        table.insert(variant.to_owned(), value);
+960	        Ok(table.into())
+961	    }
+962	
+963	    fn serialize_none(self) -> Result<Value, crate::ser::Error> {
+964	        Err(crate::ser::Error::unsupported_none())
+965	    }
+966	
+967	    fn serialize_some<T>(self, value: &T) -> Result<Value, crate::ser::Error>
+968	    where
+969	        T: ser::Serialize + ?Sized,
+970	    {
+971	        value.serialize(self)
+972	    }
+973	
+974	    fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, crate::ser::Error> {
+975	        Ok(ValueSerializeVec {
+976	            vec: Vec::with_capacity(len.unwrap_or(0)),
+977	        })
+978	    }
+979	
+980	    fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, crate::ser::Error> {
+981	        self.serialize_seq(Some(len))
+982	    }
+983	
+984	    fn serialize_tuple_struct(
+985	        self,
+986	        _name: &'static str,
+987	        len: usize,
+988	    ) -> Result<Self::SerializeTupleStruct, crate::ser::Error> {
+989	        self.serialize_seq(Some(len))
+990	    }
+991	
+992	    fn serialize_tuple_variant(
+993	        self,
+994	        _name: &'static str,
+995	        _variant_index: u32,
+996	        variant: &'static str,
+997	        len: usize,
+998	    ) -> Result<Self::SerializeTupleVariant, crate::ser::Error> {
+999	        Ok(ValueSerializeTupleVariant::tuple(variant, len))
+1000	    }
+1001	
+1002	    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, crate::ser::Error> {
+1003	        Ok(ValueSerializeMap {
+1004	            ser: crate::table::SerializeMap::new(),
+1005	        })
+1006	    }
+1007	
+1008	    fn serialize_struct(
+1009	        self,
+1010	        _name: &'static str,
+1011	        len: usize,
+1012	    ) -> Result<Self::SerializeStruct, crate::ser::Error> {
+1013	        self.serialize_map(Some(len))
+1014	    }
+1015	
+1016	    fn serialize_struct_variant(
+1017	        self,
+1018	        _name: &'static str,
+1019	        _variant_index: u32,
+1020	        variant: &'static str,
+1021	        len: usize,
+1022	    ) -> Result<Self::SerializeStructVariant, crate::ser::Error> {
+1023	        Ok(ValueSerializeStructVariant::struct_(variant, len))
+1024	    }
+1025	}
+1026	
+1027	pub(crate) struct ValueSerializeVec {
+1028	    vec: Vec<Value>,
+1029	}
+1030	
+1031	impl ser::SerializeSeq for ValueSerializeVec {
+1032	    type Ok = Value;
+1033	    type Error = crate::ser::Error;
+1034	
+1035	    fn serialize_element<T>(&mut self, value: &T) -> Result<(), crate::ser::Error>
+1036	    where
+1037	        T: ser::Serialize + ?Sized,
+1038	    {
+1039	        self.vec.push(Value::try_from(value)?);
+1040	        Ok(())
+1041	    }
+1042	
+1043	    fn end(self) -> Result<Value, crate::ser::Error> {
+1044	        Ok(Value::Array(self.vec))
+1045	    }
+1046	}
+1047	
+1048	impl ser::SerializeTuple for ValueSerializeVec {
+1049	    type Ok = Value;
+1050	    type Error = crate::ser::Error;
+1051	
+1052	    fn serialize_element<T>(&mut self, value: &T) -> Result<(), crate::ser::Error>
+1053	    where
+1054	        T: ser::Serialize + ?Sized,
+1055	    {
+1056	        ser::SerializeSeq::serialize_element(self, value)
+1057	    }
+1058	
+1059	    fn end(self) -> Result<Value, crate::ser::Error> {
+1060	        ser::SerializeSeq::end(self)
+1061	    }
+1062	}
+1063	
+1064	impl ser::SerializeTupleStruct for ValueSerializeVec {
+1065	    type Ok = Value;
+1066	    type Error = crate::ser::Error;
+1067	
+1068	    fn serialize_field<T>(&mut self, value: &T) -> Result<(), crate::ser::Error>
+1069	    where
+1070	        T: ser::Serialize + ?Sized,
+1071	    {
+1072	        ser::SerializeSeq::serialize_element(self, value)
+1073	    }
+1074	
+1075	    fn end(self) -> Result<Value, crate::ser::Error> {
+1076	        ser::SerializeSeq::end(self)
+1077	    }
+1078	}
+1079	
+1080	impl ser::SerializeTupleVariant for ValueSerializeVec {
+1081	    type Ok = Value;
+1082	    type Error = crate::ser::Error;
+1083	
+1084	    fn serialize_field<T>(&mut self, value: &T) -> Result<(), crate::ser::Error>
+1085	    where
+1086	        T: ser::Serialize + ?Sized,
+1087	    {
+1088	        ser::SerializeSeq::serialize_element(self, value)
+1089	    }
+1090	
+1091	    fn end(self) -> Result<Value, crate::ser::Error> {
+1092	        ser::SerializeSeq::end(self)
+1093	    }
+1094	}
+1095	
+1096	pub(crate) struct ValueSerializeMap {
+1097	    ser: crate::table::SerializeMap,
+1098	}
+1099	
+1100	impl ser::SerializeMap for ValueSerializeMap {
+1101	    type Ok = Value;
+1102	    type Error = crate::ser::Error;
+1103	
+1104	    fn serialize_key<T>(&mut self, key: &T) -> Result<(), crate::ser::Error>
+1105	    where
+1106	        T: ser::Serialize + ?Sized,
+1107	    {
+1108	        self.ser.serialize_key(key)
+1109	    }
+1110	
+1111	    fn serialize_value<T>(&mut self, value: &T) -> Result<(), crate::ser::Error>
+1112	    where
+1113	        T: ser::Serialize + ?Sized,
+1114	    {
+1115	        self.ser.serialize_value(value)
+1116	    }
+1117	
+1118	    fn end(self) -> Result<Value, crate::ser::Error> {
+1119	        self.ser.end().map(Value::Table)
+1120	    }
+1121	}
+1122	
+1123	impl ser::SerializeStruct for ValueSerializeMap {
+1124	    type Ok = Value;
+1125	    type Error = crate::ser::Error;
+1126	
+1127	    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), crate::ser::Error>
+1128	    where
+1129	        T: ser::Serialize + ?Sized,
+1130	    {
+1131	        ser::SerializeMap::serialize_key(self, key)?;
+1132	        ser::SerializeMap::serialize_value(self, value)
+1133	    }
+1134	
+1135	    fn end(self) -> Result<Value, crate::ser::Error> {
+1136	        ser::SerializeMap::end(self)
+1137	    }
+1138	}
+1139	
+1140	type ValueSerializeTupleVariant = ValueSerializeVariant<ValueSerializeVec>;
+1141	type ValueSerializeStructVariant = ValueSerializeVariant<ValueSerializeMap>;
+1142	
+1143	pub(crate) struct ValueSerializeVariant<T> {
+1144	    variant: &'static str,
+1145	    inner: T,
+1146	}
+1147	
+1148	impl ValueSerializeVariant<ValueSerializeVec> {
+1149	    pub(crate) fn tuple(variant: &'static str, len: usize) -> Self {
+1150	        Self {
+1151	            variant,
+1152	            inner: ValueSerializeVec {
+1153	                vec: Vec::with_capacity(len),
+1154	            },
+1155	        }
+1156	    }
+1157	}
+1158	
+1159	impl ValueSerializeVariant<ValueSerializeMap> {
+1160	    pub(crate) fn struct_(variant: &'static str, len: usize) -> Self {
+1161	        Self {
+1162	            variant,
+1163	            inner: ValueSerializeMap {
+1164	                ser: crate::table::SerializeMap::with_capacity(len),
+1165	            },
+1166	        }
+1167	    }
+1168	}
+1169	
+1170	impl ser::SerializeTupleVariant for ValueSerializeVariant<ValueSerializeVec> {
+1171	    type Ok = Value;
+1172	    type Error = crate::ser::Error;
+1173	
+1174	    fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
+1175	    where
+1176	        T: ser::Serialize + ?Sized,
+1177	    {
+1178	        ser::SerializeSeq::serialize_element(&mut self.inner, value)
+1179	    }
+1180	
+1181	    fn end(self) -> Result<Self::Ok, Self::Error> {
+1182	        let inner = ser::SerializeSeq::end(self.inner)?;
+1183	        let mut table = Table::new();
+1184	        table.insert(self.variant.to_owned(), inner);
+1185	        Ok(Value::Table(table))
+1186	    }
+1187	}
+1188	
+1189	impl ser::SerializeStructVariant for ValueSerializeVariant<ValueSerializeMap> {
+1190	    type Ok = Value;
+1191	    type Error = crate::ser::Error;
+1192	
+1193	    #[inline]
+1194	    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
+1195	    where
+1196	        T: ser::Serialize + ?Sized,
+1197	    {
+1198	        ser::SerializeStruct::serialize_field(&mut self.inner, key, value)
+1199	    }
+1200	
+1201	    #[inline]
+1202	    fn end(self) -> Result<Self::Ok, Self::Error> {
+1203	        let inner = ser::SerializeStruct::end(self.inner)?;
+1204	        let mut table = Table::new();
+1205	        table.insert(self.variant.to_owned(), inner);
+1206	        Ok(Value::Table(table))
+1207	    }
+1208	}
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-okkjrbqv.log]

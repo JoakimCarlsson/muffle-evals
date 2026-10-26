@@ -1,0 +1,2644 @@
+$ git show HEAD
+51bedab3 2026-10-22 evals: base
+=== .codecov.yml
+new file mode 100644
+@@ -0,0 +1,31 @@
++codecov:
++  require_ci_to_pass: yes
++
++coverage:
++  precision: 2
++  round: down
++  range: "70...100"
++
++  status:
++    project:
++      default:
++        target: 75%
++        threshold: 2%
++    patch: off
++    changes: no
++
++parsers:
++  gcov:
++    branch_detection:
++      conditional: yes
++      loop: yes
++      method: no
++      macro: no
++
++comment:
++  layout: "header,diff"
++  behavior: default
++  require_changes: no
++
++ignore:
++  - ast
+=== .github/FUNDING.yml
+new file mode 100644
+@@ -0,0 +1,1 @@
++github: [goccy]
+=== .github/ISSUE_TEMPLATE/bug_report.md
+new file mode 100644
+@@ -0,0 +1,29 @@
++---
++name: Bug report
++about: Create a report to help us improve
++title: ''
++labels: bug
++assignees: ''
++
++---
++
++**Describe the bug**
++A clear and concise description of what the bug is.
++
++**To Reproduce**
++
++Please provide a minimum yaml content that can be reproduced.
++We are more than happy to use [Go Playground](https://go.dev/play)
++
++**Expected behavior**
++A clear and concise description of what you expected to happen.
++
++**Screenshots**
++If applicable, add screenshots to help explain your problem.
++
++**Version Variables**
++ - Go version: [e.g. 1.21 ]
++ - go-yaml's Version: [e.g. v1.11.1 ]
++
++**Additional context**
++Add any other context about the problem here.
+=== .github/ISSUE_TEMPLATE/feature_request.md
+new file mode 100644
+@@ -0,0 +1,20 @@
++---
++name: Feature request
++about: Suggest an idea for this project
++title: ''
++labels: feature request
++assignees: ''
++
++---
++
++**Is your feature request related to a problem? Please describe.**
++A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
++
++**Describe the solution you'd like**
++A clear and concise description of what you want to happen.
++
++**Describe alternatives you've considered**
++A clear and concise description of any alternative solutions or features you've considered.
++
++**Additional context**
++Add any other context or screenshots about the feature request here.
+=== .github/pull_request_template.md
+new file mode 100644
+@@ -0,0 +1,4 @@
++Before submitting your PR, please confirm the following.
++
++- [ ] Describe the purpose for which you created this PR.  
++- [ ] Create test code that corresponds to the modification
+\ No newline at end of file
+=== .github/workflows/go.yml
+new file mode 100644
+@@ -0,0 +1,125 @@
++name: Go
++on:
++  push:
++    branches:
++      - master
++  pull_request:
++jobs:
++  lint:
++    name: lint
++    runs-on: ubuntu-latest
++    steps:
++      - name: checkout
++        uses: actions/checkout@v4
++      - name: setup Go
++        uses: actions/setup-go@v4
++        with:
++          go-version: "1.24"
++      - name: run linters
++        run: |
++          make lint
++
++  race-test:
++    name: Test with -race
++    strategy:
++      matrix:
++        os: [ "ubuntu-latest", "macos-latest", "windows-latest" ]
++        go-version: [ "1.21", "1.22", "1.23", "1.24" ]
++    runs-on: ${{ matrix.os }}
++    steps:
++    - name: checkout
++      uses: actions/checkout@v4
++    - name: setup Go ${{ matrix.go-version }}
++      uses: actions/setup-go@v4
++      with:
++        go-version: ${{ matrix.go-version }}
++    - name: test
++      run: |
++        make test
++
++  i386-test:
++    name: Test in i386
++    strategy:
++      matrix:
++        os: [ "ubuntu-latest", "windows-latest" ]
++        go-version: [ "1.21", "1.22", "1.23", "1.24" ]
++    runs-on: ${{ matrix.os }}
++    env:
++      GOARCH: "386"
++    steps:
++    - name: checkout
++      uses: actions/checkout@v4
++    - name: setup Go ${{ matrix.go-version }}
++      uses: actions/setup-go@v4
++      with:
++        go-version: ${{ matrix.go-version }}
++    - name: test
++      run: |
++        make simple-test
++
++  fuzz:
++    name: Fuzzing Test
++    runs-on: ubuntu-latest
++    steps:
++      - name: checkout
++        uses: actions/checkout@v4
++      - name: setup Go
++        uses: actions/setup-go@v4
++        with:
++          go-version: "1.24"
++      - name: run
++        run: |
++          make fuzz
++
++  ycat:
++    name: ycat
++    runs-on: ubuntu-latest
++    steps:
++      - name: checkout
++        uses: actions/checkout@v4
++      - name: setup Go
++        uses: actions/setup-go@v4
++        with:
++          go-version: "1.24"
++      - name: build
++        run: |
++          make ycat/build
++      - name: run
++        run: |
++          ./bin/ycat .github/workflows/go.yml
++
++  page:
++    name: page
++    runs-on: ubuntu-latest
++    steps:
++      - name: checkout
++        uses: actions/checkout@v4
++      - name: setup Node
++        uses: actions/setup-node@v4
++        with:
++          node-version: 20
++          cache: 'npm'
++          cache-dependency-path: docs/playground/package-lock.json
++      - name: install dependencies
++        run: make -C ./docs/playground deps
++      - name: build
++        run: make -C ./docs/playground build
++
++  coverage:
++    name: Coverage
++    runs-on: ubuntu-latest
++    steps:
++      - name: checkout
++        uses: actions/checkout@v4
++      - name: setup Go
++        uses: actions/setup-go@v4
++        with:
++          go-version: "1.24"
++      - name: measure coverage
++        run: |
++          make cover
++      - uses: codecov/codecov-action@v4
++        with:
++          fail_ci_if_error: true
++          verbose: true
++          token: ${{ secrets.CODECOV_TOKEN }}
+=== .github/workflows/pages.yaml
+new file mode 100644
+@@ -0,0 +1,42 @@
++name: Deploy static content to Pages
++on:
++  push:
++    tags:
++      - v*
++
++  workflow_dispatch:
++
++permissions:
++  contents: read
++  pages: write
++  id-token: write
++
++concurrency:
++  group: 'pages'
++  cancel-in-progress: true
++
++jobs:
++  deploy:
++    runs-on: ubuntu-latest
++    steps:
++      - name: checkout
++        uses: actions/checkout@v4
++      - name: setup Node
++        uses: actions/setup-node@v4
++        with:
++          node-version: 20
++          cache: 'npm'
++          cache-dependency-path: docs/playground/package-lock.json
++      - name: install dependencies
++        run: make -C ./docs/playground deps
++      - name: build
++        run: make -C ./docs/playground build
++      - name: setup Pages
++        uses: actions/configure-pages@v4
++      - name: upload artifact
++        uses: actions/upload-pages-artifact@v3
++        with:
++          path: './docs/playground/dist'
++      - name: deploy to GitHub Pages
++        id: deployment
++        uses: actions/deploy-pages@v4
+=== .gitignore
+new file mode 100644
+@@ -0,0 +1,3 @@
++bin/
++.idea/
++cover.out
+=== .golangci.yml
+new file mode 100644
+@@ -0,0 +1,65 @@
++version: "2"
++linters:
++  default: none
++  enable:
++    - errcheck
++    - govet
++    - ineffassign
++    - misspell
++    - perfsprint
++    - staticcheck
++    - unused
++  settings:
++    errcheck:
++      without_tests: true
++    govet:
++      disable:
++        - tests
++    misspell:
++      locale: US
++    perfsprint:
++      int-conversion: false
++      err-error: false
++      errorf: true
++      sprintf1: false
++      strconcat: false
++    staticcheck:
++      checks:
++        - -ST1000
++        - -ST1005
++        - all
++  exclusions:
++    generated: lax
++    presets:
++      - comments
++      - common-false-positives
++      - legacy
++      - std-error-handling
++    rules:
++      - linters:
++          - staticcheck
++        path: _test\.go
++    paths:
++      - third_party$
++      - builtin$
++      - examples$
++formatters:
++  enable:
++    - gci
++    - gofmt
++  settings:
++    gci:
++      sections:
++        - standard
++        - default
++        - prefix(github.com/goccy/go-yaml)
++        - blank
++        - dot
++    gofmt:
++      simplify: true
++  exclusions:
++    generated: lax
++    paths:
++      - third_party$
++      - builtin$
++      - examples$
+=== CHANGELOG.md
+new file mode 100644
+@@ -0,0 +1,186 @@
++# 1.11.2 - 2023-09-15
++
++### Fix bugs
++
++- Fix quoted comments ( #370 )
++- Fix handle of space at start or last ( #376 )
++- Fix sequence with comment ( #390 )
++
++# 1.11.1 - 2023-09-14
++
++### Fix bugs
++
++- Handle `\r` in a double-quoted string the same as `\n` ( #372 )
++- Replace loop with n.Values = append(n.Values, target.Values...) ( #380 )
++- Skip encoding an inline field if it is null ( #386 )
++- Fix comment parsing with null value ( #388 )
++
++# 1.11.0 - 2023-04-03
++
++### Features
++
++- Supports dynamically switch encode and decode processing for a given type
++
++# 1.10.1 - 2023-03-28
++
++### Features
++
++- Quote YAML 1.1 bools at encoding time for compatibility with other legacy parsers
++- Add support of 32-bit architecture
++
++### Fix bugs
++
++- Don't trim all space characters in block style sequence
++- Support strings starting with `@`
++
++# 1.10.0 - 2023-03-01
++
++### Fix bugs
++
++Reversible conversion of comments was not working in various cases, which has been corrected.
++**Breaking Change** exists in the comment map interface. However, if you are dealing with CommentMap directly, there is no problem.
++
++
++# 1.9.8 - 2022-12-19
++
++### Fix feature
++
++- Append new line at the end of file ( #329 )
++
++### Fix bugs
++
++- Fix custom marshaler ( #333, #334 )
++- Fix behavior when struct fields conflicted( #335 )
++- Fix position calculation for literal, folded and raw folded strings ( #330 )
++
++# 1.9.7 - 2022-12-03
++
++### Fix bugs
++
++- Fix handling of quoted map key ( #328 )
++- Fix resusing process of scanning context ( #322 )
++
++## v1.9.6 - 2022-10-26
++
++### New Features
++
++- Introduce MapKeyNode interface to limit node types for map key ( #312 )
++
++### Fix bugs
+[+117 more diff lines]
+=== LICENSE +21 -0
+new file mode 100644
+=== Makefile +55 -0
+new file mode 100644
+=== README.md +420 -0
+new file mode 100644
+=== ast/ast.go +2377 -0
+new file mode 100644
+=== ast/ast_test.go +36 -0
+new file mode 100644
+=== benchmarks/benchmark_test.go +52 -0
+new file mode 100644
+=== benchmarks/go.mod +11 -0
+new file mode 100644
+=== benchmarks/go.sum +6 -0
+new file mode 100644
+=== cmd/ycat/go.mod +16 -0
+new file mode 100644
+=== cmd/ycat/go.sum +29 -0
+new file mode 100644
+=== cmd/ycat/ycat.go +89 -0
+new file mode 100644
+=== context.go +37 -0
+new file mode 100644
+=== decode.go +2036 -0
+new file mode 100644
+=== decode_test.go +3855 -0
+new file mode 100644
+=== docs/playground/.gitignore +3 -0
+new file mode 100644
+=== docs/playground/.vite/deps/_metadata.json +8 -0
+new file mode 100644
+=== docs/playground/.vite/deps/package.json +3 -0
+new file mode 100644
+=== docs/playground/Makefile +18 -0
+new file mode 100644
+=== docs/playground/README.md +14 -0
+new file mode 100644
+=== docs/playground/cmd/yaml/main.go +868 -0
+new file mode 100644
+=== docs/playground/eslint.config.js +28 -0
+new file mode 100644
+=== docs/playground/go.mod +23 -0
+new file mode 100644
+=== docs/playground/go.sum +24 -0
+new file mode 100644
+=== docs/playground/index.html +30 -0
+new file mode 100644
+=== docs/playground/package-lock.json +6686 -0
+new file mode 100644
+=== docs/playground/package.json +41 -0
+new file mode 100644
+=== docs/playground/public/yaml.svg +1 -0
+new file mode 100644
+=== docs/playground/src/App.css +5 -0
+new file mode 100644
+=== docs/playground/src/App.tsx +688 -0
+new file mode 100644
+=== docs/playground/src/YAML.ts +75 -0
+new file mode 100644
+=== docs/playground/src/index.css +8 -0
+new file mode 100644
+=== docs/playground/src/main.tsx +10 -0
+new file mode 100644
+=== docs/playground/src/vite-env.d.ts +2 -0
+new file mode 100644
+=== docs/playground/src/wasm_exec.js +575 -0
+new file mode 100644
+=== docs/playground/src/worker.ts +113 -0
+new file mode 100644
+=== docs/playground/tsconfig.app.json +26 -0
+new file mode 100644
+=== docs/playground/tsconfig.json +7 -0
+new file mode 100644
+=== docs/playground/tsconfig.node.json +24 -0
+new file mode 100644
+=== docs/playground/vite.config.ts +9 -0
+new file mode 100644
+=== encode.go +1074 -0
+new file mode 100644
+=== encode_test.go +2168 -0
+new file mode 100644
+=== error.go +77 -0
+new file mode 100644
+=== fuzz_test.go +56 -0
+new file mode 100644
+=== go.mod +3 -0
+new file mode 100644
+=== go.sum
+new file mode 100644
+=== internal/errors/error.go +246 -0
+new file mode 100644
+=== internal/format/format.go +539 -0
+new file mode 100644
+=== lexer/lexer.go +23 -0
+new file mode 100644
+=== lexer/lexer_test.go +3294 -0
+new file mode 100644
+=== option.go +352 -0
+new file mode 100644
+=== parser/color.go +28 -0
+new file mode 100644
+=== parser/context.go +187 -0
+new file mode 100644
+=== parser/node.go +257 -0
+new file mode 100644
+=== parser/option.go +12 -0
+new file mode 100644
+=== parser/parser.go +1320 -0
+new file mode 100644
+=== parser/parser_test.go +1989 -0
+new file mode 100644
+=== parser/testdata/cr.yml +0 -0
+new file mode 100644
+=== parser/testdata/crlf.yml +3 -0
+new file mode 100644
+=== parser/testdata/lf.yml +3 -0
+new file mode 100644
+=== parser/token.go +746 -0
+new file mode 100644
+=== path.go +835 -0
+new file mode 100644
+=== path_test.go +976 -0
+new file mode 100644
+=== printer/color.go +83 -0
+new file mode 100644
+=== printer/printer.go +353 -0
+new file mode 100644
+=== printer/printer_test.go +223 -0
+new file mode 100644
+=== scanner/context.go +452 -0
+new file mode 100644
+=== scanner/error.go +17 -0
+new file mode 100644
+=== scanner/scanner.go +1536 -0
+new file mode 100644
+=== stdlib_quote.go +113 -0
+new file mode 100644
+=== struct.go +128 -0
+new file mode 100644
+=== testdata/anchor.yml +3 -0
+new file mode 100644
+=== testdata/go_test.mod +19 -0
+new file mode 100644
+=== testdata/go_test.sum +30 -0
+new file mode 100644
+=== testdata/validate_test.go +230 -0
+new file mode 100644
+=== testdata/yaml-test-suite/aliases-in-block-sequence/in.json +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/aliases-in-block-sequence/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/aliases-in-explicit-block-mapping/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/aliases-in-explicit-block-mapping/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/aliases-in-flow-objects/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/aliases-in-flow-objects/out.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/aliases-in-implicit-block-mapping/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/aliases-in-implicit-block-mapping/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/aliases-in-implicit-block-mapping/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/allowed-characters-in-alias/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/allowed-characters-in-alias/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/allowed-characters-in-keys/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/allowed-characters-in-keys/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/allowed-characters-in-keys/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/allowed-characters-in-plain-scalars/in.json +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/allowed-characters-in-plain-scalars/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/allowed-characters-in-plain-scalars/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/allowed-characters-in-quoted-mapping-key/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/allowed-characters-in-quoted-mapping-key/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/allowed-characters-in-quoted-mapping-key/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-and-alias-as-mapping-key/error
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-and-alias-as-mapping-key/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-before-sequence-entry-on-same-line/error
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-before-sequence-entry-on-same-line/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-before-zero-indented-sequence/in.json +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-before-zero-indented-sequence/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-before-zero-indented-sequence/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-for-empty-node/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-for-empty-node/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-for-empty-node/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-plus-alias/error
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-plus-alias/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-with-colon-in-the-middle/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-with-colon-in-the-middle/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-with-colon-in-the-middle/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-with-unicode-character/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-with-unicode-character/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchor-with-unicode-character/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchors-and-tags/in.json +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchors-and-tags/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchors-and-tags/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchors-in-mapping/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchors-in-mapping/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchors-on-empty-scalars/in.yaml +12 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchors-on-empty-scalars/out.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchors-with-colon-in-name/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchors-with-colon-in-name/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/anchors-with-colon-in-name/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/backslashes-in-singlequotes/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/backslashes-in-singlequotes/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/backslashes-in-singlequotes/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/bad-indentation-in-mapping-2/error
+new file mode 100644
+=== testdata/yaml-test-suite/bad-indentation-in-mapping-2/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/bad-indentation-in-mapping/error
+new file mode 100644
+=== testdata/yaml-test-suite/bad-indentation-in-mapping/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/bare-document-after-document-end-marker/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/bare-document-after-document-end-marker/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/bare-document-after-document-end-marker/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/blank-lines/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/blank-lines/in.yaml +12 -0
+new file mode 100644
+=== testdata/yaml-test-suite/blank-lines/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-mapping-with-missing-keys/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-mapping-with-missing-values/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-mapping-with-missing-values/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-mapping-with-missing-values/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-mapping-with-multiline-scalars/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-mapping-with-multiline-scalars/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-mapping-with-multiline-scalars/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-mappings-in-block-sequence/in.json +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-mappings-in-block-sequence/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-mappings-in-block-sequence/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-indicator-order/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-indicator-order/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-indicator-order/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-keep/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-keep/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-keep/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-strip-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-strip-1-3/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-strip-1-3/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-strip/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-strip/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-strip/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-with-more-spaces-than-first-content-line/error
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-with-more-spaces-than-first-content-line/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-with-wrong-indented-line-after-spaces-only/error
+new file mode 100644
+=== testdata/yaml-test-suite/block-scalar-with-wrong-indented-line-after-spaces-only/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-sequence-in-block-mapping/in.json +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-sequence-in-block-mapping/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-sequence-in-block-mapping/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-sequence-in-block-sequence/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-sequence-in-block-sequence/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-sequence-indentation/in.json +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-sequence-indentation/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-sequence-indentation/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-submapping/in.json +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/block-submapping/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/colon-and-adjacent-value-after-comment-on-next-line/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/colon-and-adjacent-value-after-comment-on-next-line/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/colon-and-adjacent-value-after-comment-on-next-line/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/colon-and-adjacent-value-on-next-line/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/colon-and-adjacent-value-on-next-line/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/colon-and-adjacent-value-on-next-line/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/colon-at-the-beginning-of-adjacent-flow-scalar/in.json +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/colon-at-the-beginning-of-adjacent-flow-scalar/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/colon-at-the-beginning-of-adjacent-flow-scalar/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/colon-followed-by-comma/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/colon-followed-by-comma/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/colon-followed-by-comma/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/colon-in-double-quoted-string/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/colon-in-double-quoted-string/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/comment-and-document-end-marker/in.json
+new file mode 100644
+=== testdata/yaml-test-suite/comment-and-document-end-marker/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/comment-and-document-end-marker/out.yaml
+new file mode 100644
+=== testdata/yaml-test-suite/comment-between-plain-scalar-lines/error
+new file mode 100644
+=== testdata/yaml-test-suite/comment-between-plain-scalar-lines/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/comment-in-flow-sequence-before-comma/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/comment-in-flow-sequence-before-comma/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/comment-in-flow-sequence-before-comma/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/comment-in-plain-multiline-value/error
+new file mode 100644
+=== testdata/yaml-test-suite/comment-in-plain-multiline-value/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/comment-that-looks-like-a-mapping-key/error
+new file mode 100644
+=== testdata/yaml-test-suite/comment-that-looks-like-a-mapping-key/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/comment-without-whitespace-after-block-scalar-indicator/error
+new file mode 100644
+=== testdata/yaml-test-suite/comment-without-whitespace-after-block-scalar-indicator/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/comment-without-whitespace-after-doublequoted-scalar/error
+new file mode 100644
+=== testdata/yaml-test-suite/comment-without-whitespace-after-doublequoted-scalar/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/construct-binary/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/construct-binary/in.yaml +12 -0
+new file mode 100644
+=== testdata/yaml-test-suite/dash-in-flow-sequence/error
+new file mode 100644
+=== testdata/yaml-test-suite/dash-in-flow-sequence/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-by-itself-with-no-document/error
+new file mode 100644
+=== testdata/yaml-test-suite/directive-by-itself-with-no-document/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/00/error
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/00/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/01/error
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/01/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/02/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/02/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/02/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/03/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/03/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/03/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/04/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/04/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/04/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/05/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/05/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/05/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/06/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/06/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-variants/06/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/directive-without-document/error
+new file mode 100644
+=== testdata/yaml-test-suite/directive-without-document/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/document-end-marker/in.json
+new file mode 100644
+=== testdata/yaml-test-suite/document-end-marker/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/document-end-marker/out.yaml
+new file mode 100644
+=== testdata/yaml-test-suite/document-start-on-last-line/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/document-start-on-last-line/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/document-start-on-last-line/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/document-with-footer/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/document-with-footer/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/double-quoted-scalar-with-escaped-single-quote/error
+new file mode 100644
+=== testdata/yaml-test-suite/double-quoted-scalar-with-escaped-single-quote/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/double-quoted-string-without-closing-quote/error
+new file mode 100644
+=== testdata/yaml-test-suite/double-quoted-string-without-closing-quote/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/doublequoted-scalar-starting-with-a-tab/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/doublequoted-scalar-starting-with-a-tab/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/doublequoted-scalar-starting-with-a-tab/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/duplicate-yaml-directive/error
+new file mode 100644
+=== testdata/yaml-test-suite/duplicate-yaml-directive/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/empty-flow-collections/in.json +16 -0
+new file mode 100644
+=== testdata/yaml-test-suite/empty-flow-collections/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/empty-flow-collections/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/empty-implicit-key-in-single-pair-flow-sequences/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/empty-implicit-key-in-single-pair-flow-sequences/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/empty-keys-in-block-and-flow-mapping/in.yaml +13 -0
+new file mode 100644
+=== testdata/yaml-test-suite/empty-lines-at-end-of-document/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/empty-lines-between-mapping-elements/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/empty-lines-between-mapping-elements/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/empty-lines-between-mapping-elements/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/empty-stream/in.json
+new file mode 100644
+=== testdata/yaml-test-suite/empty-stream/in.yaml
+new file mode 100644
+=== testdata/yaml-test-suite/escaped-slash-in-double-quotes/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/escaped-slash-in-double-quotes/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/escaped-slash-in-double-quotes/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/explicit-key-and-value-seperated-by-comment/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/explicit-key-and-value-seperated-by-comment/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/explicit-key-and-value-seperated-by-comment/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/explicit-non-specific-tag-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/explicit-non-specific-tag-1-3/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/explicit-non-specific-tag-1-3/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/explicit-non-specific-tag/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/explicit-non-specific-tag/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/extra-words-on-yaml-directive/error
+new file mode 100644
+=== testdata/yaml-test-suite/extra-words-on-yaml-directive/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-collections-over-many-lines/00/error
+new file mode 100644
+=== testdata/yaml-test-suite/flow-collections-over-many-lines/00/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-collections-over-many-lines/01/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-collections-over-many-lines/01/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-collections-over-many-lines/01/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-colon-on-line-after-key/00/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-colon-on-line-after-key/00/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-colon-on-line-after-key/01/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-colon-on-line-after-key/01/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-colon-on-line-after-key/02/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-colon-on-line-after-key/02/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-edge-cases/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-edge-cases/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-edge-cases/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-in-block-sequence/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-in-block-sequence/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-in-block-sequence/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-key-on-two-lines/error
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-key-on-two-lines/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-missing-a-separating-comma/error
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-missing-a-separating-comma/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-separate-values/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping-separate-values/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-mapping/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-in-block-mapping/in.json +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-in-block-mapping/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-in-block-mapping/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-in-flow-mapping/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-in-flow-mapping/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-in-flow-sequence/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-in-flow-sequence/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-in-flow-sequence/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-with-invalid-comma-at-the-beginning/error
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-with-invalid-comma-at-the-beginning/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-with-invalid-extra-closing-bracket/error
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-with-invalid-extra-closing-bracket/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-with-invalid-extra-comma/error
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-with-invalid-extra-comma/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-without-closing-bracket/error
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence-without-closing-bracket/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/flow-sequence/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/folded-block-scalar-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/folded-block-scalar-1-3/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/folded-block-scalar-1-3/out.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/folded-block-scalar/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/folded-block-scalar/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/folded-block-scalar/out.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/implicit-flow-mapping-key-on-one-line/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/implicit-flow-mapping-key-on-one-line/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/implicit-key-followed-by-newline-and-adjacent-value/error
+new file mode 100644
+=== testdata/yaml-test-suite/implicit-key-followed-by-newline-and-adjacent-value/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/implicit-key-followed-by-newline/error
+new file mode 100644
+=== testdata/yaml-test-suite/implicit-key-followed-by-newline/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/inline-tabs-in-double-quoted/00/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/inline-tabs-in-double-quoted/00/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/inline-tabs-in-double-quoted/01/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/inline-tabs-in-double-quoted/01/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/inline-tabs-in-double-quoted/01/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/inline-tabs-in-double-quoted/02/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/inline-tabs-in-double-quoted/02/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/inline-tabs-in-double-quoted/02/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-anchor-in-zero-indented-sequence/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-anchor-in-zero-indented-sequence/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-block-mapping-key-on-same-line-as-previous-key/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-block-mapping-key-on-same-line-as-previous-key/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-comma-in-tag/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-comma-in-tag/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-comment-after-comma/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-comment-after-comma/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-comment-after-end-of-flow-sequence/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-comment-after-end-of-flow-sequence/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-content-after-document-end-marker/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-content-after-document-end-marker/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-document-end-marker-in-single-quoted-string/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-document-end-marker-in-single-quoted-string/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-document-markers-in-flow-style/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-document-markers-in-flow-style/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-document-start-marker-in-doublequoted-tring/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-document-start-marker-in-doublequoted-tring/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-escape-in-double-quoted-string/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-escape-in-double-quoted-string/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-item-after-end-of-flow-sequence/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-item-after-end-of-flow-sequence/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-mapping-after-sequence/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-mapping-after-sequence/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-mapping-in-plain-multiline/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-mapping-in-plain-multiline/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-mapping-in-plain-scalar/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-mapping-in-plain-scalar/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-mapping-in-plain-single-line-value/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-mapping-in-plain-single-line-value/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-nested-mapping/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-nested-mapping/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-scalar-after-sequence/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-scalar-after-sequence/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-scalar-at-the-end-of-mapping/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-scalar-at-the-end-of-mapping/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-scalar-at-the-end-of-sequence/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-scalar-at-the-end-of-sequence/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-sequene-item-on-same-line-as-previous-item/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-sequene-item-on-same-line-as-previous-item/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-tabs-as-indendation-in-a-mapping/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-tabs-as-indendation-in-a-mapping/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-tag/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-tag/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-text-after-block-scalar-indicator/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-text-after-block-scalar-indicator/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-value-after-mapping/error
+new file mode 100644
+=== testdata/yaml-test-suite/invalid-value-after-mapping/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/key-with-anchor-after-missing-explicit-mapping-value/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/key-with-anchor-after-missing-explicit-mapping-value/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/key-with-anchor-after-missing-explicit-mapping-value/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tab-content-in-literals/00/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tab-content-in-literals/00/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tab-content-in-literals/00/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tab-content-in-literals/01/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tab-content-in-literals/01/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tab-content-in-literals/01/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tabs-in-double-quoted/00/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tabs-in-double-quoted/00/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tabs-in-double-quoted/01/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tabs-in-double-quoted/01/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tabs-in-double-quoted/02/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tabs-in-double-quoted/02/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tabs-in-double-quoted/03/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tabs-in-double-quoted/03/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tabs-in-double-quoted/04/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tabs-in-double-quoted/04/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tabs-in-double-quoted/05/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/leading-tabs-in-double-quoted/05/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/legal-tab-after-indentation/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/legal-tab-after-indentation/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/legal-tab-after-indentation/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-block-scalar-with-more-spaces-in-first-line/error
+new file mode 100644
+=== testdata/yaml-test-suite/literal-block-scalar-with-more-spaces-in-first-line/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-block-scalar/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-block-scalar/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-block-scalar/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-modifers/00/error
+new file mode 100644
+=== testdata/yaml-test-suite/literal-modifers/00/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-modifers/01/error
+new file mode 100644
+=== testdata/yaml-test-suite/literal-modifers/01/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-modifers/02/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-modifers/02/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-modifers/03/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-modifers/03/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-scalars/in.json +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-scalars/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-scalars/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-unicode/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-unicode/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/literal-unicode/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/lookahead-test-cases/in.json +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/lookahead-test-cases/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/mapping-key-and-flow-sequence-item-anchors/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/mapping-key-and-flow-sequence-item-anchors/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/mapping-starting-at-line/error
+new file mode 100644
+=== testdata/yaml-test-suite/mapping-starting-at-line/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/mapping-with-anchor-on-document-start-line/error
+new file mode 100644
+=== testdata/yaml-test-suite/mapping-with-anchor-on-document-start-line/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/missing-colon/error
+new file mode 100644
+=== testdata/yaml-test-suite/missing-colon/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/missing-comma-in-flow/error
+new file mode 100644
+=== testdata/yaml-test-suite/missing-comma-in-flow/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/missing-document-end-marker-before-directive/error
+new file mode 100644
+=== testdata/yaml-test-suite/missing-document-end-marker-before-directive/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/mixed-block-mapping-explicit-to-implicit/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/mixed-block-mapping-explicit-to-implicit/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/mixed-block-mapping-explicit-to-implicit/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/mixed-block-mapping-implicit-to-explicit/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/mixed-block-mapping-implicit-to-explicit/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/mixed-block-mapping-implicit-to-explicit/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/more-indented-lines-at-the-beginning-of-folded-block-scalars/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/more-indented-lines-at-the-beginning-of-folded-block-scalars/in.yaml +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multi-level-mapping-indent/in.json +11 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multi-level-mapping-indent/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-double-quoted-flow-mapping-key/in.json +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-double-quoted-flow-mapping-key/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-double-quoted-flow-mapping-key/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-double-quoted-implicit-keys/error
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-double-quoted-implicit-keys/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-doublequoted-flow-mapping-key-without-value/in.json +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-doublequoted-flow-mapping-key-without-value/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-doublequoted-flow-mapping-key-without-value/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-implicit-keys/error
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-implicit-keys/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-plain-flow-mapping-key-without-value/in.json +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-plain-flow-mapping-key-without-value/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-plain-flow-mapping-key-without-value/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-plain-flow-mapping-key/in.json +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-plain-flow-mapping-key/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-plain-flow-mapping-key/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-plain-scalar-with-empty-line/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-plain-scalar-with-empty-line/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-plain-scalar-with-empty-line/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-plain-value-with-tabs-on-empty-lines/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-plain-value-with-tabs-on-empty-lines/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-plain-value-with-tabs-on-empty-lines/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-scalar-at-top-level-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-scalar-at-top-level-1-3/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-scalar-at-top-level-1-3/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-scalar-at-top-level/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-scalar-at-top-level/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-scalar-at-top-level/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-scalar-in-mapping/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-scalar-in-mapping/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-scalar-in-mapping/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-scalar-that-looks-like-a-yaml-directive/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-scalar-that-looks-like-a-yaml-directive/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-scalar-that-looks-like-a-yaml-directive/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-single-quoted-implicit-keys/error
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-single-quoted-implicit-keys/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-unidented-double-quoted-block-key/error
+new file mode 100644
+=== testdata/yaml-test-suite/multiline-unidented-double-quoted-block-key/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiple-entry-block-sequence/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiple-entry-block-sequence/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiple-pair-block-mapping/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/multiple-pair-block-mapping/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/need-document-footer-before-directives/error
+new file mode 100644
+=== testdata/yaml-test-suite/need-document-footer-before-directives/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/nested-flow-collections-on-one-line/in.json +12 -0
+new file mode 100644
+=== testdata/yaml-test-suite/nested-flow-collections-on-one-line/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/nested-flow-collections-on-one-line/out.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/nested-flow-collections/in.json +12 -0
+new file mode 100644
+=== testdata/yaml-test-suite/nested-flow-collections/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/nested-flow-collections/out.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/nested-flow-mapping-sequence-and-mappings/in.json +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/nested-flow-mapping-sequence-and-mappings/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/nested-flow-mapping-sequence-and-mappings/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/nested-implicit-complex-keys/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/nested-implicit-complex-keys/out.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/nested-top-level-flow-mapping/in.json +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/nested-top-level-flow-mapping/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/nested-top-level-flow-mapping/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/node-anchor-and-tag-on-seperate-lines/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/node-anchor-and-tag-on-seperate-lines/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/node-anchor-and-tag-on-seperate-lines/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/node-anchor-in-sequence/error
+new file mode 100644
+=== testdata/yaml-test-suite/node-anchor-in-sequence/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/node-anchor-not-indented/error
+new file mode 100644
+=== testdata/yaml-test-suite/node-anchor-not-indented/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/node-and-mapping-key-anchors-1-3/in.json +19 -0
+new file mode 100644
+=== testdata/yaml-test-suite/node-and-mapping-key-anchors-1-3/in.yaml +15 -0
+new file mode 100644
+=== testdata/yaml-test-suite/node-and-mapping-key-anchors-1-3/out.yaml +13 -0
+new file mode 100644
+=== testdata/yaml-test-suite/node-and-mapping-key-anchors/in.json +19 -0
+new file mode 100644
+=== testdata/yaml-test-suite/node-and-mapping-key-anchors/in.yaml +17 -0
+new file mode 100644
+=== testdata/yaml-test-suite/node-and-mapping-key-anchors/out.yaml +13 -0
+new file mode 100644
+=== testdata/yaml-test-suite/non-specific-tags-on-scalars/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/non-specific-tags-on-scalars/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/plain-dashes-in-flow-sequence/error
+new file mode 100644
+=== testdata/yaml-test-suite/plain-dashes-in-flow-sequence/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/plain-mapping-key-ending-with-colon/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/plain-mapping-key-ending-with-colon/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/plain-mapping-key-ending-with-colon/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/plain-scalar-looking-like-key-comment-anchor-and-tag/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/plain-scalar-looking-like-key-comment-anchor-and-tag/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/plain-scalar-looking-like-key-comment-anchor-and-tag/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/plain-scalar-with-backslashes/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/plain-scalar-with-backslashes/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/plain-scalar-with-backslashes/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/plain-url-in-flow-mapping/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/plain-url-in-flow-mapping/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/plain-url-in-flow-mapping/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/question-mark-at-start-of-flow-key/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/question-mark-at-start-of-flow-key/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/question-mark-at-start-of-flow-key/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/question-mark-edge-cases/00/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/question-mark-edge-cases/00/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/question-mark-edge-cases/01/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/question-mark-edge-cases/01/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/question-marks-in-scalars/in.json +22 -0
+new file mode 100644
+=== testdata/yaml-test-suite/question-marks-in-scalars/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/question-marks-in-scalars/out.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalar-doc-with-in-content/00/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalar-doc-with-in-content/00/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalar-doc-with-in-content/00/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalar-doc-with-in-content/01/error
+new file mode 100644
+=== testdata/yaml-test-suite/scalar-doc-with-in-content/01/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalar-doc-with-in-content/01/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalar-value-with-two-anchors/error
+new file mode 100644
+=== testdata/yaml-test-suite/scalar-value-with-two-anchors/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalars-in-flow-start-with-syntax-char/00/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalars-in-flow-start-with-syntax-char/00/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalars-in-flow-start-with-syntax-char/00/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalars-in-flow-start-with-syntax-char/01/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalars-in-flow-start-with-syntax-char/01/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalars-in-flow-start-with-syntax-char/01/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalars-on-line/in.json +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalars-on-line/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/scalars-on-line/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/sequence-entry-that-looks-like-two-with-wrong-indentation/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/sequence-entry-that-looks-like-two-with-wrong-indentation/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/sequence-entry-that-looks-like-two-with-wrong-indentation/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/sequence-indent/in.json +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/sequence-indent/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/sequence-indent/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/sequence-on-same-line-as-mapping-key/error
+new file mode 100644
+=== testdata/yaml-test-suite/sequence-on-same-line-as-mapping-key/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/sequence-with-same-indentation-as-parent-mapping/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/sequence-with-same-indentation-as-parent-mapping/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/simple-mapping-indent/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/simple-mapping-indent/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-block-sequence-with-anchor-and-explicit-document-start/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-block-sequence-with-anchor-and-explicit-document-start/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-block-sequence-with-anchor-and-explicit-document-start/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-block-sequence-with-anchor/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-block-sequence-with-anchor/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-block-sequence-with-anchor/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-character-streams/00/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-character-streams/00/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-character-streams/00/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-character-streams/01/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-character-streams/01/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-entry-block-sequence/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-entry-block-sequence/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-pair-block-mapping/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-pair-block-mapping/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-pair-implicit-entries/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/single-pair-implicit-entries/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-1-sequence-of-scalars/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-1-sequence-of-scalars/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-1-sequence-of-scalars/lex.token +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-10-node-for-sammy-sosa-appears-twice-in-this-document/in.json +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-10-node-for-sammy-sosa-appears-twice-in-this-document/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-10-node-for-sammy-sosa-appears-twice-in-this-document/out.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-11-mapping-between-sequences/in.yaml +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-11-mapping-between-sequences/out.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-12-compact-nested-mapping/in.json +14 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-12-compact-nested-mapping/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-12-compact-nested-mapping/out.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-13-in-literals-newlines-are-preserved/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-13-in-literals-newlines-are-preserved/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-13-in-literals-newlines-are-preserved/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-14-in-the-folded-scalars-newlines-become-spaces/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-14-in-the-folded-scalars-newlines-become-spaces/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-14-in-the-folded-scalars-newlines-become-spaces/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-15-folded-newlines-are-preserved-for-more-indented-and-blank-lines/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-15-folded-newlines-are-preserved-for-more-indented-and-blank-lines/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-15-folded-newlines-are-preserved-for-more-indented-and-blank-lines/out.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-16-indentation-determines-scope/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-16-indentation-determines-scope/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-16-indentation-determines-scope/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-17-quoted-scalars/in.json +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-17-quoted-scalars/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-17-quoted-scalars/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-18-multi-line-flow-scalars/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-18-multi-line-flow-scalars/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-18-multi-line-flow-scalars/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-2-mapping-scalars-to-scalars/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-2-mapping-scalars-to-scalars/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-2-mapping-scalars-to-scalars/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-24-global-tags/in.json +27 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-24-global-tags/in.yaml +14 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-24-global-tags/out.yaml +15 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-25-unordered-sets/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-25-unordered-sets/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-25-unordered-sets/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-26-ordered-mappings/in.json +11 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-26-ordered-mappings/in.yaml +11 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-26-ordered-mappings/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-27-invoice/in.json +41 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-27-invoice/in.yaml +29 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-27-invoice/out.yaml +26 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-28-log-file/in.json +27 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-28-log-file/in.yaml +26 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-28-log-file/out.yaml +21 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-3-mapping-scalars-to-sequences/in.json +12 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-3-mapping-scalars-to-sequences/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-3-mapping-scalars-to-sequences/out.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-4-sequence-of-mappings/in.json +12 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-4-sequence-of-mappings/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-4-sequence-of-mappings/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-5-sequence-of-sequences/in.json +17 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-5-sequence-of-sequences/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-5-sequence-of-sequences/out.yaml +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-6-mapping-of-mappings/in.json +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-6-mapping-of-mappings/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-6-mapping-of-mappings/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-7-two-documents-in-a-stream/in.json +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-7-two-documents-in-a-stream/in.yaml +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-7-two-documents-in-a-stream/out.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-8-play-by-play-feed-from-a-game/in.json +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-8-play-by-play-feed-from-a-game/in.yaml +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-9-single-document-with-two-comments/in.json +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-9-single-document-with-two-comments/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-2-9-single-document-with-two-comments/out.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-12-tabs-and-spaces/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-12-tabs-and-spaces/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-12-tabs-and-spaces/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-3-block-structure-indicators/in.json +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-3-block-structure-indicators/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-3-block-structure-indicators/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-4-flow-collection-indicators/in.json +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-4-flow-collection-indicators/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-4-flow-collection-indicators/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-5-comment-indicator/in.json
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-5-comment-indicator/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-5-comment-indicator/out.yaml
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-6-node-property-indicators/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-6-node-property-indicators/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-6-node-property-indicators/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-7-block-scalar-indicators/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-7-block-scalar-indicators/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-7-block-scalar-indicators/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-8-quoted-scalar-indicators/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-8-quoted-scalar-indicators/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-9-directive-indicator/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-9-directive-indicator/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-5-9-directive-indicator/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-1-indentation-spaces/in.json +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-1-indentation-spaces/in.yaml +12 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-1-indentation-spaces/out.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-10-comment-lines/in.json
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-10-comment-lines/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-10-comment-lines/out.yaml
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-11-multi-line-comments/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-11-multi-line-comments/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-11-multi-line-comments/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-12-separation-spaces/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-12-separation-spaces/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-13-reserved-directives-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-13-reserved-directives-1-3/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-13-reserved-directives-1-3/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-13-reserved-directives/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-13-reserved-directives/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-13-reserved-directives/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-14-yaml-directive/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-14-yaml-directive/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-14-yaml-directive/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-16-tag-directive/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-16-tag-directive/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-16-tag-directive/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-18-primary-tag-handle-1-3/in.json +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-18-primary-tag-handle-1-3/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-18-primary-tag-handle-1-3/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-18-primary-tag-handle/in.json +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-18-primary-tag-handle/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-18-primary-tag-handle/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-19-secondary-tag-handle/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-19-secondary-tag-handle/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-19-secondary-tag-handle/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-2-indentation-indicators/in.json +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-2-indentation-indicators/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-2-indentation-indicators/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-20-tag-handles/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-20-tag-handles/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-20-tag-handles/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-21-local-tag-prefix/in.json +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-21-local-tag-prefix/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-22-global-tag-prefix/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-22-global-tag-prefix/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-22-global-tag-prefix/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-23-node-properties/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-23-node-properties/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-23-node-properties/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-24-verbatim-tags/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-24-verbatim-tags/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-24-verbatim-tags/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-26-tag-shorthands/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-26-tag-shorthands/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-28-non-specific-tags/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-28-non-specific-tags/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-28-non-specific-tags/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-29-node-anchors/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-29-node-anchors/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-3-separation-spaces/in.json +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-3-separation-spaces/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-3-separation-spaces/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-4-line-prefixes/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-4-line-prefixes/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-4-line-prefixes/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-5-empty-lines-1-3/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-5-empty-lines-1-3/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-5-empty-lines-1-3/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-5-empty-lines/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-5-empty-lines/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-5-empty-lines/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-6-line-folding-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-6-line-folding-1-3/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-6-line-folding-1-3/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-6-line-folding/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-6-line-folding/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-6-line-folding/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-7-block-folding/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-7-block-folding/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-7-block-folding/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-8-flow-folding-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-8-flow-folding-1-3/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-8-flow-folding-1-3/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-8-flow-folding/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-8-flow-folding/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-8-flow-folding/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-9-separated-comment/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-9-separated-comment/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-6-9-separated-comment/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-1-alias-nodes/in.json +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-1-alias-nodes/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-10-plain-characters/in.json +14 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-10-plain-characters/in.yaml +12 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-10-plain-characters/out.yaml +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-11-plain-implicit-keys/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-11-plain-implicit-keys/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-11-plain-implicit-keys/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-12-plain-lines/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-12-plain-lines/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-12-plain-lines/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-13-flow-sequence/in.json +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-13-flow-sequence/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-13-flow-sequence/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-14-flow-sequence-entries/in.json +11 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-14-flow-sequence-entries/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-14-flow-sequence-entries/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-15-flow-mappings/in.json +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-15-flow-mappings/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-15-flow-mappings/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-16-flow-mapping-entries/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-16-flow-mapping-entries/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-18-flow-mapping-adjacent-values/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-18-flow-mapping-adjacent-values/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-18-flow-mapping-adjacent-values/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-19-single-pair-flow-mappings/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-19-single-pair-flow-mappings/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-19-single-pair-flow-mappings/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-2-empty-content/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-2-empty-content/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-2-empty-content/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-20-single-pair-explicit-entry/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-20-single-pair-explicit-entry/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-20-single-pair-explicit-entry/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-23-flow-content/in.json +12 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-23-flow-content/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-23-flow-content/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-24-flow-nodes/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-24-flow-nodes/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-3-completely-empty-flow-nodes/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-4-double-quoted-implicit-keys/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-4-double-quoted-implicit-keys/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-4-double-quoted-implicit-keys/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-5-double-quoted-line-breaks-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-5-double-quoted-line-breaks-1-3/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-5-double-quoted-line-breaks-1-3/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-5-double-quoted-line-breaks/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-5-double-quoted-line-breaks/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-5-double-quoted-line-breaks/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-6-double-quoted-lines-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-6-double-quoted-lines-1-3/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-6-double-quoted-lines-1-3/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-6-double-quoted-lines/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-6-double-quoted-lines/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-6-double-quoted-lines/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-7-single-quoted-characters-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-7-single-quoted-characters-1-3/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-7-single-quoted-characters-1-3/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-7-single-quoted-characters/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-7-single-quoted-characters/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-8-single-quoted-implicit-keys/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-8-single-quoted-implicit-keys/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-8-single-quoted-implicit-keys/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-9-single-quoted-lines-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-9-single-quoted-lines-1-3/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-9-single-quoted-lines-1-3/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-9-single-quoted-lines/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-9-single-quoted-lines/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-7-9-single-quoted-lines/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-1-block-scalar-header/in.json +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-1-block-scalar-header/in.yaml +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-1-block-scalar-header/out.yaml +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-10-folded-lines-8-13-final-empty-lines/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-10-folded-lines-8-13-final-empty-lines/in.yaml +16 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-10-folded-lines-8-13-final-empty-lines/out.yaml +11 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-14-block-sequence/in.json +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-14-block-sequence/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-14-block-sequence/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-15-block-sequence-entry-types/in.json +11 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-15-block-sequence-entry-types/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-15-block-sequence-entry-types/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-16-block-mappings/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-16-block-mappings/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-16-block-mappings/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-17-explicit-block-mapping-entries/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-17-explicit-block-mapping-entries/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-17-explicit-block-mapping-entries/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-18-implicit-block-mapping-entries/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-19-compact-block-mappings/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-2-block-indentation-indicator-1-3/in.json +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-2-block-indentation-indicator-1-3/in.yaml +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-2-block-indentation-indicator/in.json +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-2-block-indentation-indicator/in.yaml +11 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-2-block-indentation-indicator/out.yaml +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-20-block-node-types/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-20-block-node-types/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-20-block-node-types/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-21-block-scalar-nodes-1-3/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-21-block-scalar-nodes-1-3/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-21-block-scalar-nodes-1-3/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-21-block-scalar-nodes/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-21-block-scalar-nodes/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-21-block-scalar-nodes/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-22-block-collection-nodes/in.json +11 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-22-block-collection-nodes/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-22-block-collection-nodes/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-4-chomping-final-line-break/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-4-chomping-final-line-break/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-4-chomping-final-line-break/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-5-chomping-trailing-lines/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-5-chomping-trailing-lines/in.yaml +19 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-5-chomping-trailing-lines/out.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-6-empty-scalar-chomping/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-6-empty-scalar-chomping/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-6-empty-scalar-chomping/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-7-literal-scalar-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-7-literal-scalar-1-3/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-7-literal-scalar-1-3/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-7-literal-scalar/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-7-literal-scalar/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-7-literal-scalar/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-8-literal-content-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-8-literal-content-1-3/in.yaml +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-8-literal-content-1-3/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-8-literal-content/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-8-literal-content/in.yaml +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-8-literal-content/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-9-folded-scalar-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-9-folded-scalar-1-3/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-9-folded-scalar-1-3/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-9-folded-scalar/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-9-folded-scalar/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-8-9-folded-scalar/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-2-document-markers/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-2-document-markers/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-2-document-markers/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-3-bare-documents/in.json +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-3-bare-documents/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-4-explicit-documents/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-4-explicit-documents/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-4-explicit-documents/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-5-directives-documents/in.json +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-5-directives-documents/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-5-directives-documents/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-6-stream-1-3/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-6-stream-1-3/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-6-stream/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/spec-example-9-6-stream/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/syntax-character-edge-cases/00/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/syntax-character-edge-cases/01/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/syntax-character-edge-cases/01/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/syntax-character-edge-cases/02/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tab-after-document-header/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tab-after-document-header/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tab-after-document-header/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tab-at-beginning-of-line-followed-by-a-flow-mapping/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tab-at-beginning-of-line-followed-by-a-flow-mapping/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tab-at-beginning-of-line-followed-by-a-flow-mapping/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tab-indented-top-flow/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tab-indented-top-flow/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/000/error
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/000/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/001/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/001/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/001/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/002/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/002/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/002/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/003/error
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/003/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/003/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/004/error
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/004/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/004/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/005/error
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/005/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/005/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/006/error
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/006/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/006/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/007/error
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/007/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/007/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/008/error
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/008/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/008/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/009/error
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/009/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/009/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/010/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/010/in.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-in-various-contexts/010/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/00/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/00/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/01/error
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/01/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/01/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/02/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/02/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/03/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/03/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/04/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/04/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/05/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/05/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/06/error
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/06/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/06/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/07/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/07/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/08/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tabs-that-look-like-indentation/08/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tag-shorthand-used-in-documents-but-only-defined-in-the-first/error
+new file mode 100644
+=== testdata/yaml-test-suite/tag-shorthand-used-in-documents-but-only-defined-in-the-first/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-for-block-objects/in.json +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-for-block-objects/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-for-block-objects/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-for-flow-objects/in.json +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-for-flow-objects/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-for-flow-objects/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-for-root-objects/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-for-root-objects/in.yaml +8 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-for-root-objects/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-in-block-sequence/in.json +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-in-block-sequence/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-in-block-sequence/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-in-explicit-mapping/in.json +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-in-explicit-mapping/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-in-explicit-mapping/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-in-implicit-mapping/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-in-implicit-mapping/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-in-implicit-mapping/out.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-on-empty-scalars/in.yaml +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/tags-on-empty-scalars/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/three-dashes-and-content-without-space-1-3/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/three-dashes-and-content-without-space-1-3/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/three-dashes-and-content-without-space-1-3/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/three-dashes-and-content-without-space/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/three-dashes-and-content-without-space/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/three-dashes-and-content-without-space/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/three-explicit-integers-in-a-block-sequence/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/three-explicit-integers-in-a-block-sequence/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/three-explicit-integers-in-a-block-sequence/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-comment-in-multiline-plain-scalar/error
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-comment-in-multiline-plain-scalar/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-content-after-quoted-value/error
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-content-after-quoted-value/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-content-that-looks-like-a-mapping/error
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-content-that-looks-like-a-mapping/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-line-of-spaces/00/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-line-of-spaces/00/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-line-of-spaces/01/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-line-of-spaces/01/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-spaces-after-flow-collection/in.json +5 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-spaces-after-flow-collection/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-spaces-after-flow-collection/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/00/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/00/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/00/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/01/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/01/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/01/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/02/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/02/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/02/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/03/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/03/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/03/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/04/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/04/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/04/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/05/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/05/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-tabs-in-double-quoted/05/out.yaml +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-whitespace-in-streams/00/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-whitespace-in-streams/00/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-whitespace-in-streams/00/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-whitespace-in-streams/01/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-whitespace-in-streams/01/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-whitespace-in-streams/01/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-whitespace-in-streams/02/in.json +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-whitespace-in-streams/02/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/trailing-whitespace-in-streams/02/out.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/two-document-start-markers/in.json +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/two-document-start-markers/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/two-document-start-markers/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/two-scalar-docs-with-trailing-comments/in.json +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/two-scalar-docs-with-trailing-comments/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/two-scalar-docs-with-trailing-comments/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-combinations-of-explicit-block-mappings/in.yaml +16 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-combinations-of-explicit-block-mappings/out.yaml +17 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-combinations-of-tags-and-anchors/in.json +17 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-combinations-of-tags-and-anchors/in.yaml +26 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-combinations-of-tags-and-anchors/out.yaml +13 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-empty-or-newline-only-quoted-strings/in.json +10 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-empty-or-newline-only-quoted-strings/in.yaml +23 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-location-of-anchors-in-flow-sequence/in.json +14 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-location-of-anchors-in-flow-sequence/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-location-of-anchors-in-flow-sequence/out.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-trailing-comments-1-3/in.yaml +15 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-trailing-comments-1-3/out.yaml +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-trailing-comments/in.yaml +16 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-trailing-comments/out.yaml +9 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-trailing-tabs/in.json +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-trailing-tabs/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/various-trailing-tabs/out.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/whitespace-after-scalars-in-flow/in.json +13 -0
+new file mode 100644
+=== testdata/yaml-test-suite/whitespace-after-scalars-in-flow/in.yaml +6 -0
+new file mode 100644
+=== testdata/yaml-test-suite/whitespace-after-scalars-in-flow/out.yaml +7 -0
+new file mode 100644
+=== testdata/yaml-test-suite/whitespace-around-colon-in-mappings/in.json +18 -0
+new file mode 100644
+=== testdata/yaml-test-suite/whitespace-around-colon-in-mappings/in.yaml +12 -0
+new file mode 100644
+=== testdata/yaml-test-suite/whitespace-around-colon-in-mappings/out.yaml +11 -0
+new file mode 100644
+=== testdata/yaml-test-suite/wrong-indendation-in-map/error
+new file mode 100644
+=== testdata/yaml-test-suite/wrong-indendation-in-map/in.yaml +3 -0
+new file mode 100644
+=== testdata/yaml-test-suite/wrong-indendation-in-mapping/error
+new file mode 100644
+=== testdata/yaml-test-suite/wrong-indendation-in-mapping/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/wrong-indendation-in-sequence/error
+new file mode 100644
+=== testdata/yaml-test-suite/wrong-indendation-in-sequence/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/wrong-indented-flow-sequence/error
+new file mode 100644
+=== testdata/yaml-test-suite/wrong-indented-flow-sequence/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/wrong-indented-multiline-quoted-scalar/error
+new file mode 100644
+=== testdata/yaml-test-suite/wrong-indented-multiline-quoted-scalar/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/wrong-indented-sequence-item/error
+new file mode 100644
+=== testdata/yaml-test-suite/wrong-indented-sequence-item/in.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/yaml-directive-without-document-end-marker/error
+new file mode 100644
+=== testdata/yaml-test-suite/yaml-directive-without-document-end-marker/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/yaml.go +92 -0
+new file mode 100644
+=== testdata/yaml-test-suite/zero-indented-block-scalar-with-line-that-looks-like-a-comment/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/zero-indented-block-scalar-with-line-that-looks-like-a-comment/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/zero-indented-block-scalar-with-line-that-looks-like-a-comment/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/zero-indented-block-scalar/in.json +1 -0
+new file mode 100644
+=== testdata/yaml-test-suite/zero-indented-block-scalar/in.yaml +4 -0
+new file mode 100644
+=== testdata/yaml-test-suite/zero-indented-block-scalar/out.yaml +2 -0
+new file mode 100644
+=== testdata/yaml-test-suite/zero-indented-sequences-in-explicit-mapping-keys/in.yaml +7 -0
+new file mode 100644
+=== testdata/yaml_test.go +1144 -0
+new file mode 100644
+=== token/token.go +1177 -0
+new file mode 100644
+=== token/token_test.go +155 -0
+new file mode 100644
+=== validate.go +13 -0
+new file mode 100644
+=== yaml.go +357 -0
+new file mode 100644
+=== yaml_test.go +511 -0
+new file mode 100644
+=== yaml_test_suite_test.go +134 -0
+new file mode 100644
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-n6s6llg7.log]

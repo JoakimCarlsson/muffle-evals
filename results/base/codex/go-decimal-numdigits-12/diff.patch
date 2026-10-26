@@ -1,0 +1,69 @@
+diff --git a/decimal.go b/decimal.go
+index 880d569..f6b0855 100644
+--- a/decimal.go
++++ b/decimal.go
+@@ -1256,13 +1256,13 @@ func (d Decimal) NumDigits() int {
+ 	v := d.getValue()
+ 	if v.IsInt64() {
+ 		i64 := v.Int64()
+-		// restrict fast path to integers with exact conversion to float64
+-		if i64 <= (1<<53) && i64 >= -(1<<53) {
+-			if i64 == 0 {
+-				return 1
+-			}
+-			return int(math.Log10(math.Abs(float64(i64)))) + 1
++		// Count with integer arithmetic to avoid rounding near powers of ten.
++		numDigits := 1
++		for i64 <= -10 || i64 >= 10 {
++			i64 /= 10
++			numDigits++
+ 		}
++		return numDigits
+ 	}
+ 
+ 	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
+diff --git a/decimal_test.go b/decimal_test.go
+index 25d95bc..1cc5ef8 100644
+--- a/decimal_test.go
++++ b/decimal_test.go
+@@ -3143,6 +3143,9 @@ func TestDecimal_NumDigits(t *testing.T) {
+ 		ExpectedNumDigits int
+ 	}{
+ 		{"0", 1},
++		{"100000000000000E20", 15},
++		{"1000000000000000E20", 16},
++		{"10000000000000000E20", 17},
+ 		{"0.00", 1},
+ 		{"1.0", 2},
+ 		{"3.0", 2},
+@@ -3167,6 +3170,30 @@ func TestDecimal_NumDigits(t *testing.T) {
+ 	}
+ }
+ 
++func TestDecimal_NumDigitsPowersOfTen(t *testing.T) {
++	for power := int64(0); power <= 100; power++ {
++		boundary := new(big.Int).Exp(big.NewInt(10), big.NewInt(power), nil)
++		for _, offset := range []int64{-1, 0, 1} {
++			coefficient := new(big.Int).Add(boundary, big.NewInt(offset))
++			want := len(coefficient.Text(10))
++			for _, sign := range []int64{1, -1} {
++				signed := new(big.Int).Mul(coefficient, big.NewInt(sign))
++				for _, exponent := range []int32{-20, 0, 20} {
++					d := NewFromBigInt(signed, exponent)
++					if got := d.NumDigits(); got != want {
++						t.Errorf("coefficient %s, exponent %d: expected %d digits, got %d", signed, exponent, want, got)
++					}
++				}
++			}
++		}
++	}
++	for _, coefficient := range []int64{math.MinInt64, math.MaxInt64} {
++		if got := New(coefficient, 0).NumDigits(); got != 19 {
++			t.Errorf("coefficient %d: expected 19 digits, got %d", coefficient, got)
++		}
++	}
++}
++
+ func TestDecimal_Sign(t *testing.T) {
+ 	if Zero.Sign() != 0 {
+ 		t.Errorf("%q should have sign 0", Zero)

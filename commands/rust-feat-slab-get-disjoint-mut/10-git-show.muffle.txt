@@ -1,0 +1,428 @@
+$ git show HEAD
+f4fe561c 2026-10-22 evals: base
+=== .github/workflows/ci.yml
+new file mode 100644
+@@ -0,0 +1,77 @@
++name: CI
++
++on:
++  pull_request:
++    branches:
++      - master
++  push:
++    branches:
++      - master
++  schedule:
++    - cron: '0 2 * * 0'
++
++env:
++  RUSTFLAGS: -Dwarnings
++  RUST_BACKTRACE: 1
++
++concurrency:
++  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
++  cancel-in-progress: true
++
++jobs:
++  test:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update stable
++      - name: Install cargo-hack
++        uses: taiki-e/install-action@cargo-hack
++      - run: cargo hack build --feature-powerset --optional-deps --no-dev-deps
++      - run: cargo test --all-features
++
++  minrust:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install cargo-hack
++        uses: taiki-e/install-action@cargo-hack
++      - run: cargo hack build --rust-version
++      - run: cargo hack build --rust-version --no-default-features --target thumbv7m-none-eabi
++
++  miri:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup toolchain install nightly --component miri && rustup default nightly
++      - run: cargo miri test --workspace --all-features
++        env:
++          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-disable-isolation
++          RUSTFLAGS: ${{ env.RUSTFLAGS }} -Z randomize-layout
++
++  clippy:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update stable
++      - run: cargo clippy --all-features
++
++  fmt:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update stable
++      - run: cargo fmt --all --check
++
++  docs:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update nightly && rustup default nightly
++      - run: cargo doc --no-deps --all-features
++        env:
++          RUSTDOCFLAGS: -Dwarnings
+=== .github/workflows/release.yml
+new file mode 100644
+@@ -0,0 +1,19 @@
++name: Release
++
++on:
++  push:
++    tags:
++      - v[0-9]+.*
++
++jobs:
++  create-release:
++    if: github.repository_owner == 'tokio-rs'
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: taiki-e/create-gh-release-action@v1
++        with:
++          changelog: CHANGELOG.md
++          branch: master
++        env:
++          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+=== .gitignore
+new file mode 100644
+@@ -0,0 +1,3 @@
++*.swp
++target
++Cargo.lock
+=== CHANGELOG.md
+new file mode 100644
+@@ -0,0 +1,54 @@
++# 0.4.9 (August 22, 2023)
++
++* Avoid reallocations in `Slab::clone_from` (#137)
++
++# 0.4.8 (January 20, 2023)
++
++* Fixed documentation about overflow (#124)
++* Document panic in `get2_mut` (#131)
++* Refactoring (#129, #132)
++
++# 0.4.7 (July 19, 2022)
++
++* Use `#[track_caller]` on Rust 1.46+ (#119)
++* Make `Slab::new` const on Rust 1.39+ (#119)
++
++# 0.4.6 (April 2, 2022)
++
++* Add `Slab::vacant_key` (#114)
++* Fix stacked borrows violation in `Slab::get2_unchecked_mut` (#115)
++
++# 0.4.5 (October 13, 2021)
++
++* Add alternate debug output for listing items in the slab (#108)
++* Fix typo in debug output of IntoIter (#109)
++* Impl 'Clone' for 'Iter' (#110)
++
++# 0.4.4 (August 06, 2021)
++
++* Fix panic in `FromIterator` impl (#102)
++* Fix compatibility with older clippy versions (#104)
++* Add `try_remove` method (#89)
++* Implement `ExactSizeIterator` and `FusedIterator` for iterators (#92)
++
++# 0.4.3 (April 20, 2021)
++
++* Add no_std support for Rust 1.36 and above (#71).
++* Add `get2_mut` and `get2_unchecked_mut` methods (#65).
++* Make `shrink_to_fit()` remove trailing vacant entries (#62).
++* Implement `FromIterator<(usize, T)>` (#62).
++* Implement `IntoIterator<Item = (usize, T)>` (#62).
++* Provide `size_hint()` of the iterators (#62).
++* Make all iterators reversible (#62).
++* Add `key_of()` method (#61)
++* Add `compact()` method (#60)
++* Add support for serde (#85)
++
++# 0.4.2 (January 11, 2019)
++
++* Add `Slab::drain` (#56).
++
++# 0.4.1 (July 15, 2018)
++
++* Improve `reserve` and `reserve_exact` (#37).
++* Implement `Default` for `Slab` (#43).
+=== Cargo.toml
+new file mode 100644
+@@ -0,0 +1,29 @@
++[package]
++
++name = "slab"
++# When releasing to crates.io:
++# - Update version number
++#   - README.md
++# - Update CHANGELOG.md
++# - Create git tag
++version = "0.4.9"
++authors = ["Carl Lerche <me@carllerche.com>"]
++edition = "2018"
++rust-version = "1.46"
++license = "MIT"
++description = "Pre-allocated storage for a uniform data type"
++repository = "https://github.com/tokio-rs/slab"
++keywords = ["slab", "allocator", "no_std"]
++categories = ["memory-management", "data-structures", "no-std"]
++exclude = ["/.*"]
++
++[features]
++std = []
++default = ["std"]
++
++[dependencies]
++serde = { version = "1.0.95", optional = true, default-features = false, features = ["alloc"] }
++
++[dev-dependencies]
++serde = { version = "1", features = ["derive"] }
++serde_test = "1"
+=== LICENSE
+new file mode 100644
+@@ -0,0 +1,25 @@
++Copyright (c) 2019 Carl Lerche
++
++Permission is hereby granted, free of charge, to any
++person obtaining a copy of this software and associated
++documentation files (the "Software"), to deal in the
++Software without restriction, including without
++limitation the rights to use, copy, modify, merge,
++publish, distribute, sublicense, and/or sell copies of
++the Software, and to permit persons to whom the Software
++is furnished to do so, subject to the following
++conditions:
++
++The above copyright notice and this permission notice
++shall be included in all copies or substantial portions
++of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
++ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
++TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
++PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
++SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
++CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
++OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
++IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++DEALINGS IN THE SOFTWARE.
+=== README.md
+new file mode 100644
+@@ -0,0 +1,51 @@
++# Slab
++
++Pre-allocated storage for a uniform data type.
++
++[![Crates.io][crates-badge]][crates-url]
++[![Build Status][ci-badge]][ci-url]
++
++[crates-badge]: https://img.shields.io/crates/v/slab
++[crates-url]: https://crates.io/crates/slab
++[ci-badge]: https://img.shields.io/github/actions/workflow/status/tokio-rs/slab/ci.yml?branch=master
++[ci-url]: https://github.com/tokio-rs/slab/actions
++
++[Documentation](https://docs.rs/slab)
++
++## Usage
++
++To use `slab`, first add this to your `Cargo.toml`:
++
++```toml
++[dependencies]
++slab = "0.4"
++```
++
++Next, add this to your crate:
++
++```rust
++use slab::Slab;
++
++let mut slab = Slab::new();
++
++let hello = slab.insert("hello");
++let world = slab.insert("world");
++
++assert_eq!(slab[hello], "hello");
++assert_eq!(slab[world], "world");
++
++slab[world] = "earth";
++assert_eq!(slab[world], "earth");
++```
++
++See [documentation](https://docs.rs/slab) for more details.
++
++## License
++
++This project is licensed under the [MIT license](LICENSE).
++
++### Contribution
++
++Unless you explicitly state otherwise, any contribution intentionally submitted
++for inclusion in `slab` by you, shall be licensed as MIT, without any additional
++terms or conditions.
+=== src/builder.rs
+new file mode 100644
+@@ -0,0 +1,63 @@
++use crate::{Entry, Slab};
++
++// Building `Slab` from pairs (usize, T).
++pub(crate) struct Builder<T> {
++    slab: Slab<T>,
++    vacant_list_broken: bool,
++    first_vacant_index: Option<usize>,
++}
++
++impl<T> Builder<T> {
++    pub(crate) fn with_capacity(capacity: usize) -> Self {
++        Self {
++            slab: Slab::with_capacity(capacity),
++            vacant_list_broken: false,
++            first_vacant_index: None,
++        }
++    }
++    pub(crate) fn pair(&mut self, key: usize, value: T) {
++        let slab = &mut self.slab;
++        if key < slab.entries.len() {
++            // iterator is not sorted, might need to recreate vacant list
++            if let Entry::Vacant(_) = slab.entries[key] {
++                self.vacant_list_broken = true;
++                slab.len += 1;
++            }
++            // if an element with this key already exists, replace it.
++            // This is consistent with HashMap and BtreeMap
++            slab.entries[key] = Entry::Occupied(value);
++        } else {
++            if self.first_vacant_index.is_none() && slab.entries.len() < key {
++                self.first_vacant_index = Some(slab.entries.len());
++            }
++            // insert holes as necessary
++            while slab.entries.len() < key {
++                // add the entry to the start of the vacant list
++                let next = slab.next;
++                slab.next = slab.entries.len();
++                slab.entries.push(Entry::Vacant(next));
++            }
++            slab.entries.push(Entry::Occupied(value));
++            slab.len += 1;
++        }
++    }
++
++    pub(crate) fn build(self) -> Slab<T> {
++        let mut slab = self.slab;
++        if slab.len == slab.entries.len() {
++            // no vacant entries, so next might not have been updated
++            slab.next = slab.entries.len();
++        } else if self.vacant_list_broken {
++            slab.recreate_vacant_list();
++        } else if let Some(first_vacant_index) = self.first_vacant_index {
++            let next = slab.entries.len();
++            match &mut slab.entries[first_vacant_index] {
++                Entry::Vacant(n) => *n = next,
++                _ => unreachable!(),
++            }
++        } else {
++            unreachable!()
++        }
++        slab
++    }
++}
+=== src/lib.rs
+new file mode 100644
+@@ -0,0 +1,1572 @@
++#![no_std]
++#![warn(
++    missing_debug_implementations,
++    missing_docs,
++    rust_2018_idioms,
++    unreachable_pub
++)]
++#![doc(test(
++    no_crate_inject,
++    attr(deny(warnings, rust_2018_idioms), allow(dead_code, unused_variables))
++))]
++#![allow(clippy::incompatible_msrv)] // false positive: https://github.com/rust-lang/rust-clippy/issues/12280
++
++//! Pre-allocated storage for a uniform data type.
++//!
++//! `Slab` provides pre-allocated storage for a single data type. If many values
++//! of a single type are being allocated, it can be more efficient to
++//! pre-allocate the necessary storage. Since the size of the type is uniform,
++//! memory fragmentation can be avoided. Storing, clearing, and lookup
++//! operations become very cheap.
++//!
++//! While `Slab` may look like other Rust collections, it is not intended to be
++//! used as a general purpose collection. The primary difference between `Slab`
++//! and `Vec` is that `Slab` returns the key when storing the value.
++//!
++//! It is important to note that keys may be reused. In other words, once a
++//! value associated with a given key is removed from a slab, that key may be
++//! returned from future calls to `insert`.
++//!
++//! # Examples
++//!
++//! Basic storing and retrieval.
++//!
++//! ```
++//! # use slab::*;
++//! let mut slab = Slab::new();
++//!
++//! let hello = slab.insert("hello");
++//! let world = slab.insert("world");
++//!
++//! assert_eq!(slab[hello], "hello");
++//! assert_eq!(slab[world], "world");
++//!
++//! slab[world] = "earth";
++//! assert_eq!(slab[world], "earth");
++//! ```
++//!
++//! Sometimes it is useful to be able to associate the key with the value being
++//! inserted in the slab. This can be done with the `vacant_entry` API as such:
++//!
++//! ```
++//! # use slab::*;
++//! let mut slab = Slab::new();
++//!
++//! let hello = {
++//!     let entry = slab.vacant_entry();
++//!     let key = entry.key();
++//!
++//!     entry.insert((key, "hello"));
++//!     key
++//! };
++//!
++//! assert_eq!(hello, slab[hello].0);
++//! assert_eq!("hello", slab[hello].1);
++//! ```
++//!
++//! It is generally a good idea to specify the desired capacity of a slab at
++//! creation time. Note that `Slab` will grow the internal capacity when
++//! attempting to insert a new value once the existing capacity has been reached.
++//! To avoid this, add a check.
+[+1502 more diff lines]
+=== src/serde.rs +62 -0
+new file mode 100644
+=== tests/serde.rs +49 -0
+new file mode 100644
+=== tests/slab.rs +732 -0
+new file mode 100644
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-o38ewjbh.log]

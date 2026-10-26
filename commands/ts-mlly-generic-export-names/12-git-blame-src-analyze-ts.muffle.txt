@@ -1,0 +1,769 @@
+$ git blame src/analyze.ts
+e955e30 evals 2026-10-22
+1	import { tokenizer } from "acorn";
+2	import { matchAll, clearImports, getImportNames } from "./_utils";
+3	import { resolvePath, type ResolveOptions } from "./resolve";
+4	import { loadURL } from "./utils";
+5	
+6	/**
+7	 * Represents a general structure for ECMAScript module imports.
+8	 */
+9	export interface ESMImport {
+10	  /**
+11	   * Specifies the type of import: "static" for static imports and "dynamic" for dynamic imports.
+12	   */
+13	  type: "static" | "dynamic";
+14	
+15	  /**
+16	   * The full import declaration code snippet as a string.
+17	   */
+18	  code: string;
+19	
+20	  /**
+21	   * The starting position (index) of the import declaration in the source code.
+22	   */
+23	  start: number;
+24	
+25	  /**
+26	   * The end position (index) of the import declaration in the source code.
+27	   */
+28	  end: number;
+29	}
+30	
+31	/**
+32	 * Represents a static import declaration in an ECMAScript module.
+33	 * Extends {@link ESMImport}.
+34	 */
+35	export interface StaticImport extends ESMImport {
+36	  /**
+37	   * Indicates the type of import, specifically a static import.
+38	   */
+39	  type: "static";
+40	
+41	  /**
+42	   * Contains the entire import statement as a string, excluding the module specifier.
+43	   */
+44	  imports: string;
+45	
+46	  /**
+47	   * The module specifier from which imports are being brought in.
+48	   */
+49	  specifier: string;
+50	}
+51	
+52	/**
+53	 * Represents a parsed static import declaration with detailed components of the import.
+54	 * Extends {@link StaticImport}.
+55	 */
+56	export interface ParsedStaticImport extends StaticImport {
+57	  /**
+58	   * The default import name, if any.
+59	   * @optional
+60	   */
+61	  defaultImport?: string;
+62	
+63	  /**
+64	   * The namespace import name, if any, using the `* as` syntax.
+65	   * @optional
+66	   */
+67	  namespacedImport?: string;
+68	
+69	  /**
+70	   * An object representing named imports, with their local aliases if specified.
+71	   * Each property key is the original name and its value is the alias.
+72	   * @optional
+73	   */
+74	  namedImports?: { [name: string]: string };
+75	}
+76	
+77	/**
+78	 * Represents a dynamic import declaration that is loaded at runtime.
+79	 * Extends {@link ESMImport}.
+80	 */
+81	export interface DynamicImport extends ESMImport {
+82	  /**
+83	   * Indicates that this is a dynamic import.
+84	   */
+85	  type: "dynamic";
+86	
+87	  /**
+88	   * The expression or path to be dynamically imported, typically a module path or URL.
+89	   */
+90	  expression: string;
+91	}
+92	
+93	/**
+94	 * Represents a type-specific import, primarily used for importing types in TypeScript.
+95	 * Extends {@link ESMImport} but omits the 'type' to redefine it specifically for type imports.
+96	 */
+97	export interface TypeImport extends Omit<ESMImport, "type"> {
+98	  /**
+99	   * Specifies that this is a type import.
+100	   */
+101	  type: "type";
+102	
+103	  /**
+104	   * Contains the entire type import statement as a string, excluding the module specifier.
+105	   */
+106	  imports: string;
+107	
+108	  /**
+109	   * The module specifier from which to import types.
+110	   */
+111	  specifier: string;
+112	}
+113	
+114	/**
+115	 * Represents a general structure for ECMAScript module exports.
+116	 */
+117	export interface ESMExport {
+118	  /**
+119	   * Optional explicit type for complex scenarios, often used internally.
+120	   * @optional
+121	   */
+122	  _type?: "declaration" | "named" | "default" | "star";
+123	
+124	  /**
+125	   * The type of export (declaration, named, default or star).
+126	   */
+127	  type: "declaration" | "named" | "default" | "star";
+128	
+129	  /**
+130	   * The specific type of declaration being exported, if applicable.
+131	   * @optional
+132	   */
+133	  declarationType?:
+134	    | "let"
+135	    | "var"
+136	    | "const"
+137	    | "enum"
+138	    | "const enum"
+139	    | "class"
+140	    | "function"
+141	    | "async function";
+142	
+143	  /**
+144	   * The full code snippet of the export statement.
+145	   */
+146	  code: string;
+147	
+148	  /**
+149	   * The starting position (index) of the export declaration in the source code.
+150	   */
+151	  start: number;
+152	
+153	  /**
+154	   * The end position (index) of the export declaration in the source code.
+155	   */
+156	  end: number;
+157	
+158	  /**
+159	   * The name of the variable, function or class being exported, if given explicitly.
+160	   * @optional
+161	   */
+162	  name?: string;
+163	
+164	  /**
+165	   * The name used for default exports when a specific identifier isn't given.
+166	   * @optional
+167	   */
+168	  defaultName?: string;
+169	
+170	  /**
+171	   * An array of names to export, applicable to named and destructured exports.
+172	   */
+173	  names: string[];
+174	
+175	  /**
+176	   * The module specifier, if any, from which exports are being re-exported.
+177	   * @optional
+178	   */
+179	  specifier?: string;
+180	}
+181	
+182	/**
+183	 * Represents a declaration export within an ECMAScript module.
+184	 * Extends {@link ESMExport}.
+185	 */
+186	export interface DeclarationExport extends ESMExport {
+187	  /**
+188	   * Indicates that this export is a declaration export.
+189	   */
+190	  type: "declaration";
+191	
+192	  /**
+193	   * The declaration string, such as 'let', 'const', 'class', etc., describing what is being exported.
+194	   */
+195	  declaration: string;
+196	
+197	  /**
+198	   * The name of the declaration to be exported.
+199	   */
+200	  name: string;
+201	}
+202	
+203	/**
+204	 * Represents a named export within an ECMAScript module.
+205	 * Extends {@link ESMExport}.
+206	 */
+207	export interface NamedExport extends ESMExport {
+208	  /**
+209	   * Specifies that this export is a named export.
+210	   */
+211	  type: "named";
+212	
+213	  /**
+214	   * The export string, containing all exported identifiers.
+215	   */
+216	  exports: string;
+217	
+218	  /**
+219	   * An array of names to export.
+220	   */
+221	  names: string[];
+222	
+223	  /**
+224	   * The module specifier, if any, from which exports are being re-exported.
+225	   * @optional
+226	   */
+227	  specifier?: string;
+228	}
+229	
+230	/**
+231	 * Represents a standard export within an ECMAScript module.
+232	 * Extends {@link ESMExport}.
+233	 */
+234	export interface DefaultExport extends ESMExport {
+235	  /**
+236	   * Specifies that this export is a standard export.
+237	   */
+238	  type: "default";
+239	}
+240	
+241	/**
+242	 * Regular expression to match static import statements in JavaScript/TypeScript code.
+243	 * @example `import { foo, bar as baz } from 'module'`
+244	 */
+245	export const ESM_STATIC_IMPORT_RE =
+246	  /(?<=\s|^|;|\})import\s*(?:[\s"']*(?<imports>[\p{L}\p{M}\w\t\n\r $*,/{}@.]+)from\s*)?["']\s*(?<specifier>(?<="\s*)[^"]*[^\s"](?=\s*")|(?<='\s*)[^']*[^\s'](?=\s*'))\s*["'][\s;]*/gmu;
+247	
+248	/**
+249	 * Regular expression to match dynamic import statements in JavaScript/TypeScript code.
+250	 * @example `import('module')`
+251	 */
+252	export const DYNAMIC_IMPORT_RE =
+253	  /import\s*\((?<expression>(?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*)\)/gm;
+254	const IMPORT_NAMED_TYPE_RE =
+255	  /(?<=\s|^|;|})import\s*type\s+(?:[\s"']*(?<imports>[\w\t\n\r $*,/{}]+)from\s*)?["']\s*(?<specifier>(?<="\s*)[^"]*[^\s"](?=\s*")|(?<='\s*)[^']*[^\s'](?=\s*'))\s*["'][\s;]*/gm;
+256	
+257	/**
+258	 * Regular expression to match various types of export declarations including variables, functions, and classes.
+259	 * @example `export const num = 1, str = 'hello'; export class Example {}`
+260	 */
+261	export const EXPORT_DECAL_RE =
+262	  /\bexport\s+(?<declaration>(?:async function\s*\*?|function\s*\*?|let|const enum|const|enum|var|class))\s+\*?(?<name>[\w$]+)(?<extraNames>.*,\s*[\s\w:[\]{}]*[\w$\]}]+)*/g;
+263	/**
+264	 * Regular expression to match export declarations specifically for types, interfaces, and type aliases in TypeScript.
+265	 * @example `export type Result = { success: boolean; }; export interface User { name: string; age: number; };`
+266	 */
+267	export const EXPORT_DECAL_TYPE_RE =
+268	  /\bexport\s+(?<declaration>(?:interface|type|declare (?:async function|function|let|const enum|const|enum|var|class)))\s+(?<name>[\w$]+)/g;
+269	const EXPORT_NAMED_RE =
+270	  /\bexport\s*{(?<exports>[^}]+?)[\s,]*}(?:\s*from\s*["']\s*(?<specifier>(?<="\s*)[^"]*[^\s"](?=\s*")|(?<='\s*)[^']*[^\s'](?=\s*'))\s*["'][^\n;]*)?/g;
+271	const EXPORT_NAMED_TYPE_RE =
+272	  /\bexport\s+type\s*{(?<exports>[^}]+?)[\s,]*}(?:\s*from\s*["']\s*(?<specifier>(?<="\s*)[^"]*[^\s"](?=\s*")|(?<='\s*)[^']*[^\s'](?=\s*'))\s*["'][^\n;]*)?/g;
+273	const EXPORT_NAMED_DESTRUCT =
+274	  /\bexport\s+(?:let|var|const)\s+(?:{(?<exports1>[^}]+?)[\s,]*}|\[(?<exports2>[^\]]+?)[\s,]*])\s+=/gm;
+275	const EXPORT_STAR_RE =
+276	  /\bexport\s*\*(?:\s*as\s+(?<name>[\w$]+)\s+)?\s*(?:\s*from\s*["']\s*(?<specifier>(?<="\s*)[^"]*[^\s"](?=\s*")|(?<='\s*)[^']*[^\s'](?=\s*'))\s*["'][^\n;]*)?/g;
+277	const EXPORT_DEFAULT_RE =
+278	  /\bexport\s+default\s+(async function|function|class|true|false|\W|\d)|\bexport\s+default\s+(?<defaultName>.*)/g;
+279	const EXPORT_DEFAULT_CLASS_RE =
+280	  /\bexport\s+default\s+(?<declaration>class)\s+(?<name>[\w$]+)/g;
+281	const TYPE_RE = /^\s*?type\s/;
+282	
+283	/**
+284	 * Finds all static import statements within the given code string.
+285	 * @param {string} code - The source code to search for static imports.
+286	 * @returns {StaticImport[]} An array of {@link StaticImport} objects representing each static import found.
+287	 */
+288	export function findStaticImports(code: string): StaticImport[] {
+289	  return _filterStatement(
+290	    _tryGetLocations(code, "import"),
+291	    matchAll(ESM_STATIC_IMPORT_RE, code, { type: "static" }),
+292	  );
+293	}
+294	
+295	/**
+296	 * Searches for dynamic import statements in the given source code.
+297	 * @param {string} code - The source to search for dynamic imports in.
+298	 * @returns {DynamicImport[]} An array of {@link DynamicImport} objects representing each dynamic import found.
+299	 */
+300	export function findDynamicImports(code: string): DynamicImport[] {
+301	  return _filterStatement(
+302	    _tryGetLocations(code, "import"),
+303	    matchAll(DYNAMIC_IMPORT_RE, code, { type: "dynamic" }),
+304	  );
+305	}
+306	
+307	/**
+308	 * Identifies and returns all type import statements in the given source code.
+309	 * This function is specifically targeted at type imports used in TypeScript.
+310	 * @param {string} code - The source code to search for type imports.
+311	 * @returns {TypeImport[]} An array of {@link TypeImport} objects representing each type import found.
+312	 */
+313	export function findTypeImports(code: string): TypeImport[] {
+314	  return [
+315	    ...matchAll(IMPORT_NAMED_TYPE_RE, code, { type: "type" }),
+316	    ...matchAll(ESM_STATIC_IMPORT_RE, code, { type: "static" }).filter(
+317	      (match) => /[^A-Za-z]type\s/.test(match.imports),
+318	    ),
+319	  ];
+320	}
+321	
+322	/**
+323	 * Parses a static import or type import to extract detailed import elements such as default, namespace and named imports.
+324	 * @param {StaticImport | TypeImport} matched - The matched import statement to parse. See {@link StaticImport} and {@link TypeImport}.
+325	 * @returns {ParsedStaticImport} A structured object representing the parsed static import. See {@link ParsedStaticImport}.
+326	 */
+327	export function parseStaticImport(
+328	  matched: StaticImport | TypeImport,
+329	): ParsedStaticImport {
+330	  const cleanedImports = clearImports(matched.imports);
+331	
+332	  const namedImports: Record<string, string> = {};
+333	  const _matches = cleanedImports.match(/{([^}]*)}/)?.[1]?.split(",") || [];
+334	  for (const namedImport of _matches) {
+335	    const _match = namedImport.match(/^\s*(\S*) as (\S*)\s*$/);
+336	    const source = _match?.[1] || namedImport.trim();
+337	    const importName = _match?.[2] || source;
+338	    if (source && !TYPE_RE.test(source)) {
+339	      namedImports[source] = importName;
+340	    }
+341	  }
+342	  const { namespacedImport, defaultImport } = getImportNames(cleanedImports);
+343	
+344	  return {
+345	    ...matched,
+346	    defaultImport,
+347	    namespacedImport,
+348	    namedImports,
+349	  } as ParsedStaticImport;
+350	}
+351	
+352	/**
+353	 * Parses a static import or type import to extract detailed import elements such as default, namespace and named imports.
+354	 * @param {StaticImport | TypeImport} matched - The matched import statement to parse. See {@link StaticImport} and {@link TypeImport}.
+355	 * @returns {ParsedStaticImport} A structured object representing the parsed static import. See {@link ParsedStaticImport}.
+356	 */
+357	export function parseTypeImport(
+358	  matched: TypeImport | StaticImport,
+359	): ParsedStaticImport {
+360	  if (matched.type === "type") {
+361	    return parseStaticImport(matched);
+362	  }
+363	
+364	  const cleanedImports = clearImports(matched.imports);
+365	
+366	  const namedImports: Record<string, string> = {};
+367	  const _matches = cleanedImports.match(/{([^}]*)}/)?.[1]?.split(",") || [];
+368	  for (const namedImport of _matches) {
+369	    const _match = /\s+as\s+/.test(namedImport)
+370	      ? namedImport.match(/^\s*type\s+(\S*) as (\S*)\s*$/)
+371	      : namedImport.match(/^\s*type\s+(\S*)\s*$/);
+372	    const source = _match?.[1] || namedImport.trim();
+373	    const importName = _match?.[2] || source;
+374	    if (source && TYPE_RE.test(namedImport)) {
+375	      namedImports[source] = importName;
+376	    }
+377	  }
+378	
+379	  const { namespacedImport, defaultImport } = getImportNames(cleanedImports);
+380	
+381	  return {
+382	    ...matched,
+383	    defaultImport,
+384	    namespacedImport,
+385	    namedImports,
+386	  } as ParsedStaticImport;
+387	}
+388	
+389	/**
+390	 * Extracts extra variable names from a comma-separated declaration list,
+391	 * ignoring commas nested inside parentheses, brackets, braces, generics, or strings.
+392	 *
+393	 * For `export const foo = fn('a', bar), baz = 2`, only `baz` should be
+394	 * extracted — commas inside `fn(...)` or `Handler<A, B>` are not declaration separators.
+395	 * @param {string} extraNamesStr - The string containing the extra variable declarations to parse.
+396	 * @returns {string[]} An array of variable names extracted from the declaration list.
+397	 */
+398	function _extractExtraNames(extraNamesStr: string): string[] {
+399	  const names: string[] = [];
+400	  let depth = 0;
+401	  let angleDepth = 0;
+402	  let inString: string | false = false;
+403	  let inTypeAnnotation = false;
+404	
+405	  for (let i = 0; i < extraNamesStr.length; i++) {
+406	    const char = extraNamesStr[i];
+407	
+408	    // Handle string literals — skip their contents entirely
+409	    if (inString) {
+410	      if (char === inString) {
+411	        let backslashCount = 0;
+412	        for (let j = i - 1; j >= 0 && extraNamesStr[j] === "\\"; j--) {
+413	          backslashCount++;
+414	        }
+415	        if (backslashCount % 2 === 0) {
+416	          inString = false;
+417	        }
+418	      }
+419	      continue;
+420	    }
+421	    if (char === '"' || char === "'" || char === "`") {
+422	      inString = char;
+423	      continue;
+424	    }
+425	
+426	    // Track type annotations (between `:` and `=` at depth 0) for generic angle brackets
+427	    if (char === ":" && depth === 0 && angleDepth === 0) {
+428	      inTypeAnnotation = true;
+429	      continue;
+430	    }
+431	    if (
+432	      char === "=" &&
+433	      extraNamesStr[i + 1] !== ">" &&
+434	      depth === 0 &&
+435	      angleDepth === 0
+436	    ) {
+437	      inTypeAnnotation = false;
+438	    }
+439	    if (inTypeAnnotation && char === "<") {
+440	      angleDepth++;
+441	      continue;
+442	    }
+443	    if (inTypeAnnotation && char === ">" && angleDepth > 0) {
+444	      angleDepth--;
+445	      continue;
+446	    }
+447	
+448	    // Track bracket nesting
+449	    if (char === "(" || char === "[" || char === "{") {
+450	      depth++;
+451	    } else if (char === ")" || char === "]" || char === "}") {
+452	      depth--;
+453	    }
+454	
+455	    // A comma at depth 0 (outside generics) is a real declaration separator
+456	    if (char === "," && depth === 0 && angleDepth === 0) {
+457	      // Extract the identifier that follows this comma
+458	      const rest = extraNamesStr.slice(i + 1);
+459	      const match = rest.match(/^\s*([\w$]+)/);
+460	      if (match) {
+461	        names.push(match[1]);
+462	      }
+463	    }
+464	  }
+465	
+466	  return names;
+467	}
+468	
+469	/**
+470	 * Identifies all export statements in the supplied source code and categorises them into different types such as declarations, named, default and star exports.
+471	 * This function processes the code to capture different forms of export statements and normalise their representation for further processing.
+472	 *
+473	 * @param {string} code - The source code containing the export statements to be analysed.
+474	 * @returns {ESMExport[]} An array of {@link ESMExport} objects representing each export found, properly categorised and structured.
+475	 */
+476	export function findExports(code: string): ESMExport[] {
+477	  // Find declarations like export const foo = 'bar'
+478	  const declaredExports: DeclarationExport[] = matchAll(EXPORT_DECAL_RE, code, {
+479	    type: "declaration",
+480	  });
+481	  // Parse extra names (foo, bar)
+482	  for (const declaredExport of declaredExports) {
+483	    // function declarations don't have extra names
+484	    if (/^export\s+(?:async\s+)?function/.test(declaredExport.code)) {
+485	      continue;
+486	    }
+487	    const extraNamesStr = (declaredExport as any).extraNames as
+488	      | string
+489	      | undefined;
+490	    if (extraNamesStr) {
+491	      const extraNames = _extractExtraNames(extraNamesStr);
+492	      if (extraNames.length > 0) {
+493	        declaredExport.names = [declaredExport.name, ...extraNames];
+494	      }
+495	    }
+496	    delete (declaredExport as any).extraNames;
+497	  }
+498	
+499	  // Find named exports
+500	  const namedExports: NamedExport[] = normalizeNamedExports(
+501	    matchAll(EXPORT_NAMED_RE, code, {
+502	      type: "named",
+503	    }),
+504	  );
+505	
+506	  const destructuredExports: NamedExport[] = matchAll(
+507	    EXPORT_NAMED_DESTRUCT,
+508	    code,
+509	    { type: "named" },
+510	  );
+511	  for (const namedExport of destructuredExports) {
+512	    // @ts-expect-error groups
+513	    namedExport.exports = namedExport.exports1 || namedExport.exports2;
+514	    namedExport.names = namedExport.exports
+515	      .replace(/^\r?\n?/, "")
+516	      .split(/\s*,\s*/g)
+517	      .filter((name) => !TYPE_RE.test(name))
+518	      .map((name) =>
+519	        name
+520	          .replace(/^.*?\s*:\s*/, "")
+521	          .replace(/\s*=\s*.*$/, "")
+522	          .trim(),
+523	      );
+524	  }
+525	
+526	  // Find export default
+527	  const defaultExport: DefaultExport[] = matchAll(EXPORT_DEFAULT_RE, code, {
+528	    type: "default",
+529	    name: "default",
+530	  });
+531	
+532	  // Find export default class
+533	  const defaultClassExports = matchAll(EXPORT_DEFAULT_CLASS_RE, code, {
+534	    type: "declaration",
+535	  });
+536	
+537	  // Find export star
+538	  const starExports: ESMExport[] = matchAll(EXPORT_STAR_RE, code, {
+539	    type: "star",
+540	  });
+541	
+542	  // Merge and normalize exports
+543	
+544	  const exports: ESMExport[] = normalizeExports([
+545	    ...declaredExports,
+546	    ...namedExports,
+547	    ...destructuredExports,
+548	    ...defaultExport,
+549	    ...defaultClassExports,
+550	    ...starExports,
+551	  ]);
+552	
+553	  // Return early when there is no  export statement
+554	  if (exports.length === 0) {
+555	    return [];
+556	  }
+557	  const exportLocations = _tryGetLocations(code, "export");
+558	  if (exportLocations && exportLocations.length === 0) {
+559	    return [];
+560	  }
+561	
+562	  return (
+563	    // Filter false positive export matches
+564	    _filterStatement(exportLocations, exports)
+565	      // Prevent multiple exports of same function, only keep latest iteration of signatures
+566	      .filter((exp, index, exports) => {
+567	        const nextExport = exports[index + 1];
+568	        return (
+569	          !nextExport ||
+570	          exp.type !== nextExport.type ||
+571	          !exp.name ||
+572	          exp.name !== nextExport.name
+573	        );
+574	      })
+575	  );
+576	}
+577	
+578	/**
+579	 * Searches specifically for type-related exports in TypeScript code, such as exported interfaces, types, and declarations prefixed with 'declare'.
+580	 * This function uses specialised regular expressions to identify type exports and normalises them for consistency.
+581	 *
+582	 * @param {string} code - The TypeScript source code to search for type exports.
+583	 * @returns {ESMExport[]} An array of {@link ESMExport} objects representing each type export found.
+584	 */
+585	export function findTypeExports(code: string): ESMExport[] {
+586	  // Find declarations like export const foo = 'bar'
+587	  const declaredExports: DeclarationExport[] = matchAll(
+588	    EXPORT_DECAL_TYPE_RE,
+589	    code,
+590	    { type: "declaration" },
+591	  );
+592	
+593	  // Find named exports
+594	  const namedExports: NamedExport[] = normalizeNamedExports(
+595	    matchAll(EXPORT_NAMED_TYPE_RE, code, {
+596	      type: "named",
+597	    }),
+598	  );
+599	
+600	  // Merge and normalize exports
+601	  const exports: ESMExport[] = normalizeExports([
+602	    ...declaredExports,
+603	    ...namedExports,
+604	  ]);
+605	
+606	  // Return early when there is no  export statement
+607	  if (exports.length === 0) {
+608	    return [];
+609	  }
+610	  const exportLocations = _tryGetLocations(code, "export");
+611	  if (exportLocations && exportLocations.length === 0) {
+612	    return [];
+613	  }
+614	
+615	  return (
+616	    // Filter false positive export matches
+617	    _filterStatement(exportLocations, exports)
+618	      // Prevent multiple exports of same function, only keep latest iteration of signatures
+619	      .filter((exp, index, exports) => {
+620	        const nextExport = exports[index + 1];
+621	        return (
+622	          !nextExport ||
+623	          exp.type !== nextExport.type ||
+624	          !exp.name ||
+625	          exp.name !== nextExport.name
+626	        );
+627	      })
+628	  );
+629	}
+630	
+631	function normalizeExports(exports: (ESMExport & { declaration?: string })[]) {
+632	  for (const exp of exports) {
+633	    if (!exp.name && exp.names && exp.names.length === 1) {
+634	      exp.name = exp.names[0];
+635	    }
+636	    if (exp.name === "default" && exp.type !== "default") {
+637	      exp._type = exp.type;
+638	      exp.type = "default";
+639	    }
+640	    if (!exp.names && exp.name) {
+641	      exp.names = [exp.name];
+642	    }
+643	    if (exp.type === "declaration" && exp.declaration) {
+644	      exp.declarationType = exp.declaration.replace(
+645	        /^declare\s*/,
+646	        "",
+647	      ) as ESMExport["declarationType"];
+648	    }
+649	  }
+650	  return exports;
+651	}
+652	
+653	function normalizeNamedExports(namedExports: NamedExport[]) {
+654	  for (const namedExport of namedExports) {
+655	    namedExport.names = namedExport.exports
+656	      .replace(/^\r?\n?/, "")
+657	      .split(/\s*,\s*/g)
+658	      .filter((name) => !TYPE_RE.test(name))
+659	      .map((name) => name.replace(/^.*?\sas\s/, "").trim());
+660	  }
+661	  return namedExports;
+662	}
+663	
+664	/**
+665	 * Extracts and returns a list of all export names from the given source.
+666	 * This function uses {@link findExports} to retrieve all types of exports and consolidates their names into a single array.
+667	 *
+668	 * @param {string} code - The source code to search for export names.
+669	 * @returns {string[]} An array containing the names of all exports found in the code.
+670	 */
+671	export function findExportNames(code: string): string[] {
+672	  return findExports(code)
+673	    .flatMap((exp) => exp.names)
+674	    .filter(Boolean);
+675	}
+676	
+677	/**
+678	 * Asynchronously resolves and returns all export names from a module specified by its module identifier.
+679	 * This function recursively resolves all explicitly named and asterisked (* as) exports to fully enumerate the exported identifiers.
+680	 *
+681	 * @param {string} id - The module identifier to resolve.
+682	 * @param {ResolveOptions} [options] - Optional settings for resolving the module path, such as the base URL.
+683	 * @returns {Promise<string[]>} A promise that resolves to an array of export names from the module.
+684	 */
+685	export async function resolveModuleExportNames(
+686	  id: string,
+687	  options?: ResolveOptions,
+688	): Promise<string[]> {
+689	  const url = await resolvePath(id, options);
+690	  const code = await loadURL(url);
+691	  const exports = findExports(code);
+692	
+693	  // Explicit named exports
+694	  const exportNames = new Set(
+695	    exports.flatMap((exp) => exp.names).filter(Boolean),
+696	  );
+697	
+698	  // Recursive * exports
+699	  for (const exp of exports) {
+700	    if (exp.type !== "star" || !exp.specifier) {
+701	      continue;
+702	    }
+703	    const subExports = await resolveModuleExportNames(exp.specifier, {
+704	      ...options,
+705	      url,
+706	    });
+707	    for (const subExport of subExports) {
+708	      exportNames.add(subExport);
+709	    }
+710	  }
+711	
+712	  return [...exportNames];
+713	}
+714	
+715	// --- Internal ---
+716	
+717	interface TokenLocation {
+718	  start: number;
+719	  end: number;
+720	}
+721	
+722	function _filterStatement<T extends TokenLocation>(
+723	  locations: TokenLocation[] | undefined,
+724	  statements: T[],
+725	): T[] {
+726	  return statements.filter((exp) => {
+727	    return (
+728	      !locations ||
+729	      locations.some((location) => {
+730	        // AST token inside the regex match
+731	        return exp.start <= location.start && exp.end >= location.end;
+732	        // AST Token start or end is within the regex match
+733	        // return (exp.start <= location.start && location.start <= exp.end) ||
+734	        // (exp.start <= location.end && location.end <= exp.end)
+735	      })
+736	    );
+737	  });
+738	}
+739	
+740	function _tryGetLocations(code: string, label: string) {
+741	  try {
+742	    return _getLocations(code, label);
+743	  } catch {
+744	    // Ignore error
+745	  }
+746	}
+747	
+748	function _getLocations(code: string, label: string) {
+749	  const tokens = tokenizer(code, {
+750	    ecmaVersion: "latest",
+751	    sourceType: "module",
+752	    allowHashBang: true,
+753	    allowAwaitOutsideFunction: true,
+754	    allowImportExportEverywhere: true,
+755	  });
+756	  const locations: TokenLocation[] = [];
+757	  for (const token of tokens) {
+758	    if (token.type.label === label) {
+759	      locations.push({
+760	        start: token.start,
+761	        end: token.end,
+762	      });
+763	    }
+764	  }
+765	  return locations;
+766	}
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-ovr9jwk4.log]

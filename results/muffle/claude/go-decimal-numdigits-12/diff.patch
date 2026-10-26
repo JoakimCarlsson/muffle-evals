@@ -1,0 +1,51 @@
+diff --git a/decimal.go b/decimal.go
+index 880d569..357a6f6 100644
+--- a/decimal.go
++++ b/decimal.go
+@@ -1255,14 +1255,16 @@ func (d Decimal) Ln(precision int32) (Decimal, error) {
+ func (d Decimal) NumDigits() int {
+ 	v := d.getValue()
+ 	if v.IsInt64() {
+-		i64 := v.Int64()
+-		// restrict fast path to integers with exact conversion to float64
+-		if i64 <= (1<<53) && i64 >= -(1<<53) {
+-			if i64 == 0 {
+-				return 1
+-			}
+-			return int(math.Log10(math.Abs(float64(i64)))) + 1
++		// integer arithmetic, since math.Log10 is inexact for powers of ten
++		u := uint64(v.Int64())
++		if v.Sign() < 0 {
++			u = -u
++		}
++		n := 1
++		for ; u >= 10; u /= 10 {
++			n++
+ 		}
++		return n
+ 	}
+ 
+ 	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
+diff --git a/decimal_test.go b/decimal_test.go
+index 25d95bc..8ebcfa9 100644
+--- a/decimal_test.go
++++ b/decimal_test.go
+@@ -3962,3 +3962,18 @@ func ExampleNewFromFloat() {
+ 	//0.123123123123123
+ 	//-10000000000000
+ }
++
++func TestNumDigitsPowersOfTen(t *testing.T) {
++	for i := 0; i < 60; i++ {
++		p := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(i)), nil)
++		for _, v := range []*big.Int{p, new(big.Int).Sub(p, big.NewInt(1)), new(big.Int).Neg(p)} {
++			if v.Sign() == 0 {
++				continue
++			}
++			want := len(new(big.Int).Abs(v).Text(10))
++			if got := NewFromBigInt(v, 0).NumDigits(); got != want {
++				t.Errorf("NumDigits(%s) = %d, want %d", v, got, want)
++			}
++		}
++	}
++}

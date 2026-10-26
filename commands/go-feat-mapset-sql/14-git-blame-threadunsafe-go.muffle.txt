@@ -1,0 +1,387 @@
+$ git blame threadunsafe.go
+08d6f3f evals 2026-10-22
+1	/*
+2	Open Source Initiative OSI - The MIT License (MIT):Licensing
+3	
+4	The MIT License (MIT)
+5	Copyright (c) 2013 - 2022 Ralph Caraveo (deckarep@gmail.com)
+6	
+7	Permission is hereby granted, free of charge, to any person obtaining a copy of
+8	this software and associated documentation files (the "Software"), to deal in
+9	the Software without restriction, including without limitation the rights to
+10	use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+11	of the Software, and to permit persons to whom the Software is furnished to do
+12	so, subject to the following conditions:
+13	
+14	The above copyright notice and this permission notice shall be included in all
+15	copies or substantial portions of the Software.
+16	
+17	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+18	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+19	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+20	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+21	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+22	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+23	SOFTWARE.
+24	*/
+25	
+26	package mapset
+27	
+28	import (
+29		"encoding/json"
+30		"fmt"
+31		"strings"
+32	)
+33	
+34	type threadUnsafeSet[T comparable] map[T]struct{}
+35	
+36	// Assert concrete type:threadUnsafeSet adheres to Set interface.
+37	var _ Set[string] = (*threadUnsafeSet[string])(nil)
+38	
+39	func newThreadUnsafeSet[T comparable]() *threadUnsafeSet[T] {
+40		t := make(threadUnsafeSet[T])
+41		return &t
+42	}
+43	
+44	func newThreadUnsafeSetWithSize[T comparable](cardinality int) *threadUnsafeSet[T] {
+45		t := make(threadUnsafeSet[T], cardinality)
+46		return &t
+47	}
+48	
+49	func (s *threadUnsafeSet[T]) Add(v T) bool {
+50		prevLen := len(*s)
+51		s.add(v)
+52		return prevLen != len(*s)
+53	}
+54	
+55	// private version of Add which doesn't return a value
+56	func (s *threadUnsafeSet[T]) add(v T) {
+57		(*s)[v] = struct{}{}
+58	}
+59	
+60	func (s *threadUnsafeSet[T]) Append(vs ...T) int {
+61		prevLen := len(*s)
+62		s.append(vs...)
+63		return len(*s) - prevLen
+64	}
+65	
+66	// private version of Append which doesn't return a value
+67	func (s *threadUnsafeSet[T]) append(vs ...T) {
+68		for _, v := range vs {
+69			s.add(v)
+70		}
+71	}
+72	
+73	func (s *threadUnsafeSet[T]) AppendFrom(other Set[T]) int {
+74		o := other.(*threadUnsafeSet[T])
+75	
+76		prevLen := s.Cardinality()
+77		for elem := range *o {
+78			s.add(elem)
+79		}
+80		return s.Cardinality() - prevLen
+81	}
+82	
+83	func (s *threadUnsafeSet[T]) Cardinality() int {
+84		return len(*s)
+85	}
+86	
+87	func (s *threadUnsafeSet[T]) Clear() {
+88		clear(*s)
+89	}
+90	
+91	func (s *threadUnsafeSet[T]) Clone() Set[T] {
+92		t := threadUnsafeSet[T](mapclone(*s))
+93		return &t
+94	}
+95	
+96	func (s *threadUnsafeSet[T]) Contains(v ...T) bool {
+97		for _, val := range v {
+98			if !s.contains(val) {
+99				return false
+100			}
+101		}
+102		return true
+103	}
+104	
+105	func (s *threadUnsafeSet[T]) ContainsOne(v T) bool {
+106		return s.contains(v)
+107	}
+108	
+109	func (s *threadUnsafeSet[T]) ContainsAny(v ...T) bool {
+110		for _, val := range v {
+111			if s.contains(val) {
+112				return true
+113			}
+114		}
+115		return false
+116	}
+117	
+118	func (s *threadUnsafeSet[T]) ContainsAnyElement(other Set[T]) bool {
+119		o := other.(*threadUnsafeSet[T])
+120	
+121		// loop over smaller set
+122		if s.Cardinality() < other.Cardinality() {
+123			for elem := range *s {
+124				if o.contains(elem) {
+125					return true
+126				}
+127			}
+128		} else {
+129			for elem := range *o {
+130				if s.contains(elem) {
+131					return true
+132				}
+133			}
+134		}
+135		return false
+136	}
+137	
+138	// private version of Contains for a single element v
+139	func (s *threadUnsafeSet[T]) contains(v T) (ok bool) {
+140		_, found := (*s)[v]
+141		return found
+142	}
+143	
+144	func (s *threadUnsafeSet[T]) Difference(other Set[T]) Set[T] {
+145		o := other.(*threadUnsafeSet[T])
+146	
+147		diff := make(threadUnsafeSet[T], s.Cardinality())
+148		for elem := range *s {
+149			if !o.contains(elem) {
+150				diff.add(elem)
+151			}
+152		}
+153		return &diff
+154	}
+155	
+156	func (s *threadUnsafeSet[T]) Each(cb func(T) bool) {
+157		for elem := range *s {
+158			if cb(elem) {
+159				break
+160			}
+161		}
+162	}
+163	
+164	func (s *threadUnsafeSet[T]) Filter(cb func(T) bool) Set[T] {
+165		mappedSet := newThreadUnsafeSetWithSize[T](s.Cardinality())
+166		for elem := range *s {
+167			if cb(elem) {
+168				mappedSet.add(elem)
+169			}
+170		}
+171		return mappedSet
+172	}
+173	
+174	func (s *threadUnsafeSet[T]) Equal(other Set[T]) bool {
+175		o := other.(*threadUnsafeSet[T])
+176	
+177		if s.Cardinality() != other.Cardinality() {
+178			return false
+179		}
+180		for elem := range *s {
+181			if !o.contains(elem) {
+182				return false
+183			}
+184		}
+185		return true
+186	}
+187	
+188	func (s *threadUnsafeSet[T]) Intersect(other Set[T]) Set[T] {
+189		o := other.(*threadUnsafeSet[T])
+190	
+191		var intersection threadUnsafeSet[T]
+192		// loop over smaller set
+193		if s.Cardinality() < other.Cardinality() {
+194			intersection = make(threadUnsafeSet[T], s.Cardinality())
+195			for elem := range *s {
+196				if o.contains(elem) {
+197					intersection.add(elem)
+198				}
+199			}
+200		} else {
+201			intersection = make(threadUnsafeSet[T], o.Cardinality())
+202			for elem := range *o {
+203				if s.contains(elem) {
+204					intersection.add(elem)
+205				}
+206			}
+207		}
+208		return &intersection
+209	}
+210	
+211	func (s *threadUnsafeSet[T]) IsEmpty() bool {
+212		return len(*s) == 0
+213	}
+214	
+215	func (s *threadUnsafeSet[T]) IsProperSubset(other Set[T]) bool {
+216		return s.Cardinality() < other.Cardinality() && s.IsSubset(other)
+217	}
+218	
+219	func (s *threadUnsafeSet[T]) IsProperSuperset(other Set[T]) bool {
+220		return s.Cardinality() > other.Cardinality() && s.IsSuperset(other)
+221	}
+222	
+223	func (s *threadUnsafeSet[T]) IsSubset(other Set[T]) bool {
+224		o := other.(*threadUnsafeSet[T])
+225		if s.Cardinality() > other.Cardinality() {
+226			return false
+227		}
+228		for elem := range *s {
+229			if !o.contains(elem) {
+230				return false
+231			}
+232		}
+233		return true
+234	}
+235	
+236	func (s *threadUnsafeSet[T]) IsDisjoint(other Set[T]) bool {
+237		return !s.ContainsAnyElement(other)
+238	}
+239	
+240	func (s *threadUnsafeSet[T]) IsSuperset(other Set[T]) bool {
+241		return other.IsSubset(s)
+242	}
+243	
+244	func (s *threadUnsafeSet[T]) Iter() <-chan T {
+245		ch := make(chan T)
+246		go func() {
+247			for elem := range *s {
+248				ch <- elem
+249			}
+250			close(ch)
+251		}()
+252	
+253		return ch
+254	}
+255	
+256	func (s *threadUnsafeSet[T]) Iterator() *Iterator[T] {
+257		iterator, ch, stopCh := newIterator[T]()
+258	
+259		go func() {
+260		L:
+261			for elem := range *s {
+262				select {
+263				case <-stopCh:
+264					break L
+265				case ch <- elem:
+266				}
+267			}
+268			close(ch)
+269		}()
+270	
+271		return iterator
+272	}
+273	
+274	// Pop returns a popped item in case set is not empty, or nil-value of T
+275	// if set is already empty
+276	func (s *threadUnsafeSet[T]) Pop() (v T, ok bool) {
+277		for item := range *s {
+278			delete(*s, item)
+279			return item, true
+280		}
+281		return v, false
+282	}
+283	
+284	func (s *threadUnsafeSet[T]) PopN(n int) (items []T, count int) {
+285		if n <= 0 || len(*s) == 0 {
+286			return make([]T, 0), 0
+287		}
+288		sn := s.Cardinality()
+289		if n > sn {
+290			n = sn
+291		}
+292	
+293		items = make([]T, 0, n)
+294		for item := range *s {
+295			if count >= n {
+296				break
+297			}
+298			delete(*s, item)
+299			items = append(items, item)
+300			count++
+301		}
+302		return items, count
+303	}
+304	
+305	func (s threadUnsafeSet[T]) Remove(v T) {
+306		delete(s, v)
+307	}
+308	
+309	func (s threadUnsafeSet[T]) RemoveAll(i ...T) {
+310		for _, elem := range i {
+311			delete(s, elem)
+312		}
+313	}
+314	
+315	func (s threadUnsafeSet[T]) String() string {
+316		items := make([]string, 0, len(s))
+317	
+318		for elem := range s {
+319			items = append(items, fmt.Sprintf("%v", elem))
+320		}
+321		return fmt.Sprintf("Set{%s}", strings.Join(items, ", "))
+322	}
+323	
+324	func (s *threadUnsafeSet[T]) SymmetricDifference(other Set[T]) Set[T] {
+325		o := other.(*threadUnsafeSet[T])
+326	
+327		// maximum number of elements is the sum of s and o cardinalities (when s and o are disjoint)
+328		n := s.Cardinality() + o.Cardinality()
+329		sd := make(threadUnsafeSet[T], n)
+330		for elem := range *s {
+331			if !o.contains(elem) {
+332				sd.add(elem)
+333			}
+334		}
+335		for elem := range *o {
+336			if !s.contains(elem) {
+337				sd.add(elem)
+338			}
+339		}
+340		return &sd
+341	}
+342	
+343	func (s threadUnsafeSet[T]) ToSlice() []T {
+344		keys := make([]T, 0, len(s))
+345		for elem := range s {
+346			keys = append(keys, elem)
+347		}
+348	
+349		return keys
+350	}
+351	
+352	func (s threadUnsafeSet[T]) Union(other Set[T]) Set[T] {
+353		o := other.(*threadUnsafeSet[T])
+354	
+355		// maximum number of elements is the sum of s and o cardinalities (when s and o are disjoint)
+356		n := s.Cardinality() + o.Cardinality()
+357		unionedSet := make(threadUnsafeSet[T], n)
+358	
+359		for elem := range s {
+360			unionedSet.add(elem)
+361		}
+362		for elem := range *o {
+363			unionedSet.add(elem)
+364		}
+365		return &unionedSet
+366	}
+367	
+368	// MarshalJSON creates a JSON array from the set, it marshals all elements
+369	func (s threadUnsafeSet[T]) MarshalJSON() ([]byte, error) {
+370		return json.Marshal(s.ToSlice())
+371	}
+372	
+373	// UnmarshalJSON recreates a set from a JSON array, it only decodes
+374	// primitive types. Numbers are decoded as json.Number.
+375	func (s *threadUnsafeSet[T]) UnmarshalJSON(b []byte) error {
+376		var i []T
+377		err := json.Unmarshal(b, &i)
+378		if err != nil {
+379			return err
+380		}
+381		s.append(i...)
+382	
+383		return nil
+384	}
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-n42bm7jj.log]

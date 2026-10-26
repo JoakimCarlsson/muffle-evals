@@ -1,0 +1,719 @@
+$ git blame tenacity/__init__.py
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200   1) # Copyright 2016-2018 Julien Danjou
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200   2) # Copyright 2017 Elisey Zanko
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200   3) # Copyright 2016 Étienne Bersac
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200   4) # Copyright 2016 Joshua Harlow
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200   5) # Copyright 2013-2014 Ray Holder
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200   6) #
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200   7) # Licensed under the Apache License, Version 2.0 (the "License");
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200   8) # you may not use this file except in compliance with the License.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200   9) # You may obtain a copy of the License at
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  10) #
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  11) # http://www.apache.org/licenses/LICENSE-2.0
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  12) #
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  13) # Unless required by applicable law or agreed to in writing, software
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  14) # distributed under the License is distributed on an "AS IS" BASIS,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  15) # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  16) # See the License for the specific language governing permissions and
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  17) # limitations under the License.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  18) import dataclasses
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  19) import functools
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  20) import sys
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  21) import threading
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  22) import time
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  23) import typing as t
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  24) import warnings
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  25) from abc import ABC, abstractmethod
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  26) from concurrent import futures
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  27) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  28) from . import _utils
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  29) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  30) # Import all built-in retry strategies for easier usage.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  31) from .retry import retry_base  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  32) from .retry import retry_all  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  33) from .retry import retry_always  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  34) from .retry import retry_any  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  35) from .retry import retry_if_exception  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  36) from .retry import retry_if_exception_type  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  37) from .retry import retry_if_exception_cause_type  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  38) from .retry import retry_if_not_exception_type  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  39) from .retry import retry_if_not_result  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  40) from .retry import retry_if_result  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  41) from .retry import retry_never  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  42) from .retry import retry_unless_exception_type  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  43) from .retry import retry_if_exception_message  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  44) from .retry import retry_if_not_exception_message  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  45) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  46) # Import all nap strategies for easier usage.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  47) from .nap import sleep  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  48) from .nap import sleep_using_event  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  49) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  50) # Import all built-in stop strategies for easier usage.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  51) from .stop import stop_after_attempt  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  52) from .stop import stop_after_delay  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  53) from .stop import stop_before_delay  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  54) from .stop import stop_all  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  55) from .stop import stop_any  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  56) from .stop import stop_never  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  57) from .stop import stop_when_event_set  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  58) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  59) # Import all built-in wait strategies for easier usage.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  60) from .wait import wait_chain  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  61) from .wait import wait_combine  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  62) from .wait import wait_exponential  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  63) from .wait import wait_fixed  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  64) from .wait import wait_incrementing  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  65) from .wait import wait_none  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  66) from .wait import wait_random  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  67) from .wait import wait_random_exponential  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  68) from .wait import wait_random_exponential as wait_full_jitter  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  69) from .wait import wait_exponential_jitter  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  70) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  71) # Import all built-in before strategies for easier usage.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  72) from .before import before_log  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  73) from .before import before_nothing  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  74) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  75) # Import all built-in after strategies for easier usage.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  76) from .after import after_log  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  77) from .after import after_nothing  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  78) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  79) # Import all built-in before sleep strategies for easier usage.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  80) from .before_sleep import before_sleep_log  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  81) from .before_sleep import before_sleep_nothing  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  82) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  83) try:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  84)     import tornado
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  85) except ImportError:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  86)     tornado = None
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  87) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  88) if t.TYPE_CHECKING:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  89)     import types
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  90) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  91)     from typing_extensions import Self
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  92) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  93)     from . import asyncio as tasyncio
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  94)     from .retry import RetryBaseT
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  95)     from .stop import StopBaseT
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  96)     from .wait import WaitBaseT
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  97) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  98) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200  99) WrappedFnReturnT = t.TypeVar("WrappedFnReturnT")
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 100) WrappedFn = t.TypeVar("WrappedFn", bound=t.Callable[..., t.Any])
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 101) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 102) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 103) dataclass_kwargs = {}
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 104) if sys.version_info >= (3, 10):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 105)     dataclass_kwargs.update({"slots": True})
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 106) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 107) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 108) @dataclasses.dataclass(**dataclass_kwargs)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 109) class IterState:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 110)     actions: t.List[t.Callable[["RetryCallState"], t.Any]] = dataclasses.field(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 111)         default_factory=list
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 112)     )
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 113)     retry_run_result: bool = False
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 114)     delay_since_first_attempt: int = 0
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 115)     stop_run_result: bool = False
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 116)     is_explicit_retry: bool = False
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 117) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 118)     def reset(self) -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 119)         self.actions = []
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 120)         self.retry_run_result = False
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 121)         self.delay_since_first_attempt = 0
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 122)         self.stop_run_result = False
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 123)         self.is_explicit_retry = False
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 124) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 125) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 126) class TryAgain(Exception):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 127)     """Always retry the executed function when raised."""
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 128) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 129) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 130) NO_RESULT = object()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 131) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 132) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 133) class DoAttempt:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 134)     pass
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 135) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 136) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 137) class DoSleep(float):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 138)     pass
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 139) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 140) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 141) class BaseAction:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 142)     """Base class for representing actions to take by retry object.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 143) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 144)     Concrete implementations must define:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 145)     - __init__: to initialize all necessary fields
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 146)     - REPR_FIELDS: class variable specifying attributes to include in repr(self)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 147)     - NAME: for identification in retry object methods and callbacks
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 148)     """
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 149) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 150)     REPR_FIELDS: t.Sequence[str] = ()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 151)     NAME: t.Optional[str] = None
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 152) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 153)     def __repr__(self) -> str:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 154)         state_str = ", ".join(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 155)             f"{field}={getattr(self, field)!r}" for field in self.REPR_FIELDS
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 156)         )
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 157)         return f"{self.__class__.__name__}({state_str})"
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 158) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 159)     def __str__(self) -> str:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 160)         return repr(self)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 161) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 162) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 163) class RetryAction(BaseAction):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 164)     REPR_FIELDS = ("sleep",)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 165)     NAME = "retry"
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 166) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 167)     def __init__(self, sleep: t.SupportsFloat) -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 168)         self.sleep = float(sleep)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 169) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 170) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 171) _unset = object()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 172) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 173) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 174) def _first_set(first: t.Union[t.Any, object], second: t.Any) -> t.Any:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 175)     return second if first is _unset else first
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 176) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 177) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 178) class RetryError(Exception):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 179)     """Encapsulates the last attempt instance right before giving up."""
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 180) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 181)     def __init__(self, last_attempt: "Future") -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 182)         self.last_attempt = last_attempt
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 183)         super().__init__(last_attempt)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 184) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 185)     def reraise(self) -> t.NoReturn:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 186)         if self.last_attempt.failed:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 187)             raise self.last_attempt.result()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 188)         raise self
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 189) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 190)     def __str__(self) -> str:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 191)         return f"{self.__class__.__name__}[{self.last_attempt}]"
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 192) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 193) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 194) class AttemptManager:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 195)     """Manage attempt context."""
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 196) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 197)     def __init__(self, retry_state: "RetryCallState"):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 198)         self.retry_state = retry_state
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 199) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 200)     def __enter__(self) -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 201)         pass
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 202) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 203)     def __exit__(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 204)         self,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 205)         exc_type: t.Optional[t.Type[BaseException]],
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 206)         exc_value: t.Optional[BaseException],
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 207)         traceback: t.Optional["types.TracebackType"],
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 208)     ) -> t.Optional[bool]:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 209)         if exc_type is not None and exc_value is not None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 210)             self.retry_state.set_exception((exc_type, exc_value, traceback))
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 211)             return True  # Swallow exception.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 212)         else:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 213)             # We don't have the result, actually.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 214)             self.retry_state.set_result(None)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 215)             return None
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 216) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 217) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 218) class BaseRetrying(ABC):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 219)     def __init__(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 220)         self,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 221)         sleep: t.Callable[[t.Union[int, float]], None] = sleep,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 222)         stop: "StopBaseT" = stop_never,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 223)         wait: "WaitBaseT" = wait_none(),
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 224)         retry: "RetryBaseT" = retry_if_exception_type(),
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 225)         before: t.Callable[["RetryCallState"], None] = before_nothing,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 226)         after: t.Callable[["RetryCallState"], None] = after_nothing,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 227)         before_sleep: t.Optional[t.Callable[["RetryCallState"], None]] = None,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 228)         reraise: bool = False,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 229)         retry_error_cls: t.Type[RetryError] = RetryError,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 230)         retry_error_callback: t.Optional[t.Callable[["RetryCallState"], t.Any]] = None,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 231)     ):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 232)         self.sleep = sleep
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 233)         self.stop = stop
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 234)         self.wait = wait
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 235)         self.retry = retry
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 236)         self.before = before
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 237)         self.after = after
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 238)         self.before_sleep = before_sleep
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 239)         self.reraise = reraise
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 240)         self._local = threading.local()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 241)         self.retry_error_cls = retry_error_cls
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 242)         self.retry_error_callback = retry_error_callback
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 243) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 244)     def copy(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 245)         self,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 246)         sleep: t.Union[t.Callable[[t.Union[int, float]], None], object] = _unset,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 247)         stop: t.Union["StopBaseT", object] = _unset,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 248)         wait: t.Union["WaitBaseT", object] = _unset,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 249)         retry: t.Union[retry_base, object] = _unset,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 250)         before: t.Union[t.Callable[["RetryCallState"], None], object] = _unset,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 251)         after: t.Union[t.Callable[["RetryCallState"], None], object] = _unset,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 252)         before_sleep: t.Union[
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 253)             t.Optional[t.Callable[["RetryCallState"], None]], object
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 254)         ] = _unset,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 255)         reraise: t.Union[bool, object] = _unset,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 256)         retry_error_cls: t.Union[t.Type[RetryError], object] = _unset,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 257)         retry_error_callback: t.Union[
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 258)             t.Optional[t.Callable[["RetryCallState"], t.Any]], object
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 259)         ] = _unset,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 260)     ) -> "Self":
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 261)         """Copy this object with some parameters changed if needed."""
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 262)         return self.__class__(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 263)             sleep=_first_set(sleep, self.sleep),
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 264)             stop=_first_set(stop, self.stop),
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 265)             wait=_first_set(wait, self.wait),
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 266)             retry=_first_set(retry, self.retry),
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 267)             before=_first_set(before, self.before),
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 268)             after=_first_set(after, self.after),
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 269)             before_sleep=_first_set(before_sleep, self.before_sleep),
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 270)             reraise=_first_set(reraise, self.reraise),
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 271)             retry_error_cls=_first_set(retry_error_cls, self.retry_error_cls),
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 272)             retry_error_callback=_first_set(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 273)                 retry_error_callback, self.retry_error_callback
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 274)             ),
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 275)         )
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 276) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 277)     def __repr__(self) -> str:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 278)         return (
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 279)             f"<{self.__class__.__name__} object at 0x{id(self):x} ("
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 280)             f"stop={self.stop}, "
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 281)             f"wait={self.wait}, "
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 282)             f"sleep={self.sleep}, "
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 283)             f"retry={self.retry}, "
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 284)             f"before={self.before}, "
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 285)             f"after={self.after})>"
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 286)         )
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 287) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 288)     @property
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 289)     def statistics(self) -> t.Dict[str, t.Any]:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 290)         """Return a dictionary of runtime statistics.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 291) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 292)         This dictionary will be empty when the controller has never been
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 293)         ran. When it is running or has ran previously it should have (but
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 294)         may not) have useful and/or informational keys and values when
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 295)         running is underway and/or completed.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 296) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 297)         .. warning:: The keys in this dictionary **should** be some what
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 298)                      stable (not changing), but there existence **may**
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 299)                      change between major releases as new statistics are
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 300)                      gathered or removed so before accessing keys ensure that
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 301)                      they actually exist and handle when they do not.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 302) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 303)         .. note:: The values in this dictionary are local to the thread
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 304)                   running call (so if multiple threads share the same retrying
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 305)                   object - either directly or indirectly) they will each have
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 306)                   there own view of statistics they have collected (in the
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 307)                   future we may provide a way to aggregate the various
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 308)                   statistics from each thread).
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 309)         """
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 310)         if not hasattr(self._local, "statistics"):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 311)             self._local.statistics = t.cast(t.Dict[str, t.Any], {})
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 312)         return self._local.statistics  # type: ignore[no-any-return]
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 313) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 314)     @property
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 315)     def iter_state(self) -> IterState:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 316)         if not hasattr(self._local, "iter_state"):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 317)             self._local.iter_state = IterState()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 318)         return self._local.iter_state  # type: ignore[no-any-return]
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 319) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 320)     def wraps(self, f: WrappedFn) -> WrappedFn:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 321)         """Wrap a function for retrying.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 322) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 323)         :param f: A function to wraps for retrying.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 324)         """
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 325) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 326)         @functools.wraps(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 327)             f, functools.WRAPPER_ASSIGNMENTS + ("__defaults__", "__kwdefaults__")
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 328)         )
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 329)         def wrapped_f(*args: t.Any, **kw: t.Any) -> t.Any:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 330)             # Always create a copy to prevent overwriting the local contexts when
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 331)             # calling the same wrapped functions multiple times in the same stack
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 332)             copy = self.copy()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 333)             wrapped_f.statistics = copy.statistics  # type: ignore[attr-defined]
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 334)             return copy(f, *args, **kw)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 335) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 336)         def retry_with(*args: t.Any, **kwargs: t.Any) -> WrappedFn:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 337)             return self.copy(*args, **kwargs).wraps(f)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 338) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 339)         # Preserve attributes
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 340)         wrapped_f.retry = self  # type: ignore[attr-defined]
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 341)         wrapped_f.retry_with = retry_with  # type: ignore[attr-defined]
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 342)         wrapped_f.statistics = {}  # type: ignore[attr-defined]
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 343) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 344)         return wrapped_f  # type: ignore[return-value]
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 345) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 346)     def begin(self) -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 347)         self.statistics.clear()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 348)         self.statistics["start_time"] = time.monotonic()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 349)         self.statistics["attempt_number"] = 1
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 350)         self.statistics["idle_for"] = 0
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 351) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 352)     def _add_action_func(self, fn: t.Callable[..., t.Any]) -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 353)         self.iter_state.actions.append(fn)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 354) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 355)     def _run_retry(self, retry_state: "RetryCallState") -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 356)         self.iter_state.retry_run_result = self.retry(retry_state)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 357) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 358)     def _run_wait(self, retry_state: "RetryCallState") -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 359)         if self.wait:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 360)             sleep = self.wait(retry_state)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 361)         else:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 362)             sleep = 0.0
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 363) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 364)         retry_state.upcoming_sleep = sleep
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 365) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 366)     def _run_stop(self, retry_state: "RetryCallState") -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 367)         self.statistics["delay_since_first_attempt"] = retry_state.seconds_since_start
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 368)         self.iter_state.stop_run_result = self.stop(retry_state)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 369) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 370)     def iter(self, retry_state: "RetryCallState") -> t.Union[DoAttempt, DoSleep, t.Any]:  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 371)         self._begin_iter(retry_state)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 372)         result = None
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 373)         for action in self.iter_state.actions:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 374)             result = action(retry_state)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 375)         return result
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 376) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 377)     def _begin_iter(self, retry_state: "RetryCallState") -> None:  # noqa
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 378)         self.iter_state.reset()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 379) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 380)         fut = retry_state.outcome
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 381)         if fut is None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 382)             if self.before is not None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 383)                 self._add_action_func(self.before)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 384)             self._add_action_func(lambda rs: DoAttempt())
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 385)             return
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 386) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 387)         self.iter_state.is_explicit_retry = fut.failed and isinstance(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 388)             fut.exception(), TryAgain
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 389)         )
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 390)         if not self.iter_state.is_explicit_retry:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 391)             self._add_action_func(self._run_retry)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 392)         self._add_action_func(self._post_retry_check_actions)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 393) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 394)     def _post_retry_check_actions(self, retry_state: "RetryCallState") -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 395)         if not (self.iter_state.is_explicit_retry or self.iter_state.retry_run_result):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 396)             self._add_action_func(lambda rs: rs.outcome.result())
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 397)             return
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 398) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 399)         if self.after is not None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 400)             self._add_action_func(self.after)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 401) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 402)         self._add_action_func(self._run_wait)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 403)         self._add_action_func(self._run_stop)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 404)         self._add_action_func(self._post_stop_check_actions)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 405) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 406)     def _post_stop_check_actions(self, retry_state: "RetryCallState") -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 407)         if self.iter_state.stop_run_result:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 408)             if self.retry_error_callback:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 409)                 self._add_action_func(self.retry_error_callback)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 410)                 return
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 411) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 412)             def exc_check(rs: "RetryCallState") -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 413)                 fut = t.cast(Future, rs.outcome)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 414)                 retry_exc = self.retry_error_cls(fut)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 415)                 if self.reraise:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 416)                     raise retry_exc.reraise()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 417)                 raise retry_exc from fut.exception()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 418) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 419)             self._add_action_func(exc_check)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 420)             return
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 421) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 422)         def next_action(rs: "RetryCallState") -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 423)             sleep = rs.upcoming_sleep
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 424)             rs.next_action = RetryAction(sleep)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 425)             rs.idle_for += sleep
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 426)             self.statistics["idle_for"] += sleep
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 427)             self.statistics["attempt_number"] += 1
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 428) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 429)         self._add_action_func(next_action)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 430) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 431)         if self.before_sleep is not None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 432)             self._add_action_func(self.before_sleep)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 433) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 434)         self._add_action_func(lambda rs: DoSleep(rs.upcoming_sleep))
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 435) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 436)     def __iter__(self) -> t.Generator[AttemptManager, None, None]:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 437)         self.begin()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 438) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 439)         retry_state = RetryCallState(self, fn=None, args=(), kwargs={})
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 440)         while True:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 441)             do = self.iter(retry_state=retry_state)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 442)             if isinstance(do, DoAttempt):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 443)                 yield AttemptManager(retry_state=retry_state)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 444)             elif isinstance(do, DoSleep):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 445)                 retry_state.prepare_for_next_attempt()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 446)                 self.sleep(do)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 447)             else:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 448)                 break
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 449) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 450)     @abstractmethod
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 451)     def __call__(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 452)         self,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 453)         fn: t.Callable[..., WrappedFnReturnT],
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 454)         *args: t.Any,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 455)         **kwargs: t.Any,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 456)     ) -> WrappedFnReturnT:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 457)         pass
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 458) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 459) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 460) class Retrying(BaseRetrying):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 461)     """Retrying controller."""
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 462) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 463)     def __call__(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 464)         self,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 465)         fn: t.Callable[..., WrappedFnReturnT],
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 466)         *args: t.Any,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 467)         **kwargs: t.Any,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 468)     ) -> WrappedFnReturnT:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 469)         self.begin()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 470) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 471)         retry_state = RetryCallState(retry_object=self, fn=fn, args=args, kwargs=kwargs)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 472)         while True:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 473)             do = self.iter(retry_state=retry_state)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 474)             if isinstance(do, DoAttempt):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 475)                 try:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 476)                     result = fn(*args, **kwargs)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 477)                 except BaseException:  # noqa: B902
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 478)                     retry_state.set_exception(sys.exc_info())  # type: ignore[arg-type]
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 479)                 else:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 480)                     retry_state.set_result(result)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 481)             elif isinstance(do, DoSleep):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 482)                 retry_state.prepare_for_next_attempt()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 483)                 self.sleep(do)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 484)             else:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 485)                 return do  # type: ignore[no-any-return]
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 486) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 487) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 488) if sys.version_info >= (3, 9):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 489)     FutureGenericT = futures.Future[t.Any]
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 490) else:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 491)     FutureGenericT = futures.Future
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 492) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 493) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 494) class Future(FutureGenericT):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 495)     """Encapsulates a (future or past) attempted call to a target function."""
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 496) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 497)     def __init__(self, attempt_number: int) -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 498)         super().__init__()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 499)         self.attempt_number = attempt_number
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 500) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 501)     @property
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 502)     def failed(self) -> bool:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 503)         """Return whether a exception is being held in this future."""
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 504)         return self.exception() is not None
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 505) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 506)     @classmethod
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 507)     def construct(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 508)         cls, attempt_number: int, value: t.Any, has_exception: bool
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 509)     ) -> "Future":
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 510)         """Construct a new Future object."""
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 511)         fut = cls(attempt_number)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 512)         if has_exception:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 513)             fut.set_exception(value)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 514)         else:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 515)             fut.set_result(value)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 516)         return fut
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 517) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 518) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 519) class RetryCallState:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 520)     """State related to a single call wrapped with Retrying."""
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 521) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 522)     def __init__(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 523)         self,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 524)         retry_object: BaseRetrying,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 525)         fn: t.Optional[WrappedFn],
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 526)         args: t.Any,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 527)         kwargs: t.Any,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 528)     ) -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 529)         #: Retry call start timestamp
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 530)         self.start_time = time.monotonic()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 531)         #: Retry manager object
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 532)         self.retry_object = retry_object
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 533)         #: Function wrapped by this retry call
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 534)         self.fn = fn
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 535)         #: Arguments of the function wrapped by this retry call
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 536)         self.args = args
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 537)         #: Keyword arguments of the function wrapped by this retry call
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 538)         self.kwargs = kwargs
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 539) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 540)         #: The number of the current attempt
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 541)         self.attempt_number: int = 1
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 542)         #: Last outcome (result or exception) produced by the function
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 543)         self.outcome: t.Optional[Future] = None
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 544)         #: Timestamp of the last outcome
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 545)         self.outcome_timestamp: t.Optional[float] = None
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 546)         #: Time spent sleeping in retries
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 547)         self.idle_for: float = 0.0
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 548)         #: Next action as decided by the retry manager
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 549)         self.next_action: t.Optional[RetryAction] = None
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 550)         #: Next sleep time as decided by the retry manager.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 551)         self.upcoming_sleep: float = 0.0
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 552) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 553)     @property
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 554)     def seconds_since_start(self) -> t.Optional[float]:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 555)         if self.outcome_timestamp is None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 556)             return None
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 557)         return self.outcome_timestamp - self.start_time
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 558) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 559)     def prepare_for_next_attempt(self) -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 560)         self.outcome = None
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 561)         self.outcome_timestamp = None
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 562)         self.attempt_number += 1
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 563)         self.next_action = None
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 564) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 565)     def set_result(self, val: t.Any) -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 566)         ts = time.monotonic()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 567)         fut = Future(self.attempt_number)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 568)         fut.set_result(val)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 569)         self.outcome, self.outcome_timestamp = fut, ts
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 570) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 571)     def set_exception(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 572)         self,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 573)         exc_info: t.Tuple[
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 574)             t.Type[BaseException], BaseException, "types.TracebackType| None"
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 575)         ],
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 576)     ) -> None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 577)         ts = time.monotonic()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 578)         fut = Future(self.attempt_number)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 579)         fut.set_exception(exc_info[1])
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 580)         self.outcome, self.outcome_timestamp = fut, ts
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 581) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 582)     def __repr__(self) -> str:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 583)         if self.outcome is None:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 584)             result = "none yet"
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 585)         elif self.outcome.failed:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 586)             exception = self.outcome.exception()
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 587)             result = f"failed ({exception.__class__.__name__} {exception})"
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 588)         else:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 589)             result = f"returned {self.outcome.result()}"
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 590) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 591)         slept = float(round(self.idle_for, 2))
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 592)         clsname = self.__class__.__name__
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 593)         return f"<{clsname} {id(self)}: attempt #{self.attempt_number}; slept for {slept}; last result: {result}>"
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 594) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 595) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 596) @t.overload
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 597) def retry(func: WrappedFn) -> WrappedFn: ...
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 598) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 599) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 600) @t.overload
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 601) def retry(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 602)     sleep: t.Callable[[t.Union[int, float]], t.Union[None, t.Awaitable[None]]] = sleep,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 603)     stop: "StopBaseT" = stop_never,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 604)     wait: "WaitBaseT" = wait_none(),
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 605)     retry: "t.Union[RetryBaseT, tasyncio.retry.RetryBaseT]" = retry_if_exception_type(),
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 606)     before: t.Callable[
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 607)         ["RetryCallState"], t.Union[None, t.Awaitable[None]]
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 608)     ] = before_nothing,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 609)     after: t.Callable[
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 610)         ["RetryCallState"], t.Union[None, t.Awaitable[None]]
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 611)     ] = after_nothing,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 612)     before_sleep: t.Optional[
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 613)         t.Callable[["RetryCallState"], t.Union[None, t.Awaitable[None]]]
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 614)     ] = None,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 615)     reraise: bool = False,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 616)     retry_error_cls: t.Type["RetryError"] = RetryError,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 617)     retry_error_callback: t.Optional[
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 618)         t.Callable[["RetryCallState"], t.Union[t.Any, t.Awaitable[t.Any]]]
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 619)     ] = None,
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 620) ) -> t.Callable[[WrappedFn], WrappedFn]: ...
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 621) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 622) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 623) def retry(*dargs: t.Any, **dkw: t.Any) -> t.Any:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 624)     """Wrap a function with a new `Retrying` object.
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 625) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 626)     :param dargs: positional arguments passed to Retrying object
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 627)     :param dkw: keyword arguments passed to the Retrying object
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 628)     """
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 629)     # support both @retry and @retry() as valid syntax
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 630)     if len(dargs) == 1 and callable(dargs[0]):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 631)         return retry()(dargs[0])
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 632)     else:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 633) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 634)         def wrap(f: WrappedFn) -> WrappedFn:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 635)             if isinstance(f, retry_base):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 636)                 warnings.warn(
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 637)                     f"Got retry_base instance ({f.__class__.__name__}) as callable argument, "
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 638)                     f"this will probably hang indefinitely (did you mean retry={f.__class__.__name__}(...)?)"
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 639)                 )
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 640)             r: "BaseRetrying"
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 641)             if _utils.is_coroutine_callable(f):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 642)                 r = AsyncRetrying(*dargs, **dkw)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 643)             elif (
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 644)                 tornado
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 645)                 and hasattr(tornado.gen, "is_coroutine_function")
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 646)                 and tornado.gen.is_coroutine_function(f)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 647)             ):
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 648)                 r = TornadoRetrying(*dargs, **dkw)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 649)             else:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 650)                 r = Retrying(*dargs, **dkw)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 651) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 652)             return r.wraps(f)
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 653) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 654)         return wrap
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 655) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 656) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 657) from tenacity.asyncio import AsyncRetrying  # noqa:E402,I100
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 658) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 659) if tornado:
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 660)     from tenacity.tornadoweb import TornadoRetrying
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 661) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 662) 
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 663) __all__ = [
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 664)     "retry_base",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 665)     "retry_all",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 666)     "retry_always",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 667)     "retry_any",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 668)     "retry_if_exception",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 669)     "retry_if_exception_type",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 670)     "retry_if_exception_cause_type",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 671)     "retry_if_not_exception_type",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 672)     "retry_if_not_result",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 673)     "retry_if_result",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 674)     "retry_never",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 675)     "retry_unless_exception_type",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 676)     "retry_if_exception_message",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 677)     "retry_if_not_exception_message",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 678)     "sleep",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 679)     "sleep_using_event",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 680)     "stop_after_attempt",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 681)     "stop_after_delay",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 682)     "stop_before_delay",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 683)     "stop_all",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 684)     "stop_any",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 685)     "stop_never",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 686)     "stop_when_event_set",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 687)     "wait_chain",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 688)     "wait_combine",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 689)     "wait_exponential",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 690)     "wait_fixed",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 691)     "wait_incrementing",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 692)     "wait_none",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 693)     "wait_random",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 694)     "wait_random_exponential",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 695)     "wait_full_jitter",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 696)     "wait_exponential_jitter",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 697)     "before_log",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 698)     "before_nothing",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 699)     "after_log",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 700)     "after_nothing",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 701)     "before_sleep_log",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 702)     "before_sleep_nothing",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 703)     "retry",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 704)     "WrappedFn",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 705)     "TryAgain",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 706)     "NO_RESULT",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 707)     "DoAttempt",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 708)     "DoSleep",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 709)     "BaseAction",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 710)     "RetryAction",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 711)     "RetryError",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 712)     "AttemptManager",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 713)     "BaseRetrying",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 714)     "Retrying",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 715)     "Future",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 716)     "RetryCallState",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 717)     "AsyncRetrying",
+^dcb4a83 (evals 2026-10-22 12:39:06 +0200 718) ]

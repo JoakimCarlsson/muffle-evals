@@ -1,0 +1,2500 @@
+$ git show HEAD
+86c5c842 2026-10-22 evals: base
+=== .agents/skills/shadcn/SKILL.md
+new file mode 100644
+@@ -0,0 +1,250 @@
++---
++name: shadcn
++description: Manages shadcn components and projects — adding, searching, fixing, debugging, styling, and composing UI. Provides project context, component docs, and usage examples. Applies when working with shadcn/ui, component registries, presets, --preset codes, or any project with a components.json file. Also triggers for "shadcn init", "create an app with --preset", or "switch to --preset".
++user-invocable: false
++allowed-tools: Bash(npx shadcn@latest *), Bash(pnpm dlx shadcn@latest *), Bash(bunx --bun shadcn@latest *)
++---
++
++# shadcn/ui
++
++A framework for building ui, components and design systems. Components are added as source code to the user's project via the CLI.
++
++> **IMPORTANT:** Run all CLI commands using the project's package runner: `npx shadcn@latest`, `pnpm dlx shadcn@latest`, or `bunx --bun shadcn@latest` — based on the project's `packageManager`. Examples below use `npx shadcn@latest` but substitute the correct runner for the project.
++
++## Current Project Context
++
++```json
++!`npx shadcn@latest info --json`
++```
++
++The JSON above contains the project config and installed components. Use `npx shadcn@latest docs <component>` to get documentation and example URLs for any component.
++
++## Principles
++
++1. **Use existing components first.** Use `npx shadcn@latest search` to check registries before writing custom UI. Check community registries too.
++2. **Compose, don't reinvent.** Settings page = Tabs + Card + form controls. Dashboard = Sidebar + Card + Chart + Table.
++3. **Use built-in variants before custom styles.** `variant="outline"`, `size="sm"`, etc.
++4. **Use semantic colors.** `bg-primary`, `text-muted-foreground` — never raw values like `bg-blue-500`.
++
++## Critical Rules
++
++These rules are **always enforced**. Each links to a file with Incorrect/Correct code pairs.
++
++### Styling & Tailwind → [styling.md](./rules/styling.md)
++
++- **`className` for layout, not styling.** Never override component colors or typography.
++- **No `space-x-*` or `space-y-*`.** Use `flex` with `gap-*`. For vertical stacks, `flex flex-col gap-*`.
++- **Use `size-*` when width and height are equal.** `size-10` not `w-10 h-10`.
++- **Use `truncate` shorthand.** Not `overflow-hidden text-ellipsis whitespace-nowrap`.
++- **No manual `dark:` color overrides.** Use semantic tokens (`bg-background`, `text-muted-foreground`).
++- **Use `cn()` for conditional classes.** Don't write manual template literal ternaries.
++- **No manual `z-index` on overlay components.** Dialog, Sheet, Popover, etc. handle their own stacking.
++
++### Forms & Inputs → [forms.md](./rules/forms.md)
++
++- **Forms use `FieldGroup` + `Field`.** Never use raw `div` with `space-y-*` or `grid gap-*` for form layout.
++- **`InputGroup` uses `InputGroupInput`/`InputGroupTextarea`.** Never raw `Input`/`Textarea` inside `InputGroup`.
++- **Buttons inside inputs use `InputGroup` + `InputGroupAddon`.**
++- **Option sets (2–7 choices) use `ToggleGroup`.** Don't loop `Button` with manual active state.
++- **`FieldSet` + `FieldLegend` for grouping related checkboxes/radios.** Don't use a `div` with a heading.
++- **Field validation uses `data-invalid` + `aria-invalid`.** `data-invalid` on `Field`, `aria-invalid` on the control. For disabled: `data-disabled` on `Field`, `disabled` on the control.
++
++### Component Structure → [composition.md](./rules/composition.md)
++
++- **Items always inside their Group.** `SelectItem` → `SelectGroup`. `DropdownMenuItem` → `DropdownMenuGroup`. `CommandItem` → `CommandGroup`.
++- **Use `asChild` (radix) or `render` (base) for custom triggers.** Check `base` field from `npx shadcn@latest info`. → [base-vs-radix.md](./rules/base-vs-radix.md)
++- **Dialog, Sheet, and Drawer always need a Title.** `DialogTitle`, `SheetTitle`, `DrawerTitle` required for accessibility. Use `className="sr-only"` if visually hidden.
++- **Use full Card composition.** `CardHeader`/`CardTitle`/`CardDescription`/`CardContent`/`CardFooter`. Don't dump everything in `CardContent`.
++- **Button has no `isPending`/`isLoading`.** Compose with `Spinner` + `data-icon` + `disabled`.
++- **`TabsTrigger` must be inside `TabsList`.** Never render triggers directly in `Tabs`.
++- **`Avatar` always needs `AvatarFallback`.** For when the image fails to load.
++
++### Use Components, Not Custom Markup → [composition.md](./rules/composition.md)
++
++- **Use existing components before custom markup.** Check if a component exists before writing a styled `div`.
++- **Callouts use `Alert`.** Don't build custom styled divs.
++- **Empty states use `Empty`.** Don't build custom empty state markup.
++- **Toast via `sonner`.** Use `toast()` from `sonner`.
++- **Use `Separator`** instead of `<hr>` or `<div className="border-t">`.
++- **Use `Skeleton`** for loading placeholders. No custom `animate-pulse` divs.
++- **Use `Badge`** instead of custom styled spans.
++
++### Icons → [icons.md](./rules/icons.md)
++
++- **Icons in `Button` use `data-icon`.** `data-icon="inline-start"` or `data-icon="inline-end"` on the icon.
++- **No sizing classes on icons inside components.** Components handle icon sizing via CSS. No `size-4` or `w-4 h-4`.
++- **Pass icons as objects, not string keys.** `icon={CheckIcon}`, not a string lookup.
++
++### CLI
++
++- **Never decode or fetch preset codes manually.** Pass them directly to `npx shadcn@latest apply --preset <code>` for existing projects, or `npx shadcn@latest init --preset <code>` when initializing.
++
++## Key Patterns
++
++These are the most common patterns that differentiate correct shadcn/ui code. For edge cases, see the linked rule files above.
++
++```tsx
++// Form layout: FieldGroup + Field, not div + Label.
++<FieldGroup>
++  <Field>
++    <FieldLabel htmlFor="email">Email</FieldLabel>
++    <Input id="email" />
++  </Field>
++</FieldGroup>
++
++// Validation: data-invalid on Field, aria-invalid on the control.
++<Field data-invalid>
++  <FieldLabel>Email</FieldLabel>
++  <Input aria-invalid />
++  <FieldDescription>Invalid email.</FieldDescription>
++</Field>
++
++// Icons in buttons: data-icon, no sizing classes.
++<Button>
++  <SearchIcon data-icon="inline-start" />
++  Search
++</Button>
++
++// Spacing: gap-*, not space-y-*.
++<div className="flex flex-col gap-4">  // correct
++<div className="space-y-4">           // wrong
++
++// Equal dimensions: size-*, not w-* h-*.
++<Avatar className="size-10">   // correct
++<Avatar className="w-10 h-10"> // wrong
++
++// Status colors: Badge variants or semantic tokens, not raw colors.
++<Badge variant="secondary">+20.1%</Badge>    // correct
++<span className="text-emerald-600">+20.1%</span> // wrong
++```
++
++## Component Selection
++
++| Need                       | Use                                                                                                 |
++| -------------------------- | --------------------------------------------------------------------------------------------------- |
++| Button/action              | `Button` with appropriate variant                                                                   |
++| Form inputs                | `Input`, `Select`, `Combobox`, `Switch`, `Checkbox`, `RadioGroup`, `Textarea`, `InputOTP`, `Slider` |
++| Toggle between 2–5 options | `ToggleGroup` + `ToggleGroupItem`                                                                   |
++| Data display               | `Table`, `Card`, `Badge`, `Avatar`                                                                  |
++| Navigation                 | `Sidebar`, `NavigationMenu`, `Breadcrumb`, `Tabs`, `Pagination`                                     |
++| Overlays                   | `Dialog` (modal), `Sheet` (side panel), `Drawer` (bottom sheet), `AlertDialog` (confirmation)       |
++| Feedback                   | `sonner` (toast), `Alert`, `Progress`, `Skeleton`, `Spinner`                                        |
++| Command palette            | `Command` inside `Dialog`                                                                           |
++| Charts                     | `Chart` (wraps Recharts)                                                                            |
++| Layout                     | `Card`, `Separator`, `Resizable`, `ScrollArea`, `Accordion`, `Collapsible`                          |
++| Empty states               | `Empty`                                                                                             |
++| Menus                      | `DropdownMenu`, `ContextMenu`, `Menubar`                                                            |
++| Tooltips/info              | `Tooltip`, `HoverCard`, `Popover`                                                                   |
++
++## Key Fields
++
++The injected project context contains these key fields:
++
++- **`aliases`** → use the actual alias prefix for imports (e.g. `@/`, `~/`), never hardcode.
++- **`isRSC`** → when `true`, components using `useState`, `useEffect`, event handlers, or browser APIs need `"use client"` at the top of the file. Always reference this field when advising on the directive.
++- **`tailwindVersion`** → `"v4"` uses `@theme inline` blocks; `"v3"` uses `tailwind.config.js`.
++- **`tailwindCssFile`** → the global CSS file where custom CSS variables are defined. Always edit this file, never create a new one.
++- **`style`** → component visual treatment (e.g. `nova`, `vega`).
++- **`base`** → primitive library (`radix` or `base`). Affects component APIs and available props.
++- **`iconLibrary`** → determines icon imports. Use `lucide-react` for `lucide`, `@tabler/icons-react` for `tabler`, etc. Never assume `lucide-react`.
++- **`resolvedPaths`** → exact file-system destinations for components, utils, hooks, etc.
++- **`framework`** → routing and file conventions (e.g. Next.js App Router vs Vite SPA).
++- **`packageManager`** → use this for any non-shadcn dependency installs (e.g. `pnpm add date-fns` vs `npm install date-fns`).
++
++See [cli.md — `info` command](./cli.md) for the full field reference.
++
++## Component Docs, Examples, and Usage
++
++Run `npx shadcn@latest docs <component>` to get the URLs for a component's documentation, examples, and API reference. Fetch these URLs to get the actual content.
++
++```bash
++npx shadcn@latest docs button dialog select
++```
++
++**When creating, fixing, debugging, or using a component, always run `npx shadcn@latest docs` and fetch the URLs first.** This ensures you're working with the correct API and usage patterns rather than guessing.
++
++## Workflow
++
++1. **Get project context** — already injected above. Run `npx shadcn@latest info` again if you need to refresh.
++2. **Check installed components first** — before running `add`, always check the `components` list from project context or list the `resolvedPaths.ui` directory. Don't import components that haven't been added, and don't re-add ones already installed.
++3. **Find components** — `npx shadcn@latest search`.
++4. **Get docs and examples** — run `npx shadcn@latest docs <component>` to get URLs, then fetch them. Use `npx shadcn@latest view` to browse registry items you haven't installed. To preview changes to installed components, use `npx shadcn@latest add --diff`.
++5. **Install or update** — `npx shadcn@latest add`. When updating existing components, use `--dry-run` and `--diff` to preview changes first (see [Updating Components](#updating-components) below).
++6. **Fix imports in third-party components** — After adding components from community registries (e.g. `@bundui`, `@magicui`), check the added non-UI files for hardcoded import paths like `@/components/ui/...`. These won't match the project's actual aliases. Use `npx shadcn@latest info` to get the correct `ui` alias (e.g. `@workspace/ui/components`) and rewrite the imports accordingly. The CLI rewrites imports for its own UI files, but third-party registry components may use default paths that don't match the project.
++7. **Review added components** — After adding a component or block from any registry, **always read the added files and verify they are correct**. Check for missing sub-components (e.g. `SelectItem` without `SelectGroup`), missing imports, incorrect composition, or violations of the [Critical Rules](#critical-rules). Also replace any icon imports with the project's `iconLibrary` from the project context (e.g. if the registry item uses `lucide-react` but the project uses `hugeicons`, swap the imports and icon names accordingly). Fix all issues before moving on.
++8. **Registry must be explicit** — When the user asks to add a block or component, **do not guess the registry**. If no registry is specified (e.g. user says "add a login block" without specifying `@shadcn`, `@tailark`, etc.), ask which registry to use. Never default to a registry on behalf of the user.
++9. **Switching presets** — Ask the user first: **overwrite**, **partial**, **merge**, or **skip**?
++   - **Overwrite**: `npx shadcn@latest apply --preset <code>`. Overwrites detected components, fonts, and CSS variables.
++   - **Partial**: `npx shadcn@latest apply --preset <code> --only theme,font`. Updates only the selected preset parts without reinstalling UI components. Supported values are `theme` and `font`; comma-separated combinations are allowed. `icon` is intentionally not supported, because icon changes may require full component reinstall and transforms.
++   - **Merge**: `npx shadcn@latest init --preset <code> --force --no-reinstall`, then run `npx shadcn@latest info` to list installed components, then for each installed component use `--dry-run` and `--diff` to [smart merge](#updating-components) it individually.
++   - **Skip**: `npx shadcn@latest init --preset <code> --force --no-reinstall`. Only updates config and CSS, leaves components as-is.
++   - **Important**: Always run preset commands inside the user's project directory. `apply` only works in an existing project with a `components.json` file. The CLI automatically preserves the current base (`base` vs `radix`) from `components.json`. If you must use a scratch/temp directory (e.g. for `--dry-run` comparisons), pass `--base <current-base>` explicitly — preset codes do not encode the base.
++
++## Updating Components
++
++When the user asks to update a component from upstream while keeping their local changes, use `--dry-run` and `--diff` to intelligently merge. **NEVER fetch raw files from GitHub manually — always use the CLI.**
++
++1. Run `npx shadcn@latest add <component> --dry-run` to see all files that would be affected.
++2. For each file, run `npx shadcn@latest add <component> --diff <file>` to see what changed upstream vs local.
++3. Decide per file based on the diff:
++   - No local changes → safe to overwrite.
++   - Has local changes → read the local file, analyze the diff, and apply upstream updates while preserving local modifications.
++   - User says "just update everything" → use `--overwrite`, but confirm first.
++4. **Never use `--overwrite` without the user's explicit approval.**
++
++## Quick Reference
++
++```bash
++# Create a new project.
++npx shadcn@latest init --name my-app --preset base-nova
+[+51 more diff lines]
+=== .agents/skills/shadcn/agents/openai.yml
+new file mode 100644
+@@ -0,0 +1,5 @@
++interface:
++  display_name: "shadcn/ui"
++  short_description: "Manages shadcn/ui components — adding, searching, fixing, debugging, styling, and composing UI."
++  icon_small: "./assets/shadcn-small.png"
++  icon_large: "./assets/shadcn.png"
+=== .agents/skills/shadcn/assets/shadcn-small.png
+new file mode 100644
+Binary files /dev/null and b/.agents/skills/shadcn/assets/shadcn-small.png differ
+=== .agents/skills/shadcn/assets/shadcn.png
+new file mode 100644
+Binary files /dev/null and b/.agents/skills/shadcn/assets/shadcn.png differ
+=== .agents/skills/shadcn/cli.md
+new file mode 100644
+@@ -0,0 +1,276 @@
++# shadcn CLI Reference
++
++Configuration is read from `components.json`.
++
++> **IMPORTANT:** Always run commands using the project's package runner: `npx shadcn@latest`, `pnpm dlx shadcn@latest`, or `bunx --bun shadcn@latest`. Check `packageManager` from project context to choose the right one. Examples below use `npx shadcn@latest` but substitute the correct runner for the project.
++
++> **IMPORTANT:** Only use the flags documented below. Do not invent or guess flags — if a flag isn't listed here, it doesn't exist. The CLI auto-detects the package manager from the project's lockfile; there is no `--package-manager` flag.
++
++## Contents
++
++- Commands: init, apply, add (dry-run, smart merge), search, view, docs, info, build
++- Templates: next, vite, start, react-router, astro
++- Presets: named, code, URL formats and fields
++- Switching presets
++
++---
++
++## Commands
++
++### `init` — Initialize or create a project
++
++```bash
++npx shadcn@latest init [components...] [options]
++```
++
++Initializes shadcn/ui in an existing project or creates a new project (when `--name` is provided). Optionally installs components in the same step.
++
++| Flag                    | Short | Description                                               | Default |
++| ----------------------- | ----- | --------------------------------------------------------- | ------- |
++| `--template <template>` | `-t`  | Template (next, start, vite, next-monorepo, react-router) | —       |
++| `--preset [name]`       | `-p`  | Preset configuration (named, code, or URL)                | —       |
++| `--yes`                 | `-y`  | Skip confirmation prompt                                  | `true`  |
++| `--defaults`            | `-d`  | Use defaults (`--template=next --preset=base-nova`)       | `false` |
++| `--force`               | `-f`  | Force overwrite existing configuration                    | `false` |
++| `--cwd <cwd>`           | `-c`  | Working directory                                         | current |
++| `--name <name>`         | `-n`  | Name for new project                                      | —       |
++| `--silent`              | `-s`  | Mute output                                               | `false` |
++| `--rtl`                 |       | Enable RTL support                                        | —       |
++| `--reinstall`           |       | Re-install existing UI components                         | `false` |
++| `--monorepo`            |       | Scaffold a monorepo project                               | —       |
++| `--no-monorepo`         |       | Skip the monorepo prompt                                  | —       |
++
++`npx shadcn@latest create` is an alias for `npx shadcn@latest init`.
++
++### `apply` — Apply a preset to an existing project
++
++```bash
++npx shadcn@latest apply [preset] [options]
++```
++
++Applies a preset to an existing project, overwriting preset-driven config, fonts, CSS variables, and detected UI components.
++
++| Flag                | Short | Description                                | Default |
++| ------------------- | ----- | ------------------------------------------ | ------- |
++| `--preset <preset>` | —     | Preset configuration (named, code, or URL) | —       |
++| `--yes`             | `-y`  | Skip confirmation prompt                   | `false` |
++| `--cwd <cwd>`       | `-c`  | Working directory                          | current |
++| `--silent`          | `-s`  | Mute output                                | `false` |
++
++`[preset]` is a shorthand for `--preset <preset>`. If both are provided, they must match.
++If no preset is provided, the CLI offers to open the custom preset builder on `ui.shadcn.com/create`.
++
++### `add` — Add components
++
++> **IMPORTANT:** To compare local components against upstream or to preview changes, ALWAYS use `npx shadcn@latest add <component> --dry-run`, `--diff`, or `--view`. NEVER fetch raw files from GitHub or other sources manually. The CLI handles registry resolution, file paths, and CSS diffing automatically.
++
++```bash
++npx shadcn@latest add [components...] [options]
++```
++
++Accepts component names, registry-prefixed names (`@magicui/shimmer-button`), URLs, or local paths.
++
++| Flag            | Short | Description                                                                                                          | Default |
++| --------------- | ----- | -------------------------------------------------------------------------------------------------------------------- | ------- |
++| `--yes`         | `-y`  | Skip confirmation prompt                                                                                             | `false` |
++| `--overwrite`   | `-o`  | Overwrite existing files                                                                                             | `false` |
++| `--cwd <cwd>`   | `-c`  | Working directory                                                                                                    | current |
++| `--all`         | `-a`  | Add all available components                                                                                         | `false` |
++| `--path <path>` | `-p`  | Target path for the component                                                                                        | —       |
++| `--silent`      | `-s`  | Mute output                                                                                                          | `false` |
++| `--dry-run`     |       | Preview all changes without writing files                                                                            | `false` |
++| `--diff [path]` |       | Show diffs. Without a path, shows the first 5 files. With a path, shows that file only (implies `--dry-run`)         | —       |
++| `--view [path]` |       | Show file contents. Without a path, shows the first 5 files. With a path, shows that file only (implies `--dry-run`) | —       |
++
++#### Dry-Run Mode
++
++Use `--dry-run` to preview what `add` would do without writing any files. `--diff` and `--view` both imply `--dry-run`.
++
++```bash
++# Preview all changes.
++npx shadcn@latest add button --dry-run
++
++# Show diffs for all files (top 5).
++npx shadcn@latest add button --diff
++
++# Show the diff for a specific file.
++npx shadcn@latest add button --diff button.tsx
++
++# Show contents for all files (top 5).
++npx shadcn@latest add button --view
++
++# Show the full content of a specific file.
++npx shadcn@latest add button --view button.tsx
++
++# Works with URLs too.
++npx shadcn@latest add https://api.npoint.io/abc123 --dry-run
++
++# CSS diffs.
++npx shadcn@latest add button --diff globals.css
++```
++
++**When to use dry-run:**
++
++- When the user asks "what files will this add?" or "what will this change?" — use `--dry-run`.
++- Before overwriting existing components — use `--diff` to preview the changes first.
++- When the user wants to inspect component source code without installing — use `--view`.
++- When checking what CSS changes would be made to `globals.css` — use `--diff globals.css`.
++- When the user asks to review or audit third-party registry code before installing — use `--view` to inspect the source.
++
++> **`npx shadcn@latest add --dry-run` vs `npx shadcn@latest view`:** Prefer `npx shadcn@latest add --dry-run/--diff/--view` over `npx shadcn@latest view` when the user wants to preview changes to their project. `npx shadcn@latest view` only shows raw registry metadata. `npx shadcn@latest add --dry-run` shows exactly what would happen in the user's project: resolved file paths, diffs against existing files, and CSS updates. Use `npx shadcn@latest view` only when the user wants to browse registry info without a project context.
++
++#### Smart Merge from Upstream
++
++See [Updating Components in SKILL.md](./SKILL.md#updating-components) for the full workflow.
++
++### `search` — Search registries
++
++```bash
++npx shadcn@latest search < registries... > [options]
++```
++
++Fuzzy search across registries. Also aliased as `npx shadcn@latest list`. Without `-q`, lists all items.
++
++| Flag                | Short | Description            | Default |
++| ------------------- | ----- | ---------------------- | ------- |
++| `--query <query>`   | `-q`  | Search query           | —       |
++| `--limit <number>`  | `-l`  | Max items per registry | `100`   |
++| `--offset <number>` | `-o`  | Items to skip          | `0`     |
++| `--cwd <cwd>`       | `-c`  | Working directory      | current |
++
++### `view` — View item details
++
++```bash
++npx shadcn@latest view < items... > [options]
++```
++
++Displays item info including file contents. Example: `npx shadcn@latest view @shadcn/button`.
++
++### `docs` — Get component documentation URLs
++
++```bash
++npx shadcn@latest docs < components... > [options]
++```
++
++Outputs resolved URLs for component documentation, examples, and API references. Accepts one or more component names. Fetch the URLs to get the actual content.
++
++Example output for `npx shadcn@latest docs input button`:
++
++```
++base  radix
++
++input
++  docs      https://ui.shadcn.com/docs/components/radix/input
++  examples  https://raw.githubusercontent.com/.../examples/input-example.tsx
++
++button
++  docs      https://ui.shadcn.com/docs/components/radix/button
++  examples  https://raw.githubusercontent.com/.../examples/button-example.tsx
++```
++
++Some components include an `api` link to the underlying library (e.g. `cmdk` for the command component).
++
++### `diff` — Check for updates
++
++Do not use this command. Use `npx shadcn@latest add --diff` instead.
++
++### `info` — Project information
++
++```bash
++npx shadcn@latest info [options]
++```
++
++Displays project info and `components.json` configuration. Run this first to discover the project's framework, aliases, Tailwind version, and resolved paths.
++
++| Flag          | Short | Description       | Default |
++| ------------- | ----- | ----------------- | ------- |
++| `--cwd <cwd>` | `-c`  | Working directory | current |
++
++**Project Info fields:**
++
++| Field                | Type      | Meaning                                                            |
++| -------------------- | --------- | ------------------------------------------------------------------ |
++| `framework`          | `string`  | Detected framework (`next`, `vite`, `react-router`, `start`, etc.) |
+[+83 more diff lines]
+=== .agents/skills/shadcn/customization.md +209 -0
+new file mode 100644
+=== .agents/skills/shadcn/evals/evals.json +47 -0
+new file mode 100644
+=== .agents/skills/shadcn/mcp.md +94 -0
+new file mode 100644
+=== .agents/skills/shadcn/rules/base-vs-radix.md +310 -0
+new file mode 100644
+=== .agents/skills/shadcn/rules/composition.md +197 -0
+new file mode 100644
+=== .agents/skills/shadcn/rules/forms.md +198 -0
+new file mode 100644
+=== .agents/skills/shadcn/rules/icons.md +101 -0
+new file mode 100644
+=== .agents/skills/shadcn/rules/styling.md +163 -0
+new file mode 100644
+=== .gitattributes +2 -0
+new file mode 100644
+=== .github/CODEOWNERS +1 -0
+new file mode 100644
+=== .github/FUNDING.yml +1 -0
+new file mode 100644
+=== .github/dependabot.yml +25 -0
+new file mode 100644
+=== .github/pull_request_template.md +30 -0
+new file mode 100644
+=== .github/workflows/canaries.yml +141 -0
+new file mode 100644
+=== .github/workflows/ci-docs.yml +83 -0
+new file mode 100644
+=== .github/workflows/ci-library.yml +419 -0
+new file mode 100644
+=== .github/workflows/codecov.yml +37 -0
+new file mode 100644
+=== .github/workflows/codeql.yml +38 -0
+new file mode 100644
+=== .github/workflows/pr_titles.yml +28 -0
+new file mode 100644
+=== .github/workflows/scorecard.yml +38 -0
+new file mode 100644
+=== .gitignore +7 -0
+new file mode 100644
+=== .husky/pre-commit +1 -0
+new file mode 100755
+=== .nvmrc +1 -0
+new file mode 100644
+=== .vscode/settings.json +8 -0
+new file mode 100644
+=== CODE_OF_CONDUCT.md +128 -0
+new file mode 100644
+=== CONTRIBUTING.md +255 -0
+new file mode 100644
+=== LICENSE +21 -0
+new file mode 100644
+=== README.md +78 -0
+new file mode 100644
+=== SECURITY.md +30 -0
+new file mode 100644
+=== lint-staged.config.ts +5 -0
+new file mode 100644
+=== netlify.toml +3 -0
+new file mode 100644
+=== package-lock.json +25294 -0
+new file mode 100644
+=== package.json +31 -0
+new file mode 100644
+=== packages/README.md +7 -0
+new file mode 100644
+=== packages/docs/.gitignore +6 -0
+new file mode 100644
+=== packages/docs/.vscode/extensions.json +3 -0
+new file mode 100644
+=== packages/docs/.vscode/settings.json +5 -0
+new file mode 100644
+=== packages/docs/CLAUDE.md +60 -0
+new file mode 100644
+=== packages/docs/README.md +65 -0
+new file mode 100644
+=== packages/docs/astro.config.ts +90 -0
+new file mode 100644
+=== packages/docs/components.json +21 -0
+new file mode 100644
+=== packages/docs/eslint.config.ts +166 -0
+new file mode 100644
+=== packages/docs/lint-staged.config.ts +19 -0
+new file mode 100644
+=== packages/docs/package.json +71 -0
+new file mode 100644
+=== packages/docs/prettier.config.js +15 -0
+new file mode 100644
+=== packages/docs/public/icons/github.svg +2 -0
+new file mode 100644
+=== packages/docs/public/sandbox.js +18 -0
+new file mode 100644
+=== packages/docs/src/components/article.astro +20 -0
+new file mode 100644
+=== packages/docs/src/components/code-block.astro +24 -0
+new file mode 100644
+=== packages/docs/src/components/copy-button.tsx +39 -0
+new file mode 100644
+=== packages/docs/src/components/docs-page-nav.astro +30 -0
+new file mode 100644
+=== packages/docs/src/components/docs-section.astro +12 -0
+new file mode 100644
+=== packages/docs/src/components/function-api.astro +46 -0
+new file mode 100644
+=== packages/docs/src/components/function-card.astro +44 -0
+new file mode 100644
+=== packages/docs/src/components/function-description.astro +69 -0
+new file mode 100644
+=== packages/docs/src/components/function-return-type.tsx +40 -0
+new file mode 100644
+=== packages/docs/src/components/github-edit.astro +28 -0
+new file mode 100644
+=== packages/docs/src/components/github-logo-icon.astro +1 -0
+new file mode 100644
+=== packages/docs/src/components/github-source.astro +20 -0
+new file mode 100644
+=== packages/docs/src/components/header.astro +50 -0
+new file mode 100644
+=== packages/docs/src/components/install-commands.astro +29 -0
+new file mode 100644
+=== packages/docs/src/components/mapping-function-card.astro +67 -0
+new file mode 100644
+=== packages/docs/src/components/markdown.astro +12 -0
+new file mode 100644
+=== packages/docs/src/components/migration-selector-island.tsx +38 -0
+new file mode 100644
+=== packages/docs/src/components/migration-selector.astro +10 -0
+new file mode 100644
+=== packages/docs/src/components/mobile-nav.tsx +51 -0
+new file mode 100644
+=== packages/docs/src/components/navbar.tsx +81 -0
+new file mode 100644
+=== packages/docs/src/components/netlify-attribution.astro +18 -0
+new file mode 100644
+=== packages/docs/src/components/parameters.tsx +26 -0
+new file mode 100644
+=== packages/docs/src/components/prose.astro +17 -0
+new file mode 100644
+=== packages/docs/src/components/search.tsx +71 -0
+new file mode 100644
+=== packages/docs/src/components/signature.tsx +45 -0
+new file mode 100644
+=== packages/docs/src/components/tag-badge.tsx +30 -0
+new file mode 100644
+=== packages/docs/src/components/theme-switcher.tsx +44 -0
+new file mode 100644
+=== packages/docs/src/components/themed-code.astro +8 -0
+new file mode 100644
+=== packages/docs/src/components/ui/badge.tsx +45 -0
+new file mode 100644
+=== packages/docs/src/components/ui/button.tsx +61 -0
+new file mode 100644
+=== packages/docs/src/components/ui/card.tsx +112 -0
+new file mode 100644
+=== packages/docs/src/components/ui/collapsible.tsx +30 -0
+new file mode 100644
+=== packages/docs/src/components/ui/dropdown-menu.tsx +234 -0
+new file mode 100644
+=== packages/docs/src/components/ui/scroll-area.tsx +53 -0
+new file mode 100644
+=== packages/docs/src/components/ui/sheet.tsx +143 -0
+new file mode 100644
+=== packages/docs/src/components/v1/function-card.astro +58 -0
+new file mode 100644
+=== packages/docs/src/components/v1/migration-box.tsx +31 -0
+new file mode 100644
+=== packages/docs/src/content.config.ts +31 -0
+new file mode 100644
+=== packages/docs/src/content/docs-articles/content.config.ts +39 -0
+new file mode 100644
+=== packages/docs/src/content/docs-articles/docs/intro.md +16 -0
+new file mode 100644
+=== packages/docs/src/content/docs-articles/migrate/v1/migration-environment.md +44 -0
+new file mode 100644
+=== packages/docs/src/content/docs-articles/migrate/v1/migration-headless.md +42 -0
+new file mode 100644
+=== packages/docs/src/content/docs-articles/migrate/v1/migration-intro.md +40 -0
+new file mode 100644
+=== packages/docs/src/content/docs-articles/migrate/v1/migration-keys.md +42 -0
+new file mode 100644
+=== packages/docs/src/content/docs-articles/migrate/v1/migration-reimplementations.md +15 -0
+new file mode 100644
+=== packages/docs/src/content/docs-articles/migrate/v1/migration-removed.md +76 -0
+new file mode 100644
+=== packages/docs/src/content/docs-articles/migrate/v1/migration-variants.md +162 -0
+new file mode 100644
+=== packages/docs/src/content/functions/content.config.ts +33 -0
+new file mode 100644
+=== packages/docs/src/content/functions/v1/README.md +10 -0
+new file mode 100644
+=== packages/docs/src/content/functions/v1/content.config.ts +36 -0
+new file mode 100644
+=== packages/docs/src/content/functions/v1/functions.json +65017 -0
+new file mode 100644
+=== packages/docs/src/content/functions/v1/loaders.ts +37 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/content.config.ts +24 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/just/__MISSING.md +109 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/just/extend.md +74 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/__MISSING.md +149 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/___TODO.md +32 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/add.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/assign.md +24 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/camelCase.md +66 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/capitalize.md +41 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/ceil.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/chunk.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/clamp.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/cloneDeep.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/compact.md +14 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/concat.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/cond.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/constant.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/countBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/debounce.md +137 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/deburr.md +51 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/defaultTo.md +68 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/difference.md +91 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/differenceBy.md +105 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/differenceWith.md +61 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/divide.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/drop.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/dropRight.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/dropRightWhile.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/dropWhile.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/endsWith.md +47 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/escape.md +29 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/escapeRegExp.md +23 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/every.md +17 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/filter.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/find.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/findIndex.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/findLast.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/findLastIndex.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/flatMap.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/flatMapDeep.md +20 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/flatMapDepth.md +36 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/flatten.md +15 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/flattenDeep.md +18 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/floor.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/flow.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/forEach.md +57 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/forEachRight.md +54 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/forOwn.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/fromPairs.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/get.md +82 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/groupBy.md +51 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/head.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/identity.md +15 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/includes.md +65 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/intersection.md +29 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/intersectionWith.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/invert.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/invokeMap.md +70 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/isArray.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/isBoolean.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/isDate.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/isEmpty.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/isEqual.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/isError.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/isFunction.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/isMatch.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/isNil.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/isNumber.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/isObjectLike.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/isPlainObject.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/isString.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/isSymbol.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/join.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/kebabCase.md +60 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/keyBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/keys.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/last.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/lowerCase.md +64 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/lowerFirst.md +50 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/map.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/mapKeys.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/mapValues.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/max.md +14 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/maxBy.md +14 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/mean.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/meanBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/min.md +14 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/minBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/multiply.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/noop.md +17 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/nth.md +38 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/omit.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/omitBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/once.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/orderBy.md +23 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/pad.md +31 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/padEnd.md +35 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/padStart.md +35 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/parseInt.md +34 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/partial.md +24 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/partialRight.md +24 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/partition.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/pick.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/pickBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/pull.md +74 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/pullAll.md +61 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/pullAllBy.md +58 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/pullAllWith.md +61 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/random.md +53 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/range.md +75 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/rangeRight.md +13 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/reduce.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/reduceRight.md +17 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/reject.md +14 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/repeat.md +16 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/replace.md +32 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/reverse.md +16 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/round.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/sample.md +41 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/sampleSize.md +33 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/set.md +52 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/shuffle.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/size.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/snakeCase.md +60 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/some.md +17 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/sortBy.md +29 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/sortedIndex.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/sortedIndexBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/sortedLastIndex.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/sortedLastIndexBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/sortedUniq.md +25 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/split.md +74 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/startCase.md +66 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/startsWith.md +75 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/subtract.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/sum.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/sumBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/take.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/takeRight.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/takeRightWhile.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/takeWhile.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/tap.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/template.md +63 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/throttle.md +123 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/times.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/toLower.md +44 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/toPairs.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/toPath.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/toUpper.md +44 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/transform.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/trim.md +90 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/trimEnd.md +80 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/trimStart.md +80 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/truncate.md +48 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/unescape.md +26 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/uniq.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/uniqBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/uniqWith.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/upperCase.md +64 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/upperFirst.md +50 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/values.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/without.md +23 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/words.md +72 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/zip.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/zipObject.md +15 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/lodash/zipWith.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/F.md +16 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/T.md +16 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/__MISSING.md +171 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/___TODO.md +7 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/add.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/addIndex.md +18 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/allPass.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/always.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/anyPass.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/append.md +32 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/assoc.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/assocPath.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/chain.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/clamp.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/clone.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/concat.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/cond.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/countBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/dec.md +14 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/defaultTo.md +68 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/difference.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/differenceWith.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/divide.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/drop.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/dropLast.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/dropLastWhile.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/dropWhile.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/equals.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/evolve.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/filter.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/find.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/findIndex.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/findLast.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/findLastIndex.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/flatten.md +18 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/forEach.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/forEachObjIndexed.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/fromPairs.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/groupBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/head.md +26 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/identity.md +15 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/ifElse.md +58 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/inc.md +14 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/includes.md +59 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/indexBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/init.md +27 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/innerJoin.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/intersection.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/invertObj.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/isEmpty.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/isNil.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/isNotNil.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/join.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/keys.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/last.md +26 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/length.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/map.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/mapAccum.md +23 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/mapObjIndexed.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/max.md +21 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/maxBy.md +17 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/mean.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/median.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/mergeAll.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/mergeDeepRight.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/mergeRight.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/min.md +21 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/minBy.md +17 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/multiply.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/negate.md +14 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/not.md +27 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/nth.md +37 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/objOf.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/omit.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/once.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/partial.md +18 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/partialRight.md +18 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/partition.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/path.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/pathOr.md +14 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/paths.md +20 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/pick.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/pickBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/pipe.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/pluck.md +34 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/product.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/prop.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/range.md +33 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/reduce.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/reject.md +17 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/remove.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/reverse.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/set.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/sort.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/sortBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/sortWith.md +35 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/split.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/splitAt.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/splitWhen.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/subtract.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/sum.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/swap.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/tail.md +27 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/take.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/takeLast.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/takeLastWhile.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/takeWhile.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/tap.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/times.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/toLower.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/toPairs.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/toUpper.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/uniq.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/uniqBy.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/uniqWith.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/values.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/when.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/where.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/zip.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/zipObj.md +15 -0
+new file mode 100644
+=== packages/docs/src/content/mapping/ramda/zipWith.md +4 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/clone.md +36 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/compact.md +26 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/concat.md +15 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/content.config.ts +11 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/countBy.md +37 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/createPipe.md +13 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/difference.md +57 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/dropLastWhile.md +31 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/dropWhile.md +35 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/entries.md +54 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/equals.md +28 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/evolve.md +15 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/filter.md +44 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/find.md +55 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/findIndex.md +44 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/findLast.md +55 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/findLastIndex.md +44 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/flatMap.md +35 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/flatMapToObj.md +73 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/flatten.md +32 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/flattenDeep.md +64 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/forEach.md +48 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/forEachObj.md +70 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/fromEntries.md +53 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/fromKeys.md +35 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/fromPairs.md +58 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/groupBy.md +90 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/identity.md +17 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/indexBy.md +88 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/intersection.md +74 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/isDefined.md +35 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/isNil.md +13 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/isObject.md +66 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/keys.md +63 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/map.md +79 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/mapKeys.md +68 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/mapToObj.md +44 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/mapValues.md +83 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/mapWithFeedback.md +44 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/maxBy.md +44 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/meanBy.md +40 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/minBy.md +43 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/noop.md +27 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/omit.md +23 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/omitBy.md +76 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/partition.md +44 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/pickBy.md +67 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/pullObject.md +43 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/purry.md +55 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/randomString.md +16 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/reduce.md +44 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/reject.md +38 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/sample.md +18 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/setPath.md +29 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/sort.md +29 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/sortBy.md +29 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/sortedIndexBy.md +41 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/sortedIndexWith.md +30 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/sortedLastIndexBy.md +41 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/splitWhen.md +35 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/sumBy.md +40 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/takeLastWhile.md +34 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/takeWhile.md +34 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/toPairs.md +49 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/type.md +133 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/uniq.md +13 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/uniqBy.md +14 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/uniqWith.md +13 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/uniqueBy.md +35 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/values.md +27 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/zip.md +34 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/zipObj.md +16 -0
+new file mode 100644
+=== packages/docs/src/content/v1-migration/zipWith.md +58 -0
+new file mode 100644
+=== packages/docs/src/layouts/base.astro +38 -0
+new file mode 100644
+=== packages/docs/src/layouts/docs-page.astro +49 -0
+new file mode 100644
+=== packages/docs/src/layouts/wiki.astro +16 -0
+new file mode 100644
+=== packages/docs/src/lib/articles/entries.ts +52 -0
+new file mode 100644
+=== packages/docs/src/lib/as-html.ts +18 -0
+new file mode 100644
+=== packages/docs/src/lib/functions/entries.ts +55 -0
+new file mode 100644
+=== packages/docs/src/lib/mapping/entries.ts +55 -0
+new file mode 100644
+=== packages/docs/src/lib/mapping/libraries.ts +22 -0
+new file mode 100644
+=== packages/docs/src/lib/mapping/urls.ts +20 -0
+new file mode 100644
+=== packages/docs/src/lib/route-navbar-entries.ts +36 -0
+new file mode 100644
+=== packages/docs/src/lib/sort-categories.ts +13 -0
+new file mode 100644
+=== packages/docs/src/lib/tags.ts +40 -0
+new file mode 100644
+=== packages/docs/src/lib/theme.ts +69 -0
+new file mode 100644
+=== packages/docs/src/lib/throws.ts +12 -0
+new file mode 100644
+=== packages/docs/src/lib/to-string.ts +20 -0
+new file mode 100644
+=== packages/docs/src/lib/typedoc/internal-package-dir.ts +19 -0
+new file mode 100644
+=== packages/docs/src/lib/typedoc/loader.ts +110 -0
+new file mode 100644
+=== packages/docs/src/lib/typedoc/schema.ts +96 -0
+new file mode 100644
+=== packages/docs/src/lib/utils.ts +6 -0
+new file mode 100644
+=== packages/docs/src/lib/v1/entries.ts +53 -0
+new file mode 100644
+=== packages/docs/src/pages/docs.astro +27 -0
+new file mode 100644
+=== packages/docs/src/pages/index.mdx +180 -0
+new file mode 100644
+=== packages/docs/src/pages/migrate/[library].astro +31 -0
+new file mode 100644
+=== packages/docs/src/pages/migrate/v1.astro +31 -0
+new file mode 100644
+=== packages/docs/src/pages/robots.txt.ts +13 -0
+new file mode 100644
+=== packages/docs/src/scripts/README.md +16 -0
+new file mode 100644
+=== packages/docs/src/scripts/init-theme.ts +2 -0
+new file mode 100644
+=== packages/docs/src/styles/global.css +132 -0
+new file mode 100644
+=== packages/docs/tsconfig.json +17 -0
+new file mode 100644
+=== packages/remeda/.DS_Store
+new file mode 100644
+Binary files /dev/null and b/packages/remeda/.DS_Store differ
+=== packages/remeda/.gitignore +4 -0
+new file mode 100644
+=== packages/remeda/.prettierignore +2 -0
+new file mode 100644
+=== packages/remeda/.vscode/extensions.json +3 -0
+new file mode 100644
+=== packages/remeda/.vscode/settings.json +15 -0
+new file mode 100644
+=== packages/remeda/README.md +78 -0
+new file mode 100644
+=== packages/remeda/eslint.config.ts +540 -0
+new file mode 100644
+=== packages/remeda/jsr.json +10 -0
+new file mode 100644
+=== packages/remeda/lint-staged.config.ts +19 -0
+new file mode 100644
+=== packages/remeda/package.json +90 -0
+new file mode 100644
+=== packages/remeda/prettier.config.js +4 -0
+new file mode 100644
+=== packages/remeda/release.config.js +34 -0
+new file mode 100644
+=== packages/remeda/src/add.test.ts +12 -0
+new file mode 100644
+=== packages/remeda/src/add.ts +42 -0
+new file mode 100644
+=== packages/remeda/src/addProp.test-d.ts +42 -0
+new file mode 100644
+=== packages/remeda/src/addProp.test.ts +19 -0
+new file mode 100644
+=== packages/remeda/src/addProp.ts +62 -0
+new file mode 100644
+=== packages/remeda/src/allPass.test.ts +20 -0
+new file mode 100644
+=== packages/remeda/src/allPass.ts +50 -0
+new file mode 100644
+=== packages/remeda/src/anyPass.test.ts +20 -0
+new file mode 100644
+=== packages/remeda/src/anyPass.ts +50 -0
+new file mode 100644
+=== packages/remeda/src/capitalize.test-d.ts +111 -0
+new file mode 100644
+=== packages/remeda/src/capitalize.test.ts +71 -0
+new file mode 100644
+=== packages/remeda/src/capitalize.ts +59 -0
+new file mode 100644
+=== packages/remeda/src/ceil.test.ts +95 -0
+new file mode 100644
+=== packages/remeda/src/ceil.ts +43 -0
+new file mode 100644
+=== packages/remeda/src/chunk.test-d.ts +412 -0
+new file mode 100644
+=== packages/remeda/src/chunk.test.ts +65 -0
+new file mode 100644
+=== packages/remeda/src/chunk.ts +265 -0
+new file mode 100644
+=== packages/remeda/src/clamp.test.ts +14 -0
+new file mode 100644
+=== packages/remeda/src/clamp.ts +48 -0
+new file mode 100644
+=== packages/remeda/src/clone.test.ts +258 -0
+new file mode 100644
+=== packages/remeda/src/clone.ts +126 -0
+new file mode 100644
+=== packages/remeda/src/concat.test.ts +19 -0
+new file mode 100644
+=== packages/remeda/src/concat.ts +55 -0
+new file mode 100644
+=== packages/remeda/src/conditional.test-d.ts +173 -0
+new file mode 100644
+=== packages/remeda/src/conditional.test.ts +76 -0
+new file mode 100644
+=== packages/remeda/src/conditional.ts +760 -0
+new file mode 100644
+=== packages/remeda/src/constant.test-d.ts +56 -0
+new file mode 100644
+=== packages/remeda/src/constant.test.ts +73 -0
+new file mode 100644
+=== packages/remeda/src/constant.ts +33 -0
+new file mode 100644
+=== packages/remeda/src/countBy.test-d.ts +40 -0
+new file mode 100644
+=== packages/remeda/src/countBy.test.ts +155 -0
+new file mode 100644
+=== packages/remeda/src/countBy.ts +81 -0
+new file mode 100644
+=== packages/remeda/src/debounce.test-d.ts +121 -0
+new file mode 100644
+=== packages/remeda/src/debounce.test.ts +404 -0
+new file mode 100644
+=== packages/remeda/src/debounce.ts +288 -0
+new file mode 100644
+=== packages/remeda/src/defaultTo.test-d.ts +401 -0
+new file mode 100644
+=== packages/remeda/src/defaultTo.test.ts +94 -0
+new file mode 100644
+=== packages/remeda/src/defaultTo.ts +68 -0
+new file mode 100644
+=== packages/remeda/src/difference.test.ts +80 -0
+new file mode 100644
+=== packages/remeda/src/difference.ts +71 -0
+new file mode 100644
+=== packages/remeda/src/differenceWith.test.ts +50 -0
+new file mode 100644
+=== packages/remeda/src/differenceWith.ts +66 -0
+new file mode 100644
+=== packages/remeda/src/divide.test.ts +10 -0
+new file mode 100644
+=== packages/remeda/src/divide.ts +42 -0
+new file mode 100644
+=== packages/remeda/src/doNothing.test-d.ts +18 -0
+new file mode 100644
+=== packages/remeda/src/doNothing.test.ts +36 -0
+new file mode 100644
+=== packages/remeda/src/doNothing.ts +34 -0
+new file mode 100644
+=== packages/remeda/src/drop.test-d.ts +197 -0
+new file mode 100644
+=== packages/remeda/src/drop.test.ts +56 -0
+new file mode 100644
+=== packages/remeda/src/drop.ts +154 -0
+new file mode 100644
+=== packages/remeda/src/dropFirstBy.test.ts +146 -0
+new file mode 100644
+=== packages/remeda/src/dropFirstBy.ts +80 -0
+new file mode 100644
+=== packages/remeda/src/dropLast.test-d.ts +106 -0
+new file mode 100644
+=== packages/remeda/src/dropLast.test.ts +34 -0
+new file mode 100644
+=== packages/remeda/src/dropLast.ts +44 -0
+new file mode 100644
+=== packages/remeda/src/dropLastWhile.test-d.ts +228 -0
+new file mode 100644
+=== packages/remeda/src/dropLastWhile.test.ts +78 -0
+new file mode 100644
+=== packages/remeda/src/dropLastWhile.ts +54 -0
+new file mode 100644
+=== packages/remeda/src/dropWhile.test-d.ts +222 -0
+new file mode 100644
+=== packages/remeda/src/dropWhile.test.ts +78 -0
+new file mode 100644
+=== packages/remeda/src/dropWhile.ts +54 -0
+new file mode 100644
+=== packages/remeda/src/endsWith.test-d.ts +144 -0
+new file mode 100644
+=== packages/remeda/src/endsWith.test.ts +29 -0
+new file mode 100644
+=== packages/remeda/src/endsWith.ts +54 -0
+new file mode 100644
+=== packages/remeda/src/entries.test-d.ts +73 -0
+new file mode 100644
+=== packages/remeda/src/entries.test.ts +30 -0
+new file mode 100644
+=== packages/remeda/src/entries.ts +50 -0
+new file mode 100644
+=== packages/remeda/src/evolve.test-d.ts +343 -0
+new file mode 100644
+=== packages/remeda/src/evolve.test.ts +205 -0
+new file mode 100644
+=== packages/remeda/src/evolve.ts +154 -0
+new file mode 100644
+=== packages/remeda/src/filter.test-d.ts +284 -0
+new file mode 100644
+=== packages/remeda/src/filter.test.ts +66 -0
+new file mode 100644
+=== packages/remeda/src/filter.ts +110 -0
+new file mode 100644
+=== packages/remeda/src/find.test-d.ts +9 -0
+new file mode 100644
+=== packages/remeda/src/find.test.ts +79 -0
+new file mode 100644
+=== packages/remeda/src/find.ts +94 -0
+new file mode 100644
+=== packages/remeda/src/findIndex.test.ts +33 -0
+new file mode 100644
+=== packages/remeda/src/findIndex.ts +63 -0
+new file mode 100644
+=== packages/remeda/src/findLast.test.ts +41 -0
+new file mode 100644
+=== packages/remeda/src/findLast.ts +91 -0
+new file mode 100644
+=== packages/remeda/src/findLastIndex.test.ts +37 -0
+new file mode 100644
+=== packages/remeda/src/findLastIndex.ts +73 -0
+new file mode 100644
+=== packages/remeda/src/first.test-d.ts +114 -0
+new file mode 100644
+=== packages/remeda/src/first.test.ts +194 -0
+new file mode 100644
+=== packages/remeda/src/first.ts +58 -0
+new file mode 100644
+=== packages/remeda/src/firstBy.test-d.ts +25 -0
+new file mode 100644
+=== packages/remeda/src/firstBy.test.ts +142 -0
+new file mode 100644
+=== packages/remeda/src/firstBy.ts +98 -0
+new file mode 100644
+=== packages/remeda/src/flat.test-d.ts +162 -0
+new file mode 100644
+=== packages/remeda/src/flat.test.ts +224 -0
+new file mode 100644
+=== packages/remeda/src/flat.ts +147 -0
+new file mode 100644
+=== packages/remeda/src/flatMap.test.ts +59 -0
+new file mode 100644
+=== packages/remeda/src/flatMap.ts +77 -0
+new file mode 100644
+=== packages/remeda/src/floor.test.ts +99 -0
+new file mode 100644
+=== packages/remeda/src/floor.ts +43 -0
+new file mode 100644
+=== packages/remeda/src/forEach.test-d.ts +36 -0
+new file mode 100644
+=== packages/remeda/src/forEach.test.ts +61 -0
+new file mode 100644
+=== packages/remeda/src/forEach.ts +80 -0
+new file mode 100644
+=== packages/remeda/src/forEachObj.test-d.ts +43 -0
+new file mode 100644
+=== packages/remeda/src/forEachObj.test.ts +45 -0
+new file mode 100644
+=== packages/remeda/src/forEachObj.ts +71 -0
+new file mode 100644
+=== packages/remeda/src/fromEntries.test-d.ts +184 -0
+new file mode 100644
+=== packages/remeda/src/fromEntries.test.ts +51 -0
+new file mode 100644
+=== packages/remeda/src/fromEntries.ts +146 -0
+new file mode 100644
+=== packages/remeda/src/fromKeys.test-d.ts +233 -0
+new file mode 100644
+=== packages/remeda/src/fromKeys.test.ts +120 -0
+new file mode 100644
+=== packages/remeda/src/fromKeys.ts +91 -0
+new file mode 100644
+=== packages/remeda/src/funnel.lodash-debounce-with-cached-value.test.ts +261 -0
+new file mode 100644
+=== packages/remeda/src/funnel.lodash-debounce.test.ts +395 -0
+new file mode 100644
+=== packages/remeda/src/funnel.lodash-throttle-with-cached-value.test.ts +232 -0
+new file mode 100644
+=== packages/remeda/src/funnel.lodash-throttle.test.ts +337 -0
+new file mode 100644
+=== packages/remeda/src/funnel.reference-batch.test.ts +199 -0
+new file mode 100644
+=== packages/remeda/src/funnel.remeda-debounce.test.ts +471 -0
+new file mode 100644
+=== packages/remeda/src/funnel.test-d.ts +126 -0
+new file mode 100644
+=== packages/remeda/src/funnel.test.ts +1025 -0
+new file mode 100644
+=== packages/remeda/src/funnel.ts +313 -0
+new file mode 100644
+=== packages/remeda/src/groupBy.test-d.ts +127 -0
+new file mode 100644
+=== packages/remeda/src/groupBy.test-prop.ts +114 -0
+new file mode 100644
+=== packages/remeda/src/groupBy.test.ts +100 -0
+new file mode 100644
+=== packages/remeda/src/groupBy.ts +111 -0
+new file mode 100644
+=== packages/remeda/src/groupByProp.test-d.ts +172 -0
+new file mode 100644
+=== packages/remeda/src/groupByProp.test.ts +178 -0
+new file mode 100644
+=== packages/remeda/src/groupByProp.ts +227 -0
+new file mode 100644
+=== packages/remeda/src/hasAtLeast.test-d.ts +182 -0
+new file mode 100644
+=== packages/remeda/src/hasAtLeast.test.ts +64 -0
+new file mode 100644
+=== packages/remeda/src/hasAtLeast.ts +74 -0
+new file mode 100644
+=== packages/remeda/src/hasSubObject.test-d.ts +576 -0
+new file mode 100644
+=== packages/remeda/src/hasSubObject.test.ts +60 -0
+new file mode 100644
+=== packages/remeda/src/hasSubObject.ts +122 -0
+new file mode 100644
+=== packages/remeda/src/identity.test-d.ts +57 -0
+new file mode 100644
+=== packages/remeda/src/identity.test.ts +36 -0
+new file mode 100644
+=== packages/remeda/src/identity.ts +29 -0
+new file mode 100644
+=== packages/remeda/src/index.ts +162 -0
+new file mode 100644
+=== packages/remeda/src/indexBy.test-d.ts +76 -0
+new file mode 100644
+=== packages/remeda/src/indexBy.test.ts +34 -0
+new file mode 100644
+=== packages/remeda/src/indexBy.ts +71 -0
+new file mode 100644
+=== packages/remeda/src/internal/binarySearchCutoffIndex.test.ts +177 -0
+new file mode 100644
+=== packages/remeda/src/internal/binarySearchCutoffIndex.ts +35 -0
+new file mode 100644
+=== packages/remeda/src/internal/heap.test.ts +13 -0
+new file mode 100644
+=== packages/remeda/src/internal/heap.ts +103 -0
+new file mode 100644
+=== packages/remeda/src/internal/lazyDataLastImpl.ts +28 -0
+new file mode 100644
+=== packages/remeda/src/internal/purryFromLazy.test.ts +31 -0
+new file mode 100644
+=== packages/remeda/src/internal/purryFromLazy.ts +46 -0
+new file mode 100644
+=== packages/remeda/src/internal/purryOn.ts +21 -0
+new file mode 100644
+=== packages/remeda/src/internal/purryOrderRules.ts +177 -0
+new file mode 100644
+=== packages/remeda/src/internal/quickSelect.ts +92 -0
+new file mode 100644
+=== packages/remeda/src/internal/swapInPlace.ts +13 -0
+new file mode 100644
+=== packages/remeda/src/internal/toSingle.ts +6 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/ArrayAt.test-d.ts +213 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/ArrayAt.ts +68 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/ArrayRequiredPrefix.test-d.ts +386 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/ArrayRequiredPrefix.ts +131 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/BoundedPartial.ts +13 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/BrandedReturn.ts +9 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/ClampedIntegerSubtract.ts +30 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/CoercedArray.ts +12 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/CompareFunction.ts +6 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/Deduped.test-d.ts +103 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/Deduped.ts +28 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/DisjointUnionFields.test-d.ts +12 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/DisjointUnionFields.ts +18 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/EnumerableStringKeyOf.test-d.ts +93 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/EnumerableStringKeyOf.ts +13 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/EnumerableStringKeyedValueOf.test-d.ts +124 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/EnumerableStringKeyedValueOf.ts +23 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/FilteredArray.test-d.ts +842 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/FilteredArray.ts +91 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/GuardType.ts +15 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/HasWritableKeys.ts +8 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/IntRangeInclusive.ts +12 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/IsBounded.test-d.ts +85 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/IsBounded.ts +48 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/IsBoundedRecord.ts +15 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/IterableContainer.ts +13 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/LazyDefinition.ts +17 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/LazyEvaluator.ts +7 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/LazyResult.ts +22 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/Mapped.ts +5 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/NTuple.test-d.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/NTuple.ts +12 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/NarrowedTo.ts +15 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/NoInfer.d.ts +2 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/NonEmptyArray.ts +1 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/OptionalOptionsWithDefaults.ts +25 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/PartialArray.ts +10 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/PartitionByUnion.ts +20 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/RemedaTypeError.ts +26 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/ReorderedArray.ts +5 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/SimplifiedWritable.ts +12 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/StrictFunction.ts +22 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/StringLength.test-d.ts +38 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/StringLength.ts +17 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/ToString.test-d.ts +87 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/ToString.ts +15 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/TupleParts.test-d.ts +361 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/TupleParts.ts +137 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/TupleSplits.test-d.ts +208 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/TupleSplits.ts +115 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/UpsertProp.ts +26 -0
+new file mode 100644
+=== packages/remeda/src/internal/types/WeakKey.d.ts +2 -0
+new file mode 100644
+=== packages/remeda/src/internal/utilityEvaluators.ts +25 -0
+new file mode 100644
+=== packages/remeda/src/internal/withPrecision.test.ts +14 -0
+new file mode 100644
+=== packages/remeda/src/internal/withPrecision.ts +53 -0
+new file mode 100644
+=== packages/remeda/src/internal/words.test.ts +165 -0
+new file mode 100644
+=== packages/remeda/src/internal/words.ts +85 -0
+new file mode 100644
+=== packages/remeda/src/intersection.test-d.ts +8 -0
+new file mode 100644
+=== packages/remeda/src/intersection.test.ts +60 -0
+new file mode 100644
+=== packages/remeda/src/intersection.ts +90 -0
+new file mode 100644
+=== packages/remeda/src/intersectionWith.test.ts +70 -0
+new file mode 100644
+=== packages/remeda/src/intersectionWith.ts +76 -0
+new file mode 100644
+=== packages/remeda/src/invert.test-d.ts +71 -0
+new file mode 100644
+=== packages/remeda/src/invert.test.ts +73 -0
+new file mode 100644
+=== packages/remeda/src/invert.ts +54 -0
+new file mode 100644
+=== packages/remeda/src/isArray.test-d.ts +58 -0
+new file mode 100644
+=== packages/remeda/src/isArray.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/isArray.ts +20 -0
+new file mode 100644
+=== packages/remeda/src/isBigInt.test-d.ts +36 -0
+new file mode 100644
+=== packages/remeda/src/isBigInt.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/isBigInt.ts +19 -0
+new file mode 100644
+=== packages/remeda/src/isBoolean.test-d.ts +35 -0
+new file mode 100644
+=== packages/remeda/src/isBoolean.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/isBoolean.ts +20 -0
+new file mode 100644
+=== packages/remeda/src/isDate.test-d.ts +27 -0
+new file mode 100644
+=== packages/remeda/src/isDate.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/isDate.ts +15 -0
+new file mode 100644
+=== packages/remeda/src/isDeepEqual.test-d.ts +68 -0
+new file mode 100644
+=== packages/remeda/src/isDeepEqual.test.ts +412 -0
+new file mode 100644
+=== packages/remeda/src/isDeepEqual.ts +231 -0
+new file mode 100644
+=== packages/remeda/src/isDefined.test-d.ts +62 -0
+new file mode 100644
+=== packages/remeda/src/isDefined.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/isDefined.ts +17 -0
+new file mode 100644
+=== packages/remeda/src/isEmpty.test-d.ts +166 -0
+new file mode 100644
+=== packages/remeda/src/isEmpty.test.ts +33 -0
+new file mode 100644
+=== packages/remeda/src/isEmpty.ts +65 -0
+new file mode 100644
+=== packages/remeda/src/isEmptyish.test-d.ts +835 -0
+new file mode 100644
+=== packages/remeda/src/isEmptyish.test.ts +276 -0
+new file mode 100644
+=== packages/remeda/src/isEmptyish.ts +226 -0
+new file mode 100644
+=== packages/remeda/src/isError.test-d.ts +33 -0
+new file mode 100644
+=== packages/remeda/src/isError.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/isError.ts +17 -0
+new file mode 100644
+=== packages/remeda/src/isFunction.test-d.ts +76 -0
+new file mode 100644
+=== packages/remeda/src/isFunction.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/isFunction.ts +18 -0
+new file mode 100644
+=== packages/remeda/src/isIncludedIn.test-d.ts +123 -0
+new file mode 100644
+=== packages/remeda/src/isIncludedIn.test.ts +163 -0
+new file mode 100644
+=== packages/remeda/src/isIncludedIn.ts +153 -0
+new file mode 100644
+=== packages/remeda/src/isNonNull.test-d.ts +62 -0
+new file mode 100644
+=== packages/remeda/src/isNonNull.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/isNonNull.ts +17 -0
+new file mode 100644
+=== packages/remeda/src/isNonNullish.test-d.ts +60 -0
+new file mode 100644
+=== packages/remeda/src/isNonNullish.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/isNonNullish.ts +18 -0
+new file mode 100644
+=== packages/remeda/src/isNot.test-d.ts +64 -0
+new file mode 100644
+=== packages/remeda/src/isNot.test.ts +18 -0
+new file mode 100644
+=== packages/remeda/src/isNot.ts +21 -0
+new file mode 100644
+=== packages/remeda/src/isNullish.test-d.ts +81 -0
+new file mode 100644
+=== packages/remeda/src/isNullish.test.ts +21 -0
+new file mode 100644
+=== packages/remeda/src/isNullish.ts +22 -0
+new file mode 100644
+=== packages/remeda/src/isNumber.test-d.ts +36 -0
+new file mode 100644
+=== packages/remeda/src/isNumber.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/isNumber.ts +19 -0
+new file mode 100644
+=== packages/remeda/src/isObjectType.test-d.ts +72 -0
+new file mode 100644
+=== packages/remeda/src/isObjectType.test.ts +61 -0
+new file mode 100644
+=== packages/remeda/src/isObjectType.ts +32 -0
+new file mode 100644
+=== packages/remeda/src/isPlainObject.test-d.ts +49 -0
+new file mode 100644
+=== packages/remeda/src/isPlainObject.test.ts +37 -0
+new file mode 100644
+=== packages/remeda/src/isPlainObject.ts +38 -0
+new file mode 100644
+=== packages/remeda/src/isPromise.test-d.ts +20 -0
+new file mode 100644
+=== packages/remeda/src/isPromise.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/isPromise.ts +20 -0
+new file mode 100644
+=== packages/remeda/src/isShallowEqual.test-d.ts +72 -0
+new file mode 100644
+=== packages/remeda/src/isShallowEqual.test.ts +149 -0
+new file mode 100644
+=== packages/remeda/src/isShallowEqual.ts +165 -0
+new file mode 100644
+=== packages/remeda/src/isStrictEqual.test-d.ts +72 -0
+new file mode 100644
+=== packages/remeda/src/isStrictEqual.test.ts +118 -0
+new file mode 100644
+=== packages/remeda/src/isStrictEqual.ts +78 -0
+new file mode 100644
+=== packages/remeda/src/isString.test-d.ts +36 -0
+new file mode 100644
+=== packages/remeda/src/isString.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/isString.ts +17 -0
+new file mode 100644
+=== packages/remeda/src/isSymbol.test-d.ts +35 -0
+new file mode 100644
+=== packages/remeda/src/isSymbol.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/isSymbol.ts +17 -0
+new file mode 100644
+=== packages/remeda/src/isTruthy.test-d.ts +9 -0
+new file mode 100644
+=== packages/remeda/src/isTruthy.test.ts +6 -0
+new file mode 100644
+=== packages/remeda/src/isTruthy.ts +22 -0
+new file mode 100644
+=== packages/remeda/src/join.test-d.ts +140 -0
+new file mode 100644
+=== packages/remeda/src/join.test.ts +76 -0
+new file mode 100644
+=== packages/remeda/src/join.ts +59 -0
+new file mode 100644
+=== packages/remeda/src/keys.test-d.ts +182 -0
+new file mode 100644
+=== packages/remeda/src/keys.test.ts +24 -0
+new file mode 100644
+=== packages/remeda/src/keys.ts +83 -0
+new file mode 100644
+=== packages/remeda/src/last.test-d.ts +40 -0
+new file mode 100644
+=== packages/remeda/src/last.test.ts +23 -0
+new file mode 100644
+=== packages/remeda/src/last.ts +50 -0
+new file mode 100644
+=== packages/remeda/src/length.test.ts +44 -0
+new file mode 100644
+=== packages/remeda/src/length.ts +35 -0
+new file mode 100644
+=== packages/remeda/src/map.test-d.ts +176 -0
+new file mode 100644
+=== packages/remeda/src/map.test.ts +123 -0
+new file mode 100644
+=== packages/remeda/src/map.ts +69 -0
+new file mode 100644
+=== packages/remeda/src/mapKeys.test-d.ts +109 -0
+new file mode 100644
+=== packages/remeda/src/mapKeys.test.ts +53 -0
+new file mode 100644
+=== packages/remeda/src/mapKeys.ts +101 -0
+new file mode 100644
+=== packages/remeda/src/mapToObj.test.ts +37 -0
+new file mode 100644
+=== packages/remeda/src/mapToObj.ts +96 -0
+new file mode 100644
+=== packages/remeda/src/mapValues.test-d.ts +156 -0
+new file mode 100644
+=== packages/remeda/src/mapValues.test.ts +43 -0
+new file mode 100644
+=== packages/remeda/src/mapValues.ts +74 -0
+new file mode 100644
+=== packages/remeda/src/mapWithFeedback.test-d.ts +56 -0
+new file mode 100644
+=== packages/remeda/src/mapWithFeedback.test.ts +101 -0
+new file mode 100644
+=== packages/remeda/src/mapWithFeedback.ts +89 -0
+new file mode 100644
+=== packages/remeda/src/mean.test-d.ts +61 -0
+new file mode 100644
+=== packages/remeda/src/mean.test.ts +27 -0
+new file mode 100644
+=== packages/remeda/src/mean.ts +66 -0
+new file mode 100644
+=== packages/remeda/src/meanBy.test.ts +50 -0
+new file mode 100644
+=== packages/remeda/src/meanBy.ts +62 -0
+new file mode 100644
+=== packages/remeda/src/median.test-d.ts +61 -0
+new file mode 100644
+=== packages/remeda/src/median.test.ts +33 -0
+new file mode 100644
+=== packages/remeda/src/median.ts +78 -0
+new file mode 100644
+=== packages/remeda/src/merge.test-d.ts +142 -0
+new file mode 100644
+=== packages/remeda/src/merge.test.ts +22 -0
+new file mode 100644
+=== packages/remeda/src/merge.ts +64 -0
+new file mode 100644
+=== packages/remeda/src/mergeAll.test-d.ts +181 -0
+new file mode 100644
+=== packages/remeda/src/mergeAll.test.ts +21 -0
+new file mode 100644
+=== packages/remeda/src/mergeAll.ts +68 -0
+new file mode 100644
+=== packages/remeda/src/mergeDeep.test-d.ts +94 -0
+new file mode 100644
+=== packages/remeda/src/mergeDeep.test.ts +94 -0
+new file mode 100644
+=== packages/remeda/src/mergeDeep.ts +89 -0
+new file mode 100644
+=== packages/remeda/src/multiply.test.ts +10 -0
+new file mode 100644
+=== packages/remeda/src/multiply.ts +42 -0
+new file mode 100644
+=== packages/remeda/src/nthBy.test-d.ts +22 -0
+new file mode 100644
+=== packages/remeda/src/nthBy.test.ts +116 -0
+new file mode 100644
+=== packages/remeda/src/nthBy.ts +66 -0
+new file mode 100644
+=== packages/remeda/src/objOf.test.ts +20 -0
+new file mode 100644
+=== packages/remeda/src/objOf.ts +37 -0
+new file mode 100644
+=== packages/remeda/src/omit.test-d.ts +86 -0
+new file mode 100644
+=== packages/remeda/src/omit.test.ts +36 -0
+new file mode 100644
+=== packages/remeda/src/omit.ts +163 -0
+new file mode 100644
+=== packages/remeda/src/omitBy.test-d.ts +206 -0
+new file mode 100644
+=== packages/remeda/src/omitBy.test.ts +43 -0
+new file mode 100644
+=== packages/remeda/src/omitBy.ts +181 -0
+new file mode 100644
+=== packages/remeda/src/once.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/once.ts +23 -0
+new file mode 100644
+=== packages/remeda/src/only.test-d.ts +122 -0
+new file mode 100644
+=== packages/remeda/src/only.test.ts +47 -0
+new file mode 100644
+=== packages/remeda/src/only.ts +50 -0
+new file mode 100644
+=== packages/remeda/src/partialBind.test-d.ts +188 -0
+new file mode 100644
+=== packages/remeda/src/partialBind.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/partialBind.ts +75 -0
+new file mode 100644
+=== packages/remeda/src/partialLastBind.test-d.ts +147 -0
+new file mode 100644
+=== packages/remeda/src/partialLastBind.test.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/partialLastBind.ts +84 -0
+new file mode 100644
+=== packages/remeda/src/partition.test-d.ts +19 -0
+new file mode 100644
+=== packages/remeda/src/partition.test.ts +111 -0
+new file mode 100644
+=== packages/remeda/src/partition.ts +79 -0
+new file mode 100644
+=== packages/remeda/src/pathOr.test-d.ts +16 -0
+new file mode 100644
+=== packages/remeda/src/pathOr.test.ts +70 -0
+new file mode 100644
+=== packages/remeda/src/pathOr.ts +195 -0
+new file mode 100644
+=== packages/remeda/src/pick.test-d.ts +1121 -0
+new file mode 100644
+=== packages/remeda/src/pick.test.ts +31 -0
+new file mode 100644
+=== packages/remeda/src/pick.ts +130 -0
+new file mode 100644
+=== packages/remeda/src/pickBy.test-d.ts +236 -0
+new file mode 100644
+=== packages/remeda/src/pickBy.test.ts +33 -0
+new file mode 100644
+=== packages/remeda/src/pickBy.ts +207 -0
+new file mode 100644
+=== packages/remeda/src/pipe.test-d.ts +8 -0
+new file mode 100644
+=== packages/remeda/src/pipe.test.ts +148 -0
+new file mode 100644
+=== packages/remeda/src/pipe.ts +403 -0
+new file mode 100644
+=== packages/remeda/src/piped.test.ts +17 -0
+new file mode 100644
+=== packages/remeda/src/piped.ts +198 -0
+new file mode 100644
+=== packages/remeda/src/product.test-d.ts +100 -0
+new file mode 100644
+=== packages/remeda/src/product.test.ts +41 -0
+new file mode 100644
+=== packages/remeda/src/product.ts +84 -0
+new file mode 100644
+=== packages/remeda/src/prop.test-d.ts +470 -0
+new file mode 100644
+=== packages/remeda/src/prop.test.ts +193 -0
+new file mode 100644
+=== packages/remeda/src/prop.ts +465 -0
+new file mode 100644
+=== packages/remeda/src/pullObject.test-d.ts +103 -0
+new file mode 100644
+=== packages/remeda/src/pullObject.test.ts +167 -0
+new file mode 100644
+=== packages/remeda/src/pullObject.ts +104 -0
+new file mode 100644
+=== packages/remeda/src/purry.test.ts +24 -0
+new file mode 100644
+=== packages/remeda/src/purry.ts +65 -0
+new file mode 100644
+=== packages/remeda/src/randomBigInt.test-d.ts +9 -0
+new file mode 100644
+=== packages/remeda/src/randomBigInt.test.ts +127 -0
+new file mode 100644
+=== packages/remeda/src/randomBigInt.ts +94 -0
+new file mode 100644
+=== packages/remeda/src/randomInteger.test-d.ts +65 -0
+new file mode 100644
+=== packages/remeda/src/randomInteger.test.ts +56 -0
+new file mode 100644
+=== packages/remeda/src/randomInteger.ts +65 -0
+new file mode 100644
+=== packages/remeda/src/randomString.test.ts +6 -0
+new file mode 100644
+=== packages/remeda/src/randomString.ts +50 -0
+new file mode 100644
+=== packages/remeda/src/range.test.ts +297 -0
+new file mode 100644
+=== packages/remeda/src/range.ts +100 -0
+new file mode 100644
+=== packages/remeda/src/rankBy.test.ts +31 -0
+new file mode 100644
+=== packages/remeda/src/rankBy.ts +72 -0
+new file mode 100644
+=== packages/remeda/src/reduce.test.ts +39 -0
+new file mode 100644
+=== packages/remeda/src/reduce.ts +86 -0
+new file mode 100644
+=== packages/remeda/src/reverse.test-d.ts +45 -0
+new file mode 100644
+=== packages/remeda/src/reverse.test.ts +19 -0
+new file mode 100644
+=== packages/remeda/src/reverse.ts +51 -0
+new file mode 100644
+=== packages/remeda/src/round.test.ts +105 -0
+new file mode 100644
+=== packages/remeda/src/round.ts +43 -0
+new file mode 100644
+=== packages/remeda/src/sample.test-d.ts +1193 -0
+new file mode 100644
+=== packages/remeda/src/sample.test.ts +170 -0
+new file mode 100644
+=== packages/remeda/src/sample.ts +203 -0
+new file mode 100644
+=== packages/remeda/src/set.test-d.ts +46 -0
+new file mode 100644
+=== packages/remeda/src/set.test.ts +15 -0
+new file mode 100644
+=== packages/remeda/src/set.ts +56 -0
+new file mode 100644
+=== packages/remeda/src/setPath.test-d.ts +91 -0
+new file mode 100644
+=== packages/remeda/src/setPath.test.ts +88 -0
+new file mode 100644
+=== packages/remeda/src/setPath.ts +117 -0
+new file mode 100644
+=== packages/remeda/src/shuffle.test-d.ts +51 -0
+new file mode 100644
+=== packages/remeda/src/shuffle.test.ts +34 -0
+new file mode 100644
+=== packages/remeda/src/shuffle.ts +47 -0
+new file mode 100644
+=== packages/remeda/src/sliceString.test.ts +184 -0
+new file mode 100644
+=== packages/remeda/src/sliceString.ts +59 -0
+new file mode 100644
+=== packages/remeda/src/sort.test-d.ts +74 -0
+new file mode 100644
+=== packages/remeda/src/sort.test.ts +20 -0
+new file mode 100644
+=== packages/remeda/src/sort.ts +54 -0
+new file mode 100644
+=== packages/remeda/src/sortBy.test-d.ts +169 -0
+new file mode 100644
+=== packages/remeda/src/sortBy.test.ts +101 -0
+new file mode 100644
+=== packages/remeda/src/sortBy.ts +101 -0
+new file mode 100644
+=== packages/remeda/src/sortedIndex.test.ts +62 -0
+new file mode 100644
+=== packages/remeda/src/sortedIndex.ts +52 -0
+new file mode 100644
+=== packages/remeda/src/sortedIndexBy.test.ts +272 -0
+new file mode 100644
+=== packages/remeda/src/sortedIndexBy.ts +105 -0
+new file mode 100644
+=== packages/remeda/src/sortedIndexWith.test.ts +20 -0
+new file mode 100644
+=== packages/remeda/src/sortedIndexWith.ts +81 -0
+new file mode 100644
+=== packages/remeda/src/sortedLastIndex.test.ts +62 -0
+new file mode 100644
+=== packages/remeda/src/sortedLastIndex.ts +61 -0
+new file mode 100644
+=== packages/remeda/src/sortedLastIndexBy.test.ts +272 -0
+new file mode 100644
+=== packages/remeda/src/sortedLastIndexBy.ts +110 -0
+new file mode 100644
+=== packages/remeda/src/splice.test-d.ts +23 -0
+new file mode 100644
+=== packages/remeda/src/splice.test.ts +219 -0
+new file mode 100644
+=== packages/remeda/src/splice.ts +59 -0
+new file mode 100644
+=== packages/remeda/src/split.test-d.ts +128 -0
+new file mode 100644
+=== packages/remeda/src/split.test.ts +93 -0
+new file mode 100644
+=== packages/remeda/src/split.ts +112 -0
+new file mode 100644
+=== packages/remeda/src/splitAt.test.ts +28 -0
+new file mode 100644
+=== packages/remeda/src/splitAt.ts +45 -0
+new file mode 100644
+=== packages/remeda/src/splitWhen.test.ts +18 -0
+new file mode 100644
+=== packages/remeda/src/splitWhen.ts +47 -0
+new file mode 100644
+=== packages/remeda/src/startsWith.test-d.ts +144 -0
+new file mode 100644
+=== packages/remeda/src/startsWith.test.ts +29 -0
+new file mode 100644
+=== packages/remeda/src/startsWith.ts +56 -0
+new file mode 100644
+=== packages/remeda/src/stringToPath.test-d.ts +398 -0
+new file mode 100644
+=== packages/remeda/src/stringToPath.test.ts +253 -0
+new file mode 100644
+=== packages/remeda/src/stringToPath.ts +140 -0
+new file mode 100644
+=== packages/remeda/src/subtract.test.ts +12 -0
+new file mode 100644
+=== packages/remeda/src/subtract.ts +44 -0
+new file mode 100644
+=== packages/remeda/src/sum.test-d.ts +100 -0
+new file mode 100644
+=== packages/remeda/src/sum.test.ts +39 -0
+new file mode 100644
+=== packages/remeda/src/sum.ts +83 -0
+new file mode 100644
+=== packages/remeda/src/sumBy.test-d.ts +114 -0
+new file mode 100644
+=== packages/remeda/src/sumBy.test.ts +64 -0
+new file mode 100644
+=== packages/remeda/src/sumBy.ts +110 -0
+new file mode 100644
+=== packages/remeda/src/swapIndices.test.ts +34 -0
+new file mode 100644
+=== packages/remeda/src/swapIndices.ts +177 -0
+new file mode 100644
+=== packages/remeda/src/swapProps.test-d.ts +7 -0
+new file mode 100644
+=== packages/remeda/src/swapProps.test.ts +22 -0
+new file mode 100644
+=== packages/remeda/src/swapProps.ts +61 -0
+new file mode 100644
+=== packages/remeda/src/take.test-d.ts +103 -0
+new file mode 100644
+=== packages/remeda/src/take.test.ts +55 -0
+new file mode 100644
+=== packages/remeda/src/take.ts +59 -0
+new file mode 100644
+=== packages/remeda/src/takeFirstBy.test.ts +142 -0
+new file mode 100644
+=== packages/remeda/src/takeFirstBy.ts +77 -0
+new file mode 100644
+=== packages/remeda/src/takeLast.test-d.ts +106 -0
+new file mode 100644
+=== packages/remeda/src/takeLast.test.ts +34 -0
+new file mode 100644
+=== packages/remeda/src/takeLast.ts +43 -0
+new file mode 100644
+=== packages/remeda/src/takeLastWhile.test-d.ts +241 -0
+new file mode 100644
+=== packages/remeda/src/takeLastWhile.test.ts +80 -0
+new file mode 100644
+=== packages/remeda/src/takeLastWhile.ts +59 -0
+new file mode 100644
+=== packages/remeda/src/takeWhile.test-d.ts +235 -0
+new file mode 100644
+=== packages/remeda/src/takeWhile.test.ts +22 -0
+new file mode 100644
+=== packages/remeda/src/takeWhile.ts +59 -0
+new file mode 100644
+=== packages/remeda/src/tap.test-d.ts +35 -0
+new file mode 100644
+=== packages/remeda/src/tap.test.ts +68 -0
+new file mode 100644
+=== packages/remeda/src/tap.ts +54 -0
+new file mode 100644
+=== packages/remeda/src/times.test-d.ts +82 -0
+new file mode 100644
+=== packages/remeda/src/times.test.ts +88 -0
+new file mode 100644
+=== packages/remeda/src/times.ts +100 -0
+new file mode 100644
+=== packages/remeda/src/toCamelCase.test-d.ts +219 -0
+new file mode 100644
+=== packages/remeda/src/toCamelCase.test.ts +104 -0
+new file mode 100644
+=== packages/remeda/src/toCamelCase.ts +137 -0
+new file mode 100644
+=== packages/remeda/src/toKebabCase.test-d.ts +68 -0
+new file mode 100644
+=== packages/remeda/src/toKebabCase.test.ts +95 -0
+new file mode 100644
+=== packages/remeda/src/toKebabCase.ts +73 -0
+new file mode 100644
+=== packages/remeda/src/toLowerCase.test-d.ts +106 -0
+new file mode 100644
+=== packages/remeda/src/toLowerCase.test.ts +58 -0
+new file mode 100644
+=== packages/remeda/src/toLowerCase.ts +58 -0
+new file mode 100644
+=== packages/remeda/src/toSnakeCase.test-d.ts +68 -0
+new file mode 100644
+=== packages/remeda/src/toSnakeCase.test.ts +95 -0
+new file mode 100644
+=== packages/remeda/src/toSnakeCase.ts +73 -0
+new file mode 100644
+=== packages/remeda/src/toTitleCase.test-d.ts +200 -0
+new file mode 100644
+=== packages/remeda/src/toTitleCase.test.ts +182 -0
+new file mode 100644
+=== packages/remeda/src/toTitleCase.ts +154 -0
+new file mode 100644
+=== packages/remeda/src/toUpperCase.test-d.ts +110 -0
+new file mode 100644
+=== packages/remeda/src/toUpperCase.test.ts +62 -0
+new file mode 100644
+=== packages/remeda/src/toUpperCase.ts +58 -0
+new file mode 100644
+=== packages/remeda/src/truncate.test-d.ts +280 -0
+new file mode 100644
+=== packages/remeda/src/truncate.test.ts +149 -0
+new file mode 100644
+=== packages/remeda/src/truncate.ts +296 -0
+new file mode 100644
+=== packages/remeda/src/uncapitalize.test-d.ts +111 -0
+new file mode 100644
+=== packages/remeda/src/uncapitalize.test.ts +71 -0
+new file mode 100644
+=== packages/remeda/src/uncapitalize.ts +59 -0
+new file mode 100644
+=== packages/remeda/src/unique.test.ts +39 -0
+new file mode 100644
+=== packages/remeda/src/unique.ts +53 -0
+new file mode 100644
+=== packages/remeda/src/uniqueBy.test.ts +80 -0
+new file mode 100644
+=== packages/remeda/src/uniqueBy.ts +71 -0
+new file mode 100644
+=== packages/remeda/src/uniqueWith.test.ts +81 -0
+new file mode 100644
+=== packages/remeda/src/uniqueWith.ts +70 -0
+new file mode 100644
+=== packages/remeda/src/values.test-d.ts +71 -0
+new file mode 100644
+=== packages/remeda/src/values.test.ts +20 -0
+new file mode 100644
+=== packages/remeda/src/values.ts +43 -0
+new file mode 100644
+=== packages/remeda/src/when.test-d.ts +457 -0
+new file mode 100644
+=== packages/remeda/src/when.test.ts +182 -0
+new file mode 100644
+=== packages/remeda/src/when.ts +168 -0
+new file mode 100644
+=== packages/remeda/src/zip.test-d.ts +209 -0
+new file mode 100644
+=== packages/remeda/src/zip.test.ts +60 -0
+new file mode 100644
+=== packages/remeda/src/zip.ts +86 -0
+new file mode 100644
+=== packages/remeda/src/zipWith.test-d.ts +31 -0
+new file mode 100644
+=== packages/remeda/src/zipWith.test.ts +81 -0
+new file mode 100644
+=== packages/remeda/src/zipWith.ts +119 -0
+new file mode 100644
+=== packages/remeda/test/lazyInvocationCounter.ts +15 -0
+new file mode 100644
+=== packages/remeda/test/sleep.ts +15 -0
+new file mode 100644
+=== packages/remeda/test/typesDataProvider.ts +37 -0
+new file mode 100644
+=== packages/remeda/tsconfig.dist.json +38 -0
+new file mode 100644
+=== packages/remeda/tsconfig.json +45 -0
+new file mode 100644
+=== packages/remeda/tsconfig.source.json +8 -0
+new file mode 100644
+=== packages/remeda/tsdown.config.ts +207 -0
+new file mode 100644
+=== packages/remeda/vitest.config.ts +42 -0
+new file mode 100644
+=== packages/stackblitz-template/.nvmrc +1 -0
+new file mode 100644
+=== packages/stackblitz-template/CLAUDE.md +21 -0
+new file mode 100644
+=== packages/stackblitz-template/README.md +39 -0
+new file mode 100644
+=== packages/stackblitz-template/interactive.js +15 -0
+new file mode 100644
+=== packages/stackblitz-template/package.json +18 -0
+new file mode 100644
+=== packages/stackblitz-template/src/playground.ts +22 -0
+new file mode 100644
+=== packages/stackblitz-template/src/runtime.test.ts +18 -0
+new file mode 100644
+=== packages/stackblitz-template/src/typing.test-d.ts +22 -0
+new file mode 100644
+=== packages/stackblitz-template/tsconfig.json +7 -0
+new file mode 100644
+=== packages/stackblitz-template/tsconfig.playground.json +28 -0
+new file mode 100644
+=== packages/stackblitz-template/tsconfig.project.json +45 -0
+new file mode 100644
+=== prettier.config.js +4 -0
+new file mode 100644
+=== remeda.code-workspace +53 -0
+new file mode 100644
+=== skills-lock.json +10 -0
+new file mode 100644
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-ozujto4s.log]

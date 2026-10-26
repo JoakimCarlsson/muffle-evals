@@ -1,0 +1,971 @@
+$ git blame src/parse/parser.ts
+b0e2824 evals 2026-10-22
+1	import type {
+2	  SourceToken,
+3	  Token,
+4	  FlowScalar,
+5	  FlowCollection,
+6	  Document,
+7	  BlockMap,
+8	  BlockScalar,
+9	  BlockSequence,
+10	  DocumentEnd,
+11	  TokenType
+12	} from './cst.ts'
+13	import { prettyToken, tokenType } from './cst.ts'
+14	import { lex } from './lexer.ts'
+15	
+16	function includesToken(list: SourceToken[], type: SourceToken['type']) {
+17	  for (let i = 0; i < list.length; ++i) if (list[i].type === type) return true
+18	  return false
+19	}
+20	
+21	const logToken =
+22	  typeof process !== 'undefined' && process.env?.LOG_TOKENS
+23	    ? (token: string) => console.log('|', prettyToken(token))
+24	    : () => {}
+25	
+26	function findNonEmptyIndex(list: SourceToken[]) {
+27	  for (let i = 0; i < list.length; ++i) {
+28	    switch (list[i].type) {
+29	      case 'space':
+30	      case 'comment':
+31	      case 'newline':
+32	        break
+33	      default:
+34	        return i
+35	    }
+36	  }
+37	  return -1
+38	}
+39	
+40	function isFlowToken(
+41	  token: Token | null | undefined
+42	): token is FlowScalar | FlowCollection {
+43	  switch (token?.type) {
+44	    case 'alias':
+45	    case 'scalar':
+46	    case 'single-quoted-scalar':
+47	    case 'double-quoted-scalar':
+48	    case 'flow-collection':
+49	      return true
+50	    default:
+51	      return false
+52	  }
+53	}
+54	
+55	function getPrevProps(parent: Token) {
+56	  switch (parent.type) {
+57	    case 'document':
+58	      return parent.start
+59	    case 'block-map': {
+60	      const it = parent.items[parent.items.length - 1]
+61	      return it.sep ?? it.start
+62	    }
+63	    case 'block-seq':
+64	      return parent.items[parent.items.length - 1].start
+65	    /* istanbul ignore next should not happen */
+66	    default:
+67	      return []
+68	  }
+69	}
+70	
+71	/** Note: May modify input array */
+72	function getFirstKeyStartProps(prev: SourceToken[]) {
+73	  if (prev.length === 0) return []
+74	
+75	  let i = prev.length
+76	  loop: while (--i >= 0) {
+77	    switch (prev[i].type) {
+78	      case 'doc-start':
+79	      case 'explicit-key-ind':
+80	      case 'map-value-ind':
+81	      case 'seq-item-ind':
+82	      case 'newline':
+83	        break loop
+84	    }
+85	  }
+86	  while (prev[++i]?.type === 'space') {
+87	    /* loop */
+88	  }
+89	  return prev.splice(i, prev.length)
+90	}
+91	
+92	function fixFlowSeqItems(fc: FlowCollection) {
+93	  if (fc.start.type === 'flow-seq-start') {
+94	    for (const it of fc.items) {
+95	      if (
+96	        it.sep &&
+97	        !it.value &&
+98	        !includesToken(it.start, 'explicit-key-ind') &&
+99	        !includesToken(it.sep, 'map-value-ind')
+100	      ) {
+101	        if (it.key) it.value = it.key
+102	        delete it.key
+103	        if (isFlowToken(it.value)) {
+104	          if (it.value.end) Array.prototype.push.apply(it.value.end, it.sep)
+105	          else it.value.end = it.sep
+106	        } else Array.prototype.push.apply(it.start, it.sep)
+107	        delete it.sep
+108	      }
+109	    }
+110	  }
+111	}
+112	
+113	/**
+114	 * A YAML concrete syntax tree (CST) parser
+115	 *
+116	 * ```ts
+117	 * const src: string = ...
+118	 * for (const token of new Parser().parse(src)) {
+119	 *   // token: Token
+120	 * }
+121	 * ```
+122	 *
+123	 * To use the parser with a user-provided lexer:
+124	 *
+125	 * ```ts
+126	 * function parse(source: string, lexTokens: string[]) {
+127	 *   const parser = new Parser()
+128	 *   for (const lexeme of lexTokens) parser.next(lexeme)
+129	 *   return parser.end()
+130	 * }
+131	 *
+132	 * const src: string = ...
+133	 * for (const token of parse(src, lex(src))) {
+134	 *   // token: Token
+135	 * }
+136	 * ```
+137	 */
+138	export class Parser {
+139	  private onNewLine?: (offset: number) => void
+140	
+141	  /** If true, space and sequence indicators count as indentation */
+142	  private atNewLine = true
+143	
+144	  /** If true, next token is a scalar value */
+145	  private atScalar = false
+146	
+147	  /** Current indentation level */
+148	  private indent = 0
+149	
+150	  /** Current offset since the start of parsing */
+151	  offset = 0
+152	
+153	  /** On the same line with a block map key */
+154	  private onKeyLine = false
+155	
+156	  /** Top indicates the node that's currently being built */
+157	  stack: Token[] = []
+158	
+159	  /** The source of the current token, set in parse() */
+160	  private source = ''
+161	
+162	  /** The type of the current token, set in parse() */
+163	  private type = '' as TokenType
+164	
+165	  tokens: Token[] = []
+166	
+167	  /**
+168	   * @param onNewLine - If defined, called separately with the start position of
+169	   *   each new line (in `parse()`, including the start of input).
+170	   */
+171	  constructor(onNewLine?: (offset: number) => void) {
+172	    this.onNewLine = onNewLine
+173	  }
+174	
+175	  /**
+176	   * Parse `source` as a YAML stream.
+177	   *
+178	   * Errors are not thrown, but included in the result as `{ type: 'error', message }` tokens.
+179	   *
+180	   * @returns Tokens representing each directive, document, and other structure.
+181	   */
+182	  parse(source: string): Token[] {
+183	    if (this.onNewLine && this.offset === 0) this.onNewLine(0)
+184	    for (const lexeme of lex(source)) this.next(lexeme)
+185	    return this.end()
+186	  }
+187	
+188	  /**
+189	   * Advance the parser by the `source` of one lexical token.
+190	   */
+191	  next(source: string): void {
+192	    this.source = source
+193	    logToken(source)
+194	
+195	    if (this.atScalar) {
+196	      this.atScalar = false
+197	      this.step()
+198	      this.offset += source.length
+199	      return
+200	    }
+201	
+202	    const type = tokenType(source)
+203	    if (!type) {
+204	      const message = `Not a YAML token: ${source}`
+205	      this.pop({ type: 'error', offset: this.offset, message, source })
+206	      this.offset += source.length
+207	    } else if (type === 'scalar') {
+208	      this.atNewLine = false
+209	      this.atScalar = true
+210	      this.type = 'scalar'
+211	    } else {
+212	      this.type = type
+213	      this.step()
+214	      switch (type) {
+215	        case 'newline':
+216	          this.atNewLine = true
+217	          this.indent = 0
+218	          if (this.onNewLine) this.onNewLine(this.offset + source.length)
+219	          break
+220	        case 'space':
+221	          if (this.atNewLine && source[0] === ' ') this.indent += source.length
+222	          break
+223	        case 'explicit-key-ind':
+224	        case 'map-value-ind':
+225	        case 'seq-item-ind':
+226	          if (this.atNewLine) this.indent += source.length
+227	          break
+228	        case 'doc-mode':
+229	        case 'flow-error-end':
+230	          return
+231	        default:
+232	          this.atNewLine = false
+233	      }
+234	      this.offset += source.length
+235	    }
+236	  }
+237	
+238	  /** Call at end of input to account for any remaining constructions */
+239	  end(): Token[] {
+240	    while (this.stack.length > 0) this.pop()
+241	    return this.tokens
+242	  }
+243	
+244	  private get sourceToken() {
+245	    const st: SourceToken = {
+246	      type: this.type as SourceToken['type'],
+247	      offset: this.offset,
+248	      indent: this.indent,
+249	      source: this.source
+250	    }
+251	    return st
+252	  }
+253	
+254	  private step(): void {
+255	    const top = this.peek(1)
+256	    if (this.type === 'doc-end' && top?.type !== 'doc-end') {
+257	      while (this.stack.length > 0) this.pop()
+258	      this.stack.push({
+259	        type: 'doc-end',
+260	        offset: this.offset,
+261	        source: this.source
+262	      })
+263	      return
+264	    }
+265	    if (!top) {
+266	      const token = this.stream()
+267	      if (token) this.tokens.push(token)
+268	      return
+269	    }
+270	    switch (top.type) {
+271	      case 'document':
+272	        return this.document(top)
+273	      case 'alias':
+274	      case 'scalar':
+275	      case 'single-quoted-scalar':
+276	      case 'double-quoted-scalar':
+277	        return this.scalar(top)
+278	      case 'block-scalar':
+279	        return this.blockScalar(top)
+280	      case 'block-map':
+281	        return this.blockMap(top)
+282	      case 'block-seq':
+283	        return this.blockSequence(top)
+284	      case 'flow-collection':
+285	        return this.flowCollection(top)
+286	      case 'doc-end':
+287	        return this.documentEnd(top)
+288	    }
+289	    /* istanbul ignore next should not happen */
+290	    this.pop()
+291	  }
+292	
+293	  private peek(n: number) {
+294	    return this.stack[this.stack.length - n]
+295	  }
+296	
+297	  private pop(error?: Token): void {
+298	    const token = error ?? this.stack.pop()
+299	    /* istanbul ignore if should not happen */
+300	    if (!token) {
+301	      const message = 'Tried to pop an empty stack'
+302	      this.tokens.push({
+303	        type: 'error',
+304	        offset: this.offset,
+305	        source: '',
+306	        message
+307	      })
+308	    } else if (this.stack.length === 0) {
+309	      this.tokens.push(token)
+310	    } else {
+311	      const top = this.peek(1)
+312	      if (token.type === 'block-scalar') {
+313	        // Block scalars use their parent rather than header indent
+314	        token.indent = 'indent' in top ? top.indent : 0
+315	      } else if (token.type === 'flow-collection' && top.type === 'document') {
+316	        // Ignore all indent for top-level flow collections
+317	        token.indent = 0
+318	      }
+319	      if (token.type === 'flow-collection') fixFlowSeqItems(token)
+320	      switch (top.type) {
+321	        case 'document':
+322	          top.value = token
+323	          break
+324	        case 'block-scalar':
+325	          top.props.push(token) // error
+326	          break
+327	        case 'block-map': {
+328	          const it = top.items[top.items.length - 1]
+329	          if (it.value) {
+330	            top.items.push({ start: [], key: token, sep: [] })
+331	            this.onKeyLine = true
+332	            return
+333	          } else if (it.sep) {
+334	            it.value = token
+335	          } else {
+336	            Object.assign(it, { key: token, sep: [] })
+337	            this.onKeyLine = !it.explicitKey
+338	            return
+339	          }
+340	          break
+341	        }
+342	        case 'block-seq': {
+343	          const it = top.items[top.items.length - 1]
+344	          if (it.value) top.items.push({ start: [], value: token })
+345	          else it.value = token
+346	          break
+347	        }
+348	        case 'flow-collection': {
+349	          const it = top.items[top.items.length - 1]
+350	          if (!it || it.value)
+351	            top.items.push({ start: [], key: token, sep: [] })
+352	          else if (it.sep) it.value = token
+353	          else Object.assign(it, { key: token, sep: [] })
+354	          return
+355	        }
+356	        /* istanbul ignore next should not happen */
+357	        default:
+358	          this.pop()
+359	          this.pop(token)
+360	      }
+361	
+362	      if (
+363	        (top.type === 'document' ||
+364	          top.type === 'block-map' ||
+365	          top.type === 'block-seq') &&
+366	        (token.type === 'block-map' || token.type === 'block-seq')
+367	      ) {
+368	        const last = token.items[token.items.length - 1]
+369	        if (
+370	          last &&
+371	          !last.sep &&
+372	          !last.value &&
+373	          last.start.length > 0 &&
+374	          findNonEmptyIndex(last.start) === -1 &&
+375	          (token.indent === 0 ||
+376	            last.start.every(
+377	              st => st.type !== 'comment' || st.indent < token.indent
+378	            ))
+379	        ) {
+380	          if (top.type === 'document') top.end = last.start
+381	          else top.items.push({ start: last.start })
+382	          token.items.splice(-1, 1)
+383	        }
+384	      }
+385	    }
+386	  }
+387	
+388	  private stream(): Token | null {
+389	    switch (this.type) {
+390	      case 'directive-line':
+391	        return { type: 'directive', offset: this.offset, source: this.source }
+392	      case 'byte-order-mark':
+393	      case 'space':
+394	      case 'comment':
+395	      case 'newline':
+396	        return this.sourceToken
+397	      case 'doc-mode':
+398	      case 'doc-start': {
+399	        const doc: Document = {
+400	          type: 'document',
+401	          offset: this.offset,
+402	          start: []
+403	        }
+404	        if (this.type === 'doc-start') doc.start.push(this.sourceToken)
+405	        this.stack.push(doc)
+406	        return null
+407	      }
+408	    }
+409	    return {
+410	      type: 'error',
+411	      offset: this.offset,
+412	      message: `Unexpected ${this.type} token in YAML stream`,
+413	      source: this.source
+414	    }
+415	  }
+416	
+417	  private document(doc: Document) {
+418	    if (doc.value) return this.lineEnd(doc)
+419	    switch (this.type) {
+420	      case 'doc-start': {
+421	        if (findNonEmptyIndex(doc.start) !== -1) {
+422	          this.pop()
+423	          this.step()
+424	        } else {
+425	          doc.start.push(this.sourceToken)
+426	        }
+427	        return
+428	      }
+429	      case 'anchor':
+430	      case 'tag':
+431	      case 'space':
+432	      case 'comment':
+433	      case 'newline':
+434	        doc.start.push(this.sourceToken)
+435	        return
+436	    }
+437	    const bv = this.startBlockValue(doc)
+438	    if (bv) this.stack.push(bv)
+439	    else {
+440	      this.tokens.push({
+441	        type: 'error',
+442	        offset: this.offset,
+443	        message: `Unexpected ${this.type} token in YAML document`,
+444	        source: this.source
+445	      })
+446	    }
+447	  }
+448	
+449	  private scalar(scalar: FlowScalar) {
+450	    if (this.type === 'map-value-ind') {
+451	      const prev = getPrevProps(this.peek(2))
+452	      const start = getFirstKeyStartProps(prev)
+453	
+454	      let sep: SourceToken[]
+455	      if (scalar.end) {
+456	        sep = scalar.end
+457	        sep.push(this.sourceToken)
+458	        delete scalar.end
+459	      } else sep = [this.sourceToken]
+460	
+461	      const map: BlockMap = {
+462	        type: 'block-map',
+463	        offset: scalar.offset,
+464	        indent: scalar.indent,
+465	        items: [{ start, key: scalar, sep }]
+466	      }
+467	      this.onKeyLine = true
+468	      this.stack[this.stack.length - 1] = map
+469	    } else this.lineEnd(scalar)
+470	  }
+471	
+472	  private blockScalar(scalar: BlockScalar) {
+473	    switch (this.type) {
+474	      case 'space':
+475	      case 'comment':
+476	      case 'newline':
+477	        scalar.props.push(this.sourceToken)
+478	        return
+479	      case 'scalar':
+480	        scalar.source = this.source
+481	        // block-scalar source includes trailing newline
+482	        this.atNewLine = true
+483	        this.indent = 0
+484	        if (this.onNewLine) {
+485	          let nl = this.source.indexOf('\n') + 1
+486	          while (nl !== 0) {
+487	            this.onNewLine(this.offset + nl)
+488	            nl = this.source.indexOf('\n', nl) + 1
+489	          }
+490	        }
+491	        this.pop()
+492	        break
+493	      /* istanbul ignore next should not happen */
+494	      default:
+495	        this.pop()
+496	        this.step()
+497	    }
+498	  }
+499	
+500	  private blockMap(map: BlockMap) {
+501	    const it = map.items[map.items.length - 1]
+502	
+503	    // it.sep is true-ish if pair already has key or : separator
+504	    switch (this.type) {
+505	      case 'newline':
+506	        this.onKeyLine = false
+507	        if (it.value) {
+508	          const end = 'end' in it.value ? it.value.end : undefined
+509	          const last = Array.isArray(end) ? end[end.length - 1] : undefined
+510	          if (last?.type === 'comment') end?.push(this.sourceToken)
+511	          else map.items.push({ start: [this.sourceToken] })
+512	        } else if (it.sep) {
+513	          it.sep.push(this.sourceToken)
+514	        } else {
+515	          it.start.push(this.sourceToken)
+516	        }
+517	        return
+518	      case 'space':
+519	      case 'comment':
+520	        if (it.value) {
+521	          map.items.push({ start: [this.sourceToken] })
+522	        } else if (it.sep) {
+523	          it.sep.push(this.sourceToken)
+524	        } else {
+525	          if (this.atIndentedComment(it.start, map.indent)) {
+526	            const prev = map.items[map.items.length - 2]
+527	            const end = (prev?.value as { end: SourceToken[] })?.end
+528	            if (Array.isArray(end)) {
+529	              Array.prototype.push.apply(end, it.start)
+530	              end.push(this.sourceToken)
+531	              map.items.pop()
+532	              return
+533	            }
+534	          }
+535	          it.start.push(this.sourceToken)
+536	        }
+537	        return
+538	    }
+539	
+540	    if (this.indent >= map.indent) {
+541	      const atMapIndent = !this.onKeyLine && this.indent === map.indent
+542	      const atNextItem =
+543	        atMapIndent &&
+544	        (it.sep || it.explicitKey) &&
+545	        this.type !== 'seq-item-ind'
+546	
+547	      // For empty nodes, assign newline-separated not indented empty tokens to following node
+548	      let start: SourceToken[] = []
+549	      if (atNextItem && it.sep && !it.value) {
+550	        const nl: number[] = []
+551	        for (let i = 0; i < it.sep.length; ++i) {
+552	          const st = it.sep[i]
+553	          switch (st.type) {
+554	            case 'newline':
+555	              nl.push(i)
+556	              break
+557	            case 'space':
+558	              break
+559	            case 'comment':
+560	              if (st.indent > map.indent) nl.length = 0
+561	              break
+562	            default:
+563	              nl.length = 0
+564	          }
+565	        }
+566	        if (nl.length >= 2) start = it.sep.splice(nl[1])
+567	      }
+568	
+569	      switch (this.type) {
+570	        case 'anchor':
+571	        case 'tag':
+572	          if (atNextItem || it.value) {
+573	            start.push(this.sourceToken)
+574	            map.items.push({ start })
+575	            this.onKeyLine = true
+576	          } else if (it.sep) {
+577	            it.sep.push(this.sourceToken)
+578	          } else {
+579	            it.start.push(this.sourceToken)
+580	          }
+581	          return
+582	
+583	        case 'explicit-key-ind':
+584	          if (!it.sep && !it.explicitKey) {
+585	            it.start.push(this.sourceToken)
+586	            it.explicitKey = true
+587	          } else if (atNextItem || it.value) {
+588	            start.push(this.sourceToken)
+589	            map.items.push({ start, explicitKey: true })
+590	          } else {
+591	            this.stack.push({
+592	              type: 'block-map',
+593	              offset: this.offset,
+594	              indent: this.indent,
+595	              items: [{ start: [this.sourceToken], explicitKey: true }]
+596	            })
+597	          }
+598	          this.onKeyLine = true
+599	          return
+600	
+601	        case 'map-value-ind':
+602	          if (it.explicitKey) {
+603	            if (!it.sep) {
+604	              if (includesToken(it.start, 'newline')) {
+605	                Object.assign(it, { key: null, sep: [this.sourceToken] })
+606	              } else {
+607	                const start = getFirstKeyStartProps(it.start)
+608	                this.stack.push({
+609	                  type: 'block-map',
+610	                  offset: this.offset,
+611	                  indent: this.indent,
+612	                  items: [{ start, key: null, sep: [this.sourceToken] }]
+613	                })
+614	              }
+615	            } else if (it.value) {
+616	              map.items.push({ start: [], key: null, sep: [this.sourceToken] })
+617	            } else if (includesToken(it.sep, 'map-value-ind')) {
+618	              this.stack.push({
+619	                type: 'block-map',
+620	                offset: this.offset,
+621	                indent: this.indent,
+622	                items: [{ start, key: null, sep: [this.sourceToken] }]
+623	              })
+624	            } else if (
+625	              isFlowToken(it.key) &&
+626	              !includesToken(it.sep, 'newline')
+627	            ) {
+628	              const start = getFirstKeyStartProps(it.start)
+629	              const key = it.key
+630	              const sep = it.sep
+631	              sep.push(this.sourceToken)
+632	              // @ts-expect-error type guard is wrong here
+633	              delete it.key
+634	              // @ts-expect-error type guard is wrong here
+635	              delete it.sep
+636	              this.stack.push({
+637	                type: 'block-map',
+638	                offset: this.offset,
+639	                indent: this.indent,
+640	                items: [{ start, key, sep }]
+641	              })
+642	            } else if (start.length > 0) {
+643	              // Not actually at next item
+644	              it.sep = [...it.sep, ...start, this.sourceToken]
+645	            } else {
+646	              it.sep.push(this.sourceToken)
+647	            }
+648	          } else {
+649	            if (!it.sep) {
+650	              Object.assign(it, { key: null, sep: [this.sourceToken] })
+651	            } else if (it.value || atNextItem) {
+652	              map.items.push({ start, key: null, sep: [this.sourceToken] })
+653	            } else if (includesToken(it.sep, 'map-value-ind')) {
+654	              this.stack.push({
+655	                type: 'block-map',
+656	                offset: this.offset,
+657	                indent: this.indent,
+658	                items: [{ start: [], key: null, sep: [this.sourceToken] }]
+659	              })
+660	            } else {
+661	              it.sep.push(this.sourceToken)
+662	            }
+663	          }
+664	          this.onKeyLine = true
+665	          return
+666	
+667	        case 'alias':
+668	        case 'scalar':
+669	        case 'single-quoted-scalar':
+670	        case 'double-quoted-scalar': {
+671	          const fs = this.flowScalar(this.type)
+672	          if (atNextItem || it.value) {
+673	            map.items.push({ start, key: fs, sep: [] })
+674	            this.onKeyLine = true
+675	          } else if (it.sep) {
+676	            this.stack.push(fs)
+677	          } else {
+678	            Object.assign(it, { key: fs, sep: [] })
+679	            this.onKeyLine = true
+680	          }
+681	          return
+682	        }
+683	
+684	        default: {
+685	          const bv = this.startBlockValue(map)
+686	          if (bv) {
+687	            if (bv.type === 'block-seq') {
+688	              if (
+689	                !it.explicitKey &&
+690	                it.sep &&
+691	                !includesToken(it.sep, 'newline')
+692	              ) {
+693	                this.pop({
+694	                  type: 'error',
+695	                  offset: this.offset,
+696	                  message: 'Unexpected block-seq-ind on same line with key',
+697	                  source: this.source
+698	                })
+699	                return
+700	              }
+701	            } else if (atMapIndent) {
+702	              map.items.push({ start })
+703	            }
+704	            this.stack.push(bv)
+705	            return
+706	          }
+707	        }
+708	      }
+709	    }
+710	    this.pop()
+711	    this.step()
+712	  }
+713	
+714	  private blockSequence(seq: BlockSequence) {
+715	    const it = seq.items[seq.items.length - 1]
+716	    switch (this.type) {
+717	      case 'newline':
+718	        if (it.value) {
+719	          const end = 'end' in it.value ? it.value.end : undefined
+720	          const last = Array.isArray(end) ? end[end.length - 1] : undefined
+721	          if (last?.type === 'comment') end?.push(this.sourceToken)
+722	          else seq.items.push({ start: [this.sourceToken] })
+723	        } else it.start.push(this.sourceToken)
+724	        return
+725	      case 'space':
+726	      case 'comment':
+727	        if (it.value) seq.items.push({ start: [this.sourceToken] })
+728	        else {
+729	          if (this.atIndentedComment(it.start, seq.indent)) {
+730	            const prev = seq.items[seq.items.length - 2]
+731	            const end = (prev?.value as { end: SourceToken[] })?.end
+732	            if (Array.isArray(end)) {
+733	              Array.prototype.push.apply(end, it.start)
+734	              end.push(this.sourceToken)
+735	              seq.items.pop()
+736	              return
+737	            }
+738	          }
+739	          it.start.push(this.sourceToken)
+740	        }
+741	        return
+742	      case 'anchor':
+743	      case 'tag':
+744	        if (it.value || this.indent <= seq.indent) break
+745	        it.start.push(this.sourceToken)
+746	        return
+747	      case 'seq-item-ind':
+748	        if (this.indent !== seq.indent) break
+749	        if (it.value || includesToken(it.start, 'seq-item-ind'))
+750	          seq.items.push({ start: [this.sourceToken] })
+751	        else it.start.push(this.sourceToken)
+752	        return
+753	    }
+754	    if (this.indent > seq.indent) {
+755	      const bv = this.startBlockValue(seq)
+756	      if (bv) {
+757	        this.stack.push(bv)
+758	        return
+759	      }
+760	    }
+761	    this.pop()
+762	    this.step()
+763	  }
+764	
+765	  private flowCollection(fc: FlowCollection) {
+766	    const it = fc.items[fc.items.length - 1]
+767	    if (this.type === 'flow-error-end') {
+768	      let top: Token | undefined
+769	      do {
+770	        this.pop()
+771	        top = this.peek(1)
+772	      } while (top?.type === 'flow-collection')
+773	    } else if (fc.end.length === 0) {
+774	      switch (this.type) {
+775	        case 'comma':
+776	        case 'explicit-key-ind':
+777	          if (!it || it.sep) fc.items.push({ start: [this.sourceToken] })
+778	          else it.start.push(this.sourceToken)
+779	          return
+780	
+781	        case 'map-value-ind':
+782	          if (!it || it.value)
+783	            fc.items.push({ start: [], key: null, sep: [this.sourceToken] })
+784	          else if (it.sep) it.sep.push(this.sourceToken)
+785	          else Object.assign(it, { key: null, sep: [this.sourceToken] })
+786	          return
+787	
+788	        case 'space':
+789	        case 'comment':
+790	        case 'newline':
+791	        case 'anchor':
+792	        case 'tag':
+793	          if (!it || it.value) fc.items.push({ start: [this.sourceToken] })
+794	          else if (it.sep) it.sep.push(this.sourceToken)
+795	          else it.start.push(this.sourceToken)
+796	          return
+797	
+798	        case 'alias':
+799	        case 'scalar':
+800	        case 'single-quoted-scalar':
+801	        case 'double-quoted-scalar': {
+802	          const fs = this.flowScalar(this.type)
+803	          if (!it || it.value) fc.items.push({ start: [], key: fs, sep: [] })
+804	          else if (it.sep) this.stack.push(fs)
+805	          else Object.assign(it, { key: fs, sep: [] })
+806	          return
+807	        }
+808	
+809	        case 'flow-map-end':
+810	        case 'flow-seq-end':
+811	          fc.end.push(this.sourceToken)
+812	          return
+813	      }
+814	      const bv = this.startBlockValue(fc)
+815	      /* istanbul ignore else should not happen */
+816	      if (bv) this.stack.push(bv)
+817	      else {
+818	        this.pop()
+819	        this.step()
+820	      }
+821	    } else {
+822	      const parent = this.peek(2)
+823	      if (
+824	        parent.type === 'block-map' &&
+825	        ((this.type === 'map-value-ind' && parent.indent === fc.indent) ||
+826	          (this.type === 'newline' &&
+827	            !parent.items[parent.items.length - 1].sep))
+828	      ) {
+829	        this.pop()
+830	        this.step()
+831	      } else if (
+832	        this.type === 'map-value-ind' &&
+833	        parent.type !== 'flow-collection'
+834	      ) {
+835	        const prev = getPrevProps(parent)
+836	        const start = getFirstKeyStartProps(prev)
+837	        fixFlowSeqItems(fc)
+838	        const sep = fc.end.splice(1, fc.end.length)
+839	        sep.push(this.sourceToken)
+840	        const map: BlockMap = {
+841	          type: 'block-map',
+842	          offset: fc.offset,
+843	          indent: fc.indent,
+844	          items: [{ start, key: fc, sep }]
+845	        }
+846	        this.onKeyLine = true
+847	        this.stack[this.stack.length - 1] = map
+848	      } else {
+849	        this.lineEnd(fc)
+850	      }
+851	    }
+852	  }
+853	
+854	  private flowScalar(
+855	    type: 'alias' | 'scalar' | 'single-quoted-scalar' | 'double-quoted-scalar'
+856	  ): FlowScalar {
+857	    if (this.onNewLine) {
+858	      let nl = this.source.indexOf('\n') + 1
+859	      while (nl !== 0) {
+860	        this.onNewLine(this.offset + nl)
+861	        nl = this.source.indexOf('\n', nl) + 1
+862	      }
+863	    }
+864	    return {
+865	      type,
+866	      offset: this.offset,
+867	      indent: this.indent,
+868	      source: this.source
+869	    }
+870	  }
+871	
+872	  private startBlockValue(parent: Token) {
+873	    switch (this.type) {
+874	      case 'alias':
+875	      case 'scalar':
+876	      case 'single-quoted-scalar':
+877	      case 'double-quoted-scalar':
+878	        return this.flowScalar(this.type)
+879	      case 'block-scalar-header':
+880	        return {
+881	          type: 'block-scalar',
+882	          offset: this.offset,
+883	          indent: this.indent,
+884	          props: [this.sourceToken],
+885	          source: ''
+886	        } as BlockScalar
+887	      case 'flow-map-start':
+888	      case 'flow-seq-start':
+889	        return {
+890	          type: 'flow-collection',
+891	          offset: this.offset,
+892	          indent: this.indent,
+893	          start: this.sourceToken,
+894	          items: [],
+895	          end: []
+896	        } as FlowCollection
+897	      case 'seq-item-ind':
+898	        return {
+899	          type: 'block-seq',
+900	          offset: this.offset,
+901	          indent: this.indent,
+902	          items: [{ start: [this.sourceToken] }]
+903	        } as BlockSequence
+904	      case 'explicit-key-ind': {
+905	        this.onKeyLine = true
+906	        const prev = getPrevProps(parent)
+907	        const start = getFirstKeyStartProps(prev)
+908	        start.push(this.sourceToken)
+909	        return {
+910	          type: 'block-map',
+911	          offset: this.offset,
+912	          indent: this.indent,
+913	          items: [{ start, explicitKey: true }]
+914	        } as BlockMap
+915	      }
+916	      case 'map-value-ind': {
+917	        this.onKeyLine = true
+918	        const prev = getPrevProps(parent)
+919	        const start = getFirstKeyStartProps(prev)
+920	        return {
+921	          type: 'block-map',
+922	          offset: this.offset,
+923	          indent: this.indent,
+924	          items: [{ start, key: null, sep: [this.sourceToken] }]
+925	        } as BlockMap
+926	      }
+927	    }
+928	    return null
+929	  }
+930	
+931	  private atIndentedComment(start: SourceToken[], indent: number) {
+932	    if (this.type !== 'comment') return false
+933	    if (this.indent <= indent) return false
+934	    return start.every(st => st.type === 'newline' || st.type === 'space')
+935	  }
+936	
+937	  private documentEnd(docEnd: DocumentEnd) {
+938	    if (this.type !== 'doc-mode') {
+939	      if (docEnd.end) docEnd.end.push(this.sourceToken)
+940	      else docEnd.end = [this.sourceToken]
+941	      if (this.type === 'newline') this.pop()
+942	    }
+943	  }
+944	
+945	  private lineEnd(token: Document | FlowCollection | FlowScalar) {
+946	    switch (this.type) {
+947	      case 'comma':
+948	      case 'doc-start':
+949	      case 'doc-end':
+950	      case 'flow-seq-end':
+951	      case 'flow-map-end':
+952	      case 'map-value-ind':
+953	        this.pop()
+954	        this.step()
+955	        break
+956	      case 'newline':
+957	        this.onKeyLine = false
+958	      // fallthrough
+959	      case 'space':
+960	      case 'comment':
+961	      default:
+962	        // all other values are errors
+963	        if (token.end) token.end.push(this.sourceToken)
+964	        else token.end = [this.sourceToken]
+965	        if (this.type === 'newline') this.pop()
+966	    }
+967	  }
+968	}
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-p573wwvf.log]

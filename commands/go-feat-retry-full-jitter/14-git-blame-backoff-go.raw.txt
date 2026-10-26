@@ -1,0 +1,134 @@
+$ git blame backoff.go
+^9a161fe (evals 2026-10-22 12:37:37 +0200   1) package retry
+^9a161fe (evals 2026-10-22 12:37:37 +0200   2) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200   3) import (
+^9a161fe (evals 2026-10-22 12:37:37 +0200   4) 	"math/rand/v2"
+^9a161fe (evals 2026-10-22 12:37:37 +0200   5) 	"sync"
+^9a161fe (evals 2026-10-22 12:37:37 +0200   6) 	"time"
+^9a161fe (evals 2026-10-22 12:37:37 +0200   7) )
+^9a161fe (evals 2026-10-22 12:37:37 +0200   8) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200   9) // Backoff is an interface that backs off.
+^9a161fe (evals 2026-10-22 12:37:37 +0200  10) type Backoff interface {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  11) 	// Next returns the time duration to wait and whether to stop.
+^9a161fe (evals 2026-10-22 12:37:37 +0200  12) 	Next() (next time.Duration, stop bool)
+^9a161fe (evals 2026-10-22 12:37:37 +0200  13) }
+^9a161fe (evals 2026-10-22 12:37:37 +0200  14) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  15) var _ Backoff = (BackoffFunc)(nil)
+^9a161fe (evals 2026-10-22 12:37:37 +0200  16) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  17) // BackoffFunc is a backoff expressed as a function.
+^9a161fe (evals 2026-10-22 12:37:37 +0200  18) type BackoffFunc func() (time.Duration, bool)
+^9a161fe (evals 2026-10-22 12:37:37 +0200  19) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  20) // Next implements Backoff.
+^9a161fe (evals 2026-10-22 12:37:37 +0200  21) func (b BackoffFunc) Next() (time.Duration, bool) {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  22) 	return b()
+^9a161fe (evals 2026-10-22 12:37:37 +0200  23) }
+^9a161fe (evals 2026-10-22 12:37:37 +0200  24) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  25) // WithJitter wraps a backoff function and adds the specified jitter. j can be
+^9a161fe (evals 2026-10-22 12:37:37 +0200  26) // interpreted as "+/- j". For example, if j were 5 seconds and the backoff
+^9a161fe (evals 2026-10-22 12:37:37 +0200  27) // returned 20s, the value could be between 15 and 25 seconds. The value can
+^9a161fe (evals 2026-10-22 12:37:37 +0200  28) // never be less than 0.
+^9a161fe (evals 2026-10-22 12:37:37 +0200  29) func WithJitter(j time.Duration, next Backoff) Backoff {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  30) 	return BackoffFunc(func() (time.Duration, bool) {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  31) 		val, stop := next.Next()
+^9a161fe (evals 2026-10-22 12:37:37 +0200  32) 		if stop {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  33) 			return 0, true
+^9a161fe (evals 2026-10-22 12:37:37 +0200  34) 		}
+^9a161fe (evals 2026-10-22 12:37:37 +0200  35) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  36) 		if j <= 0 {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  37) 			return val, false
+^9a161fe (evals 2026-10-22 12:37:37 +0200  38) 		}
+^9a161fe (evals 2026-10-22 12:37:37 +0200  39) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  40) 		diff := time.Duration(rand.Int64N(int64(j)*2) - int64(j))
+^9a161fe (evals 2026-10-22 12:37:37 +0200  41) 		val = max(val+diff, 0)
+^9a161fe (evals 2026-10-22 12:37:37 +0200  42) 		return val, false
+^9a161fe (evals 2026-10-22 12:37:37 +0200  43) 	})
+^9a161fe (evals 2026-10-22 12:37:37 +0200  44) }
+^9a161fe (evals 2026-10-22 12:37:37 +0200  45) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  46) // WithJitterPercent wraps a backoff function and adds the specified jitter
+^9a161fe (evals 2026-10-22 12:37:37 +0200  47) // percentage. j can be interpreted as "+/- j%". For example, if j were 5 and
+^9a161fe (evals 2026-10-22 12:37:37 +0200  48) // the backoff returned 20s, the value could be between 19 and 21 seconds. The
+^9a161fe (evals 2026-10-22 12:37:37 +0200  49) // value can never be less than 0 or greater than 100.
+^9a161fe (evals 2026-10-22 12:37:37 +0200  50) func WithJitterPercent(j uint64, next Backoff) Backoff {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  51) 	return BackoffFunc(func() (time.Duration, bool) {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  52) 		val, stop := next.Next()
+^9a161fe (evals 2026-10-22 12:37:37 +0200  53) 		if stop {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  54) 			return 0, true
+^9a161fe (evals 2026-10-22 12:37:37 +0200  55) 		}
+^9a161fe (evals 2026-10-22 12:37:37 +0200  56) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  57) 		if j <= 0 {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  58) 			return val, false
+^9a161fe (evals 2026-10-22 12:37:37 +0200  59) 		}
+^9a161fe (evals 2026-10-22 12:37:37 +0200  60) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  61) 		// Get a value between -j and j, the convert to a percentage
+^9a161fe (evals 2026-10-22 12:37:37 +0200  62) 		top := rand.Int64N(int64(j)*2) - int64(j)
+^9a161fe (evals 2026-10-22 12:37:37 +0200  63) 		pct := 1 - float64(top)/100.0
+^9a161fe (evals 2026-10-22 12:37:37 +0200  64) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  65) 		val = max(time.Duration(float64(val)*pct), 0)
+^9a161fe (evals 2026-10-22 12:37:37 +0200  66) 		return val, false
+^9a161fe (evals 2026-10-22 12:37:37 +0200  67) 	})
+^9a161fe (evals 2026-10-22 12:37:37 +0200  68) }
+^9a161fe (evals 2026-10-22 12:37:37 +0200  69) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  70) // WithMaxRetries executes the backoff function up until the maximum attempts.
+^9a161fe (evals 2026-10-22 12:37:37 +0200  71) func WithMaxRetries(max uint64, next Backoff) Backoff {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  72) 	var l sync.Mutex
+^9a161fe (evals 2026-10-22 12:37:37 +0200  73) 	var attempt uint64
+^9a161fe (evals 2026-10-22 12:37:37 +0200  74) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  75) 	return BackoffFunc(func() (time.Duration, bool) {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  76) 		l.Lock()
+^9a161fe (evals 2026-10-22 12:37:37 +0200  77) 		defer l.Unlock()
+^9a161fe (evals 2026-10-22 12:37:37 +0200  78) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  79) 		if attempt >= max {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  80) 			return 0, true
+^9a161fe (evals 2026-10-22 12:37:37 +0200  81) 		}
+^9a161fe (evals 2026-10-22 12:37:37 +0200  82) 		attempt++
+^9a161fe (evals 2026-10-22 12:37:37 +0200  83) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  84) 		val, stop := next.Next()
+^9a161fe (evals 2026-10-22 12:37:37 +0200  85) 		if stop {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  86) 			return 0, true
+^9a161fe (evals 2026-10-22 12:37:37 +0200  87) 		}
+^9a161fe (evals 2026-10-22 12:37:37 +0200  88) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  89) 		return val, false
+^9a161fe (evals 2026-10-22 12:37:37 +0200  90) 	})
+^9a161fe (evals 2026-10-22 12:37:37 +0200  91) }
+^9a161fe (evals 2026-10-22 12:37:37 +0200  92) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200  93) // WithCappedDuration sets a maximum on the duration returned from the next
+^9a161fe (evals 2026-10-22 12:37:37 +0200  94) // backoff. This is NOT a total backoff time, but rather a cap on the maximum
+^9a161fe (evals 2026-10-22 12:37:37 +0200  95) // value a backoff can return. Without another middleware, the backoff will
+^9a161fe (evals 2026-10-22 12:37:37 +0200  96) // continue infinitely.
+^9a161fe (evals 2026-10-22 12:37:37 +0200  97) func WithCappedDuration(cap time.Duration, next Backoff) Backoff {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  98) 	return BackoffFunc(func() (time.Duration, bool) {
+^9a161fe (evals 2026-10-22 12:37:37 +0200  99) 		val, stop := next.Next()
+^9a161fe (evals 2026-10-22 12:37:37 +0200 100) 		if stop {
+^9a161fe (evals 2026-10-22 12:37:37 +0200 101) 			return 0, true
+^9a161fe (evals 2026-10-22 12:37:37 +0200 102) 		}
+^9a161fe (evals 2026-10-22 12:37:37 +0200 103) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200 104) 		if val <= 0 || val > cap {
+^9a161fe (evals 2026-10-22 12:37:37 +0200 105) 			val = cap
+^9a161fe (evals 2026-10-22 12:37:37 +0200 106) 		}
+^9a161fe (evals 2026-10-22 12:37:37 +0200 107) 		return val, false
+^9a161fe (evals 2026-10-22 12:37:37 +0200 108) 	})
+^9a161fe (evals 2026-10-22 12:37:37 +0200 109) }
+^9a161fe (evals 2026-10-22 12:37:37 +0200 110) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200 111) // WithMaxDuration sets a maximum on the total amount of time a backoff should
+^9a161fe (evals 2026-10-22 12:37:37 +0200 112) // execute. It's best-effort, and should not be used to guarantee an exact
+^9a161fe (evals 2026-10-22 12:37:37 +0200 113) // amount of time.
+^9a161fe (evals 2026-10-22 12:37:37 +0200 114) func WithMaxDuration(timeout time.Duration, next Backoff) Backoff {
+^9a161fe (evals 2026-10-22 12:37:37 +0200 115) 	start := time.Now()
+^9a161fe (evals 2026-10-22 12:37:37 +0200 116) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200 117) 	return BackoffFunc(func() (time.Duration, bool) {
+^9a161fe (evals 2026-10-22 12:37:37 +0200 118) 		diff := timeout - time.Since(start)
+^9a161fe (evals 2026-10-22 12:37:37 +0200 119) 		if diff <= 0 {
+^9a161fe (evals 2026-10-22 12:37:37 +0200 120) 			return 0, true
+^9a161fe (evals 2026-10-22 12:37:37 +0200 121) 		}
+^9a161fe (evals 2026-10-22 12:37:37 +0200 122) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200 123) 		val, stop := next.Next()
+^9a161fe (evals 2026-10-22 12:37:37 +0200 124) 		if stop {
+^9a161fe (evals 2026-10-22 12:37:37 +0200 125) 			return 0, true
+^9a161fe (evals 2026-10-22 12:37:37 +0200 126) 		}
+^9a161fe (evals 2026-10-22 12:37:37 +0200 127) 
+^9a161fe (evals 2026-10-22 12:37:37 +0200 128) 		if val <= 0 || val > diff {
+^9a161fe (evals 2026-10-22 12:37:37 +0200 129) 			val = diff
+^9a161fe (evals 2026-10-22 12:37:37 +0200 130) 		}
+^9a161fe (evals 2026-10-22 12:37:37 +0200 131) 		return val, false
+^9a161fe (evals 2026-10-22 12:37:37 +0200 132) 	})
+^9a161fe (evals 2026-10-22 12:37:37 +0200 133) }

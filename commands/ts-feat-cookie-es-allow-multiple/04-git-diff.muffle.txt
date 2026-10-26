@@ -1,0 +1,88 @@
+$ git diff
+=== README.md
+@@ -37,2 +37,20 @@ import { parse, serialize, parseSetCookie, splitSetCookieString } from "cookie-e
+ 
++## Parsing Options
++
++### `allowMultiple`
++
++By default, when a cookie name appears more than once, only the first value is kept. Set `allowMultiple: true` to collect all values into an array:
++
++```js
++import { parse } from "cookie-es";
++
++// Default: first value wins
++parse("foo=a;bar=b;foo=c");
++// => { foo: "a", bar: "b" }
++
++// With allowMultiple: duplicates return arrays
++parse("foo=a;bar=b;foo=c", { allowMultiple: true });
++// => { foo: ["a", "c"], bar: "b" }
++```
++
+ ## License
+=== src/cookie/parse.ts
+@@ -5,3 +5,3 @@
+ 
+-import type { CookieParseOptions, Cookies, SetCookie } from "./types.ts";
++import type { CookieParseOptions, Cookies, MultiCookies, SetCookie } from "./types.ts";
+ 
+@@ -24,4 +24,9 @@ const NullObject = /* @__PURE__ */ (() => {
+  */
+-export function parse(str: string, options?: CookieParseOptions): Cookies {
+-  const obj: Cookies = new NullObject();
++export function parse(
++  str: string,
++  options: CookieParseOptions & { allowMultiple: true },
++): MultiCookies;
++export function parse(str: string, options?: CookieParseOptions): Cookies;
++export function parse(str: string, options?: CookieParseOptions): Cookies | MultiCookies {
++  const obj: MultiCookies = new NullObject();
+   const len = str.length;
+@@ -31,2 +36,3 @@ const NullObject = /* @__PURE__ */ (() => {
+   const dec = options?.decode || decode;
++  const allowMultiple = options?.allowMultiple || false;
+   let index = 0;
+@@ -52,5 +58,15 @@ export function parse(str: string, options?: CookieParseOptions): Cookies {
+ 
+-    // only assign once
+-    if (obj[key] === undefined) {
+-      obj[key] = dec(valueSlice(str, eqIdx + 1, endIdx));
++    const val = dec(valueSlice(str, eqIdx + 1, endIdx));
++
++    if (allowMultiple) {
++      const existing = obj[key];
++      if (existing === undefined) {
++        obj[key] = val;
++      } else if (Array.isArray(existing)) {
++        existing.push(val!);
++      } else {
++        obj[key] = [existing!, val!];
++      }
++    } else if (obj[key] === undefined) {
++      obj[key] = val;
+     }
+=== src/cookie/types.ts
+@@ -25,2 +25,8 @@ export interface CookieParseOptions {
+   filter?(key: string): boolean;
++
++  /**
++   * When enabled, duplicate cookie names will return an array of values
++   * instead of only the first value.
++   */
++  allowMultiple?: boolean;
+ }
+@@ -32,2 +38,7 @@ export interface CookieParseOptions {
+ 
++/**
++ * Cookies object when `allowMultiple` is enabled.
++ */
++export type MultiCookies = Record<string, string | string[] | undefined>;
++
+ /**
+=== src/index.ts
+@@ -8,2 +8,3 @@ export type {
+   Cookies,
++  MultiCookies,
+   SetCookie,
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-oq24mb0e.log]

@@ -1,0 +1,60 @@
+diff --git a/src/_parser.ts b/src/_parser.ts
+index 992c23d..738a620 100644
+--- a/src/_parser.ts
++++ b/src/_parser.ts
+@@ -51,7 +51,6 @@ export function parseRawArgs<T = Record<string, any>>(
+     {
+       type: "boolean" | "string";
+       short?: string;
+-      default?: any;
+       multiple?: boolean;
+     }
+   > = {};
+@@ -82,7 +81,6 @@ export function parseRawArgs<T = Record<string, any>>(
+       const type = getType(name);
+       options[name] = {
+         type,
+-        default: defaults[name],
+       };
+     }
+   }
+@@ -172,5 +170,18 @@ export function parseRawArgs<T = Record<string, any>>(
+     }
+   }
+ 
++  // Apply defaults last, so a value given via any alias is not shadowed by
++  // the default of another name (e.g. `--foo-bar` vs a `fooBar` default)
++  for (const [name, value] of Object.entries(defaults)) {
++    if ((out as any)[name] === undefined) {
++      (out as any)[name] = value;
++    }
++    for (const alias of mainToAliases.get(name) || []) {
++      if ((out as any)[alias] === undefined) {
++        (out as any)[alias] = (out as any)[name];
++      }
++    }
++  }
++
+   return out;
+ }
+diff --git a/test/_kebab.test.ts b/test/_kebab.test.ts
+new file mode 100644
+index 0000000..21e8115
+--- /dev/null
++++ b/test/_kebab.test.ts
+@@ -0,0 +1,15 @@
++import { expect, it } from "vitest";
++import { parseArgs } from "../src/args.ts";
++
++it("kebab-case input overrides camelCase default", () => {
++  const r = parseArgs(["--foo-bar", "one"], {
++    fooBar: { type: "enum", options: ["one", "two"], default: "two" },
++  }) as any;
++  expect(r.fooBar).toBe("one");
++  expect(r["foo-bar"]).toBe("one");
++  const d = parseArgs([], {
++    fooBar: { type: "enum", options: ["one", "two"], default: "two" },
++  }) as any;
++  expect(d.fooBar).toBe("two");
++  expect(d["foo-bar"]).toBe("two");
++});

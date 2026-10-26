@@ -1,0 +1,202 @@
+$ git blame src/packaging/requirements.py
+^55d6b43 (evals 2026-10-22 12:38:46 +0200   1) # This file is dual licensed under the terms of the Apache License, Version
+^55d6b43 (evals 2026-10-22 12:38:46 +0200   2) # 2.0, and the BSD License. See the LICENSE file in the root of this repository
+^55d6b43 (evals 2026-10-22 12:38:46 +0200   3) # for complete details.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200   4) from __future__ import annotations
+^55d6b43 (evals 2026-10-22 12:38:46 +0200   5) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200   6) from typing import TYPE_CHECKING
+^55d6b43 (evals 2026-10-22 12:38:46 +0200   7) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200   8) from ._parser import parse_requirement as _parse_requirement
+^55d6b43 (evals 2026-10-22 12:38:46 +0200   9) from ._tokenizer import ParserSyntaxError
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  10) from .markers import Marker, _normalize_extra_values
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  11) from .specifiers import InvalidSpecifier, SpecifierSet
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  12) from .utils import canonicalize_name
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  13) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  14) if TYPE_CHECKING:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  15)     from collections.abc import Iterator
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  16) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  17) __all__ = [
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  18)     "InvalidRequirement",
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  19)     "Requirement",
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  20) ]
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  21) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  22) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  23) def __dir__() -> list[str]:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  24)     return __all__
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  25) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  26) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  27) class InvalidRequirement(ValueError):
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  28)     """
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  29)     Raised when attempting to create a :class:`Requirement` with a string that
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  30)     does not conform to the specification. Users should refer to PEP 508.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  31) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  32)     .. versionadded:: 16.1
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  33)     """
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  34) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  35) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  36) class Requirement:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  37)     """Represent a requirement for a project.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  38) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  39)     Parse a given requirement string into its parts, such as name, specifier,
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  40)     URL, and extras, according to the specification.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  41) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  42)     .. versionadded:: 16.1
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  43) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  44)     .. versionchanged:: 22.0
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  45)         Added equality (``__eq__``) and hashing (``__hash__``) so requirements
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  46)         can be compared and stored in sets / dicts.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  47) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  48)     .. versionchanged:: 23.2
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  49)         Equality and hashing began canonicalizing requirement names, so
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  50)         requirements whose names differ only by normalization (e.g.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  51)         ``Requirement("Foo")`` vs ``Requirement("foo")``) now compare and hash
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  52)         equal.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  53) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  54)     Instances are safe to serialize with :mod:`pickle`. They use a stable
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  55)     format so the same pickle can be loaded in future packaging releases.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  56) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  57)     .. versionchanged:: 26.2
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  58) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  59)         Added a stable pickle format. Pickles created with packaging 26.2+ can
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  60)         be unpickled with future releases.  Backward compatibility with pickles
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  61)         from packaging < 26.2 is supported but may be removed in a future
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  62)         release.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  63) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  64)     .. versionchanged:: 26.3
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  65) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  66)         The dedicated pickle support introduced in 26.2 did not preserve the
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  67)         specifier's explicit :attr:`~packaging.specifiers.SpecifierSet.prereleases`
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  68)         override; it is now included again.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  69) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  70)         Equality and hashing normalize requirement names, extras, and
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  71)         equivalent specifiers. The string representation still preserves the
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  72)         parsed name and extras spelling.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  73) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  74)     :param str requirement_string: The string representation of a requirement.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  75)     :raises InvalidRequirement: If the given ``requirement_string`` is not
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  76)         parseable, then this exception will be raised.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  77)     """
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  78) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  79)     # TODO: Can we test whether something is contained within a requirement?
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  80)     #       If so how do we do that? Do we need to test against the _name_ of
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  81)     #       the thing as well as the version? What about the markers?
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  82)     # TODO: Can we normalize the name and extra name?
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  83) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  84)     __slots__ = ("extras", "marker", "name", "specifier", "url")
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  85) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  86)     def __init__(self, requirement_string: str) -> None:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  87)         try:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  88)             parsed = _parse_requirement(requirement_string)
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  89)         except ParserSyntaxError as e:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  90)             raise InvalidRequirement(str(e)) from e
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  91) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  92)         self.name: str = parsed.name
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  93)         """The name of the requirement."""
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  94)         self.url: str | None = parsed.url or None
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  95)         """The URL to download the requirement from, or ``None``."""
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  96)         self.extras: set[str] = set(parsed.extras)
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  97)         """A set of extras that the requirement specifies."""
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  98)         try:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200  99)             self.specifier: SpecifierSet = SpecifierSet(parsed.specifier)
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 100)             """A :class:`~.SpecifierSet` of the version specified by the requirement."""
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 101)         except InvalidSpecifier as e:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 102)             raise InvalidRequirement(str(e)) from e
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 103)         self.marker: Marker | None = None
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 104)         """A :class:`~.Marker` for the requirement, or ``None``."""
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 105)         if parsed.marker is not None:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 106)             self.marker = Marker.__new__(Marker)
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 107)             self.marker._markers = _normalize_extra_values(parsed.marker)
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 108) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 109)     def _iter_parts(self, name: str) -> Iterator[str]:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 110)         yield name
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 111) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 112)         if self.extras:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 113)             formatted_extras = ",".join(sorted(self.extras))
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 114)             yield f"[{formatted_extras}]"
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 115) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 116)         if self.specifier:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 117)             yield str(self.specifier)
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 118) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 119)         if self.url:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 120)             yield f" @ {self.url}"
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 121)             if self.marker:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 122)                 yield " "
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 123) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 124)         if self.marker:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 125)             yield f"; {self.marker}"
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 126) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 127)     def __getstate__(self) -> tuple[str, bool | None]:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 128)         # Return the requirement string for compactness and stability, paired
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 129)         # with the specifier's explicit prereleases override, which is not
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 130)         # captured by the string form. Re-parsed on load to reconstruct all
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 131)         # other fields.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 132)         return (str(self), self.specifier._prereleases)
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 133) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 134)     def __setstate__(self, state: object) -> None:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 135)         if isinstance(state, str):
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 136)             # Format (26.2): just the requirement string.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 137)             requirement_string: str = state
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 138)             prereleases: bool | None = None
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 139)         elif (
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 140)             isinstance(state, tuple)
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 141)             and len(state) == 2
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 142)             and isinstance(state[0], str)
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 143)             and (state[1] is None or isinstance(state[1], bool))
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 144)         ):
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 145)             # New format (26.3+): (requirement string, specifier prereleases).
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 146)             requirement_string, prereleases = state
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 147)         elif isinstance(state, dict) and state.keys() >= set(self.__slots__):
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 148)             # Old format (packaging <= 26.1, no __slots__): plain __dict__.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 149)             for key in self.__slots__:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 150)                 setattr(self, key, state[key])
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 151)             return
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 152)         else:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 153)             raise TypeError(f"Cannot restore Requirement from {state!r}")
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 154) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 155)         try:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 156)             tmp = Requirement(requirement_string)
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 157)         except InvalidRequirement as exc:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 158)             raise TypeError(f"Cannot restore Requirement from {state!r}") from exc
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 159)         self.name = tmp.name
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 160)         self.url = tmp.url
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 161)         self.extras = tmp.extras
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 162)         self.specifier = tmp.specifier
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 163)         self.specifier._prereleases = prereleases
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 164)         self.marker = tmp.marker
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 165) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 166)     def __str__(self) -> str:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 167)         return "".join(self._iter_parts(self.name))
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 168) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 169)     def __repr__(self) -> str:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 170)         return f"<{self.__class__.__name__}({str(self)!r})>"
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 171) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 172)     def __hash__(self) -> int:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 173)         # Mirror __eq__ by hashing the canonical specifier object rather than
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 174)         # its raw string. ``_iter_parts`` yields ``str(self.specifier)``, which
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 175)         # is non-canonical, so trailing-zero-equivalent requirements such as
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 176)         # ``foo==1.0.0`` and ``foo==1.0.0.0`` (which compare equal) would
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 177)         # otherwise hash differently, breaking the hash/__eq__ invariant.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 178)         return hash(
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 179)             (
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 180)                 canonicalize_name(self.name),
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 181)                 frozenset(canonicalize_name(e) for e in self.extras),
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 182)                 self.specifier,
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 183)                 self.url,
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 184)                 self.marker,
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 185)             )
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 186)         )
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 187) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 188)     def __eq__(self, other: object) -> bool:
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 189)         if not isinstance(other, Requirement):
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 190)             return NotImplemented
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 191) 
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 192)         # Extras must be normalized before comparison as per PEP 685.
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 193)         self_extras = frozenset(canonicalize_name(e) for e in self.extras)
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 194)         other_extras = frozenset(canonicalize_name(e) for e in other.extras)
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 195)         return (
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 196)             canonicalize_name(self.name) == canonicalize_name(other.name)
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 197)             and self_extras == other_extras
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 198)             and self.specifier == other.specifier
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 199)             and self.url == other.url
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 200)             and self.marker == other.marker
+^55d6b43 (evals 2026-10-22 12:38:46 +0200 201)         )

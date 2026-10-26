@@ -1,0 +1,100 @@
+diff --git a/src/_parser.ts b/src/_parser.ts
+index 992c23d..5212af6 100644
+--- a/src/_parser.ts
++++ b/src/_parser.ts
+@@ -51,7 +51,6 @@ export function parseRawArgs<T = Record<string, any>>(
+     {
+       type: "boolean" | "string";
+       short?: string;
+-      default?: any;
+       multiple?: boolean;
+     }
+   > = {};
+@@ -82,7 +81,6 @@ export function parseRawArgs<T = Record<string, any>>(
+       const type = getType(name);
+       options[name] = {
+         type,
+-        default: defaults[name],
+       };
+     }
+   }
+@@ -162,6 +160,14 @@ export function parseRawArgs<T = Record<string, any>>(
+     }
+   }
+ 
++  // Apply defaults only when neither the option nor an alias was provided.
++  for (const [name, value] of Object.entries(defaults)) {
++    const names = [name, ...(mainToAliases.get(name) || [])];
++    if (names.every((name) => (out as any)[name] === undefined)) {
++      (out as any)[name] = value;
++    }
++  }
++
+   // Propagate values between aliases
+   for (const [alias, main] of aliasToMain.entries()) {
+     if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
+diff --git a/test/args.test.ts b/test/args.test.ts
+index 732572c..54738c4 100644
+--- a/test/args.test.ts
++++ b/test/args.test.ts
+@@ -76,6 +76,34 @@ describe("args", () => {
+     }).toThrowError(result);
+   });
+ 
++  it.each(["fooBar", "foo-bar"])(
++    "should override defaults through either spelling of %s",
++    (name) => {
++      const definition: ArgsDef = {
++        [name]: { type: "enum", options: ["one", "two"], default: "two", alias: "f" },
++      };
++
++      for (const flag of ["--foo-bar", "--fooBar", "-f"]) {
++        expect(parseArgs([flag, "one"], definition)).toEqual({
++          _: [],
++          fooBar: "one",
++          "foo-bar": "one",
++          f: "one",
++        });
++      }
++
++      expect(parseArgs([], definition)).toEqual({
++        _: [],
++        fooBar: "two",
++        "foo-bar": "two",
++        f: "two",
++      });
++      expect(() => parseArgs(["--foo-bar", "three"], definition)).toThrow(
++        "Invalid value for argument",
++      );
++    },
++  );
++
+   it("should resolve camelCase argument", () => {
+     const definition: ArgsDef = {
+       "user-name": { type: "string" },
+diff --git a/test/parser.test.ts b/test/parser.test.ts
+index b1794c0..9d7d878 100644
+--- a/test/parser.test.ts
++++ b/test/parser.test.ts
+@@ -34,6 +34,21 @@ describe("parseRawArgs", () => {
+     });
+   });
+ 
++  it.each([
++    { args: ["--foo-bar", "one"], type: "string", fallback: "two", value: "one" },
++    { args: ["--foo-bar="], type: "string", fallback: "two", value: "" },
++    { args: ["--foo-bar"], type: "boolean", fallback: false, value: true },
++    { args: ["--no-foo-bar"], type: "boolean", fallback: true, value: false },
++  ])("prefers explicit aliases over defaults: $args", ({ args, type, fallback, value }) => {
++    expect(
++      parseRawArgs(args, {
++        [type]: ["fooBar"],
++        alias: { fooBar: ["foo-bar"] },
++        default: { fooBar: fallback },
++      }),
++    ).toEqual({ _: [], fooBar: value, "foo-bar": value });
++  });
++
+   it("handles boolean flags", () => {
+     const result = parseRawArgs(["--flag"], { boolean: ["flag"] });
+ 

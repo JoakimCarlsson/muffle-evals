@@ -1,0 +1,698 @@
+$ git show HEAD
+55d6b43f 2026-10-22 evals: base
+=== .github/dependabot.yml
+new file mode 100644
+@@ -0,0 +1,22 @@
++version: 2
++updates:
++  - package-ecosystem: "github-actions"
++    directory: "/"
++    schedule:
++      interval: "monthly"
++    groups:
++      github-actions:
++        patterns:
++          - "*"
++    cooldown:
++      default-days: 7
++  - package-ecosystem: "pre-commit"
++    directory: "/"
++    schedule:
++      interval: "monthly"
++    groups:
++      pre-commit:
++        patterns:
++          - "*"
++    cooldown:
++      default-days: 7
+=== .github/release.yml
+new file mode 100644
+@@ -0,0 +1,4 @@
++changelog:
++  exclude:
++    authors:
++      - dependabot[bot]
+=== .github/workflows/codeql.yml
+new file mode 100644
+@@ -0,0 +1,63 @@
++name: "CodeQL"
++
++concurrency:
++  group: ${{ github.workflow }}-${{ github.ref }}
++  cancel-in-progress: true
++
++on:
++  push:
++    branches: [ "main" ]
++  pull_request:
++    # The branches below must be a subset of the branches above
++    branches: [ "main" ]
++  schedule:
++    - cron: '16 5 * * 6'
++
++permissions: {}
++
++jobs:
++  analyze:
++    name: Analyze
++    # Runner size impacts CodeQL analysis time. To learn more, please see:
++    #   - https://gh.io/recommended-hardware-resources-for-running-codeql
++    #   - https://gh.io/supported-runners-and-hardware-resources
++    #   - https://gh.io/using-larger-runners
++    # Consider using larger runners for possible analysis time improvements.
++    runs-on: 'ubuntu-latest'
++    timeout-minutes: 360
++    permissions:
++      actions: read # Allow CodeQL action to read metadata needed for analysis.
++      contents: read
++      security-events: write # So CodeQL can upload analysis events.
++
++    strategy:
++      fail-fast: false
++      matrix:
++        language: [ 'python' ]
++
++    steps:
++    - name: Checkout repository
++      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++      with:
++        persist-credentials: false
++
++    # Initializes the CodeQL tools for scanning.
++    - name: Initialize CodeQL
++      uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
++      with:
++        languages: ${{ matrix.language }}
++        # If you wish to specify custom queries, you can do so here or in a config file.
++        # By default, queries listed here will override any specified in a config file.
++        # Prefix the list here with "+" to use these queries and those in the config file.
++
++        # For more details on CodeQL's query packs, refer to: https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/configuring-code-scanning#using-queries-in-ql-packs
++        # queries: security-extended,security-and-quality
++
++    # Autobuild attempts to build any compiled languages (C/C++, C#, Go, Java, or Swift).
++    - name: Autobuild
++      uses: github/codeql-action/autobuild@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
++
++    - name: Perform CodeQL Analysis
++      uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
++      with:
++        category: "/language:${{matrix.language}}"
+=== .github/workflows/docs.yml
+new file mode 100644
+@@ -0,0 +1,35 @@
++name: Documentation
++
++on: [push, pull_request, workflow_dispatch]
++
++concurrency:
++  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
++  cancel-in-progress: true
++
++permissions: {}
++
++env:
++  FORCE_COLOR: 1
++
++jobs:
++  docs:
++    name: nox -s docs
++    runs-on: ubuntu-latest
++
++    steps:
++      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++        with:
++          persist-credentials: false
++
++      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
++        name: Install Python
++        with:
++          python-version: "3.14"
++
++      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
++        name: Setup uv
++        with:
++          cache-suffix: ${{ github.job }}
++
++      - name: Build documentation
++        run: pipx run nox -s docs
+=== .github/workflows/lint.yml
+new file mode 100644
+@@ -0,0 +1,74 @@
++name: Linting
++
++on:
++  pull_request:
++  workflow_dispatch:
++  push:
++    branches-ignore:
++      - dependabot/**
++      - pypa/**
++      - stack/**
++
++
++concurrency:
++  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
++  cancel-in-progress: true
++
++permissions: {}
++
++env:
++  FORCE_COLOR: 1
++
++jobs:
++  lint:
++    name: nox -s lint
++    runs-on: ubuntu-latest
++
++    steps:
++      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++        with:
++          persist-credentials: false
++
++      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
++        name: Install Python
++        with:
++          python-version: "3.10"
++
++      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
++        name: Setup uv
++        with:
++          cache-suffix: ${{ github.job }}
++
++      - name: Run `nox -s lint`
++        run: pipx run nox -s lint -- --show-diff-on-failure
++
++  build:
++    name: Build sdist and wheel
++    runs-on: ubuntu-latest
++    # Linting verifies that the project is in an acceptable state to create files
++    # for releasing.
++    # And this action should be run whenever a release is ready to go public as
++    # the version number will be changed by editing __init__.py.
++    needs: lint
++
++    steps:
++      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++        with:
++          persist-credentials: false
++
++      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
++        name: Setup uv
++        with:
++          cache-suffix: ${{ github.job }}
++
++      - name: Build
++        run: uv build
++
++      - name: Build
++        run: uvx twine check --strict ./dist/*
++
++      - name: Archive files
++        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
++        with:
++          name: dist
++          path: dist
+=== .github/workflows/perf.yml
+new file mode 100644
+@@ -0,0 +1,50 @@
++name: Performance Benchmarks
++
++on:
++  pull_request:
++    branches:
++      - main
++
++permissions: {}
++
++concurrency:
++  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
++  cancel-in-progress: true
++
++jobs:
++  asv-continuous:
++    name: ASV
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++        with:
++          persist-credentials: false
++          fetch-depth: 0
++
++      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
++        name: Install Pythons
++        with:
++          python-version: |
++            3.10
++            3.11
++            3.12
++            3.13
++            3.14
++            3.15
++          allow-prereleases: true
++
++      - name: Install uv
++        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
++        with:
++          cache-suffix: ${{ github.job }}
++
++      - name: Setup ASV
++        run: |
++          uv tool install asv
++          asv machine --yes
++
++      - name: Run ASV continuous benchmark
++        run: asv continuous origin/main HEAD --interleave-rounds --sort default --no-only-changed | tee -a asv_output.txt || true
++
++      - name: Write out to GitHub Summary
++        run: sed -n '/All benchmarks/,$p' asv_output.txt >> "$GITHUB_STEP_SUMMARY"
+=== .github/workflows/publish.yml
+new file mode 100644
+@@ -0,0 +1,100 @@
++name: Publish
++
++concurrency:
++  group: ${{ github.workflow }}-${{ github.ref }}
++  cancel-in-progress: true
++
++on:
++  workflow_dispatch:
++    inputs:
++      ref:
++        # require SHA as tags and branches are mutable
++        description: Full git commit SHA (not branch/tag)
++        required: true
++        type: string
++
++env:
++  FORCE_COLOR: 1
++
++permissions: {}
++
++jobs:
++  build:
++    name: Build
++    runs-on: ubuntu-latest
++    outputs:
++      tag: ${{ steps.get-tag.outputs.tag }}
++
++    steps:
++      - name: Log inputs
++        run: echo "${INPUTS}"
++        env:
++          INPUTS: ${{ toJSON(inputs)  }}
++
++      - name: Checkout repository
++        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++        with:
++          ref: ${{ inputs.ref }}
++          persist-credentials: false
++          fetch-depth: 0
++
++      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
++        name: Setup uv
++
++      - name: Check ref is the commit SHA
++        # require SHA as tags and branches are mutable
++        run: test "${INPUTS_REF}"
++          = "$(git log --max-count=1 --format=format:%h)"
++          || test "${INPUTS_REF}"
++          = "$(git log --max-count=1 --format=format:%H)"
++        env:
++          INPUTS_REF: ${{ inputs.ref }}
++
++      - name: Get git tag
++        id: get-tag
++        run: echo "tag=$(git tag --points-at "$INPUTS_REF")" >> "$GITHUB_OUTPUT"
++        env:
++          INPUTS_REF: ${{ inputs.ref }}
++
++      - name: Install nox with pbs
++        run: pipx install nox[pbs]
++
++      - name: Provision nox environment
++        run: nox --install-only -s release_build
++
++      - name: Build distribution via nox
++        run: nox --no-install -R -s release_build
++
++      - name: Upload distribution
++        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 7.0.1
++        with:
++          name: packages
++          path: dist/
++          if-no-files-found: error
++          compression-level: 0
++
++  publish:
++    name: Publish
++    needs:
++      - build
++    environment:
++      name: pypi
++      url: https://pypi.org/project/packaging/${{ needs.build.outputs.tag }}
++    permissions:
++      id-token: write # Allow OIDC id-token for authenticated publishing to PyPI
++    # Only publish if there's a matching tag, and if this is not a fork
++    if: needs.build.outputs.tag != '' && !github.event.repository.fork
++
++    runs-on: ubuntu-latest
++
++    steps:
++      - name: Download distribution
++        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # 8.0.1
++        with:
++          name: packages
++          path: dist/
++
++      - name: Publish distribution to PyPI
++        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
++        with:
++          print-hash: true
+=== .github/workflows/test.yml
+new file mode 100644
+@@ -0,0 +1,194 @@
++name: Test
++
++on:
++  pull_request:
++  workflow_dispatch:
++  push:
++    branches-ignore:
++      - dependabot/**
++      - pypa/**
++      - stack/**
++
++concurrency:
++  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
++  cancel-in-progress: true
++
++env:
++  FORCE_COLOR: 1
++
++permissions: {}
++
++jobs:
++  test:
++    name: ${{ matrix.os }} / ${{ matrix.python_version }}
++    runs-on: ${{ matrix.os }}-latest
++    strategy:
++      fail-fast: false
++      matrix:
++        os: [Ubuntu, Windows, macOS]
++        python_version:
++          ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15", "3.13t", "3.14t", "3.15t", "pypy3.10", "pypy3.11"]
++        include:
++          - os: Ubuntu
++            python_version: "3.11.0"
++          - os: Ubuntu
++            python_version: "3.12.0"
++          - os: Ubuntu
++            python_version: "3.13.0"
++          - os: Ubuntu
++            python_version: "3.14.0"
++        exclude:
++          # Slow, sometimes fails to build in CI (not packaging's fault)
++          - os: Windows
++            python_version: "3.13t"
++
+[+150 more diff lines]
+=== .gitignore +22 -0
+new file mode 100644
+=== .pre-commit-config.yaml +65 -0
+new file mode 100644
+=== .readthedocs.yml +21 -0
+new file mode 100644
+=== CHANGELOG.rst +861 -0
+new file mode 100644
+=== CONTRIBUTING.rst +22 -0
+new file mode 100644
+=== LICENSE +3 -0
+new file mode 100644
+=== LICENSE.APACHE +177 -0
+new file mode 100644
+=== LICENSE.BSD +23 -0
+new file mode 100644
+=== README.rst +81 -0
+new file mode 100644
+=== SECURITY.md +4 -0
+new file mode 100644
+=== asv.conf.json +19 -0
+new file mode 100644
+=== benchmarks/__init__.py +17 -0
+new file mode 100644
+=== benchmarks/dist_sample.txt +500 -0
+new file mode 100644
+=== benchmarks/markers.py +40 -0
+new file mode 100644
+=== benchmarks/requirement.py +22 -0
+new file mode 100644
+=== benchmarks/resolver.py +48 -0
+new file mode 100644
+=== benchmarks/specifiers.py +118 -0
+new file mode 100644
+=== benchmarks/specs_sample.txt +500 -0
+new file mode 100644
+=== benchmarks/utils.py +33 -0
+new file mode 100644
+=== benchmarks/version.py +66 -0
+new file mode 100644
+=== benchmarks/version_sample.txt +1305 -0
+new file mode 100644
+=== docs/Makefile +153 -0
+new file mode 100644
+=== docs/_templates/components/edit-this-page.html +29 -0
+new file mode 100644
+=== docs/changelog.rst +1 -0
+new file mode 100644
+=== docs/conf.py +134 -0
+new file mode 100644
+=== docs/dependency_groups.rst +79 -0
+new file mode 100644
+=== docs/development/getting-started.rst +102 -0
+new file mode 100644
+=== docs/development/index.rst +19 -0
+new file mode 100644
+=== docs/development/release-process.rst +44 -0
+new file mode 100644
+=== docs/development/reviewing-patches.rst +37 -0
+new file mode 100644
+=== docs/development/submitting-patches.rst +74 -0
+new file mode 100644
+=== docs/direct_url.rst +88 -0
+new file mode 100644
+=== docs/errors.rst +55 -0
+new file mode 100644
+=== docs/index.rst +47 -0
+new file mode 100644
+=== docs/licenses.rst +18 -0
+new file mode 100644
+=== docs/markers.rst +77 -0
+new file mode 100644
+=== docs/metadata.rst +75 -0
+new file mode 100644
+=== docs/pylock.rst +86 -0
+new file mode 100644
+=== docs/ranges.rst +316 -0
+new file mode 100644
+=== docs/requirements.rst +77 -0
+new file mode 100644
+=== docs/security.rst +18 -0
+new file mode 100644
+=== docs/specifiers.rst +93 -0
+new file mode 100644
+=== docs/tags.rst +108 -0
+new file mode 100644
+=== docs/utils.rst +10 -0
+new file mode 100644
+=== docs/version.rst +54 -0
+new file mode 100644
+=== noxfile.py +766 -0
+new file mode 100644
+=== pyproject.toml +182 -0
+new file mode 100644
+=== src/packaging/__init__.py +15 -0
+new file mode 100644
+=== src/packaging/_elffile.py +108 -0
+new file mode 100644
+=== src/packaging/_manylinux.py +278 -0
+new file mode 100644
+=== src/packaging/_musllinux.py +88 -0
+new file mode 100644
+=== src/packaging/_parser.py +422 -0
+new file mode 100644
+=== src/packaging/_ranges.py +845 -0
+new file mode 100644
+=== src/packaging/_structures.py +33 -0
+new file mode 100644
+=== src/packaging/_tokenizer.py +198 -0
+new file mode 100644
+=== src/packaging/dependency_groups.py +352 -0
+new file mode 100644
+=== src/packaging/direct_url.py +309 -0
+new file mode 100644
+=== src/packaging/errors.py +94 -0
+new file mode 100644
+=== src/packaging/licenses/__init__.py +202 -0
+new file mode 100644
+=== src/packaging/licenses/_spdx.py +798 -0
+new file mode 100644
+=== src/packaging/markers.py +575 -0
+new file mode 100644
+=== src/packaging/metadata.py +1056 -0
+new file mode 100644
+=== src/packaging/py.typed
+new file mode 100644
+=== src/packaging/pylock.py +848 -0
+new file mode 100644
+=== src/packaging/ranges.py +2066 -0
+new file mode 100644
+=== src/packaging/requirements.py +201 -0
+new file mode 100644
+=== src/packaging/specifiers.py +1450 -0
+new file mode 100644
+=== src/packaging/tags.py +1066 -0
+new file mode 100644
+=== src/packaging/utils.py +370 -0
+new file mode 100644
+=== src/packaging/version.py +1256 -0
+new file mode 100644
+=== tasks/__init__.py +3 -0
+new file mode 100644
+=== tasks/check_frozen_revs.py +138 -0
+new file mode 100755
+=== tasks/licenses.py +93 -0
+new file mode 100644
+=== tasks/paths.py +9 -0
+new file mode 100644
+=== tasks/pickle_compat.py +199 -0
+new file mode 100644
+=== tasks/select_pypi_dist.py +34 -0
+new file mode 100644
+=== tasks/select_pypi_specs.py +32 -0
+new file mode 100644
+=== tasks/select_pypi_versions.py +67 -0
+new file mode 100644
+=== tests/__init__.py +3 -0
+new file mode 100644
+=== tests/conftest.py +40 -0
+new file mode 100644
+=== tests/hello-world.c +7 -0
+new file mode 100644
+=== tests/manylinux/build.sh +39 -0
+new file mode 100755
+=== tests/manylinux/hello-world-armv7l-armel
+new file mode 100755
+Binary files /dev/null and b/tests/manylinux/hello-world-armv7l-armel differ
+=== tests/manylinux/hello-world-armv7l-armhf
+new file mode 100755
+Binary files /dev/null and b/tests/manylinux/hello-world-armv7l-armhf differ
+=== tests/manylinux/hello-world-invalid-class
+new file mode 100755
+Binary files /dev/null and b/tests/manylinux/hello-world-invalid-class differ
+=== tests/manylinux/hello-world-invalid-data
+new file mode 100755
+Binary files /dev/null and b/tests/manylinux/hello-world-invalid-data differ
+=== tests/manylinux/hello-world-invalid-magic
+new file mode 100755
+Binary files /dev/null and b/tests/manylinux/hello-world-invalid-magic differ
+=== tests/manylinux/hello-world-s390x-s390x
+new file mode 100644
+Binary files /dev/null and b/tests/manylinux/hello-world-s390x-s390x differ
+=== tests/manylinux/hello-world-too-short
+new file mode 100644
+Binary files /dev/null and b/tests/manylinux/hello-world-too-short differ
+=== tests/manylinux/hello-world-x86_64-amd64
+new file mode 100644
+Binary files /dev/null and b/tests/manylinux/hello-world-x86_64-amd64 differ
+=== tests/manylinux/hello-world-x86_64-i386
+new file mode 100755
+Binary files /dev/null and b/tests/manylinux/hello-world-x86_64-i386 differ
+=== tests/manylinux/hello-world-x86_64-x32
+new file mode 100755
+Binary files /dev/null and b/tests/manylinux/hello-world-x86_64-x32 differ
+=== tests/metadata/everything.metadata +49 -0
+new file mode 100644
+=== tests/musllinux/build.sh +61 -0
+new file mode 100644
+=== tests/musllinux/glibc-x86_64
+new file mode 100755
+Binary files /dev/null and b/tests/musllinux/glibc-x86_64 differ
+=== tests/musllinux/musl-aarch64
+new file mode 100755
+Binary files /dev/null and b/tests/musllinux/musl-aarch64 differ
+=== tests/musllinux/musl-i386
+new file mode 100755
+Binary files /dev/null and b/tests/musllinux/musl-i386 differ
+=== tests/musllinux/musl-x86_64
+new file mode 100755
+Binary files /dev/null and b/tests/musllinux/musl-x86_64 differ
+=== tests/property/__init__.py
+new file mode 100644
+=== tests/property/strategies.py +356 -0
+new file mode 100644
+=== tests/property/test_ranges_cross_epoch.py +112 -0
+new file mode 100644
+=== tests/property/test_ranges_pep440_extended.py +289 -0
+new file mode 100644
+=== tests/property/test_ranges_pubgrub.py +398 -0
+new file mode 100644
+=== tests/property/test_ranges_set_algebra.py +482 -0
+new file mode 100644
+=== tests/property/test_ranges_set_relations.py +123 -0
+new file mode 100644
+=== tests/property/test_ranges_to_specifier_set.py +276 -0
+new file mode 100644
+=== tests/property/test_specifier_comparison.py +775 -0
+new file mode 100644
+=== tests/property/test_specifier_extended.py +144 -0
+new file mode 100644
+=== tests/property/test_specifier_implied.py +786 -0
+new file mode 100644
+=== tests/property/test_specifier_matching.py +707 -0
+new file mode 100644
+=== tests/property/test_version_format.py +721 -0
+new file mode 100644
+=== tests/property/test_version_normalization.py +640 -0
+new file mode 100644
+=== tests/property/test_version_ordering.py +496 -0
+new file mode 100644
+=== tests/property/test_version_releases.py +1080 -0
+new file mode 100644
+=== tests/pylock/pylock.spec-example.toml +68 -0
+new file mode 100644
+=== tests/test_dependency_groups.py +571 -0
+new file mode 100644
+=== tests/test_direct_url.py +359 -0
+new file mode 100644
+=== tests/test_elffile.py +104 -0
+new file mode 100644
+=== tests/test_errors.py +110 -0
+new file mode 100644
+=== tests/test_licenses.py +54 -0
+new file mode 100644
+=== tests/test_manylinux.py +212 -0
+new file mode 100644
+=== tests/test_markers.py +923 -0
+new file mode 100644
+=== tests/test_metadata.py +1553 -0
+new file mode 100644
+=== tests/test_musllinux.py +97 -0
+new file mode 100644
+=== tests/test_pylock.py +932 -0
+new file mode 100644
+=== tests/test_pylock_select.py +561 -0
+new file mode 100644
+=== tests/test_ranges.py +2193 -0
+new file mode 100644
+=== tests/test_requirements.py +1087 -0
+new file mode 100644
+=== tests/test_specifiers.py +3756 -0
+new file mode 100644
+=== tests/test_tags.py +2204 -0
+new file mode 100644
+=== tests/test_utils.py +257 -0
+new file mode 100644
+=== tests/test_version.py +1449 -0
+new file mode 100644
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-nh7jj1bm.log]

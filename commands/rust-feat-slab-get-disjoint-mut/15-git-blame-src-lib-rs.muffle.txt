@@ -1,0 +1,1575 @@
+$ git blame src/lib.rs
+f4fe561 evals 2026-10-22
+1	#![no_std]
+2	#![warn(
+3	    missing_debug_implementations,
+4	    missing_docs,
+5	    rust_2018_idioms,
+6	    unreachable_pub
+7	)]
+8	#![doc(test(
+9	    no_crate_inject,
+10	    attr(deny(warnings, rust_2018_idioms), allow(dead_code, unused_variables))
+11	))]
+12	#![allow(clippy::incompatible_msrv)] // false positive: https://github.com/rust-lang/rust-clippy/issues/12280
+13	
+14	//! Pre-allocated storage for a uniform data type.
+15	//!
+16	//! `Slab` provides pre-allocated storage for a single data type. If many values
+17	//! of a single type are being allocated, it can be more efficient to
+18	//! pre-allocate the necessary storage. Since the size of the type is uniform,
+19	//! memory fragmentation can be avoided. Storing, clearing, and lookup
+20	//! operations become very cheap.
+21	//!
+22	//! While `Slab` may look like other Rust collections, it is not intended to be
+23	//! used as a general purpose collection. The primary difference between `Slab`
+24	//! and `Vec` is that `Slab` returns the key when storing the value.
+25	//!
+26	//! It is important to note that keys may be reused. In other words, once a
+27	//! value associated with a given key is removed from a slab, that key may be
+28	//! returned from future calls to `insert`.
+29	//!
+30	//! # Examples
+31	//!
+32	//! Basic storing and retrieval.
+33	//!
+34	//! ```
+35	//! # use slab::*;
+36	//! let mut slab = Slab::new();
+37	//!
+38	//! let hello = slab.insert("hello");
+39	//! let world = slab.insert("world");
+40	//!
+41	//! assert_eq!(slab[hello], "hello");
+42	//! assert_eq!(slab[world], "world");
+43	//!
+44	//! slab[world] = "earth";
+45	//! assert_eq!(slab[world], "earth");
+46	//! ```
+47	//!
+48	//! Sometimes it is useful to be able to associate the key with the value being
+49	//! inserted in the slab. This can be done with the `vacant_entry` API as such:
+50	//!
+51	//! ```
+52	//! # use slab::*;
+53	//! let mut slab = Slab::new();
+54	//!
+55	//! let hello = {
+56	//!     let entry = slab.vacant_entry();
+57	//!     let key = entry.key();
+58	//!
+59	//!     entry.insert((key, "hello"));
+60	//!     key
+61	//! };
+62	//!
+63	//! assert_eq!(hello, slab[hello].0);
+64	//! assert_eq!("hello", slab[hello].1);
+65	//! ```
+66	//!
+67	//! It is generally a good idea to specify the desired capacity of a slab at
+68	//! creation time. Note that `Slab` will grow the internal capacity when
+69	//! attempting to insert a new value once the existing capacity has been reached.
+70	//! To avoid this, add a check.
+71	//!
+72	//! ```
+73	//! # use slab::*;
+74	//! let mut slab = Slab::with_capacity(1024);
+75	//!
+76	//! // ... use the slab
+77	//!
+78	//! if slab.len() == slab.capacity() {
+79	//!     panic!("slab full");
+80	//! }
+81	//!
+82	//! slab.insert("the slab is not at capacity yet");
+83	//! ```
+84	//!
+85	//! # Capacity and reallocation
+86	//!
+87	//! The capacity of a slab is the amount of space allocated for any future
+88	//! values that will be inserted in the slab. This is not to be confused with
+89	//! the *length* of the slab, which specifies the number of actual values
+90	//! currently being inserted. If a slab's length is equal to its capacity, the
+91	//! next value inserted into the slab will require growing the slab by
+92	//! reallocating.
+93	//!
+94	//! For example, a slab with capacity 10 and length 0 would be an empty slab
+95	//! with space for 10 more stored values. Storing 10 or fewer elements into the
+96	//! slab will not change its capacity or cause reallocation to occur. However,
+97	//! if the slab length is increased to 11 (due to another `insert`), it will
+98	//! have to reallocate, which can be slow. For this reason, it is recommended to
+99	//! use [`Slab::with_capacity`] whenever possible to specify how many values the
+100	//! slab is expected to store.
+101	//!
+102	//! # Implementation
+103	//!
+104	//! `Slab` is backed by a `Vec` of slots. Each slot is either occupied or
+105	//! vacant. `Slab` maintains a stack of vacant slots using a linked list. To
+106	//! find a vacant slot, the stack is popped. When a slot is released, it is
+107	//! pushed onto the stack.
+108	//!
+109	//! If there are no more available slots in the stack, then `Vec::reserve(1)` is
+110	//! called and a new slot is created.
+111	//!
+112	//! [`Slab::with_capacity`]: struct.Slab.html#with_capacity
+113	
+114	#[cfg(not(feature = "std"))]
+115	extern crate alloc;
+116	#[cfg(feature = "std")]
+117	extern crate std;
+118	#[cfg(feature = "std")]
+119	extern crate std as alloc;
+120	
+121	#[cfg(feature = "serde")]
+122	mod serde;
+123	
+124	mod builder;
+125	
+126	use alloc::vec::{self, Vec};
+127	use core::iter::{self, FromIterator, FusedIterator};
+128	use core::{fmt, mem, ops, slice};
+129	
+130	/// Pre-allocated storage for a uniform data type
+131	///
+132	/// See the [module documentation] for more details.
+133	///
+134	/// [module documentation]: index.html
+135	pub struct Slab<T> {
+136	    // Chunk of memory
+137	    entries: Vec<Entry<T>>,
+138	
+139	    // Number of Filled elements currently in the slab
+140	    len: usize,
+141	
+142	    // Offset of the next available slot in the slab. Set to the slab's
+143	    // capacity when the slab is full.
+144	    next: usize,
+145	}
+146	
+147	impl<T> Clone for Slab<T>
+148	where
+149	    T: Clone,
+150	{
+151	    fn clone(&self) -> Self {
+152	        Self {
+153	            entries: self.entries.clone(),
+154	            len: self.len,
+155	            next: self.next,
+156	        }
+157	    }
+158	
+159	    fn clone_from(&mut self, source: &Self) {
+160	        self.entries.clone_from(&source.entries);
+161	        self.len = source.len;
+162	        self.next = source.next;
+163	    }
+164	}
+165	
+166	impl<T> Default for Slab<T> {
+167	    fn default() -> Self {
+168	        Slab::new()
+169	    }
+170	}
+171	
+172	/// A handle to a vacant entry in a `Slab`.
+173	///
+174	/// `VacantEntry` allows constructing values with the key that they will be
+175	/// assigned to.
+176	///
+177	/// # Examples
+178	///
+179	/// ```
+180	/// # use slab::*;
+181	/// let mut slab = Slab::new();
+182	///
+183	/// let hello = {
+184	///     let entry = slab.vacant_entry();
+185	///     let key = entry.key();
+186	///
+187	///     entry.insert((key, "hello"));
+188	///     key
+189	/// };
+190	///
+191	/// assert_eq!(hello, slab[hello].0);
+192	/// assert_eq!("hello", slab[hello].1);
+193	/// ```
+194	#[derive(Debug)]
+195	pub struct VacantEntry<'a, T> {
+196	    slab: &'a mut Slab<T>,
+197	    key: usize,
+198	}
+199	
+200	/// A consuming iterator over the values stored in a `Slab`
+201	pub struct IntoIter<T> {
+202	    entries: iter::Enumerate<vec::IntoIter<Entry<T>>>,
+203	    len: usize,
+204	}
+205	
+206	/// An iterator over the values stored in the `Slab`
+207	pub struct Iter<'a, T> {
+208	    entries: iter::Enumerate<slice::Iter<'a, Entry<T>>>,
+209	    len: usize,
+210	}
+211	
+212	impl<T> Clone for Iter<'_, T> {
+213	    fn clone(&self) -> Self {
+214	        Self {
+215	            entries: self.entries.clone(),
+216	            len: self.len,
+217	        }
+218	    }
+219	}
+220	
+221	/// A mutable iterator over the values stored in the `Slab`
+222	pub struct IterMut<'a, T> {
+223	    entries: iter::Enumerate<slice::IterMut<'a, Entry<T>>>,
+224	    len: usize,
+225	}
+226	
+227	/// A draining iterator for `Slab`
+228	pub struct Drain<'a, T> {
+229	    inner: vec::Drain<'a, Entry<T>>,
+230	    len: usize,
+231	}
+232	
+233	#[derive(Clone)]
+234	enum Entry<T> {
+235	    Vacant(usize),
+236	    Occupied(T),
+237	}
+238	
+239	impl<T> Slab<T> {
+240	    /// Construct a new, empty `Slab`.
+241	    ///
+242	    /// The function does not allocate and the returned slab will have no
+243	    /// capacity until `insert` is called or capacity is explicitly reserved.
+244	    ///
+245	    /// # Examples
+246	    ///
+247	    /// ```
+248	    /// # use slab::*;
+249	    /// let slab: Slab<i32> = Slab::new();
+250	    /// ```
+251	    pub const fn new() -> Self {
+252	        Self {
+253	            entries: Vec::new(),
+254	            next: 0,
+255	            len: 0,
+256	        }
+257	    }
+258	
+259	    /// Construct a new, empty `Slab` with the specified capacity.
+260	    ///
+261	    /// The returned slab will be able to store exactly `capacity` without
+262	    /// reallocating. If `capacity` is 0, the slab will not allocate.
+263	    ///
+264	    /// It is important to note that this function does not specify the *length*
+265	    /// of the returned slab, but only the capacity. For an explanation of the
+266	    /// difference between length and capacity, see [Capacity and
+267	    /// reallocation](index.html#capacity-and-reallocation).
+268	    ///
+269	    /// # Examples
+270	    ///
+271	    /// ```
+272	    /// # use slab::*;
+273	    /// let mut slab = Slab::with_capacity(10);
+274	    ///
+275	    /// // The slab contains no values, even though it has capacity for more
+276	    /// assert_eq!(slab.len(), 0);
+277	    ///
+278	    /// // These are all done without reallocating...
+279	    /// for i in 0..10 {
+280	    ///     slab.insert(i);
+281	    /// }
+282	    ///
+283	    /// // ...but this may make the slab reallocate
+284	    /// slab.insert(11);
+285	    /// ```
+286	    pub fn with_capacity(capacity: usize) -> Slab<T> {
+287	        Slab {
+288	            entries: Vec::with_capacity(capacity),
+289	            next: 0,
+290	            len: 0,
+291	        }
+292	    }
+293	
+294	    /// Return the number of values the slab can store without reallocating.
+295	    ///
+296	    /// # Examples
+297	    ///
+298	    /// ```
+299	    /// # use slab::*;
+300	    /// let slab: Slab<i32> = Slab::with_capacity(10);
+301	    /// assert_eq!(slab.capacity(), 10);
+302	    /// ```
+303	    pub fn capacity(&self) -> usize {
+304	        self.entries.capacity()
+305	    }
+306	
+307	    /// Reserve capacity for at least `additional` more values to be stored
+308	    /// without allocating.
+309	    ///
+310	    /// `reserve` does nothing if the slab already has sufficient capacity for
+311	    /// `additional` more values. If more capacity is required, a new segment of
+312	    /// memory will be allocated and all existing values will be copied into it.
+313	    /// As such, if the slab is already very large, a call to `reserve` can end
+314	    /// up being expensive.
+315	    ///
+316	    /// The slab may reserve more than `additional` extra space in order to
+317	    /// avoid frequent reallocations. Use `reserve_exact` instead to guarantee
+318	    /// that only the requested space is allocated.
+319	    ///
+320	    /// # Panics
+321	    ///
+322	    /// Panics if the new capacity exceeds `isize::MAX` bytes.
+323	    ///
+324	    /// # Examples
+325	    ///
+326	    /// ```
+327	    /// # use slab::*;
+328	    /// let mut slab = Slab::new();
+329	    /// slab.insert("hello");
+330	    /// slab.reserve(10);
+331	    /// assert!(slab.capacity() >= 11);
+332	    /// ```
+333	    pub fn reserve(&mut self, additional: usize) {
+334	        if self.capacity() - self.len >= additional {
+335	            return;
+336	        }
+337	        let need_add = additional - (self.entries.len() - self.len);
+338	        self.entries.reserve(need_add);
+339	    }
+340	
+341	    /// Reserve the minimum capacity required to store exactly `additional`
+342	    /// more values.
+343	    ///
+344	    /// `reserve_exact` does nothing if the slab already has sufficient capacity
+345	    /// for `additional` more values. If more capacity is required, a new segment
+346	    /// of memory will be allocated and all existing values will be copied into
+347	    /// it.  As such, if the slab is already very large, a call to `reserve` can
+348	    /// end up being expensive.
+349	    ///
+350	    /// Note that the allocator may give the slab more space than it requests.
+351	    /// Therefore capacity can not be relied upon to be precisely minimal.
+352	    /// Prefer `reserve` if future insertions are expected.
+353	    ///
+354	    /// # Panics
+355	    ///
+356	    /// Panics if the new capacity exceeds `isize::MAX` bytes.
+357	    ///
+358	    /// # Examples
+359	    ///
+360	    /// ```
+361	    /// # use slab::*;
+362	    /// let mut slab = Slab::new();
+363	    /// slab.insert("hello");
+364	    /// slab.reserve_exact(10);
+365	    /// assert!(slab.capacity() >= 11);
+366	    /// ```
+367	    pub fn reserve_exact(&mut self, additional: usize) {
+368	        if self.capacity() - self.len >= additional {
+369	            return;
+370	        }
+371	        let need_add = additional - (self.entries.len() - self.len);
+372	        self.entries.reserve_exact(need_add);
+373	    }
+374	
+375	    /// Shrink the capacity of the slab as much as possible without invalidating keys.
+376	    ///
+377	    /// Because values cannot be moved to a different index, the slab cannot
+378	    /// shrink past any stored values.
+379	    /// It will drop down as close as possible to the length but the allocator may
+380	    /// still inform the underlying vector that there is space for a few more elements.
+381	    ///
+382	    /// This function can take O(n) time even when the capacity cannot be reduced
+383	    /// or the allocation is shrunk in place. Repeated calls run in O(1) though.
+384	    ///
+385	    /// # Examples
+386	    ///
+387	    /// ```
+388	    /// # use slab::*;
+389	    /// let mut slab = Slab::with_capacity(10);
+390	    ///
+391	    /// for i in 0..3 {
+392	    ///     slab.insert(i);
+393	    /// }
+394	    ///
+395	    /// slab.shrink_to_fit();
+396	    /// assert!(slab.capacity() >= 3 && slab.capacity() < 10);
+397	    /// ```
+398	    ///
+399	    /// The slab cannot shrink past the last present value even if previous
+400	    /// values are removed:
+401	    ///
+402	    /// ```
+403	    /// # use slab::*;
+404	    /// let mut slab = Slab::with_capacity(10);
+405	    ///
+406	    /// for i in 0..4 {
+407	    ///     slab.insert(i);
+408	    /// }
+409	    ///
+410	    /// slab.remove(0);
+411	    /// slab.remove(3);
+412	    ///
+413	    /// slab.shrink_to_fit();
+414	    /// assert!(slab.capacity() >= 3 && slab.capacity() < 10);
+415	    /// ```
+416	    pub fn shrink_to_fit(&mut self) {
+417	        // Remove all vacant entries after the last occupied one, so that
+418	        // the capacity can be reduced to what is actually needed.
+419	        // If the slab is empty the vector can simply be cleared, but that
+420	        // optimization would not affect time complexity when T: Drop.
+421	        let len_before = self.entries.len();
+422	        while let Some(&Entry::Vacant(_)) = self.entries.last() {
+423	            self.entries.pop();
+424	        }
+425	
+426	        // Removing entries breaks the list of vacant entries,
+427	        // so it must be repaired
+428	        if self.entries.len() != len_before {
+429	            // Some vacant entries were removed, so the list now likely¹
+430	            // either contains references to the removed entries, or has an
+431	            // invalid end marker. Fix this by recreating the list.
+432	            self.recreate_vacant_list();
+433	            // ¹: If the removed entries formed the tail of the list, with the
+434	            // most recently popped entry being the head of them, (so that its
+435	            // index is now the end marker) the list is still valid.
+436	            // Checking for that unlikely scenario of this infrequently called
+437	            // is not worth the code complexity.
+438	        }
+439	
+440	        self.entries.shrink_to_fit();
+441	    }
+442	
+443	    /// Iterate through all entries to recreate and repair the vacant list.
+444	    /// self.len must be correct and is not modified.
+445	    fn recreate_vacant_list(&mut self) {
+446	        self.next = self.entries.len();
+447	        // We can stop once we've found all vacant entries
+448	        let mut remaining_vacant = self.entries.len() - self.len;
+449	        if remaining_vacant == 0 {
+450	            return;
+451	        }
+452	
+453	        // Iterate in reverse order so that lower keys are at the start of
+454	        // the vacant list. This way future shrinks are more likely to be
+455	        // able to remove vacant entries.
+456	        for (i, entry) in self.entries.iter_mut().enumerate().rev() {
+457	            if let Entry::Vacant(ref mut next) = *entry {
+458	                *next = self.next;
+459	                self.next = i;
+460	                remaining_vacant -= 1;
+461	                if remaining_vacant == 0 {
+462	                    break;
+463	                }
+464	            }
+465	        }
+466	    }
+467	
+468	    /// Reduce the capacity as much as possible, changing the key for elements when necessary.
+469	    ///
+470	    /// To allow updating references to the elements which must be moved to a new key,
+471	    /// this function takes a closure which is called before moving each element.
+472	    /// The second and third parameters to the closure are the current key and
+473	    /// new key respectively.
+474	    /// In case changing the key for one element turns out not to be possible,
+475	    /// the move can be cancelled by returning `false` from the closure.
+476	    /// In that case no further attempts at relocating elements is made.
+477	    /// If the closure unwinds, the slab will be left in a consistent state,
+478	    /// but the value that the closure panicked on might be removed.
+479	    ///
+480	    /// # Examples
+481	    ///
+482	    /// ```
+483	    /// # use slab::*;
+484	    ///
+485	    /// let mut slab = Slab::with_capacity(10);
+486	    /// let a = slab.insert('a');
+487	    /// slab.insert('b');
+488	    /// slab.insert('c');
+489	    /// slab.remove(a);
+490	    /// slab.compact(|&mut value, from, to| {
+491	    ///     assert_eq!((value, from, to), ('c', 2, 0));
+492	    ///     true
+493	    /// });
+494	    /// assert!(slab.capacity() >= 2 && slab.capacity() < 10);
+495	    /// ```
+496	    ///
+497	    /// The value is not moved when the closure returns `Err`:
+498	    ///
+499	    /// ```
+500	    /// # use slab::*;
+501	    ///
+502	    /// let mut slab = Slab::with_capacity(100);
+503	    /// let a = slab.insert('a');
+504	    /// let b = slab.insert('b');
+505	    /// slab.remove(a);
+506	    /// slab.compact(|&mut value, from, to| false);
+507	    /// assert_eq!(slab.iter().next(), Some((b, &'b')));
+508	    /// ```
+509	    pub fn compact<F>(&mut self, mut rekey: F)
+510	    where
+511	        F: FnMut(&mut T, usize, usize) -> bool,
+512	    {
+513	        // If the closure unwinds, we need to restore a valid list of vacant entries
+514	        struct CleanupGuard<'a, T> {
+515	            slab: &'a mut Slab<T>,
+516	            decrement: bool,
+517	        }
+518	        impl<T> Drop for CleanupGuard<'_, T> {
+519	            fn drop(&mut self) {
+520	                if self.decrement {
+521	                    // Value was popped and not pushed back on
+522	                    self.slab.len -= 1;
+523	                }
+524	                self.slab.recreate_vacant_list();
+525	            }
+526	        }
+527	        let mut guard = CleanupGuard {
+528	            slab: self,
+529	            decrement: true,
+530	        };
+531	
+532	        let mut occupied_until = 0;
+533	        // While there are vacant entries
+534	        while guard.slab.entries.len() > guard.slab.len {
+535	            // Find a value that needs to be moved,
+536	            // by popping entries until we find an occupied one.
+537	            // (entries cannot be empty because 0 is not greater than anything)
+538	            if let Some(Entry::Occupied(mut value)) = guard.slab.entries.pop() {
+539	                // Found one, now find a vacant entry to move it to
+540	                while let Some(&Entry::Occupied(_)) = guard.slab.entries.get(occupied_until) {
+541	                    occupied_until += 1;
+542	                }
+543	                // Let the caller try to update references to the key
+544	                if !rekey(&mut value, guard.slab.entries.len(), occupied_until) {
+545	                    // Changing the key failed, so push the entry back on at its old index.
+546	                    guard.slab.entries.push(Entry::Occupied(value));
+547	                    guard.decrement = false;
+548	                    guard.slab.entries.shrink_to_fit();
+549	                    return;
+550	                    // Guard drop handles cleanup
+551	                }
+552	                // Put the value in its new spot
+553	                guard.slab.entries[occupied_until] = Entry::Occupied(value);
+554	                // ... and mark it as occupied (this is optional)
+555	                occupied_until += 1;
+556	            }
+557	        }
+558	        guard.slab.next = guard.slab.len;
+559	        guard.slab.entries.shrink_to_fit();
+560	        // Normal cleanup is not necessary
+561	        mem::forget(guard);
+562	    }
+563	
+564	    /// Clear the slab of all values.
+565	    ///
+566	    /// # Examples
+567	    ///
+568	    /// ```
+569	    /// # use slab::*;
+570	    /// let mut slab = Slab::new();
+571	    ///
+572	    /// for i in 0..3 {
+573	    ///     slab.insert(i);
+574	    /// }
+575	    ///
+576	    /// slab.clear();
+577	    /// assert!(slab.is_empty());
+578	    /// ```
+579	    pub fn clear(&mut self) {
+580	        self.entries.clear();
+581	        self.len = 0;
+582	        self.next = 0;
+583	    }
+584	
+585	    /// Return the number of stored values.
+586	    ///
+587	    /// # Examples
+588	    ///
+589	    /// ```
+590	    /// # use slab::*;
+591	    /// let mut slab = Slab::new();
+592	    ///
+593	    /// for i in 0..3 {
+594	    ///     slab.insert(i);
+595	    /// }
+596	    ///
+597	    /// assert_eq!(3, slab.len());
+598	    /// ```
+599	    pub fn len(&self) -> usize {
+600	        self.len
+601	    }
+602	
+603	    /// Return `true` if there are no values stored in the slab.
+604	    ///
+605	    /// # Examples
+606	    ///
+607	    /// ```
+608	    /// # use slab::*;
+609	    /// let mut slab = Slab::new();
+610	    /// assert!(slab.is_empty());
+611	    ///
+612	    /// slab.insert(1);
+613	    /// assert!(!slab.is_empty());
+614	    /// ```
+615	    pub fn is_empty(&self) -> bool {
+616	        self.len == 0
+617	    }
+618	
+619	    /// Return an iterator over the slab.
+620	    ///
+621	    /// This function should generally be **avoided** as it is not efficient.
+622	    /// Iterators must iterate over every slot in the slab even if it is
+623	    /// vacant. As such, a slab with a capacity of 1 million but only one
+624	    /// stored value must still iterate the million slots.
+625	    ///
+626	    /// # Examples
+627	    ///
+628	    /// ```
+629	    /// # use slab::*;
+630	    /// let mut slab = Slab::new();
+631	    ///
+632	    /// for i in 0..3 {
+633	    ///     slab.insert(i);
+634	    /// }
+635	    ///
+636	    /// let mut iterator = slab.iter();
+637	    ///
+638	    /// assert_eq!(iterator.next(), Some((0, &0)));
+639	    /// assert_eq!(iterator.next(), Some((1, &1)));
+640	    /// assert_eq!(iterator.next(), Some((2, &2)));
+641	    /// assert_eq!(iterator.next(), None);
+642	    /// ```
+643	    pub fn iter(&self) -> Iter<'_, T> {
+644	        Iter {
+645	            entries: self.entries.iter().enumerate(),
+646	            len: self.len,
+647	        }
+648	    }
+649	
+650	    /// Return an iterator that allows modifying each value.
+651	    ///
+652	    /// This function should generally be **avoided** as it is not efficient.
+653	    /// Iterators must iterate over every slot in the slab even if it is
+654	    /// vacant. As such, a slab with a capacity of 1 million but only one
+655	    /// stored value must still iterate the million slots.
+656	    ///
+657	    /// # Examples
+658	    ///
+659	    /// ```
+660	    /// # use slab::*;
+661	    /// let mut slab = Slab::new();
+662	    ///
+663	    /// let key1 = slab.insert(0);
+664	    /// let key2 = slab.insert(1);
+665	    ///
+666	    /// for (key, val) in slab.iter_mut() {
+667	    ///     if key == key1 {
+668	    ///         *val += 2;
+669	    ///     }
+670	    /// }
+671	    ///
+672	    /// assert_eq!(slab[key1], 2);
+673	    /// assert_eq!(slab[key2], 1);
+674	    /// ```
+675	    pub fn iter_mut(&mut self) -> IterMut<'_, T> {
+676	        IterMut {
+677	            entries: self.entries.iter_mut().enumerate(),
+678	            len: self.len,
+679	        }
+680	    }
+681	
+682	    /// Return a reference to the value associated with the given key.
+683	    ///
+684	    /// If the given key is not associated with a value, then `None` is
+685	    /// returned.
+686	    ///
+687	    /// # Examples
+688	    ///
+689	    /// ```
+690	    /// # use slab::*;
+691	    /// let mut slab = Slab::new();
+692	    /// let key = slab.insert("hello");
+693	    ///
+694	    /// assert_eq!(slab.get(key), Some(&"hello"));
+695	    /// assert_eq!(slab.get(123), None);
+696	    /// ```
+697	    pub fn get(&self, key: usize) -> Option<&T> {
+698	        match self.entries.get(key) {
+699	            Some(Entry::Occupied(val)) => Some(val),
+700	            _ => None,
+701	        }
+702	    }
+703	
+704	    /// Return a mutable reference to the value associated with the given key.
+705	    ///
+706	    /// If the given key is not associated with a value, then `None` is
+707	    /// returned.
+708	    ///
+709	    /// # Examples
+710	    ///
+711	    /// ```
+712	    /// # use slab::*;
+713	    /// let mut slab = Slab::new();
+714	    /// let key = slab.insert("hello");
+715	    ///
+716	    /// *slab.get_mut(key).unwrap() = "world";
+717	    ///
+718	    /// assert_eq!(slab[key], "world");
+719	    /// assert_eq!(slab.get_mut(123), None);
+720	    /// ```
+721	    pub fn get_mut(&mut self, key: usize) -> Option<&mut T> {
+722	        match self.entries.get_mut(key) {
+723	            Some(&mut Entry::Occupied(ref mut val)) => Some(val),
+724	            _ => None,
+725	        }
+726	    }
+727	
+728	    /// Return two mutable references to the values associated with the two
+729	    /// given keys simultaneously.
+730	    ///
+731	    /// If any one of the given keys is not associated with a value, then `None`
+732	    /// is returned.
+733	    ///
+734	    /// This function can be used to get two mutable references out of one slab,
+735	    /// so that you can manipulate both of them at the same time, eg. swap them.
+736	    ///
+737	    /// # Panics
+738	    ///
+739	    /// This function will panic if `key1` and `key2` are the same.
+740	    ///
+741	    /// # Examples
+742	    ///
+743	    /// ```
+744	    /// # use slab::*;
+745	    /// use std::mem;
+746	    ///
+747	    /// let mut slab = Slab::new();
+748	    /// let key1 = slab.insert(1);
+749	    /// let key2 = slab.insert(2);
+750	    /// let (value1, value2) = slab.get2_mut(key1, key2).unwrap();
+751	    /// mem::swap(value1, value2);
+752	    /// assert_eq!(slab[key1], 2);
+753	    /// assert_eq!(slab[key2], 1);
+754	    /// ```
+755	    pub fn get2_mut(&mut self, key1: usize, key2: usize) -> Option<(&mut T, &mut T)> {
+756	        assert!(key1 != key2);
+757	
+758	        let (entry1, entry2);
+759	
+760	        if key1 > key2 {
+761	            let (slice1, slice2) = self.entries.split_at_mut(key1);
+762	            entry1 = slice2.get_mut(0);
+763	            entry2 = slice1.get_mut(key2);
+764	        } else {
+765	            let (slice1, slice2) = self.entries.split_at_mut(key2);
+766	            entry1 = slice1.get_mut(key1);
+767	            entry2 = slice2.get_mut(0);
+768	        }
+769	
+770	        match (entry1, entry2) {
+771	            (
+772	                Some(&mut Entry::Occupied(ref mut val1)),
+773	                Some(&mut Entry::Occupied(ref mut val2)),
+774	            ) => Some((val1, val2)),
+775	            _ => None,
+776	        }
+777	    }
+778	
+779	    /// Return a reference to the value associated with the given key without
+780	    /// performing bounds checking.
+781	    ///
+782	    /// For a safe alternative see [`get`](Slab::get).
+783	    ///
+784	    /// This function should be used with care.
+785	    ///
+786	    /// # Safety
+787	    ///
+788	    /// The key must be within bounds.
+789	    ///
+790	    /// # Examples
+791	    ///
+792	    /// ```
+793	    /// # use slab::*;
+794	    /// let mut slab = Slab::new();
+795	    /// let key = slab.insert(2);
+796	    ///
+797	    /// unsafe {
+798	    ///     assert_eq!(slab.get_unchecked(key), &2);
+799	    /// }
+800	    /// ```
+801	    pub unsafe fn get_unchecked(&self, key: usize) -> &T {
+802	        match *self.entries.get_unchecked(key) {
+803	            Entry::Occupied(ref val) => val,
+804	            _ => unreachable!(),
+805	        }
+806	    }
+807	
+808	    /// Return a mutable reference to the value associated with the given key
+809	    /// without performing bounds checking.
+810	    ///
+811	    /// For a safe alternative see [`get_mut`](Slab::get_mut).
+812	    ///
+813	    /// This function should be used with care.
+814	    ///
+815	    /// # Safety
+816	    ///
+817	    /// The key must be within bounds.
+818	    ///
+819	    /// # Examples
+820	    ///
+821	    /// ```
+822	    /// # use slab::*;
+823	    /// let mut slab = Slab::new();
+824	    /// let key = slab.insert(2);
+825	    ///
+826	    /// unsafe {
+827	    ///     let val = slab.get_unchecked_mut(key);
+828	    ///     *val = 13;
+829	    /// }
+830	    ///
+831	    /// assert_eq!(slab[key], 13);
+832	    /// ```
+833	    pub unsafe fn get_unchecked_mut(&mut self, key: usize) -> &mut T {
+834	        match *self.entries.get_unchecked_mut(key) {
+835	            Entry::Occupied(ref mut val) => val,
+836	            _ => unreachable!(),
+837	        }
+838	    }
+839	
+840	    /// Return two mutable references to the values associated with the two
+841	    /// given keys simultaneously without performing bounds checking and safety
+842	    /// condition checking.
+843	    ///
+844	    /// For a safe alternative see [`get2_mut`](Slab::get2_mut).
+845	    ///
+846	    /// This function should be used with care.
+847	    ///
+848	    /// # Safety
+849	    ///
+850	    /// - Both keys must be within bounds.
+851	    /// - The condition `key1 != key2` must hold.
+852	    ///
+853	    /// # Examples
+854	    ///
+855	    /// ```
+856	    /// # use slab::*;
+857	    /// use std::mem;
+858	    ///
+859	    /// let mut slab = Slab::new();
+860	    /// let key1 = slab.insert(1);
+861	    /// let key2 = slab.insert(2);
+862	    /// let (value1, value2) = unsafe { slab.get2_unchecked_mut(key1, key2) };
+863	    /// mem::swap(value1, value2);
+864	    /// assert_eq!(slab[key1], 2);
+865	    /// assert_eq!(slab[key2], 1);
+866	    /// ```
+867	    pub unsafe fn get2_unchecked_mut(&mut self, key1: usize, key2: usize) -> (&mut T, &mut T) {
+868	        debug_assert_ne!(key1, key2);
+869	        let ptr = self.entries.as_mut_ptr();
+870	        let ptr1 = ptr.add(key1);
+871	        let ptr2 = ptr.add(key2);
+872	        match (&mut *ptr1, &mut *ptr2) {
+873	            (&mut Entry::Occupied(ref mut val1), &mut Entry::Occupied(ref mut val2)) => {
+874	                (val1, val2)
+875	            }
+876	            _ => unreachable!(),
+877	        }
+878	    }
+879	
+880	    /// Get the key for an element in the slab.
+881	    ///
+882	    /// The reference must point to an element owned by the slab.
+883	    /// Otherwise this function will panic.
+884	    /// This is a constant-time operation because the key can be calculated
+885	    /// from the reference with pointer arithmetic.
+886	    ///
+887	    /// # Panics
+888	    ///
+889	    /// This function will panic if the reference does not point to an element
+890	    /// of the slab.
+891	    ///
+892	    /// # Examples
+893	    ///
+894	    /// ```
+895	    /// # use slab::*;
+896	    ///
+897	    /// let mut slab = Slab::new();
+898	    /// let key = slab.insert(String::from("foo"));
+899	    /// let value = &slab[key];
+900	    /// assert_eq!(slab.key_of(value), key);
+901	    /// ```
+902	    ///
+903	    /// Values are not compared, so passing a reference to a different location
+904	    /// will result in a panic:
+905	    ///
+906	    /// ```should_panic
+907	    /// # use slab::*;
+908	    ///
+909	    /// let mut slab = Slab::new();
+910	    /// let key = slab.insert(0);
+911	    /// let bad = &0;
+912	    /// slab.key_of(bad); // this will panic
+913	    /// unreachable!();
+914	    /// ```
+915	    #[track_caller]
+916	    pub fn key_of(&self, present_element: &T) -> usize {
+917	        let element_ptr = present_element as *const T as usize;
+918	        let base_ptr = self.entries.as_ptr() as usize;
+919	        // Use wrapping subtraction in case the reference is bad
+920	        let byte_offset = element_ptr.wrapping_sub(base_ptr);
+921	        // The division rounds away any offset of T inside Entry
+922	        // The size of Entry<T> is never zero even if T is due to Vacant(usize)
+923	        let key = byte_offset / mem::size_of::<Entry<T>>();
+924	        // Prevent returning unspecified (but out of bounds) values
+925	        if key >= self.entries.len() {
+926	            panic!("The reference points to a value outside this slab");
+927	        }
+928	        // The reference cannot point to a vacant entry, because then it would not be valid
+929	        key
+930	    }
+931	
+932	    /// Insert a value in the slab, returning key assigned to the value.
+933	    ///
+934	    /// The returned key can later be used to retrieve or remove the value using indexed
+935	    /// lookup and `remove`. Additional capacity is allocated if needed. See
+936	    /// [Capacity and reallocation](index.html#capacity-and-reallocation).
+937	    ///
+938	    /// # Panics
+939	    ///
+940	    /// Panics if the new storage in the vector exceeds `isize::MAX` bytes.
+941	    ///
+942	    /// # Examples
+943	    ///
+944	    /// ```
+945	    /// # use slab::*;
+946	    /// let mut slab = Slab::new();
+947	    /// let key = slab.insert("hello");
+948	    /// assert_eq!(slab[key], "hello");
+949	    /// ```
+950	    pub fn insert(&mut self, val: T) -> usize {
+951	        let key = self.next;
+952	
+953	        self.insert_at(key, val);
+954	
+955	        key
+956	    }
+957	
+958	    /// Returns the key of the next vacant entry.
+959	    ///
+960	    /// This function returns the key of the vacant entry which  will be used
+961	    /// for the next insertion. This is equivalent to
+962	    /// `slab.vacant_entry().key()`, but it doesn't require mutable access.
+963	    ///
+964	    /// # Examples
+965	    ///
+966	    /// ```
+967	    /// # use slab::*;
+968	    /// let mut slab = Slab::new();
+969	    /// assert_eq!(slab.vacant_key(), 0);
+970	    ///
+971	    /// slab.insert(0);
+972	    /// assert_eq!(slab.vacant_key(), 1);
+973	    ///
+974	    /// slab.insert(1);
+975	    /// slab.remove(0);
+976	    /// assert_eq!(slab.vacant_key(), 0);
+977	    /// ```
+978	    pub fn vacant_key(&self) -> usize {
+979	        self.next
+980	    }
+981	
+982	    /// Return a handle to a vacant entry allowing for further manipulation.
+983	    ///
+984	    /// This function is useful when creating values that must contain their
+985	    /// slab key. The returned `VacantEntry` reserves a slot in the slab and is
+986	    /// able to query the associated key.
+987	    ///
+988	    /// # Examples
+989	    ///
+990	    /// ```
+991	    /// # use slab::*;
+992	    /// let mut slab = Slab::new();
+993	    ///
+994	    /// let hello = {
+995	    ///     let entry = slab.vacant_entry();
+996	    ///     let key = entry.key();
+997	    ///
+998	    ///     entry.insert((key, "hello"));
+999	    ///     key
+1000	    /// };
+1001	    ///
+1002	    /// assert_eq!(hello, slab[hello].0);
+1003	    /// assert_eq!("hello", slab[hello].1);
+1004	    /// ```
+1005	    pub fn vacant_entry(&mut self) -> VacantEntry<'_, T> {
+1006	        VacantEntry {
+1007	            key: self.next,
+1008	            slab: self,
+1009	        }
+1010	    }
+1011	
+1012	    fn insert_at(&mut self, key: usize, val: T) {
+1013	        self.len += 1;
+1014	
+1015	        if key == self.entries.len() {
+1016	            self.entries.push(Entry::Occupied(val));
+1017	            self.next = key + 1;
+1018	        } else {
+1019	            self.next = match self.entries.get(key) {
+1020	                Some(&Entry::Vacant(next)) => next,
+1021	                _ => unreachable!(),
+1022	            };
+1023	            self.entries[key] = Entry::Occupied(val);
+1024	        }
+1025	    }
+1026	
+1027	    /// Tries to remove the value associated with the given key,
+1028	    /// returning the value if the key existed.
+1029	    ///
+1030	    /// The key is then released and may be associated with future stored
+1031	    /// values.
+1032	    ///
+1033	    /// # Examples
+1034	    ///
+1035	    /// ```
+1036	    /// # use slab::*;
+1037	    /// let mut slab = Slab::new();
+1038	    ///
+1039	    /// let hello = slab.insert("hello");
+1040	    ///
+1041	    /// assert_eq!(slab.try_remove(hello), Some("hello"));
+1042	    /// assert!(!slab.contains(hello));
+1043	    /// ```
+1044	    pub fn try_remove(&mut self, key: usize) -> Option<T> {
+1045	        if let Some(entry) = self.entries.get_mut(key) {
+1046	            // Swap the entry at the provided value
+1047	            let prev = mem::replace(entry, Entry::Vacant(self.next));
+1048	
+1049	            match prev {
+1050	                Entry::Occupied(val) => {
+1051	                    self.len -= 1;
+1052	                    self.next = key;
+1053	                    return val.into();
+1054	                }
+1055	                _ => {
+1056	                    // Woops, the entry is actually vacant, restore the state
+1057	                    *entry = prev;
+1058	                }
+1059	            }
+1060	        }
+1061	        None
+1062	    }
+1063	
+1064	    /// Remove and return the value associated with the given key.
+1065	    ///
+1066	    /// The key is then released and may be associated with future stored
+1067	    /// values.
+1068	    ///
+1069	    /// # Panics
+1070	    ///
+1071	    /// Panics if `key` is not associated with a value.
+1072	    ///
+1073	    /// # Examples
+1074	    ///
+1075	    /// ```
+1076	    /// # use slab::*;
+1077	    /// let mut slab = Slab::new();
+1078	    ///
+1079	    /// let hello = slab.insert("hello");
+1080	    ///
+1081	    /// assert_eq!(slab.remove(hello), "hello");
+1082	    /// assert!(!slab.contains(hello));
+1083	    /// ```
+1084	    #[track_caller]
+1085	    pub fn remove(&mut self, key: usize) -> T {
+1086	        self.try_remove(key).expect("invalid key")
+1087	    }
+1088	
+1089	    /// Return `true` if a value is associated with the given key.
+1090	    ///
+1091	    /// # Examples
+1092	    ///
+1093	    /// ```
+1094	    /// # use slab::*;
+1095	    /// let mut slab = Slab::new();
+1096	    ///
+1097	    /// let hello = slab.insert("hello");
+1098	    /// assert!(slab.contains(hello));
+1099	    ///
+1100	    /// slab.remove(hello);
+1101	    ///
+1102	    /// assert!(!slab.contains(hello));
+1103	    /// ```
+1104	    pub fn contains(&self, key: usize) -> bool {
+1105	        matches!(self.entries.get(key), Some(&Entry::Occupied(_)))
+1106	    }
+1107	
+1108	    /// Retain only the elements specified by the predicate.
+1109	    ///
+1110	    /// In other words, remove all elements `e` such that `f(usize, &mut e)`
+1111	    /// returns false. This method operates in place and preserves the key
+1112	    /// associated with the retained values.
+1113	    ///
+1114	    /// # Examples
+1115	    ///
+1116	    /// ```
+1117	    /// # use slab::*;
+1118	    /// let mut slab = Slab::new();
+1119	    ///
+1120	    /// let k1 = slab.insert(0);
+1121	    /// let k2 = slab.insert(1);
+1122	    /// let k3 = slab.insert(2);
+1123	    ///
+1124	    /// slab.retain(|key, val| key == k1 || *val == 1);
+1125	    ///
+1126	    /// assert!(slab.contains(k1));
+1127	    /// assert!(slab.contains(k2));
+1128	    /// assert!(!slab.contains(k3));
+1129	    ///
+1130	    /// assert_eq!(2, slab.len());
+1131	    /// ```
+1132	    pub fn retain<F>(&mut self, mut f: F)
+1133	    where
+1134	        F: FnMut(usize, &mut T) -> bool,
+1135	    {
+1136	        for i in 0..self.entries.len() {
+1137	            let keep = match self.entries[i] {
+1138	                Entry::Occupied(ref mut v) => f(i, v),
+1139	                _ => true,
+1140	            };
+1141	
+1142	            if !keep {
+1143	                self.remove(i);
+1144	            }
+1145	        }
+1146	    }
+1147	
+1148	    /// Return a draining iterator that removes all elements from the slab and
+1149	    /// yields the removed items.
+1150	    ///
+1151	    /// Note: Elements are removed even if the iterator is only partially
+1152	    /// consumed or not consumed at all.
+1153	    ///
+1154	    /// # Examples
+1155	    ///
+1156	    /// ```
+1157	    /// # use slab::*;
+1158	    /// let mut slab = Slab::new();
+1159	    ///
+1160	    /// let _ = slab.insert(0);
+1161	    /// let _ = slab.insert(1);
+1162	    /// let _ = slab.insert(2);
+1163	    ///
+1164	    /// {
+1165	    ///     let mut drain = slab.drain();
+1166	    ///
+1167	    ///     assert_eq!(Some(0), drain.next());
+1168	    ///     assert_eq!(Some(1), drain.next());
+1169	    ///     assert_eq!(Some(2), drain.next());
+1170	    ///     assert_eq!(None, drain.next());
+1171	    /// }
+1172	    ///
+1173	    /// assert!(slab.is_empty());
+1174	    /// ```
+1175	    pub fn drain(&mut self) -> Drain<'_, T> {
+1176	        let old_len = self.len;
+1177	        self.len = 0;
+1178	        self.next = 0;
+1179	        Drain {
+1180	            inner: self.entries.drain(..),
+1181	            len: old_len,
+1182	        }
+1183	    }
+1184	}
+1185	
+1186	impl<T> ops::Index<usize> for Slab<T> {
+1187	    type Output = T;
+1188	
+1189	    #[track_caller]
+1190	    fn index(&self, key: usize) -> &T {
+1191	        match self.entries.get(key) {
+1192	            Some(Entry::Occupied(v)) => v,
+1193	            _ => panic!("invalid key"),
+1194	        }
+1195	    }
+1196	}
+1197	
+1198	impl<T> ops::IndexMut<usize> for Slab<T> {
+1199	    #[track_caller]
+1200	    fn index_mut(&mut self, key: usize) -> &mut T {
+1201	        match self.entries.get_mut(key) {
+1202	            Some(&mut Entry::Occupied(ref mut v)) => v,
+1203	            _ => panic!("invalid key"),
+1204	        }
+1205	    }
+1206	}
+1207	
+1208	impl<T> IntoIterator for Slab<T> {
+1209	    type Item = (usize, T);
+1210	    type IntoIter = IntoIter<T>;
+1211	
+1212	    fn into_iter(self) -> IntoIter<T> {
+1213	        IntoIter {
+1214	            entries: self.entries.into_iter().enumerate(),
+1215	            len: self.len,
+1216	        }
+1217	    }
+1218	}
+1219	
+1220	impl<'a, T> IntoIterator for &'a Slab<T> {
+1221	    type Item = (usize, &'a T);
+1222	    type IntoIter = Iter<'a, T>;
+1223	
+1224	    fn into_iter(self) -> Iter<'a, T> {
+1225	        self.iter()
+1226	    }
+1227	}
+1228	
+1229	impl<'a, T> IntoIterator for &'a mut Slab<T> {
+1230	    type Item = (usize, &'a mut T);
+1231	    type IntoIter = IterMut<'a, T>;
+1232	
+1233	    fn into_iter(self) -> IterMut<'a, T> {
+1234	        self.iter_mut()
+1235	    }
+1236	}
+1237	
+1238	/// Create a slab from an iterator of key-value pairs.
+1239	///
+1240	/// If the iterator produces duplicate keys, the previous value is replaced with the later one.
+1241	/// The keys does not need to be sorted beforehand, and this function always
+1242	/// takes O(n) time.
+1243	/// Note that the returned slab will use space proportional to the largest key,
+1244	/// so don't use `Slab` with untrusted keys.
+1245	///
+1246	/// # Examples
+1247	///
+1248	/// ```
+1249	/// # use slab::*;
+1250	///
+1251	/// let vec = vec![(2,'a'), (6,'b'), (7,'c')];
+1252	/// let slab = vec.into_iter().collect::<Slab<char>>();
+1253	/// assert_eq!(slab.len(), 3);
+1254	/// assert!(slab.capacity() >= 8);
+1255	/// assert_eq!(slab[2], 'a');
+1256	/// ```
+1257	///
+1258	/// With duplicate and unsorted keys:
+1259	///
+1260	/// ```
+1261	/// # use slab::*;
+1262	///
+1263	/// let vec = vec![(20,'a'), (10,'b'), (11,'c'), (10,'d')];
+1264	/// let slab = vec.into_iter().collect::<Slab<char>>();
+1265	/// assert_eq!(slab.len(), 3);
+1266	/// assert_eq!(slab[10], 'd');
+1267	/// ```
+1268	impl<T> FromIterator<(usize, T)> for Slab<T> {
+1269	    fn from_iter<I>(iterable: I) -> Self
+1270	    where
+1271	        I: IntoIterator<Item = (usize, T)>,
+1272	    {
+1273	        let iterator = iterable.into_iter();
+1274	        let mut builder = builder::Builder::with_capacity(iterator.size_hint().0);
+1275	
+1276	        for (key, value) in iterator {
+1277	            builder.pair(key, value)
+1278	        }
+1279	        builder.build()
+1280	    }
+1281	}
+1282	
+1283	impl<T> fmt::Debug for Slab<T>
+1284	where
+1285	    T: fmt::Debug,
+1286	{
+1287	    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+1288	        if fmt.alternate() {
+1289	            fmt.debug_map().entries(self.iter()).finish()
+1290	        } else {
+1291	            fmt.debug_struct("Slab")
+1292	                .field("len", &self.len)
+1293	                .field("cap", &self.capacity())
+1294	                .finish()
+1295	        }
+1296	    }
+1297	}
+1298	
+1299	impl<T> fmt::Debug for IntoIter<T>
+1300	where
+1301	    T: fmt::Debug,
+1302	{
+1303	    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+1304	        fmt.debug_struct("IntoIter")
+1305	            .field("remaining", &self.len)
+1306	            .finish()
+1307	    }
+1308	}
+1309	
+1310	impl<T> fmt::Debug for Iter<'_, T>
+1311	where
+1312	    T: fmt::Debug,
+1313	{
+1314	    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+1315	        fmt.debug_struct("Iter")
+1316	            .field("remaining", &self.len)
+1317	            .finish()
+1318	    }
+1319	}
+1320	
+1321	impl<T> fmt::Debug for IterMut<'_, T>
+1322	where
+1323	    T: fmt::Debug,
+1324	{
+1325	    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+1326	        fmt.debug_struct("IterMut")
+1327	            .field("remaining", &self.len)
+1328	            .finish()
+1329	    }
+1330	}
+1331	
+1332	impl<T> fmt::Debug for Drain<'_, T> {
+1333	    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+1334	        fmt.debug_struct("Drain").finish()
+1335	    }
+1336	}
+1337	
+1338	// ===== VacantEntry =====
+1339	
+1340	impl<'a, T> VacantEntry<'a, T> {
+1341	    /// Insert a value in the entry, returning a mutable reference to the value.
+1342	    ///
+1343	    /// To get the key associated with the value, use `key` prior to calling
+1344	    /// `insert`.
+1345	    ///
+1346	    /// # Examples
+1347	    ///
+1348	    /// ```
+1349	    /// # use slab::*;
+1350	    /// let mut slab = Slab::new();
+1351	    ///
+1352	    /// let hello = {
+1353	    ///     let entry = slab.vacant_entry();
+1354	    ///     let key = entry.key();
+1355	    ///
+1356	    ///     entry.insert((key, "hello"));
+1357	    ///     key
+1358	    /// };
+1359	    ///
+1360	    /// assert_eq!(hello, slab[hello].0);
+1361	    /// assert_eq!("hello", slab[hello].1);
+1362	    /// ```
+1363	    pub fn insert(self, val: T) -> &'a mut T {
+1364	        self.slab.insert_at(self.key, val);
+1365	
+1366	        match self.slab.entries.get_mut(self.key) {
+1367	            Some(&mut Entry::Occupied(ref mut v)) => v,
+1368	            _ => unreachable!(),
+1369	        }
+1370	    }
+1371	
+1372	    /// Return the key associated with this entry.
+1373	    ///
+1374	    /// A value stored in this entry will be associated with this key.
+1375	    ///
+1376	    /// # Examples
+1377	    ///
+1378	    /// ```
+1379	    /// # use slab::*;
+1380	    /// let mut slab = Slab::new();
+1381	    ///
+1382	    /// let hello = {
+1383	    ///     let entry = slab.vacant_entry();
+1384	    ///     let key = entry.key();
+1385	    ///
+1386	    ///     entry.insert((key, "hello"));
+1387	    ///     key
+1388	    /// };
+1389	    ///
+1390	    /// assert_eq!(hello, slab[hello].0);
+1391	    /// assert_eq!("hello", slab[hello].1);
+1392	    /// ```
+1393	    pub fn key(&self) -> usize {
+1394	        self.key
+1395	    }
+1396	}
+1397	
+1398	// ===== IntoIter =====
+1399	
+1400	impl<T> Iterator for IntoIter<T> {
+1401	    type Item = (usize, T);
+1402	
+1403	    fn next(&mut self) -> Option<Self::Item> {
+1404	        for (key, entry) in &mut self.entries {
+1405	            if let Entry::Occupied(v) = entry {
+1406	                self.len -= 1;
+1407	                return Some((key, v));
+1408	            }
+1409	        }
+1410	
+1411	        debug_assert_eq!(self.len, 0);
+1412	        None
+1413	    }
+1414	
+1415	    fn size_hint(&self) -> (usize, Option<usize>) {
+1416	        (self.len, Some(self.len))
+1417	    }
+1418	}
+1419	
+1420	impl<T> DoubleEndedIterator for IntoIter<T> {
+1421	    fn next_back(&mut self) -> Option<Self::Item> {
+1422	        while let Some((key, entry)) = self.entries.next_back() {
+1423	            if let Entry::Occupied(v) = entry {
+1424	                self.len -= 1;
+1425	                return Some((key, v));
+1426	            }
+1427	        }
+1428	
+1429	        debug_assert_eq!(self.len, 0);
+1430	        None
+1431	    }
+1432	}
+1433	
+1434	impl<T> ExactSizeIterator for IntoIter<T> {
+1435	    fn len(&self) -> usize {
+1436	        self.len
+1437	    }
+1438	}
+1439	
+1440	impl<T> FusedIterator for IntoIter<T> {}
+1441	
+1442	// ===== Iter =====
+1443	
+1444	impl<'a, T> Iterator for Iter<'a, T> {
+1445	    type Item = (usize, &'a T);
+1446	
+1447	    fn next(&mut self) -> Option<Self::Item> {
+1448	        for (key, entry) in &mut self.entries {
+1449	            if let Entry::Occupied(ref v) = *entry {
+1450	                self.len -= 1;
+1451	                return Some((key, v));
+1452	            }
+1453	        }
+1454	
+1455	        debug_assert_eq!(self.len, 0);
+1456	        None
+1457	    }
+1458	
+1459	    fn size_hint(&self) -> (usize, Option<usize>) {
+1460	        (self.len, Some(self.len))
+1461	    }
+1462	}
+1463	
+1464	impl<T> DoubleEndedIterator for Iter<'_, T> {
+1465	    fn next_back(&mut self) -> Option<Self::Item> {
+1466	        while let Some((key, entry)) = self.entries.next_back() {
+1467	            if let Entry::Occupied(ref v) = *entry {
+1468	                self.len -= 1;
+1469	                return Some((key, v));
+1470	            }
+1471	        }
+1472	
+1473	        debug_assert_eq!(self.len, 0);
+1474	        None
+1475	    }
+1476	}
+1477	
+1478	impl<T> ExactSizeIterator for Iter<'_, T> {
+1479	    fn len(&self) -> usize {
+1480	        self.len
+1481	    }
+1482	}
+1483	
+1484	impl<T> FusedIterator for Iter<'_, T> {}
+1485	
+1486	// ===== IterMut =====
+1487	
+1488	impl<'a, T> Iterator for IterMut<'a, T> {
+1489	    type Item = (usize, &'a mut T);
+1490	
+1491	    fn next(&mut self) -> Option<Self::Item> {
+1492	        for (key, entry) in &mut self.entries {
+1493	            if let Entry::Occupied(ref mut v) = *entry {
+1494	                self.len -= 1;
+1495	                return Some((key, v));
+1496	            }
+1497	        }
+1498	
+1499	        debug_assert_eq!(self.len, 0);
+1500	        None
+1501	    }
+1502	
+1503	    fn size_hint(&self) -> (usize, Option<usize>) {
+1504	        (self.len, Some(self.len))
+1505	    }
+1506	}
+1507	
+1508	impl<T> DoubleEndedIterator for IterMut<'_, T> {
+1509	    fn next_back(&mut self) -> Option<Self::Item> {
+1510	        while let Some((key, entry)) = self.entries.next_back() {
+1511	            if let Entry::Occupied(ref mut v) = *entry {
+1512	                self.len -= 1;
+1513	                return Some((key, v));
+1514	            }
+1515	        }
+1516	
+1517	        debug_assert_eq!(self.len, 0);
+1518	        None
+1519	    }
+1520	}
+1521	
+1522	impl<T> ExactSizeIterator for IterMut<'_, T> {
+1523	    fn len(&self) -> usize {
+1524	        self.len
+1525	    }
+1526	}
+1527	
+1528	impl<T> FusedIterator for IterMut<'_, T> {}
+1529	
+1530	// ===== Drain =====
+1531	
+1532	impl<T> Iterator for Drain<'_, T> {
+1533	    type Item = T;
+1534	
+1535	    fn next(&mut self) -> Option<Self::Item> {
+1536	        for entry in &mut self.inner {
+1537	            if let Entry::Occupied(v) = entry {
+1538	                self.len -= 1;
+1539	                return Some(v);
+1540	            }
+1541	        }
+1542	
+1543	        debug_assert_eq!(self.len, 0);
+1544	        None
+1545	    }
+1546	
+1547	    fn size_hint(&self) -> (usize, Option<usize>) {
+1548	        (self.len, Some(self.len))
+1549	    }
+1550	}
+1551	
+1552	impl<T> DoubleEndedIterator for Drain<'_, T> {
+1553	    fn next_back(&mut self) -> Option<Self::Item> {
+1554	        while let Some(entry) = self.inner.next_back() {
+1555	            if let Entry::Occupied(v) = entry {
+1556	                self.len -= 1;
+1557	                return Some(v);
+1558	            }
+1559	        }
+1560	
+1561	        debug_assert_eq!(self.len, 0);
+1562	        None
+1563	    }
+1564	}
+1565	
+1566	impl<T> ExactSizeIterator for Drain<'_, T> {
+1567	    fn len(&self) -> usize {
+1568	        self.len
+1569	    }
+1570	}
+1571	
+1572	impl<T> FusedIterator for Drain<'_, T> {}
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-o395wg6c.log]

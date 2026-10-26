@@ -1,0 +1,2815 @@
+$ git show HEAD
+commit f4fe561cbd9b60bdc731c42031e39d071adf55f5
+Author: evals <evals@localhost>
+Date:   Thu Oct 22 12:37:52 2026 +0200
+
+    base
+
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..3a080ca
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,77 @@
++name: CI
++
++on:
++  pull_request:
++    branches:
++      - master
++  push:
++    branches:
++      - master
++  schedule:
++    - cron: '0 2 * * 0'
++
++env:
++  RUSTFLAGS: -Dwarnings
++  RUST_BACKTRACE: 1
++
++concurrency:
++  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
++  cancel-in-progress: true
++
++jobs:
++  test:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update stable
++      - name: Install cargo-hack
++        uses: taiki-e/install-action@cargo-hack
++      - run: cargo hack build --feature-powerset --optional-deps --no-dev-deps
++      - run: cargo test --all-features
++
++  minrust:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install cargo-hack
++        uses: taiki-e/install-action@cargo-hack
++      - run: cargo hack build --rust-version
++      - run: cargo hack build --rust-version --no-default-features --target thumbv7m-none-eabi
++
++  miri:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup toolchain install nightly --component miri && rustup default nightly
++      - run: cargo miri test --workspace --all-features
++        env:
++          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-disable-isolation
++          RUSTFLAGS: ${{ env.RUSTFLAGS }} -Z randomize-layout
++
++  clippy:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update stable
++      - run: cargo clippy --all-features
++
++  fmt:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update stable
++      - run: cargo fmt --all --check
++
++  docs:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install Rust
++        run: rustup update nightly && rustup default nightly
++      - run: cargo doc --no-deps --all-features
++        env:
++          RUSTDOCFLAGS: -Dwarnings
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+new file mode 100644
+index 0000000..ba5992a
+--- /dev/null
++++ b/.github/workflows/release.yml
+@@ -0,0 +1,19 @@
++name: Release
++
++on:
++  push:
++    tags:
++      - v[0-9]+.*
++
++jobs:
++  create-release:
++    if: github.repository_owner == 'tokio-rs'
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: taiki-e/create-gh-release-action@v1
++        with:
++          changelog: CHANGELOG.md
++          branch: master
++        env:
++          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..b235e4d
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,3 @@
++*.swp
++target
++Cargo.lock
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+new file mode 100644
+index 0000000..f46a797
+--- /dev/null
++++ b/CHANGELOG.md
+@@ -0,0 +1,54 @@
++# 0.4.9 (August 22, 2023)
++
++* Avoid reallocations in `Slab::clone_from` (#137)
++
++# 0.4.8 (January 20, 2023)
++
++* Fixed documentation about overflow (#124)
++* Document panic in `get2_mut` (#131)
++* Refactoring (#129, #132)
++
++# 0.4.7 (July 19, 2022)
++
++* Use `#[track_caller]` on Rust 1.46+ (#119)
++* Make `Slab::new` const on Rust 1.39+ (#119)
++
++# 0.4.6 (April 2, 2022)
++
++* Add `Slab::vacant_key` (#114)
++* Fix stacked borrows violation in `Slab::get2_unchecked_mut` (#115)
++
++# 0.4.5 (October 13, 2021)
++
++* Add alternate debug output for listing items in the slab (#108)
++* Fix typo in debug output of IntoIter (#109)
++* Impl 'Clone' for 'Iter' (#110)
++
++# 0.4.4 (August 06, 2021)
++
++* Fix panic in `FromIterator` impl (#102)
++* Fix compatibility with older clippy versions (#104)
++* Add `try_remove` method (#89)
++* Implement `ExactSizeIterator` and `FusedIterator` for iterators (#92)
++
++# 0.4.3 (April 20, 2021)
++
++* Add no_std support for Rust 1.36 and above (#71).
++* Add `get2_mut` and `get2_unchecked_mut` methods (#65).
++* Make `shrink_to_fit()` remove trailing vacant entries (#62).
++* Implement `FromIterator<(usize, T)>` (#62).
++* Implement `IntoIterator<Item = (usize, T)>` (#62).
++* Provide `size_hint()` of the iterators (#62).
++* Make all iterators reversible (#62).
++* Add `key_of()` method (#61)
++* Add `compact()` method (#60)
++* Add support for serde (#85)
++
++# 0.4.2 (January 11, 2019)
++
++* Add `Slab::drain` (#56).
++
++# 0.4.1 (July 15, 2018)
++
++* Improve `reserve` and `reserve_exact` (#37).
++* Implement `Default` for `Slab` (#43).
+diff --git a/Cargo.toml b/Cargo.toml
+new file mode 100644
+index 0000000..9e0c186
+--- /dev/null
++++ b/Cargo.toml
+@@ -0,0 +1,29 @@
++[package]
++
++name = "slab"
++# When releasing to crates.io:
++# - Update version number
++#   - README.md
++# - Update CHANGELOG.md
++# - Create git tag
++version = "0.4.9"
++authors = ["Carl Lerche <me@carllerche.com>"]
++edition = "2018"
++rust-version = "1.46"
++license = "MIT"
++description = "Pre-allocated storage for a uniform data type"
++repository = "https://github.com/tokio-rs/slab"
++keywords = ["slab", "allocator", "no_std"]
++categories = ["memory-management", "data-structures", "no-std"]
++exclude = ["/.*"]
++
++[features]
++std = []
++default = ["std"]
++
++[dependencies]
++serde = { version = "1.0.95", optional = true, default-features = false, features = ["alloc"] }
++
++[dev-dependencies]
++serde = { version = "1", features = ["derive"] }
++serde_test = "1"
+diff --git a/LICENSE b/LICENSE
+new file mode 100644
+index 0000000..819ce21
+--- /dev/null
++++ b/LICENSE
+@@ -0,0 +1,25 @@
++Copyright (c) 2019 Carl Lerche
++
++Permission is hereby granted, free of charge, to any
++person obtaining a copy of this software and associated
++documentation files (the "Software"), to deal in the
++Software without restriction, including without
++limitation the rights to use, copy, modify, merge,
++publish, distribute, sublicense, and/or sell copies of
++the Software, and to permit persons to whom the Software
++is furnished to do so, subject to the following
++conditions:
++
++The above copyright notice and this permission notice
++shall be included in all copies or substantial portions
++of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
++ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
++TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
++PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
++SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
++CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
++OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
++IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++DEALINGS IN THE SOFTWARE.
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..4281389
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,51 @@
++# Slab
++
++Pre-allocated storage for a uniform data type.
++
++[![Crates.io][crates-badge]][crates-url]
++[![Build Status][ci-badge]][ci-url]
++
++[crates-badge]: https://img.shields.io/crates/v/slab
++[crates-url]: https://crates.io/crates/slab
++[ci-badge]: https://img.shields.io/github/actions/workflow/status/tokio-rs/slab/ci.yml?branch=master
++[ci-url]: https://github.com/tokio-rs/slab/actions
++
++[Documentation](https://docs.rs/slab)
++
++## Usage
++
++To use `slab`, first add this to your `Cargo.toml`:
++
++```toml
++[dependencies]
++slab = "0.4"
++```
++
++Next, add this to your crate:
++
++```rust
++use slab::Slab;
++
++let mut slab = Slab::new();
++
++let hello = slab.insert("hello");
++let world = slab.insert("world");
++
++assert_eq!(slab[hello], "hello");
++assert_eq!(slab[world], "world");
++
++slab[world] = "earth";
++assert_eq!(slab[world], "earth");
++```
++
++See [documentation](https://docs.rs/slab) for more details.
++
++## License
++
++This project is licensed under the [MIT license](LICENSE).
++
++### Contribution
++
++Unless you explicitly state otherwise, any contribution intentionally submitted
++for inclusion in `slab` by you, shall be licensed as MIT, without any additional
++terms or conditions.
+diff --git a/src/builder.rs b/src/builder.rs
+new file mode 100644
+index 0000000..8e50a20
+--- /dev/null
++++ b/src/builder.rs
+@@ -0,0 +1,63 @@
++use crate::{Entry, Slab};
++
++// Building `Slab` from pairs (usize, T).
++pub(crate) struct Builder<T> {
++    slab: Slab<T>,
++    vacant_list_broken: bool,
++    first_vacant_index: Option<usize>,
++}
++
++impl<T> Builder<T> {
++    pub(crate) fn with_capacity(capacity: usize) -> Self {
++        Self {
++            slab: Slab::with_capacity(capacity),
++            vacant_list_broken: false,
++            first_vacant_index: None,
++        }
++    }
++    pub(crate) fn pair(&mut self, key: usize, value: T) {
++        let slab = &mut self.slab;
++        if key < slab.entries.len() {
++            // iterator is not sorted, might need to recreate vacant list
++            if let Entry::Vacant(_) = slab.entries[key] {
++                self.vacant_list_broken = true;
++                slab.len += 1;
++            }
++            // if an element with this key already exists, replace it.
++            // This is consistent with HashMap and BtreeMap
++            slab.entries[key] = Entry::Occupied(value);
++        } else {
++            if self.first_vacant_index.is_none() && slab.entries.len() < key {
++                self.first_vacant_index = Some(slab.entries.len());
++            }
++            // insert holes as necessary
++            while slab.entries.len() < key {
++                // add the entry to the start of the vacant list
++                let next = slab.next;
++                slab.next = slab.entries.len();
++                slab.entries.push(Entry::Vacant(next));
++            }
++            slab.entries.push(Entry::Occupied(value));
++            slab.len += 1;
++        }
++    }
++
++    pub(crate) fn build(self) -> Slab<T> {
++        let mut slab = self.slab;
++        if slab.len == slab.entries.len() {
++            // no vacant entries, so next might not have been updated
++            slab.next = slab.entries.len();
++        } else if self.vacant_list_broken {
++            slab.recreate_vacant_list();
++        } else if let Some(first_vacant_index) = self.first_vacant_index {
++            let next = slab.entries.len();
++            match &mut slab.entries[first_vacant_index] {
++                Entry::Vacant(n) => *n = next,
++                _ => unreachable!(),
++            }
++        } else {
++            unreachable!()
++        }
++        slab
++    }
++}
+diff --git a/src/lib.rs b/src/lib.rs
+new file mode 100644
+index 0000000..cd5fe0e
+--- /dev/null
++++ b/src/lib.rs
+@@ -0,0 +1,1572 @@
++#![no_std]
++#![warn(
++    missing_debug_implementations,
++    missing_docs,
++    rust_2018_idioms,
++    unreachable_pub
++)]
++#![doc(test(
++    no_crate_inject,
++    attr(deny(warnings, rust_2018_idioms), allow(dead_code, unused_variables))
++))]
++#![allow(clippy::incompatible_msrv)] // false positive: https://github.com/rust-lang/rust-clippy/issues/12280
++
++//! Pre-allocated storage for a uniform data type.
++//!
++//! `Slab` provides pre-allocated storage for a single data type. If many values
++//! of a single type are being allocated, it can be more efficient to
++//! pre-allocate the necessary storage. Since the size of the type is uniform,
++//! memory fragmentation can be avoided. Storing, clearing, and lookup
++//! operations become very cheap.
++//!
++//! While `Slab` may look like other Rust collections, it is not intended to be
++//! used as a general purpose collection. The primary difference between `Slab`
++//! and `Vec` is that `Slab` returns the key when storing the value.
++//!
++//! It is important to note that keys may be reused. In other words, once a
++//! value associated with a given key is removed from a slab, that key may be
++//! returned from future calls to `insert`.
++//!
++//! # Examples
++//!
++//! Basic storing and retrieval.
++//!
++//! ```
++//! # use slab::*;
++//! let mut slab = Slab::new();
++//!
++//! let hello = slab.insert("hello");
++//! let world = slab.insert("world");
++//!
++//! assert_eq!(slab[hello], "hello");
++//! assert_eq!(slab[world], "world");
++//!
++//! slab[world] = "earth";
++//! assert_eq!(slab[world], "earth");
++//! ```
++//!
++//! Sometimes it is useful to be able to associate the key with the value being
++//! inserted in the slab. This can be done with the `vacant_entry` API as such:
++//!
++//! ```
++//! # use slab::*;
++//! let mut slab = Slab::new();
++//!
++//! let hello = {
++//!     let entry = slab.vacant_entry();
++//!     let key = entry.key();
++//!
++//!     entry.insert((key, "hello"));
++//!     key
++//! };
++//!
++//! assert_eq!(hello, slab[hello].0);
++//! assert_eq!("hello", slab[hello].1);
++//! ```
++//!
++//! It is generally a good idea to specify the desired capacity of a slab at
++//! creation time. Note that `Slab` will grow the internal capacity when
++//! attempting to insert a new value once the existing capacity has been reached.
++//! To avoid this, add a check.
++//!
++//! ```
++//! # use slab::*;
++//! let mut slab = Slab::with_capacity(1024);
++//!
++//! // ... use the slab
++//!
++//! if slab.len() == slab.capacity() {
++//!     panic!("slab full");
++//! }
++//!
++//! slab.insert("the slab is not at capacity yet");
++//! ```
++//!
++//! # Capacity and reallocation
++//!
++//! The capacity of a slab is the amount of space allocated for any future
++//! values that will be inserted in the slab. This is not to be confused with
++//! the *length* of the slab, which specifies the number of actual values
++//! currently being inserted. If a slab's length is equal to its capacity, the
++//! next value inserted into the slab will require growing the slab by
++//! reallocating.
++//!
++//! For example, a slab with capacity 10 and length 0 would be an empty slab
++//! with space for 10 more stored values. Storing 10 or fewer elements into the
++//! slab will not change its capacity or cause reallocation to occur. However,
++//! if the slab length is increased to 11 (due to another `insert`), it will
++//! have to reallocate, which can be slow. For this reason, it is recommended to
++//! use [`Slab::with_capacity`] whenever possible to specify how many values the
++//! slab is expected to store.
++//!
++//! # Implementation
++//!
++//! `Slab` is backed by a `Vec` of slots. Each slot is either occupied or
++//! vacant. `Slab` maintains a stack of vacant slots using a linked list. To
++//! find a vacant slot, the stack is popped. When a slot is released, it is
++//! pushed onto the stack.
++//!
++//! If there are no more available slots in the stack, then `Vec::reserve(1)` is
++//! called and a new slot is created.
++//!
++//! [`Slab::with_capacity`]: struct.Slab.html#with_capacity
++
++#[cfg(not(feature = "std"))]
++extern crate alloc;
++#[cfg(feature = "std")]
++extern crate std;
++#[cfg(feature = "std")]
++extern crate std as alloc;
++
++#[cfg(feature = "serde")]
++mod serde;
++
++mod builder;
++
++use alloc::vec::{self, Vec};
++use core::iter::{self, FromIterator, FusedIterator};
++use core::{fmt, mem, ops, slice};
++
++/// Pre-allocated storage for a uniform data type
++///
++/// See the [module documentation] for more details.
++///
++/// [module documentation]: index.html
++pub struct Slab<T> {
++    // Chunk of memory
++    entries: Vec<Entry<T>>,
++
++    // Number of Filled elements currently in the slab
++    len: usize,
++
++    // Offset of the next available slot in the slab. Set to the slab's
++    // capacity when the slab is full.
++    next: usize,
++}
++
++impl<T> Clone for Slab<T>
++where
++    T: Clone,
++{
++    fn clone(&self) -> Self {
++        Self {
++            entries: self.entries.clone(),
++            len: self.len,
++            next: self.next,
++        }
++    }
++
++    fn clone_from(&mut self, source: &Self) {
++        self.entries.clone_from(&source.entries);
++        self.len = source.len;
++        self.next = source.next;
++    }
++}
++
++impl<T> Default for Slab<T> {
++    fn default() -> Self {
++        Slab::new()
++    }
++}
++
++/// A handle to a vacant entry in a `Slab`.
++///
++/// `VacantEntry` allows constructing values with the key that they will be
++/// assigned to.
++///
++/// # Examples
++///
++/// ```
++/// # use slab::*;
++/// let mut slab = Slab::new();
++///
++/// let hello = {
++///     let entry = slab.vacant_entry();
++///     let key = entry.key();
++///
++///     entry.insert((key, "hello"));
++///     key
++/// };
++///
++/// assert_eq!(hello, slab[hello].0);
++/// assert_eq!("hello", slab[hello].1);
++/// ```
++#[derive(Debug)]
++pub struct VacantEntry<'a, T> {
++    slab: &'a mut Slab<T>,
++    key: usize,
++}
++
++/// A consuming iterator over the values stored in a `Slab`
++pub struct IntoIter<T> {
++    entries: iter::Enumerate<vec::IntoIter<Entry<T>>>,
++    len: usize,
++}
++
++/// An iterator over the values stored in the `Slab`
++pub struct Iter<'a, T> {
++    entries: iter::Enumerate<slice::Iter<'a, Entry<T>>>,
++    len: usize,
++}
++
++impl<T> Clone for Iter<'_, T> {
++    fn clone(&self) -> Self {
++        Self {
++            entries: self.entries.clone(),
++            len: self.len,
++        }
++    }
++}
++
++/// A mutable iterator over the values stored in the `Slab`
++pub struct IterMut<'a, T> {
++    entries: iter::Enumerate<slice::IterMut<'a, Entry<T>>>,
++    len: usize,
++}
++
++/// A draining iterator for `Slab`
++pub struct Drain<'a, T> {
++    inner: vec::Drain<'a, Entry<T>>,
++    len: usize,
++}
++
++#[derive(Clone)]
++enum Entry<T> {
++    Vacant(usize),
++    Occupied(T),
++}
++
++impl<T> Slab<T> {
++    /// Construct a new, empty `Slab`.
++    ///
++    /// The function does not allocate and the returned slab will have no
++    /// capacity until `insert` is called or capacity is explicitly reserved.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let slab: Slab<i32> = Slab::new();
++    /// ```
++    pub const fn new() -> Self {
++        Self {
++            entries: Vec::new(),
++            next: 0,
++            len: 0,
++        }
++    }
++
++    /// Construct a new, empty `Slab` with the specified capacity.
++    ///
++    /// The returned slab will be able to store exactly `capacity` without
++    /// reallocating. If `capacity` is 0, the slab will not allocate.
++    ///
++    /// It is important to note that this function does not specify the *length*
++    /// of the returned slab, but only the capacity. For an explanation of the
++    /// difference between length and capacity, see [Capacity and
++    /// reallocation](index.html#capacity-and-reallocation).
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::with_capacity(10);
++    ///
++    /// // The slab contains no values, even though it has capacity for more
++    /// assert_eq!(slab.len(), 0);
++    ///
++    /// // These are all done without reallocating...
++    /// for i in 0..10 {
++    ///     slab.insert(i);
++    /// }
++    ///
++    /// // ...but this may make the slab reallocate
++    /// slab.insert(11);
++    /// ```
++    pub fn with_capacity(capacity: usize) -> Slab<T> {
++        Slab {
++            entries: Vec::with_capacity(capacity),
++            next: 0,
++            len: 0,
++        }
++    }
++
++    /// Return the number of values the slab can store without reallocating.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let slab: Slab<i32> = Slab::with_capacity(10);
++    /// assert_eq!(slab.capacity(), 10);
++    /// ```
++    pub fn capacity(&self) -> usize {
++        self.entries.capacity()
++    }
++
++    /// Reserve capacity for at least `additional` more values to be stored
++    /// without allocating.
++    ///
++    /// `reserve` does nothing if the slab already has sufficient capacity for
++    /// `additional` more values. If more capacity is required, a new segment of
++    /// memory will be allocated and all existing values will be copied into it.
++    /// As such, if the slab is already very large, a call to `reserve` can end
++    /// up being expensive.
++    ///
++    /// The slab may reserve more than `additional` extra space in order to
++    /// avoid frequent reallocations. Use `reserve_exact` instead to guarantee
++    /// that only the requested space is allocated.
++    ///
++    /// # Panics
++    ///
++    /// Panics if the new capacity exceeds `isize::MAX` bytes.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    /// slab.insert("hello");
++    /// slab.reserve(10);
++    /// assert!(slab.capacity() >= 11);
++    /// ```
++    pub fn reserve(&mut self, additional: usize) {
++        if self.capacity() - self.len >= additional {
++            return;
++        }
++        let need_add = additional - (self.entries.len() - self.len);
++        self.entries.reserve(need_add);
++    }
++
++    /// Reserve the minimum capacity required to store exactly `additional`
++    /// more values.
++    ///
++    /// `reserve_exact` does nothing if the slab already has sufficient capacity
++    /// for `additional` more values. If more capacity is required, a new segment
++    /// of memory will be allocated and all existing values will be copied into
++    /// it.  As such, if the slab is already very large, a call to `reserve` can
++    /// end up being expensive.
++    ///
++    /// Note that the allocator may give the slab more space than it requests.
++    /// Therefore capacity can not be relied upon to be precisely minimal.
++    /// Prefer `reserve` if future insertions are expected.
++    ///
++    /// # Panics
++    ///
++    /// Panics if the new capacity exceeds `isize::MAX` bytes.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    /// slab.insert("hello");
++    /// slab.reserve_exact(10);
++    /// assert!(slab.capacity() >= 11);
++    /// ```
++    pub fn reserve_exact(&mut self, additional: usize) {
++        if self.capacity() - self.len >= additional {
++            return;
++        }
++        let need_add = additional - (self.entries.len() - self.len);
++        self.entries.reserve_exact(need_add);
++    }
++
++    /// Shrink the capacity of the slab as much as possible without invalidating keys.
++    ///
++    /// Because values cannot be moved to a different index, the slab cannot
++    /// shrink past any stored values.
++    /// It will drop down as close as possible to the length but the allocator may
++    /// still inform the underlying vector that there is space for a few more elements.
++    ///
++    /// This function can take O(n) time even when the capacity cannot be reduced
++    /// or the allocation is shrunk in place. Repeated calls run in O(1) though.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::with_capacity(10);
++    ///
++    /// for i in 0..3 {
++    ///     slab.insert(i);
++    /// }
++    ///
++    /// slab.shrink_to_fit();
++    /// assert!(slab.capacity() >= 3 && slab.capacity() < 10);
++    /// ```
++    ///
++    /// The slab cannot shrink past the last present value even if previous
++    /// values are removed:
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::with_capacity(10);
++    ///
++    /// for i in 0..4 {
++    ///     slab.insert(i);
++    /// }
++    ///
++    /// slab.remove(0);
++    /// slab.remove(3);
++    ///
++    /// slab.shrink_to_fit();
++    /// assert!(slab.capacity() >= 3 && slab.capacity() < 10);
++    /// ```
++    pub fn shrink_to_fit(&mut self) {
++        // Remove all vacant entries after the last occupied one, so that
++        // the capacity can be reduced to what is actually needed.
++        // If the slab is empty the vector can simply be cleared, but that
++        // optimization would not affect time complexity when T: Drop.
++        let len_before = self.entries.len();
++        while let Some(&Entry::Vacant(_)) = self.entries.last() {
++            self.entries.pop();
++        }
++
++        // Removing entries breaks the list of vacant entries,
++        // so it must be repaired
++        if self.entries.len() != len_before {
++            // Some vacant entries were removed, so the list now likely¹
++            // either contains references to the removed entries, or has an
++            // invalid end marker. Fix this by recreating the list.
++            self.recreate_vacant_list();
++            // ¹: If the removed entries formed the tail of the list, with the
++            // most recently popped entry being the head of them, (so that its
++            // index is now the end marker) the list is still valid.
++            // Checking for that unlikely scenario of this infrequently called
++            // is not worth the code complexity.
++        }
++
++        self.entries.shrink_to_fit();
++    }
++
++    /// Iterate through all entries to recreate and repair the vacant list.
++    /// self.len must be correct and is not modified.
++    fn recreate_vacant_list(&mut self) {
++        self.next = self.entries.len();
++        // We can stop once we've found all vacant entries
++        let mut remaining_vacant = self.entries.len() - self.len;
++        if remaining_vacant == 0 {
++            return;
++        }
++
++        // Iterate in reverse order so that lower keys are at the start of
++        // the vacant list. This way future shrinks are more likely to be
++        // able to remove vacant entries.
++        for (i, entry) in self.entries.iter_mut().enumerate().rev() {
++            if let Entry::Vacant(ref mut next) = *entry {
++                *next = self.next;
++                self.next = i;
++                remaining_vacant -= 1;
++                if remaining_vacant == 0 {
++                    break;
++                }
++            }
++        }
++    }
++
++    /// Reduce the capacity as much as possible, changing the key for elements when necessary.
++    ///
++    /// To allow updating references to the elements which must be moved to a new key,
++    /// this function takes a closure which is called before moving each element.
++    /// The second and third parameters to the closure are the current key and
++    /// new key respectively.
++    /// In case changing the key for one element turns out not to be possible,
++    /// the move can be cancelled by returning `false` from the closure.
++    /// In that case no further attempts at relocating elements is made.
++    /// If the closure unwinds, the slab will be left in a consistent state,
++    /// but the value that the closure panicked on might be removed.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    ///
++    /// let mut slab = Slab::with_capacity(10);
++    /// let a = slab.insert('a');
++    /// slab.insert('b');
++    /// slab.insert('c');
++    /// slab.remove(a);
++    /// slab.compact(|&mut value, from, to| {
++    ///     assert_eq!((value, from, to), ('c', 2, 0));
++    ///     true
++    /// });
++    /// assert!(slab.capacity() >= 2 && slab.capacity() < 10);
++    /// ```
++    ///
++    /// The value is not moved when the closure returns `Err`:
++    ///
++    /// ```
++    /// # use slab::*;
++    ///
++    /// let mut slab = Slab::with_capacity(100);
++    /// let a = slab.insert('a');
++    /// let b = slab.insert('b');
++    /// slab.remove(a);
++    /// slab.compact(|&mut value, from, to| false);
++    /// assert_eq!(slab.iter().next(), Some((b, &'b')));
++    /// ```
++    pub fn compact<F>(&mut self, mut rekey: F)
++    where
++        F: FnMut(&mut T, usize, usize) -> bool,
++    {
++        // If the closure unwinds, we need to restore a valid list of vacant entries
++        struct CleanupGuard<'a, T> {
++            slab: &'a mut Slab<T>,
++            decrement: bool,
++        }
++        impl<T> Drop for CleanupGuard<'_, T> {
++            fn drop(&mut self) {
++                if self.decrement {
++                    // Value was popped and not pushed back on
++                    self.slab.len -= 1;
++                }
++                self.slab.recreate_vacant_list();
++            }
++        }
++        let mut guard = CleanupGuard {
++            slab: self,
++            decrement: true,
++        };
++
++        let mut occupied_until = 0;
++        // While there are vacant entries
++        while guard.slab.entries.len() > guard.slab.len {
++            // Find a value that needs to be moved,
++            // by popping entries until we find an occupied one.
++            // (entries cannot be empty because 0 is not greater than anything)
++            if let Some(Entry::Occupied(mut value)) = guard.slab.entries.pop() {
++                // Found one, now find a vacant entry to move it to
++                while let Some(&Entry::Occupied(_)) = guard.slab.entries.get(occupied_until) {
++                    occupied_until += 1;
++                }
++                // Let the caller try to update references to the key
++                if !rekey(&mut value, guard.slab.entries.len(), occupied_until) {
++                    // Changing the key failed, so push the entry back on at its old index.
++                    guard.slab.entries.push(Entry::Occupied(value));
++                    guard.decrement = false;
++                    guard.slab.entries.shrink_to_fit();
++                    return;
++                    // Guard drop handles cleanup
++                }
++                // Put the value in its new spot
++                guard.slab.entries[occupied_until] = Entry::Occupied(value);
++                // ... and mark it as occupied (this is optional)
++                occupied_until += 1;
++            }
++        }
++        guard.slab.next = guard.slab.len;
++        guard.slab.entries.shrink_to_fit();
++        // Normal cleanup is not necessary
++        mem::forget(guard);
++    }
++
++    /// Clear the slab of all values.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    ///
++    /// for i in 0..3 {
++    ///     slab.insert(i);
++    /// }
++    ///
++    /// slab.clear();
++    /// assert!(slab.is_empty());
++    /// ```
++    pub fn clear(&mut self) {
++        self.entries.clear();
++        self.len = 0;
++        self.next = 0;
++    }
++
++    /// Return the number of stored values.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    ///
++    /// for i in 0..3 {
++    ///     slab.insert(i);
++    /// }
++    ///
++    /// assert_eq!(3, slab.len());
++    /// ```
++    pub fn len(&self) -> usize {
++        self.len
++    }
++
++    /// Return `true` if there are no values stored in the slab.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    /// assert!(slab.is_empty());
++    ///
++    /// slab.insert(1);
++    /// assert!(!slab.is_empty());
++    /// ```
++    pub fn is_empty(&self) -> bool {
++        self.len == 0
++    }
++
++    /// Return an iterator over the slab.
++    ///
++    /// This function should generally be **avoided** as it is not efficient.
++    /// Iterators must iterate over every slot in the slab even if it is
++    /// vacant. As such, a slab with a capacity of 1 million but only one
++    /// stored value must still iterate the million slots.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    ///
++    /// for i in 0..3 {
++    ///     slab.insert(i);
++    /// }
++    ///
++    /// let mut iterator = slab.iter();
++    ///
++    /// assert_eq!(iterator.next(), Some((0, &0)));
++    /// assert_eq!(iterator.next(), Some((1, &1)));
++    /// assert_eq!(iterator.next(), Some((2, &2)));
++    /// assert_eq!(iterator.next(), None);
++    /// ```
++    pub fn iter(&self) -> Iter<'_, T> {
++        Iter {
++            entries: self.entries.iter().enumerate(),
++            len: self.len,
++        }
++    }
++
++    /// Return an iterator that allows modifying each value.
++    ///
++    /// This function should generally be **avoided** as it is not efficient.
++    /// Iterators must iterate over every slot in the slab even if it is
++    /// vacant. As such, a slab with a capacity of 1 million but only one
++    /// stored value must still iterate the million slots.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    ///
++    /// let key1 = slab.insert(0);
++    /// let key2 = slab.insert(1);
++    ///
++    /// for (key, val) in slab.iter_mut() {
++    ///     if key == key1 {
++    ///         *val += 2;
++    ///     }
++    /// }
++    ///
++    /// assert_eq!(slab[key1], 2);
++    /// assert_eq!(slab[key2], 1);
++    /// ```
++    pub fn iter_mut(&mut self) -> IterMut<'_, T> {
++        IterMut {
++            entries: self.entries.iter_mut().enumerate(),
++            len: self.len,
++        }
++    }
++
++    /// Return a reference to the value associated with the given key.
++    ///
++    /// If the given key is not associated with a value, then `None` is
++    /// returned.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    /// let key = slab.insert("hello");
++    ///
++    /// assert_eq!(slab.get(key), Some(&"hello"));
++    /// assert_eq!(slab.get(123), None);
++    /// ```
++    pub fn get(&self, key: usize) -> Option<&T> {
++        match self.entries.get(key) {
++            Some(Entry::Occupied(val)) => Some(val),
++            _ => None,
++        }
++    }
++
++    /// Return a mutable reference to the value associated with the given key.
++    ///
++    /// If the given key is not associated with a value, then `None` is
++    /// returned.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    /// let key = slab.insert("hello");
++    ///
++    /// *slab.get_mut(key).unwrap() = "world";
++    ///
++    /// assert_eq!(slab[key], "world");
++    /// assert_eq!(slab.get_mut(123), None);
++    /// ```
++    pub fn get_mut(&mut self, key: usize) -> Option<&mut T> {
++        match self.entries.get_mut(key) {
++            Some(&mut Entry::Occupied(ref mut val)) => Some(val),
++            _ => None,
++        }
++    }
++
++    /// Return two mutable references to the values associated with the two
++    /// given keys simultaneously.
++    ///
++    /// If any one of the given keys is not associated with a value, then `None`
++    /// is returned.
++    ///
++    /// This function can be used to get two mutable references out of one slab,
++    /// so that you can manipulate both of them at the same time, eg. swap them.
++    ///
++    /// # Panics
++    ///
++    /// This function will panic if `key1` and `key2` are the same.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// use std::mem;
++    ///
++    /// let mut slab = Slab::new();
++    /// let key1 = slab.insert(1);
++    /// let key2 = slab.insert(2);
++    /// let (value1, value2) = slab.get2_mut(key1, key2).unwrap();
++    /// mem::swap(value1, value2);
++    /// assert_eq!(slab[key1], 2);
++    /// assert_eq!(slab[key2], 1);
++    /// ```
++    pub fn get2_mut(&mut self, key1: usize, key2: usize) -> Option<(&mut T, &mut T)> {
++        assert!(key1 != key2);
++
++        let (entry1, entry2);
++
++        if key1 > key2 {
++            let (slice1, slice2) = self.entries.split_at_mut(key1);
++            entry1 = slice2.get_mut(0);
++            entry2 = slice1.get_mut(key2);
++        } else {
++            let (slice1, slice2) = self.entries.split_at_mut(key2);
++            entry1 = slice1.get_mut(key1);
++            entry2 = slice2.get_mut(0);
++        }
++
++        match (entry1, entry2) {
++            (
++                Some(&mut Entry::Occupied(ref mut val1)),
++                Some(&mut Entry::Occupied(ref mut val2)),
++            ) => Some((val1, val2)),
++            _ => None,
++        }
++    }
++
++    /// Return a reference to the value associated with the given key without
++    /// performing bounds checking.
++    ///
++    /// For a safe alternative see [`get`](Slab::get).
++    ///
++    /// This function should be used with care.
++    ///
++    /// # Safety
++    ///
++    /// The key must be within bounds.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    /// let key = slab.insert(2);
++    ///
++    /// unsafe {
++    ///     assert_eq!(slab.get_unchecked(key), &2);
++    /// }
++    /// ```
++    pub unsafe fn get_unchecked(&self, key: usize) -> &T {
++        match *self.entries.get_unchecked(key) {
++            Entry::Occupied(ref val) => val,
++            _ => unreachable!(),
++        }
++    }
++
++    /// Return a mutable reference to the value associated with the given key
++    /// without performing bounds checking.
++    ///
++    /// For a safe alternative see [`get_mut`](Slab::get_mut).
++    ///
++    /// This function should be used with care.
++    ///
++    /// # Safety
++    ///
++    /// The key must be within bounds.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    /// let key = slab.insert(2);
++    ///
++    /// unsafe {
++    ///     let val = slab.get_unchecked_mut(key);
++    ///     *val = 13;
++    /// }
++    ///
++    /// assert_eq!(slab[key], 13);
++    /// ```
++    pub unsafe fn get_unchecked_mut(&mut self, key: usize) -> &mut T {
++        match *self.entries.get_unchecked_mut(key) {
++            Entry::Occupied(ref mut val) => val,
++            _ => unreachable!(),
++        }
++    }
++
++    /// Return two mutable references to the values associated with the two
++    /// given keys simultaneously without performing bounds checking and safety
++    /// condition checking.
++    ///
++    /// For a safe alternative see [`get2_mut`](Slab::get2_mut).
++    ///
++    /// This function should be used with care.
++    ///
++    /// # Safety
++    ///
++    /// - Both keys must be within bounds.
++    /// - The condition `key1 != key2` must hold.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// use std::mem;
++    ///
++    /// let mut slab = Slab::new();
++    /// let key1 = slab.insert(1);
++    /// let key2 = slab.insert(2);
++    /// let (value1, value2) = unsafe { slab.get2_unchecked_mut(key1, key2) };
++    /// mem::swap(value1, value2);
++    /// assert_eq!(slab[key1], 2);
++    /// assert_eq!(slab[key2], 1);
++    /// ```
++    pub unsafe fn get2_unchecked_mut(&mut self, key1: usize, key2: usize) -> (&mut T, &mut T) {
++        debug_assert_ne!(key1, key2);
++        let ptr = self.entries.as_mut_ptr();
++        let ptr1 = ptr.add(key1);
++        let ptr2 = ptr.add(key2);
++        match (&mut *ptr1, &mut *ptr2) {
++            (&mut Entry::Occupied(ref mut val1), &mut Entry::Occupied(ref mut val2)) => {
++                (val1, val2)
++            }
++            _ => unreachable!(),
++        }
++    }
++
++    /// Get the key for an element in the slab.
++    ///
++    /// The reference must point to an element owned by the slab.
++    /// Otherwise this function will panic.
++    /// This is a constant-time operation because the key can be calculated
++    /// from the reference with pointer arithmetic.
++    ///
++    /// # Panics
++    ///
++    /// This function will panic if the reference does not point to an element
++    /// of the slab.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    ///
++    /// let mut slab = Slab::new();
++    /// let key = slab.insert(String::from("foo"));
++    /// let value = &slab[key];
++    /// assert_eq!(slab.key_of(value), key);
++    /// ```
++    ///
++    /// Values are not compared, so passing a reference to a different location
++    /// will result in a panic:
++    ///
++    /// ```should_panic
++    /// # use slab::*;
++    ///
++    /// let mut slab = Slab::new();
++    /// let key = slab.insert(0);
++    /// let bad = &0;
++    /// slab.key_of(bad); // this will panic
++    /// unreachable!();
++    /// ```
++    #[track_caller]
++    pub fn key_of(&self, present_element: &T) -> usize {
++        let element_ptr = present_element as *const T as usize;
++        let base_ptr = self.entries.as_ptr() as usize;
++        // Use wrapping subtraction in case the reference is bad
++        let byte_offset = element_ptr.wrapping_sub(base_ptr);
++        // The division rounds away any offset of T inside Entry
++        // The size of Entry<T> is never zero even if T is due to Vacant(usize)
++        let key = byte_offset / mem::size_of::<Entry<T>>();
++        // Prevent returning unspecified (but out of bounds) values
++        if key >= self.entries.len() {
++            panic!("The reference points to a value outside this slab");
++        }
++        // The reference cannot point to a vacant entry, because then it would not be valid
++        key
++    }
++
++    /// Insert a value in the slab, returning key assigned to the value.
++    ///
++    /// The returned key can later be used to retrieve or remove the value using indexed
++    /// lookup and `remove`. Additional capacity is allocated if needed. See
++    /// [Capacity and reallocation](index.html#capacity-and-reallocation).
++    ///
++    /// # Panics
++    ///
++    /// Panics if the new storage in the vector exceeds `isize::MAX` bytes.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    /// let key = slab.insert("hello");
++    /// assert_eq!(slab[key], "hello");
++    /// ```
++    pub fn insert(&mut self, val: T) -> usize {
++        let key = self.next;
++
++        self.insert_at(key, val);
++
++        key
++    }
++
++    /// Returns the key of the next vacant entry.
++    ///
++    /// This function returns the key of the vacant entry which  will be used
++    /// for the next insertion. This is equivalent to
++    /// `slab.vacant_entry().key()`, but it doesn't require mutable access.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    /// assert_eq!(slab.vacant_key(), 0);
++    ///
++    /// slab.insert(0);
++    /// assert_eq!(slab.vacant_key(), 1);
++    ///
++    /// slab.insert(1);
++    /// slab.remove(0);
++    /// assert_eq!(slab.vacant_key(), 0);
++    /// ```
++    pub fn vacant_key(&self) -> usize {
++        self.next
++    }
++
++    /// Return a handle to a vacant entry allowing for further manipulation.
++    ///
++    /// This function is useful when creating values that must contain their
++    /// slab key. The returned `VacantEntry` reserves a slot in the slab and is
++    /// able to query the associated key.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    ///
++    /// let hello = {
++    ///     let entry = slab.vacant_entry();
++    ///     let key = entry.key();
++    ///
++    ///     entry.insert((key, "hello"));
++    ///     key
++    /// };
++    ///
++    /// assert_eq!(hello, slab[hello].0);
++    /// assert_eq!("hello", slab[hello].1);
++    /// ```
++    pub fn vacant_entry(&mut self) -> VacantEntry<'_, T> {
++        VacantEntry {
++            key: self.next,
++            slab: self,
++        }
++    }
++
++    fn insert_at(&mut self, key: usize, val: T) {
++        self.len += 1;
++
++        if key == self.entries.len() {
++            self.entries.push(Entry::Occupied(val));
++            self.next = key + 1;
++        } else {
++            self.next = match self.entries.get(key) {
++                Some(&Entry::Vacant(next)) => next,
++                _ => unreachable!(),
++            };
++            self.entries[key] = Entry::Occupied(val);
++        }
++    }
++
++    /// Tries to remove the value associated with the given key,
++    /// returning the value if the key existed.
++    ///
++    /// The key is then released and may be associated with future stored
++    /// values.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    ///
++    /// let hello = slab.insert("hello");
++    ///
++    /// assert_eq!(slab.try_remove(hello), Some("hello"));
++    /// assert!(!slab.contains(hello));
++    /// ```
++    pub fn try_remove(&mut self, key: usize) -> Option<T> {
++        if let Some(entry) = self.entries.get_mut(key) {
++            // Swap the entry at the provided value
++            let prev = mem::replace(entry, Entry::Vacant(self.next));
++
++            match prev {
++                Entry::Occupied(val) => {
++                    self.len -= 1;
++                    self.next = key;
++                    return val.into();
++                }
++                _ => {
++                    // Woops, the entry is actually vacant, restore the state
++                    *entry = prev;
++                }
++            }
++        }
++        None
++    }
++
++    /// Remove and return the value associated with the given key.
++    ///
++    /// The key is then released and may be associated with future stored
++    /// values.
++    ///
++    /// # Panics
++    ///
++    /// Panics if `key` is not associated with a value.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    ///
++    /// let hello = slab.insert("hello");
++    ///
++    /// assert_eq!(slab.remove(hello), "hello");
++    /// assert!(!slab.contains(hello));
++    /// ```
++    #[track_caller]
++    pub fn remove(&mut self, key: usize) -> T {
++        self.try_remove(key).expect("invalid key")
++    }
++
++    /// Return `true` if a value is associated with the given key.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    ///
++    /// let hello = slab.insert("hello");
++    /// assert!(slab.contains(hello));
++    ///
++    /// slab.remove(hello);
++    ///
++    /// assert!(!slab.contains(hello));
++    /// ```
++    pub fn contains(&self, key: usize) -> bool {
++        matches!(self.entries.get(key), Some(&Entry::Occupied(_)))
++    }
++
++    /// Retain only the elements specified by the predicate.
++    ///
++    /// In other words, remove all elements `e` such that `f(usize, &mut e)`
++    /// returns false. This method operates in place and preserves the key
++    /// associated with the retained values.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    ///
++    /// let k1 = slab.insert(0);
++    /// let k2 = slab.insert(1);
++    /// let k3 = slab.insert(2);
++    ///
++    /// slab.retain(|key, val| key == k1 || *val == 1);
++    ///
++    /// assert!(slab.contains(k1));
++    /// assert!(slab.contains(k2));
++    /// assert!(!slab.contains(k3));
++    ///
++    /// assert_eq!(2, slab.len());
++    /// ```
++    pub fn retain<F>(&mut self, mut f: F)
++    where
++        F: FnMut(usize, &mut T) -> bool,
++    {
++        for i in 0..self.entries.len() {
++            let keep = match self.entries[i] {
++                Entry::Occupied(ref mut v) => f(i, v),
++                _ => true,
++            };
++
++            if !keep {
++                self.remove(i);
++            }
++        }
++    }
++
++    /// Return a draining iterator that removes all elements from the slab and
++    /// yields the removed items.
++    ///
++    /// Note: Elements are removed even if the iterator is only partially
++    /// consumed or not consumed at all.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    ///
++    /// let _ = slab.insert(0);
++    /// let _ = slab.insert(1);
++    /// let _ = slab.insert(2);
++    ///
++    /// {
++    ///     let mut drain = slab.drain();
++    ///
++    ///     assert_eq!(Some(0), drain.next());
++    ///     assert_eq!(Some(1), drain.next());
++    ///     assert_eq!(Some(2), drain.next());
++    ///     assert_eq!(None, drain.next());
++    /// }
++    ///
++    /// assert!(slab.is_empty());
++    /// ```
++    pub fn drain(&mut self) -> Drain<'_, T> {
++        let old_len = self.len;
++        self.len = 0;
++        self.next = 0;
++        Drain {
++            inner: self.entries.drain(..),
++            len: old_len,
++        }
++    }
++}
++
++impl<T> ops::Index<usize> for Slab<T> {
++    type Output = T;
++
++    #[track_caller]
++    fn index(&self, key: usize) -> &T {
++        match self.entries.get(key) {
++            Some(Entry::Occupied(v)) => v,
++            _ => panic!("invalid key"),
++        }
++    }
++}
++
++impl<T> ops::IndexMut<usize> for Slab<T> {
++    #[track_caller]
++    fn index_mut(&mut self, key: usize) -> &mut T {
++        match self.entries.get_mut(key) {
++            Some(&mut Entry::Occupied(ref mut v)) => v,
++            _ => panic!("invalid key"),
++        }
++    }
++}
++
++impl<T> IntoIterator for Slab<T> {
++    type Item = (usize, T);
++    type IntoIter = IntoIter<T>;
++
++    fn into_iter(self) -> IntoIter<T> {
++        IntoIter {
++            entries: self.entries.into_iter().enumerate(),
++            len: self.len,
++        }
++    }
++}
++
++impl<'a, T> IntoIterator for &'a Slab<T> {
++    type Item = (usize, &'a T);
++    type IntoIter = Iter<'a, T>;
++
++    fn into_iter(self) -> Iter<'a, T> {
++        self.iter()
++    }
++}
++
++impl<'a, T> IntoIterator for &'a mut Slab<T> {
++    type Item = (usize, &'a mut T);
++    type IntoIter = IterMut<'a, T>;
++
++    fn into_iter(self) -> IterMut<'a, T> {
++        self.iter_mut()
++    }
++}
++
++/// Create a slab from an iterator of key-value pairs.
++///
++/// If the iterator produces duplicate keys, the previous value is replaced with the later one.
++/// The keys does not need to be sorted beforehand, and this function always
++/// takes O(n) time.
++/// Note that the returned slab will use space proportional to the largest key,
++/// so don't use `Slab` with untrusted keys.
++///
++/// # Examples
++///
++/// ```
++/// # use slab::*;
++///
++/// let vec = vec![(2,'a'), (6,'b'), (7,'c')];
++/// let slab = vec.into_iter().collect::<Slab<char>>();
++/// assert_eq!(slab.len(), 3);
++/// assert!(slab.capacity() >= 8);
++/// assert_eq!(slab[2], 'a');
++/// ```
++///
++/// With duplicate and unsorted keys:
++///
++/// ```
++/// # use slab::*;
++///
++/// let vec = vec![(20,'a'), (10,'b'), (11,'c'), (10,'d')];
++/// let slab = vec.into_iter().collect::<Slab<char>>();
++/// assert_eq!(slab.len(), 3);
++/// assert_eq!(slab[10], 'd');
++/// ```
++impl<T> FromIterator<(usize, T)> for Slab<T> {
++    fn from_iter<I>(iterable: I) -> Self
++    where
++        I: IntoIterator<Item = (usize, T)>,
++    {
++        let iterator = iterable.into_iter();
++        let mut builder = builder::Builder::with_capacity(iterator.size_hint().0);
++
++        for (key, value) in iterator {
++            builder.pair(key, value)
++        }
++        builder.build()
++    }
++}
++
++impl<T> fmt::Debug for Slab<T>
++where
++    T: fmt::Debug,
++{
++    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
++        if fmt.alternate() {
++            fmt.debug_map().entries(self.iter()).finish()
++        } else {
++            fmt.debug_struct("Slab")
++                .field("len", &self.len)
++                .field("cap", &self.capacity())
++                .finish()
++        }
++    }
++}
++
++impl<T> fmt::Debug for IntoIter<T>
++where
++    T: fmt::Debug,
++{
++    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
++        fmt.debug_struct("IntoIter")
++            .field("remaining", &self.len)
++            .finish()
++    }
++}
++
++impl<T> fmt::Debug for Iter<'_, T>
++where
++    T: fmt::Debug,
++{
++    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
++        fmt.debug_struct("Iter")
++            .field("remaining", &self.len)
++            .finish()
++    }
++}
++
++impl<T> fmt::Debug for IterMut<'_, T>
++where
++    T: fmt::Debug,
++{
++    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
++        fmt.debug_struct("IterMut")
++            .field("remaining", &self.len)
++            .finish()
++    }
++}
++
++impl<T> fmt::Debug for Drain<'_, T> {
++    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
++        fmt.debug_struct("Drain").finish()
++    }
++}
++
++// ===== VacantEntry =====
++
++impl<'a, T> VacantEntry<'a, T> {
++    /// Insert a value in the entry, returning a mutable reference to the value.
++    ///
++    /// To get the key associated with the value, use `key` prior to calling
++    /// `insert`.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    ///
++    /// let hello = {
++    ///     let entry = slab.vacant_entry();
++    ///     let key = entry.key();
++    ///
++    ///     entry.insert((key, "hello"));
++    ///     key
++    /// };
++    ///
++    /// assert_eq!(hello, slab[hello].0);
++    /// assert_eq!("hello", slab[hello].1);
++    /// ```
++    pub fn insert(self, val: T) -> &'a mut T {
++        self.slab.insert_at(self.key, val);
++
++        match self.slab.entries.get_mut(self.key) {
++            Some(&mut Entry::Occupied(ref mut v)) => v,
++            _ => unreachable!(),
++        }
++    }
++
++    /// Return the key associated with this entry.
++    ///
++    /// A value stored in this entry will be associated with this key.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// # use slab::*;
++    /// let mut slab = Slab::new();
++    ///
++    /// let hello = {
++    ///     let entry = slab.vacant_entry();
++    ///     let key = entry.key();
++    ///
++    ///     entry.insert((key, "hello"));
++    ///     key
++    /// };
++    ///
++    /// assert_eq!(hello, slab[hello].0);
++    /// assert_eq!("hello", slab[hello].1);
++    /// ```
++    pub fn key(&self) -> usize {
++        self.key
++    }
++}
++
++// ===== IntoIter =====
++
++impl<T> Iterator for IntoIter<T> {
++    type Item = (usize, T);
++
++    fn next(&mut self) -> Option<Self::Item> {
++        for (key, entry) in &mut self.entries {
++            if let Entry::Occupied(v) = entry {
++                self.len -= 1;
++                return Some((key, v));
++            }
++        }
++
++        debug_assert_eq!(self.len, 0);
++        None
++    }
++
++    fn size_hint(&self) -> (usize, Option<usize>) {
++        (self.len, Some(self.len))
++    }
++}
++
++impl<T> DoubleEndedIterator for IntoIter<T> {
++    fn next_back(&mut self) -> Option<Self::Item> {
++        while let Some((key, entry)) = self.entries.next_back() {
++            if let Entry::Occupied(v) = entry {
++                self.len -= 1;
++                return Some((key, v));
++            }
++        }
++
++        debug_assert_eq!(self.len, 0);
++        None
++    }
++}
++
++impl<T> ExactSizeIterator for IntoIter<T> {
++    fn len(&self) -> usize {
++        self.len
++    }
++}
++
++impl<T> FusedIterator for IntoIter<T> {}
++
++// ===== Iter =====
++
++impl<'a, T> Iterator for Iter<'a, T> {
++    type Item = (usize, &'a T);
++
++    fn next(&mut self) -> Option<Self::Item> {
++        for (key, entry) in &mut self.entries {
++            if let Entry::Occupied(ref v) = *entry {
++                self.len -= 1;
++                return Some((key, v));
++            }
++        }
++
++        debug_assert_eq!(self.len, 0);
++        None
++    }
++
++    fn size_hint(&self) -> (usize, Option<usize>) {
++        (self.len, Some(self.len))
++    }
++}
++
++impl<T> DoubleEndedIterator for Iter<'_, T> {
++    fn next_back(&mut self) -> Option<Self::Item> {
++        while let Some((key, entry)) = self.entries.next_back() {
++            if let Entry::Occupied(ref v) = *entry {
++                self.len -= 1;
++                return Some((key, v));
++            }
++        }
++
++        debug_assert_eq!(self.len, 0);
++        None
++    }
++}
++
++impl<T> ExactSizeIterator for Iter<'_, T> {
++    fn len(&self) -> usize {
++        self.len
++    }
++}
++
++impl<T> FusedIterator for Iter<'_, T> {}
++
++// ===== IterMut =====
++
++impl<'a, T> Iterator for IterMut<'a, T> {
++    type Item = (usize, &'a mut T);
++
++    fn next(&mut self) -> Option<Self::Item> {
++        for (key, entry) in &mut self.entries {
++            if let Entry::Occupied(ref mut v) = *entry {
++                self.len -= 1;
++                return Some((key, v));
++            }
++        }
++
++        debug_assert_eq!(self.len, 0);
++        None
++    }
++
++    fn size_hint(&self) -> (usize, Option<usize>) {
++        (self.len, Some(self.len))
++    }
++}
++
++impl<T> DoubleEndedIterator for IterMut<'_, T> {
++    fn next_back(&mut self) -> Option<Self::Item> {
++        while let Some((key, entry)) = self.entries.next_back() {
++            if let Entry::Occupied(ref mut v) = *entry {
++                self.len -= 1;
++                return Some((key, v));
++            }
++        }
++
++        debug_assert_eq!(self.len, 0);
++        None
++    }
++}
++
++impl<T> ExactSizeIterator for IterMut<'_, T> {
++    fn len(&self) -> usize {
++        self.len
++    }
++}
++
++impl<T> FusedIterator for IterMut<'_, T> {}
++
++// ===== Drain =====
++
++impl<T> Iterator for Drain<'_, T> {
++    type Item = T;
++
++    fn next(&mut self) -> Option<Self::Item> {
++        for entry in &mut self.inner {
++            if let Entry::Occupied(v) = entry {
++                self.len -= 1;
++                return Some(v);
++            }
++        }
++
++        debug_assert_eq!(self.len, 0);
++        None
++    }
++
++    fn size_hint(&self) -> (usize, Option<usize>) {
++        (self.len, Some(self.len))
++    }
++}
++
++impl<T> DoubleEndedIterator for Drain<'_, T> {
++    fn next_back(&mut self) -> Option<Self::Item> {
++        while let Some(entry) = self.inner.next_back() {
++            if let Entry::Occupied(v) = entry {
++                self.len -= 1;
++                return Some(v);
++            }
++        }
++
++        debug_assert_eq!(self.len, 0);
++        None
++    }
++}
++
++impl<T> ExactSizeIterator for Drain<'_, T> {
++    fn len(&self) -> usize {
++        self.len
++    }
++}
++
++impl<T> FusedIterator for Drain<'_, T> {}
+diff --git a/src/serde.rs b/src/serde.rs
+new file mode 100644
+index 0000000..894d59c
+--- /dev/null
++++ b/src/serde.rs
+@@ -0,0 +1,62 @@
++use core::fmt;
++use core::marker::PhantomData;
++
++use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
++use serde::ser::{Serialize, SerializeMap, Serializer};
++
++use super::{builder::Builder, Slab};
++
++impl<T> Serialize for Slab<T>
++where
++    T: Serialize,
++{
++    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
++    where
++        S: Serializer,
++    {
++        let mut map_serializer = serializer.serialize_map(Some(self.len()))?;
++        for (key, value) in self {
++            map_serializer.serialize_key(&key)?;
++            map_serializer.serialize_value(value)?;
++        }
++        map_serializer.end()
++    }
++}
++
++struct SlabVisitor<T>(PhantomData<T>);
++
++impl<'de, T> Visitor<'de> for SlabVisitor<T>
++where
++    T: Deserialize<'de>,
++{
++    type Value = Slab<T>;
++
++    fn expecting(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
++        write!(fmt, "a map")
++    }
++
++    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
++    where
++        A: MapAccess<'de>,
++    {
++        let mut builder = Builder::with_capacity(map.size_hint().unwrap_or(0));
++
++        while let Some((key, value)) = map.next_entry()? {
++            builder.pair(key, value)
++        }
++
++        Ok(builder.build())
++    }
++}
++
++impl<'de, T> Deserialize<'de> for Slab<T>
++where
++    T: Deserialize<'de>,
++{
++    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
++    where
++        D: Deserializer<'de>,
++    {
++        deserializer.deserialize_map(SlabVisitor(PhantomData))
++    }
++}
+diff --git a/tests/serde.rs b/tests/serde.rs
+new file mode 100644
+index 0000000..1d4a204
+--- /dev/null
++++ b/tests/serde.rs
+@@ -0,0 +1,49 @@
++#![cfg(feature = "serde")]
++#![warn(rust_2018_idioms)]
++
++use serde::{Deserialize, Serialize};
++use serde_test::{assert_tokens, Token};
++use slab::Slab;
++
++#[derive(Debug, Serialize, Deserialize)]
++#[serde(transparent)]
++struct SlabPartialEq<T>(Slab<T>);
++
++impl<T: PartialEq> PartialEq for SlabPartialEq<T> {
++    fn eq(&self, other: &Self) -> bool {
++        self.0.len() == other.0.len()
++            && self
++                .0
++                .iter()
++                .zip(other.0.iter())
++                .all(|(this, other)| this.0 == other.0 && this.1 == other.1)
++    }
++}
++
++#[test]
++fn test_serde_empty() {
++    let slab = Slab::<usize>::new();
++    assert_tokens(
++        &SlabPartialEq(slab),
++        &[Token::Map { len: Some(0) }, Token::MapEnd],
++    );
++}
++
++#[test]
++fn test_serde() {
++    let vec = vec![(1, 2), (3, 4), (5, 6)];
++    let slab: Slab<_> = vec.iter().cloned().collect();
++    assert_tokens(
++        &SlabPartialEq(slab),
++        &[
++            Token::Map { len: Some(3) },
++            Token::U64(1),
++            Token::I32(2),
++            Token::U64(3),
++            Token::I32(4),
++            Token::U64(5),
++            Token::I32(6),
++            Token::MapEnd,
++        ],
++    );
++}
+diff --git a/tests/slab.rs b/tests/slab.rs
+new file mode 100644
+index 0000000..dd71f99
+--- /dev/null
++++ b/tests/slab.rs
+@@ -0,0 +1,732 @@
++#![warn(rust_2018_idioms)]
++
++use slab::*;
++
++use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
++
++#[test]
++fn insert_get_remove_one() {
++    let mut slab = Slab::new();
++    assert!(slab.is_empty());
++
++    let key = slab.insert(10);
++
++    assert_eq!(slab[key], 10);
++    assert_eq!(slab.get(key), Some(&10));
++    assert!(!slab.is_empty());
++    assert!(slab.contains(key));
++
++    assert_eq!(slab.remove(key), 10);
++    assert!(!slab.contains(key));
++    assert!(slab.get(key).is_none());
++}
++
++#[test]
++fn insert_get_many() {
++    let mut slab = Slab::with_capacity(10);
++
++    for i in 0..10 {
++        let key = slab.insert(i + 10);
++        assert_eq!(slab[key], i + 10);
++    }
++
++    assert_eq!(slab.capacity(), 10);
++
++    // Storing another one grows the slab
++    let key = slab.insert(20);
++    assert_eq!(slab[key], 20);
++
++    // Capacity grows by 2x
++    assert_eq!(slab.capacity(), 20);
++}
++
++#[test]
++fn insert_get_remove_many() {
++    let mut slab = Slab::with_capacity(10);
++    let mut keys = vec![];
++
++    for i in 0..10 {
++        for j in 0..10 {
++            let val = (i * 10) + j;
++
++            let key = slab.insert(val);
++            keys.push((key, val));
++            assert_eq!(slab[key], val);
++        }
++
++        for (key, val) in keys.drain(..) {
++            assert_eq!(val, slab.remove(key));
++        }
++    }
++
++    assert_eq!(10, slab.capacity());
++}
++
++#[test]
++fn insert_with_vacant_entry() {
++    let mut slab = Slab::with_capacity(1);
++    let key;
++
++    {
++        let entry = slab.vacant_entry();
++        key = entry.key();
++        entry.insert(123);
++    }
++
++    assert_eq!(123, slab[key]);
++}
++
++#[test]
++fn get_vacant_entry_without_using() {
++    let mut slab = Slab::<usize>::with_capacity(1);
++    let key = slab.vacant_entry().key();
++    assert_eq!(key, slab.vacant_entry().key());
++}
++
++#[test]
++#[should_panic(expected = "invalid key")]
++fn invalid_get_panics() {
++    let slab = Slab::<usize>::with_capacity(1);
++    let _ = &slab[0];
++}
++
++#[test]
++#[should_panic(expected = "invalid key")]
++fn invalid_get_mut_panics() {
++    let mut slab = Slab::<usize>::new();
++    let _ = &mut slab[0];
++}
++
++#[test]
++#[should_panic(expected = "invalid key")]
++fn double_remove_panics() {
++    let mut slab = Slab::<usize>::with_capacity(1);
++    let key = slab.insert(123);
++    slab.remove(key);
++    slab.remove(key);
++}
++
++#[test]
++#[should_panic(expected = "invalid key")]
++fn invalid_remove_panics() {
++    let mut slab = Slab::<usize>::with_capacity(1);
++    slab.remove(0);
++}
++
++#[test]
++fn slab_get_mut() {
++    let mut slab = Slab::new();
++    let key = slab.insert(1);
++
++    slab[key] = 2;
++    assert_eq!(slab[key], 2);
++
++    *slab.get_mut(key).unwrap() = 3;
++    assert_eq!(slab[key], 3);
++}
++
++#[test]
++fn key_of_tagged() {
++    let mut slab = Slab::new();
++    slab.insert(0);
++    assert_eq!(slab.key_of(&slab[0]), 0);
++}
++
++#[test]
++fn key_of_layout_optimizable() {
++    // Entry<&str> doesn't need a discriminant tag because it can use the
++    // nonzero-ness of ptr and store Vacant's next at the same offset as len
++    let mut slab = Slab::new();
++    slab.insert("foo");
++    slab.insert("bar");
++    let third = slab.insert("baz");
++    slab.insert("quux");
++    assert_eq!(slab.key_of(&slab[third]), third);
++}
++
++#[test]
++fn key_of_zst() {
++    let mut slab = Slab::new();
++    slab.insert(());
++    let second = slab.insert(());
++    slab.insert(());
++    assert_eq!(slab.key_of(&slab[second]), second);
++}
++
++#[test]
++fn reserve_does_not_allocate_if_available() {
++    let mut slab = Slab::with_capacity(10);
++    let mut keys = vec![];
++
++    for i in 0..6 {
++        keys.push(slab.insert(i));
++    }
++
++    for key in 0..4 {
++        slab.remove(key);
++    }
++
++    assert!(slab.capacity() - slab.len() == 8);
++
++    slab.reserve(8);
++    assert_eq!(10, slab.capacity());
++}
++
++#[test]
++fn reserve_exact_does_not_allocate_if_available() {
++    let mut slab = Slab::with_capacity(10);
++    let mut keys = vec![];
++
++    for i in 0..6 {
++        keys.push(slab.insert(i));
++    }
++
++    for key in 0..4 {
++        slab.remove(key);
++    }
++
++    assert!(slab.capacity() - slab.len() == 8);
++
++    slab.reserve_exact(8);
++    assert_eq!(10, slab.capacity());
++}
++
++#[test]
++#[should_panic(expected = "capacity overflow")]
++fn reserve_does_panic_with_capacity_overflow() {
++    let mut slab = Slab::with_capacity(10);
++    slab.insert(true);
++    slab.reserve(isize::MAX as usize);
++}
++
++#[test]
++#[should_panic(expected = "capacity overflow")]
++fn reserve_does_panic_with_capacity_overflow_bytes() {
++    let mut slab = Slab::with_capacity(10);
++    slab.insert(1u16);
++    slab.reserve((isize::MAX as usize) / 2);
++}
++
++#[test]
++#[should_panic(expected = "capacity overflow")]
++fn reserve_exact_does_panic_with_capacity_overflow() {
++    let mut slab = Slab::with_capacity(10);
++    slab.insert(true);
++    slab.reserve_exact(isize::MAX as usize);
++}
++
++#[test]
++fn retain() {
++    let mut slab = Slab::with_capacity(2);
++
++    let key1 = slab.insert(0);
++    let key2 = slab.insert(1);
++
++    slab.retain(|key, x| {
++        assert_eq!(key, *x);
++        *x % 2 == 0
++    });
++
++    assert_eq!(slab.len(), 1);
++    assert_eq!(slab[key1], 0);
++    assert!(!slab.contains(key2));
++
++    // Ensure consistency is retained
++    let key = slab.insert(123);
++    assert_eq!(key, key2);
++
++    assert_eq!(2, slab.len());
++    assert_eq!(2, slab.capacity());
++
++    // Inserting another element grows
++    let key = slab.insert(345);
++    assert_eq!(key, 2);
++
++    assert_eq!(4, slab.capacity());
++}
++
++#[test]
++fn into_iter() {
++    let mut slab = Slab::new();
++
++    for i in 0..8 {
++        slab.insert(i);
++    }
++    slab.remove(0);
++    slab.remove(4);
++    slab.remove(5);
++    slab.remove(7);
++
++    let vals: Vec<_> = slab
++        .into_iter()
++        .inspect(|&(key, val)| assert_eq!(key, val))
++        .map(|(_, val)| val)
++        .collect();
++    assert_eq!(vals, vec![1, 2, 3, 6]);
++}
++
++#[test]
++fn into_iter_rev() {
++    let mut slab = Slab::new();
++
++    for i in 0..4 {
++        slab.insert(i);
++    }
++
++    let mut iter = slab.into_iter();
++    assert_eq!(iter.next_back(), Some((3, 3)));
++    assert_eq!(iter.next_back(), Some((2, 2)));
++    assert_eq!(iter.next(), Some((0, 0)));
++    assert_eq!(iter.next_back(), Some((1, 1)));
++    assert_eq!(iter.next_back(), None);
++    assert_eq!(iter.next(), None);
++}
++
++#[test]
++fn iter() {
++    let mut slab = Slab::new();
++
++    for i in 0..4 {
++        slab.insert(i);
++    }
++
++    let vals: Vec<_> = slab
++        .iter()
++        .enumerate()
++        .map(|(i, (key, val))| {
++            assert_eq!(i, key);
++            *val
++        })
++        .collect();
++    assert_eq!(vals, vec![0, 1, 2, 3]);
++
++    slab.remove(1);
++
++    let vals: Vec<_> = slab.iter().map(|(_, r)| *r).collect();
++    assert_eq!(vals, vec![0, 2, 3]);
++}
++
++#[test]
++fn iter_rev() {
++    let mut slab = Slab::new();
++
++    for i in 0..4 {
++        slab.insert(i);
++    }
++    slab.remove(0);
++
++    let vals = slab.iter().rev().collect::<Vec<_>>();
++    assert_eq!(vals, vec![(3, &3), (2, &2), (1, &1)]);
++}
++
++#[test]
++fn iter_mut() {
++    let mut slab = Slab::new();
++
++    for i in 0..4 {
++        slab.insert(i);
++    }
++
++    for (i, (key, e)) in slab.iter_mut().enumerate() {
++        assert_eq!(i, key);
++        *e += 1;
++    }
++
++    let vals: Vec<_> = slab.iter().map(|(_, r)| *r).collect();
++    assert_eq!(vals, vec![1, 2, 3, 4]);
++
++    slab.remove(2);
++
++    for (_, e) in slab.iter_mut() {
++        *e += 1;
++    }
++
++    let vals: Vec<_> = slab.iter().map(|(_, r)| *r).collect();
++    assert_eq!(vals, vec![2, 3, 5]);
++}
++
++#[test]
++fn iter_mut_rev() {
++    let mut slab = Slab::new();
++
++    for i in 0..4 {
++        slab.insert(i);
++    }
++    slab.remove(2);
++
++    {
++        let mut iter = slab.iter_mut();
++        assert_eq!(iter.next(), Some((0, &mut 0)));
++        let mut prev_key = !0;
++        for (key, e) in iter.rev() {
++            *e += 10;
++            assert!(prev_key > key);
++            prev_key = key;
++        }
++    }
++
++    assert_eq!(slab[0], 0);
++    assert_eq!(slab[1], 11);
++    assert_eq!(slab[3], 13);
++    assert!(!slab.contains(2));
++}
++
++#[test]
++fn from_iterator_sorted() {
++    let mut slab = (0..5).map(|i| (i, i)).collect::<Slab<_>>();
++    assert_eq!(slab.len(), 5);
++    assert_eq!(slab[0], 0);
++    assert_eq!(slab[2], 2);
++    assert_eq!(slab[4], 4);
++    assert_eq!(slab.vacant_entry().key(), 5);
++}
++
++#[test]
++fn from_iterator_new_in_order() {
++    // all new keys come in increasing order, but existing keys are overwritten
++    let mut slab = [(0, 'a'), (1, 'a'), (1, 'b'), (0, 'b'), (9, 'a'), (0, 'c')]
++        .iter()
++        .cloned()
++        .collect::<Slab<_>>();
++    assert_eq!(slab.len(), 3);
++    assert_eq!(slab[0], 'c');
++    assert_eq!(slab[1], 'b');
++    assert_eq!(slab[9], 'a');
++    assert_eq!(slab.get(5), None);
++    assert_eq!(slab.vacant_entry().key(), 8);
++}
++
++#[test]
++fn from_iterator_unordered() {
++    let mut slab = vec![(1, "one"), (50, "fifty"), (3, "three"), (20, "twenty")]
++        .into_iter()
++        .collect::<Slab<_>>();
++    assert_eq!(slab.len(), 4);
++    assert_eq!(slab.vacant_entry().key(), 0);
++    let mut iter = slab.iter();
++    assert_eq!(iter.next(), Some((1, &"one")));
++    assert_eq!(iter.next(), Some((3, &"three")));
++    assert_eq!(iter.next(), Some((20, &"twenty")));
++    assert_eq!(iter.next(), Some((50, &"fifty")));
++    assert_eq!(iter.next(), None);
++}
++
++// https://github.com/tokio-rs/slab/issues/100
++#[test]
++fn from_iterator_issue_100() {
++    let mut slab: slab::Slab<()> = vec![(1, ())].into_iter().collect();
++    assert_eq!(slab.len(), 1);
++    assert_eq!(slab.insert(()), 0);
++    assert_eq!(slab.insert(()), 2);
++    assert_eq!(slab.insert(()), 3);
++
++    let mut slab: slab::Slab<()> = vec![(1, ()), (2, ())].into_iter().collect();
++    assert_eq!(slab.len(), 2);
++    assert_eq!(slab.insert(()), 0);
++    assert_eq!(slab.insert(()), 3);
++    assert_eq!(slab.insert(()), 4);
++
++    let mut slab: slab::Slab<()> = vec![(1, ()), (3, ())].into_iter().collect();
++    assert_eq!(slab.len(), 2);
++    assert_eq!(slab.insert(()), 2);
++    assert_eq!(slab.insert(()), 0);
++    assert_eq!(slab.insert(()), 4);
++
++    let mut slab: slab::Slab<()> = vec![(0, ()), (2, ()), (3, ()), (5, ())]
++        .into_iter()
++        .collect();
++    assert_eq!(slab.len(), 4);
++    assert_eq!(slab.insert(()), 4);
++    assert_eq!(slab.insert(()), 1);
++    assert_eq!(slab.insert(()), 6);
++}
++
++#[test]
++fn clear() {
++    let mut slab = Slab::new();
++
++    for i in 0..4 {
++        slab.insert(i);
++    }
++
++    // clear full
++    slab.clear();
++    assert!(slab.is_empty());
++
++    assert_eq!(0, slab.len());
++    assert_eq!(4, slab.capacity());
++
++    for i in 0..2 {
++        slab.insert(i);
++    }
++
++    let vals: Vec<_> = slab.iter().map(|(_, r)| *r).collect();
++    assert_eq!(vals, vec![0, 1]);
++
++    // clear half-filled
++    slab.clear();
++    assert!(slab.is_empty());
++}
++
++#[test]
++fn shrink_to_fit_empty() {
++    let mut slab = Slab::<bool>::with_capacity(20);
++    slab.shrink_to_fit();
++    assert_eq!(slab.capacity(), 0);
++}
++
++#[test]
++fn shrink_to_fit_no_vacant() {
++    let mut slab = Slab::with_capacity(20);
++    slab.insert(String::new());
++    slab.shrink_to_fit();
++    assert!(slab.capacity() < 10);
++}
++
++#[test]
++fn shrink_to_fit_doesnt_move() {
++    let mut slab = Slab::with_capacity(8);
++    slab.insert("foo");
++    let bar = slab.insert("bar");
++    slab.insert("baz");
++    let quux = slab.insert("quux");
++    slab.remove(quux);
++    slab.remove(bar);
++    slab.shrink_to_fit();
++    assert_eq!(slab.len(), 2);
++    assert!(slab.capacity() >= 3);
++    assert_eq!(slab.get(0), Some(&"foo"));
++    assert_eq!(slab.get(2), Some(&"baz"));
++    assert_eq!(slab.vacant_entry().key(), bar);
++}
++
++#[test]
++fn shrink_to_fit_doesnt_recreate_list_when_nothing_can_be_done() {
++    let mut slab = Slab::with_capacity(16);
++    for i in 0..4 {
++        slab.insert(Box::new(i));
++    }
++    slab.remove(0);
++    slab.remove(2);
++    slab.remove(1);
++    assert_eq!(slab.vacant_entry().key(), 1);
++    slab.shrink_to_fit();
++    assert_eq!(slab.len(), 1);
++    assert!(slab.capacity() >= 4);
++    assert_eq!(slab.vacant_entry().key(), 1);
++}
++
++#[test]
++fn compact_empty() {
++    let mut slab = Slab::new();
++    slab.compact(|_, _, _| panic!());
++    assert_eq!(slab.len(), 0);
++    assert_eq!(slab.capacity(), 0);
++    slab.reserve(20);
++    slab.compact(|_, _, _| panic!());
++    assert_eq!(slab.len(), 0);
++    assert_eq!(slab.capacity(), 0);
++    slab.insert(0);
++    slab.insert(1);
++    slab.insert(2);
++    slab.remove(1);
++    slab.remove(2);
++    slab.remove(0);
++    slab.compact(|_, _, _| panic!());
++    assert_eq!(slab.len(), 0);
++    assert_eq!(slab.capacity(), 0);
++}
++
++#[test]
++fn compact_no_moves_needed() {
++    let mut slab = Slab::new();
++    for i in 0..10 {
++        slab.insert(i);
++    }
++    slab.remove(8);
++    slab.remove(9);
++    slab.remove(6);
++    slab.remove(7);
++    slab.compact(|_, _, _| panic!());
++    assert_eq!(slab.len(), 6);
++    for ((index, &value), want) in slab.iter().zip(0..6) {
++        assert!(index == value);
++        assert_eq!(index, want);
++    }
++    assert!(slab.capacity() >= 6 && slab.capacity() < 10);
++}
++
++#[test]
++fn compact_moves_successfully() {
++    let mut slab = Slab::with_capacity(20);
++    for i in 0..10 {
++        slab.insert(i);
++    }
++    for &i in &[0, 5, 9, 6, 3] {
++        slab.remove(i);
++    }
++    let mut moved = 0;
++    slab.compact(|&mut v, from, to| {
++        assert!(from > to);
++        assert!(from >= 5);
++        assert!(to < 5);
++        assert_eq!(from, v);
++        moved += 1;
++        true
++    });
++    assert_eq!(slab.len(), 5);
++    assert_eq!(moved, 2);
++    assert_eq!(slab.vacant_entry().key(), 5);
++    assert!(slab.capacity() >= 5 && slab.capacity() < 20);
++    let mut iter = slab.iter();
++    assert_eq!(iter.next(), Some((0, &8)));
++    assert_eq!(iter.next(), Some((1, &1)));
++    assert_eq!(iter.next(), Some((2, &2)));
++    assert_eq!(iter.next(), Some((3, &7)));
++    assert_eq!(iter.next(), Some((4, &4)));
++    assert_eq!(iter.next(), None);
++}
++
++#[test]
++fn compact_doesnt_move_if_closure_errors() {
++    let mut slab = Slab::with_capacity(20);
++    for i in 0..10 {
++        slab.insert(i);
++    }
++    for &i in &[9, 3, 1, 4, 0] {
++        slab.remove(i);
++    }
++    slab.compact(|&mut v, from, to| {
++        assert!(from > to);
++        assert_eq!(from, v);
++        v != 6
++    });
++    assert_eq!(slab.len(), 5);
++    assert!(slab.capacity() >= 7 && slab.capacity() < 20);
++    assert_eq!(slab.vacant_entry().key(), 3);
++    let mut iter = slab.iter();
++    assert_eq!(iter.next(), Some((0, &8)));
++    assert_eq!(iter.next(), Some((1, &7)));
++    assert_eq!(iter.next(), Some((2, &2)));
++    assert_eq!(iter.next(), Some((5, &5)));
++    assert_eq!(iter.next(), Some((6, &6)));
++    assert_eq!(iter.next(), None);
++}
++
++#[test]
++fn compact_handles_closure_panic() {
++    let mut slab = Slab::new();
++    for i in 0..10 {
++        slab.insert(i);
++    }
++    for i in 1..6 {
++        slab.remove(i);
++    }
++    let result = catch_unwind(AssertUnwindSafe(|| {
++        slab.compact(|&mut v, from, to| {
++            assert!(from > to);
++            assert_eq!(from, v);
++            if v == 7 {
++                panic!("test");
++            }
++            true
++        })
++    }));
++    match result {
++        Err(ref payload) if payload.downcast_ref() == Some(&"test") => {}
++        Err(bug) => resume_unwind(bug),
++        Ok(()) => unreachable!(),
++    }
++    assert_eq!(slab.len(), 5 - 1);
++    assert_eq!(slab.vacant_entry().key(), 3);
++    let mut iter = slab.iter();
++    assert_eq!(iter.next(), Some((0, &0)));
++    assert_eq!(iter.next(), Some((1, &9)));
++    assert_eq!(iter.next(), Some((2, &8)));
++    assert_eq!(iter.next(), Some((6, &6)));
++    assert_eq!(iter.next(), None);
++}
++
++#[test]
++fn fully_consumed_drain() {
++    let mut slab = Slab::new();
++
++    for i in 0..3 {
++        slab.insert(i);
++    }
++
++    {
++        let mut drain = slab.drain();
++        assert_eq!(Some(0), drain.next());
++        assert_eq!(Some(1), drain.next());
++        assert_eq!(Some(2), drain.next());
++        assert_eq!(None, drain.next());
++    }
++
++    assert!(slab.is_empty());
++}
++
++#[test]
++fn partially_consumed_drain() {
++    let mut slab = Slab::new();
++
++    for i in 0..3 {
++        slab.insert(i);
++    }
++
++    {
++        let mut drain = slab.drain();
++        assert_eq!(Some(0), drain.next());
++    }
++
++    assert!(slab.is_empty())
++}
++
++#[test]
++fn drain_rev() {
++    let mut slab = Slab::new();
++    for i in 0..10 {
++        slab.insert(i);
++    }
++    slab.remove(9);
++
++    let vals: Vec<u64> = slab.drain().rev().collect();
++    assert_eq!(vals, (0..9).rev().collect::<Vec<u64>>());
++}
++
++#[test]
++fn try_remove() {
++    let mut slab = Slab::new();
++
++    let key = slab.insert(1);
++
++    assert_eq!(slab.try_remove(key), Some(1));
++    assert_eq!(slab.try_remove(key), None);
++    assert_eq!(slab.get(key), None);
++}
++
++#[test]
++fn const_new() {
++    static _SLAB: Slab<()> = Slab::new();
++}
++
++#[test]
++fn clone_from() {
++    let mut slab1 = Slab::new();
++    let mut slab2 = Slab::new();
++    for i in 0..5 {
++        slab1.insert(i);
++        slab2.insert(2 * i);
++        slab2.insert(2 * i + 1);
++    }
++    slab1.remove(1);
++    slab1.remove(3);
++    slab2.clone_from(&slab1);
++
++    let mut iter2 = slab2.iter();
++    assert_eq!(iter2.next(), Some((0, &0)));
++    assert_eq!(iter2.next(), Some((2, &2)));
++    assert_eq!(iter2.next(), Some((4, &4)));
++    assert_eq!(iter2.next(), None);
++    assert!(slab2.capacity() >= 10);
++}

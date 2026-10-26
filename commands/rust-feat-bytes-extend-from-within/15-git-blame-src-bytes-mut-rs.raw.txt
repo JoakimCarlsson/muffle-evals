@@ -1,0 +1,1975 @@
+$ git blame src/bytes_mut.rs
+^f1bb864 (evals 2026-10-22 12:37:59 +0200    1) use core::mem::{self, ManuallyDrop, MaybeUninit};
+^f1bb864 (evals 2026-10-22 12:37:59 +0200    2) use core::ops::{Deref, DerefMut};
+^f1bb864 (evals 2026-10-22 12:37:59 +0200    3) use core::ptr::{self, NonNull};
+^f1bb864 (evals 2026-10-22 12:37:59 +0200    4) use core::{cmp, fmt, hash, slice};
+^f1bb864 (evals 2026-10-22 12:37:59 +0200    5) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200    6) use alloc::{
+^f1bb864 (evals 2026-10-22 12:37:59 +0200    7)     borrow::{Borrow, BorrowMut},
+^f1bb864 (evals 2026-10-22 12:37:59 +0200    8)     boxed::Box,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200    9)     string::String,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   10)     vec,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   11)     vec::Vec,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   12) };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   13) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   14) use crate::buf::{IntoIter, UninitSlice};
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   15) use crate::bytes::Vtable;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   16) #[allow(unused)]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   17) use crate::loom::sync::atomic::AtomicMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   18) use crate::loom::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   19) use crate::{Buf, BufMut, Bytes, TryGetError};
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   20) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   21) /// A unique reference to a contiguous slice of memory.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   22) ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   23) /// `BytesMut` represents a unique view into a potentially shared memory region.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   24) /// Given the uniqueness guarantee, owners of `BytesMut` handles are able to
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   25) /// mutate the memory.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   26) ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   27) /// `BytesMut` can be thought of as containing a `buf: Arc<Vec<u8>>`, an offset
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   28) /// into `buf`, a slice length, and a guarantee that no other `BytesMut` for the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   29) /// same `buf` overlaps with its slice. That guarantee means that a write lock
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   30) /// is not required.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   31) ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   32) /// # Growth
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   33) ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   34) /// `BytesMut`'s `BufMut` implementation will implicitly grow its buffer as
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   35) /// necessary. However, explicitly reserving the required space up-front before
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   36) /// a series of inserts will be more efficient.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   37) ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   38) /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   39) ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   40) /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   41) /// use bytes::{BytesMut, BufMut};
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   42) ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   43) /// let mut buf = BytesMut::with_capacity(64);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   44) ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   45) /// buf.put_u8(b'h');
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   46) /// buf.put_u8(b'e');
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   47) /// buf.put(&b"llo"[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   48) ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   49) /// assert_eq!(&buf[..], b"hello");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   50) ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   51) /// // Freeze the buffer so that it can be shared
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   52) /// let a = buf.freeze();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   53) ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   54) /// // This does not allocate, instead `b` points to the same memory.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   55) /// let b = a.clone();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   56) ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   57) /// assert_eq!(&a[..], b"hello");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   58) /// assert_eq!(&b[..], b"hello");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   59) /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   60) pub struct BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   61)     ptr: NonNull<u8>,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   62)     len: usize,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   63)     cap: usize,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   64)     data: *mut Shared,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   65) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   66) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   67) // Thread-safe reference-counted container for the shared storage. This mostly
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   68) // the same as `core::sync::Arc` but without the weak counter. The ref counting
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   69) // fns are based on the ones found in `std`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   70) //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   71) // The main reason to use `Shared` instead of `core::sync::Arc` is that it ends
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   72) // up making the overall code simpler and easier to reason about. This is due to
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   73) // some of the logic around setting `Inner::arc` and other ways the `arc` field
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   74) // is used. Using `Arc` ended up requiring a number of funky transmutes and
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   75) // other shenanigans to make it work.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   76) struct Shared {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   77)     vec: Vec<u8>,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   78)     original_capacity_repr: usize,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   79)     ref_count: AtomicUsize,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   80) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   81) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   82) // Assert that the alignment of `Shared` is divisible by 2.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   83) // This is a necessary invariant since we depend on allocating `Shared` a
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   84) // shared object to implicitly carry the `KIND_ARC` flag in its pointer.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   85) // This flag is set when the LSB is 0.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   86) const _: [(); 0 - mem::align_of::<Shared>() % 2] = []; // Assert that the alignment of `Shared` is divisible by 2.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   87) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   88) // Buffer storage strategy flags.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   89) const KIND_ARC: usize = 0b0;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   90) const KIND_VEC: usize = 0b1;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   91) const KIND_MASK: usize = 0b1;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   92) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   93) // The max original capacity value. Any `Bytes` allocated with a greater initial
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   94) // capacity will default to this.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   95) const MAX_ORIGINAL_CAPACITY_WIDTH: usize = 17;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   96) // The original capacity algorithm will not take effect unless the originally
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   97) // allocated capacity was at least 1kb in size.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   98) const MIN_ORIGINAL_CAPACITY_WIDTH: usize = 10;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200   99) // The original capacity is stored in powers of 2 starting at 1kb to a max of
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  100) // 64kb. Representing it as such requires only 3 bits of storage.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  101) const ORIGINAL_CAPACITY_MASK: usize = 0b11100;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  102) const ORIGINAL_CAPACITY_OFFSET: usize = 2;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  103) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  104) const VEC_POS_OFFSET: usize = 5;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  105) // When the storage is in the `Vec` representation, the pointer can be advanced
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  106) // at most this value. This is due to the amount of storage available to track
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  107) // the offset is usize - number of KIND bits and number of ORIGINAL_CAPACITY
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  108) // bits.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  109) const MAX_VEC_POS: usize = usize::MAX >> VEC_POS_OFFSET;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  110) const NOT_VEC_POS_MASK: usize = 0b11111;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  111) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  112) #[cfg(target_pointer_width = "64")]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  113) const PTR_WIDTH: usize = 64;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  114) #[cfg(target_pointer_width = "32")]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  115) const PTR_WIDTH: usize = 32;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  116) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  117) /*
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  118)  *
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  119)  * ===== BytesMut =====
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  120)  *
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  121)  */
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  122) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  123) impl BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  124)     /// Creates a new `BytesMut` with the specified capacity.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  125)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  126)     /// The returned `BytesMut` will be able to hold at least `capacity` bytes
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  127)     /// without reallocating.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  128)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  129)     /// It is important to note that this function does not specify the length
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  130)     /// of the returned `BytesMut`, but only the capacity.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  131)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  132)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  133)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  134)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  135)     /// use bytes::{BytesMut, BufMut};
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  136)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  137)     /// let mut bytes = BytesMut::with_capacity(64);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  138)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  139)     /// // `bytes` contains no data, even though there is capacity
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  140)     /// assert_eq!(bytes.len(), 0);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  141)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  142)     /// bytes.put(&b"hello world"[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  143)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  144)     /// assert_eq!(&bytes[..], b"hello world");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  145)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  146)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  147)     pub fn with_capacity(capacity: usize) -> BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  148)         BytesMut::from_vec(Vec::with_capacity(capacity))
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  149)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  150) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  151)     /// Creates a new `BytesMut` with default capacity.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  152)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  153)     /// Resulting object has length 0 and unspecified capacity.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  154)     /// This function does not allocate.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  155)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  156)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  157)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  158)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  159)     /// use bytes::{BytesMut, BufMut};
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  160)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  161)     /// let mut bytes = BytesMut::new();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  162)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  163)     /// assert_eq!(0, bytes.len());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  164)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  165)     /// bytes.reserve(2);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  166)     /// bytes.put_slice(b"xy");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  167)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  168)     /// assert_eq!(&b"xy"[..], &bytes[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  169)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  170)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  171)     pub fn new() -> BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  172)         BytesMut::with_capacity(0)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  173)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  174) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  175)     /// Returns the number of bytes contained in this `BytesMut`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  176)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  177)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  178)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  179)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  180)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  181)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  182)     /// let b = BytesMut::from(&b"hello"[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  183)     /// assert_eq!(b.len(), 5);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  184)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  185)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  186)     pub fn len(&self) -> usize {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  187)         self.len
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  188)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  189) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  190)     /// Returns true if the `BytesMut` has a length of 0.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  191)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  192)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  193)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  194)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  195)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  196)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  197)     /// let b = BytesMut::with_capacity(64);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  198)     /// assert!(b.is_empty());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  199)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  200)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  201)     pub fn is_empty(&self) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  202)         self.len == 0
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  203)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  204) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  205)     /// Returns the number of bytes the `BytesMut` can hold without reallocating.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  206)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  207)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  208)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  209)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  210)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  211)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  212)     /// let b = BytesMut::with_capacity(64);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  213)     /// assert_eq!(b.capacity(), 64);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  214)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  215)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  216)     pub fn capacity(&self) -> usize {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  217)         self.cap
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  218)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  219) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  220)     /// Converts `self` into an immutable `Bytes`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  221)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  222)     /// The conversion is zero cost and is used to indicate that the slice
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  223)     /// referenced by the handle will no longer be mutated. Once the conversion
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  224)     /// is done, the handle can be cloned and shared across threads.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  225)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  226)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  227)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  228)     /// ```ignore-wasm
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  229)     /// use bytes::{BytesMut, BufMut};
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  230)     /// use std::thread;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  231)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  232)     /// let mut b = BytesMut::with_capacity(64);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  233)     /// b.put(&b"hello world"[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  234)     /// let b1 = b.freeze();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  235)     /// let b2 = b1.clone();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  236)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  237)     /// let th = thread::spawn(move || {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  238)     ///     assert_eq!(&b1[..], b"hello world");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  239)     /// });
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  240)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  241)     /// assert_eq!(&b2[..], b"hello world");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  242)     /// th.join().unwrap();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  243)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  244)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  245)     pub fn freeze(self) -> Bytes {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  246)         let bytes = ManuallyDrop::new(self);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  247)         if bytes.kind() == KIND_VEC {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  248)             // Just re-use `Bytes` internal Vec vtable
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  249)             unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  250)                 let off = bytes.get_vec_pos();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  251)                 let vec = rebuild_vec(bytes.ptr.as_ptr(), bytes.len, bytes.cap, off);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  252)                 let mut b: Bytes = vec.into();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  253)                 b.advance(off);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  254)                 b
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  255)             }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  256)         } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  257)             debug_assert_eq!(bytes.kind(), KIND_ARC);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  258) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  259)             let ptr = bytes.ptr.as_ptr();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  260)             let len = bytes.len;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  261)             let data = AtomicPtr::new(bytes.data.cast());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  262)             unsafe { Bytes::with_vtable(ptr, len, data, &SHARED_VTABLE) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  263)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  264)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  265) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  266)     /// Creates a new `BytesMut` containing `len` zeros.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  267)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  268)     /// The resulting object has a length of `len` and a capacity greater
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  269)     /// than or equal to `len`. The entire length of the object will be filled
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  270)     /// with zeros.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  271)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  272)     /// On some platforms or allocators this function may be faster than
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  273)     /// a manual implementation.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  274)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  275)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  276)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  277)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  278)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  279)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  280)     /// let zeros = BytesMut::zeroed(42);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  281)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  282)     /// assert!(zeros.capacity() >= 42);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  283)     /// assert_eq!(zeros.len(), 42);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  284)     /// zeros.into_iter().for_each(|x| assert_eq!(x, 0));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  285)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  286)     pub fn zeroed(len: usize) -> BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  287)         BytesMut::from_vec(vec![0; len])
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  288)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  289) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  290)     /// Splits the bytes into two at the given index.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  291)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  292)     /// Afterwards `self` contains elements `[0, at)`, and the returned
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  293)     /// `BytesMut` contains elements `[at, capacity)`. It's guaranteed that the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  294)     /// memory does not move, that is, the address of `self` does not change,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  295)     /// and the address of the returned slice is `at` bytes after that.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  296)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  297)     /// This is an `O(1)` operation that just increases the reference count
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  298)     /// and sets a few indices.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  299)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  300)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  301)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  302)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  303)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  304)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  305)     /// let mut a = BytesMut::from(&b"hello world"[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  306)     /// let mut b = a.split_off(5);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  307)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  308)     /// a[0] = b'j';
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  309)     /// b[0] = b'!';
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  310)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  311)     /// assert_eq!(&a[..], b"jello");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  312)     /// assert_eq!(&b[..], b"!world");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  313)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  314)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  315)     /// # Panics
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  316)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  317)     /// Panics if `at > capacity`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  318)     #[must_use = "consider BytesMut::truncate if you don't need the other half"]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  319)     pub fn split_off(&mut self, at: usize) -> BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  320)         assert!(
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  321)             at <= self.capacity(),
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  322)             "split_off out of bounds: {:?} <= {:?}",
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  323)             at,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  324)             self.capacity(),
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  325)         );
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  326)         unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  327)             let mut other = self.shallow_clone();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  328)             // SAFETY: We've checked that `at` <= `self.capacity()` above.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  329)             other.advance_unchecked(at);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  330)             self.cap = at;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  331)             self.len = cmp::min(self.len, at);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  332)             other
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  333)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  334)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  335) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  336)     /// Removes the bytes from the current view, returning them in a new
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  337)     /// `BytesMut` handle.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  338)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  339)     /// Afterwards, `self` will be empty, but will retain any additional
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  340)     /// capacity that it had before the operation. This is identical to
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  341)     /// `self.split_to(self.len())`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  342)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  343)     /// This is an `O(1)` operation that just increases the reference count and
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  344)     /// sets a few indices.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  345)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  346)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  347)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  348)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  349)     /// use bytes::{BytesMut, BufMut};
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  350)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  351)     /// let mut buf = BytesMut::with_capacity(1024);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  352)     /// buf.put(&b"hello world"[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  353)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  354)     /// let other = buf.split();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  355)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  356)     /// assert!(buf.is_empty());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  357)     /// assert_eq!(1013, buf.capacity());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  358)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  359)     /// assert_eq!(other, b"hello world"[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  360)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  361)     #[must_use = "consider BytesMut::clear if you don't need the other half"]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  362)     pub fn split(&mut self) -> BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  363)         let len = self.len();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  364)         self.split_to(len)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  365)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  366) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  367)     /// Splits the buffer into two at the given index.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  368)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  369)     /// Afterwards `self` contains elements `[at, len)`, and the returned `BytesMut`
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  370)     /// contains elements `[0, at)`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  371)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  372)     /// This is an `O(1)` operation that just increases the reference count and
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  373)     /// sets a few indices.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  374)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  375)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  376)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  377)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  378)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  379)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  380)     /// let mut a = BytesMut::from(&b"hello world"[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  381)     /// let mut b = a.split_to(5);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  382)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  383)     /// a[0] = b'!';
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  384)     /// b[0] = b'j';
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  385)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  386)     /// assert_eq!(&a[..], b"!world");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  387)     /// assert_eq!(&b[..], b"jello");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  388)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  389)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  390)     /// # Panics
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  391)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  392)     /// Panics if `at > len`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  393)     #[must_use = "consider BytesMut::advance if you don't need the other half"]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  394)     pub fn split_to(&mut self, at: usize) -> BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  395)         assert!(
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  396)             at <= self.len(),
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  397)             "split_to out of bounds: {:?} <= {:?}",
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  398)             at,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  399)             self.len(),
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  400)         );
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  401) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  402)         unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  403)             let mut other = self.shallow_clone();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  404)             // SAFETY: We've checked that `at` <= `self.len()` and we know that `self.len()` <=
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  405)             // `self.capacity()`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  406)             self.advance_unchecked(at);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  407)             other.cap = at;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  408)             other.len = at;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  409)             other
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  410)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  411)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  412) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  413)     /// Shortens the buffer, keeping the first `len` bytes and dropping the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  414)     /// rest.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  415)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  416)     /// If `len` is greater than the buffer's current length, this has no
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  417)     /// effect.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  418)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  419)     /// Existing underlying capacity is preserved.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  420)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  421)     /// The [split_off](`Self::split_off()`) method can emulate `truncate`, but this causes the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  422)     /// excess bytes to be returned instead of dropped.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  423)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  424)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  425)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  426)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  427)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  428)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  429)     /// let mut buf = BytesMut::from(&b"hello world"[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  430)     /// buf.truncate(5);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  431)     /// assert_eq!(buf, b"hello"[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  432)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  433)     pub fn truncate(&mut self, len: usize) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  434)         if len <= self.len() {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  435)             // SAFETY: Shrinking the buffer cannot expose uninitialized bytes.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  436)             unsafe { self.set_len(len) };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  437)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  438)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  439) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  440)     /// Clears the buffer, removing all data. Existing capacity is preserved.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  441)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  442)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  443)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  444)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  445)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  446)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  447)     /// let mut buf = BytesMut::from(&b"hello world"[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  448)     /// buf.clear();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  449)     /// assert!(buf.is_empty());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  450)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  451)     pub fn clear(&mut self) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  452)         // SAFETY: Setting the length to zero cannot expose uninitialized bytes.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  453)         unsafe { self.set_len(0) };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  454)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  455) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  456)     /// Resizes the buffer so that `len` is equal to `new_len`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  457)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  458)     /// If `new_len` is greater than `len`, the buffer is extended by the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  459)     /// difference with each additional byte set to `value`. If `new_len` is
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  460)     /// less than `len`, the buffer is simply truncated.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  461)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  462)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  463)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  464)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  465)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  466)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  467)     /// let mut buf = BytesMut::new();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  468)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  469)     /// buf.resize(3, 0x1);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  470)     /// assert_eq!(&buf[..], &[0x1, 0x1, 0x1]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  471)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  472)     /// buf.resize(2, 0x2);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  473)     /// assert_eq!(&buf[..], &[0x1, 0x1]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  474)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  475)     /// buf.resize(4, 0x3);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  476)     /// assert_eq!(&buf[..], &[0x1, 0x1, 0x3, 0x3]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  477)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  478)     pub fn resize(&mut self, new_len: usize, value: u8) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  479)         let additional = if let Some(additional) = new_len.checked_sub(self.len()) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  480)             additional
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  481)         } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  482)             self.truncate(new_len);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  483)             return;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  484)         };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  485) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  486)         if additional == 0 {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  487)             return;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  488)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  489) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  490)         self.reserve(additional);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  491)         let dst = self.spare_capacity_mut().as_mut_ptr();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  492)         // SAFETY: `spare_capacity_mut` returns a valid, properly aligned pointer and we've
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  493)         // reserved enough space to write `additional` bytes.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  494)         unsafe { ptr::write_bytes(dst, value, additional) };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  495) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  496)         // SAFETY: There are at least `new_len` initialized bytes in the buffer so no
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  497)         // uninitialized bytes are being exposed.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  498)         unsafe { self.set_len(new_len) };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  499)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  500) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  501)     /// Sets the length of the buffer.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  502)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  503)     /// This will explicitly set the size of the buffer without actually
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  504)     /// modifying the data, so it is up to the caller to ensure that the data
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  505)     /// has been initialized.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  506)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  507)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  508)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  509)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  510)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  511)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  512)     /// let mut b = BytesMut::from(&b"hello world"[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  513)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  514)     /// unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  515)     ///     b.set_len(5);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  516)     /// }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  517)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  518)     /// assert_eq!(&b[..], b"hello");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  519)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  520)     /// unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  521)     ///     b.set_len(11);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  522)     /// }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  523)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  524)     /// assert_eq!(&b[..], b"hello world");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  525)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  526)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  527)     pub unsafe fn set_len(&mut self, len: usize) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  528)         debug_assert!(len <= self.cap, "set_len out of bounds");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  529)         self.len = len;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  530)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  531) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  532)     /// Reserves capacity for at least `additional` more bytes to be inserted
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  533)     /// into the given `BytesMut`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  534)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  535)     /// More than `additional` bytes may be reserved in order to avoid frequent
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  536)     /// reallocations. A call to `reserve` may result in an allocation.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  537)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  538)     /// Before allocating new buffer space, the function will attempt to reclaim
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  539)     /// space in the existing buffer. If the current handle references a view
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  540)     /// into a larger original buffer, and all other handles referencing part
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  541)     /// of the same original buffer have been dropped, then the current view
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  542)     /// can be copied/shifted to the front of the buffer and the handle can take
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  543)     /// ownership of the full buffer, provided that the full buffer is large
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  544)     /// enough to fit the requested additional capacity.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  545)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  546)     /// This optimization will only happen if shifting the data from the current
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  547)     /// view to the front of the buffer is not too expensive in terms of the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  548)     /// (amortized) time required. The precise condition is subject to change;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  549)     /// as of now, the length of the data being shifted needs to be at least as
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  550)     /// large as the distance that it's shifted by. If the current view is empty
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  551)     /// and the original buffer is large enough to fit the requested additional
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  552)     /// capacity, then reallocations will never happen.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  553)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  554)     /// This method does not preserve data stored in the unused capacity.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  555)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  556)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  557)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  558)     /// In the following example, a new buffer is allocated.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  559)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  560)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  561)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  562)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  563)     /// let mut buf = BytesMut::from(&b"hello"[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  564)     /// buf.reserve(64);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  565)     /// assert!(buf.capacity() >= 69);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  566)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  567)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  568)     /// In the following example, the existing buffer is reclaimed.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  569)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  570)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  571)     /// use bytes::{BytesMut, BufMut};
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  572)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  573)     /// let mut buf = BytesMut::with_capacity(128);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  574)     /// buf.put(&[0; 64][..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  575)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  576)     /// let ptr = buf.as_ptr();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  577)     /// let other = buf.split();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  578)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  579)     /// assert!(buf.is_empty());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  580)     /// assert_eq!(buf.capacity(), 64);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  581)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  582)     /// drop(other);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  583)     /// buf.reserve(128);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  584)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  585)     /// assert_eq!(buf.capacity(), 128);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  586)     /// assert_eq!(buf.as_ptr(), ptr);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  587)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  588)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  589)     /// # Panics
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  590)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  591)     /// Panics if the new capacity overflows `usize`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  592)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  593)     pub fn reserve(&mut self, additional: usize) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  594)         let len = self.len();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  595)         let rem = self.capacity() - len;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  596) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  597)         if additional <= rem {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  598)             // The handle can already store at least `additional` more bytes, so
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  599)             // there is no further work needed to be done.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  600)             return;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  601)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  602) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  603)         // will always succeed
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  604)         let _ = self.reserve_inner(additional, true);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  605)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  606) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  607)     // In separate function to allow the short-circuits in `reserve` and `try_reclaim` to
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  608)     // be inline-able. Significantly helps performance. Returns false if it did not succeed.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  609)     fn reserve_inner(&mut self, additional: usize, allocate: bool) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  610)         let len = self.len();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  611)         let kind = self.kind();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  612) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  613)         if kind == KIND_VEC {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  614)             // If there's enough free space before the start of the buffer, then
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  615)             // just copy the data backwards and reuse the already-allocated
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  616)             // space.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  617)             //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  618)             // Otherwise, since backed by a vector, use `Vec::reserve`
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  619)             //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  620)             // We need to make sure that this optimization does not kill the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  621)             // amortized runtimes of BytesMut's operations.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  622)             unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  623)                 let off = self.get_vec_pos();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  624) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  625)                 // Only reuse space if we can satisfy the requested additional space.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  626)                 //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  627)                 // Also check if the value of `off` suggests that enough bytes
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  628)                 // have been read to account for the overhead of shifting all
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  629)                 // the data (in an amortized analysis).
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  630)                 // Hence the condition `off >= self.len()`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  631)                 //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  632)                 // This condition also already implies that the buffer is going
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  633)                 // to be (at least) half-empty in the end; so we do not break
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  634)                 // the (amortized) runtime with future resizes of the underlying
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  635)                 // `Vec`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  636)                 //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  637)                 // [For more details check issue #524, and PR #525.]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  638)                 if self.capacity() - self.len() + off >= additional && off >= self.len() {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  639)                     // There's enough space, and it's not too much overhead:
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  640)                     // reuse the space!
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  641)                     //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  642)                     // Just move the pointer back to the start after copying
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  643)                     // data back.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  644)                     let base_ptr = self.ptr.as_ptr().sub(off);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  645)                     // Since `off >= self.len()`, the two regions don't overlap.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  646)                     ptr::copy_nonoverlapping(self.ptr.as_ptr(), base_ptr, self.len);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  647)                     self.ptr = vptr(base_ptr);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  648)                     self.set_vec_pos(0);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  649) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  650)                     // Length stays constant, but since we moved backwards we
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  651)                     // can gain capacity back.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  652)                     self.cap += off;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  653)                 } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  654)                     if !allocate {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  655)                         return false;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  656)                     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  657)                     // Not enough space, or reusing might be too much overhead:
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  658)                     // allocate more space!
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  659)                     let mut v =
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  660)                         ManuallyDrop::new(rebuild_vec(self.ptr.as_ptr(), self.len, self.cap, off));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  661)                     v.reserve(additional);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  662) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  663)                     // Update the info
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  664)                     self.ptr = vptr(v.as_mut_ptr().add(off));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  665)                     self.cap = v.capacity() - off;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  666)                     debug_assert_eq!(self.len, v.len() - off);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  667)                 }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  668) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  669)                 return true;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  670)             }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  671)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  672) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  673)         debug_assert_eq!(kind, KIND_ARC);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  674)         let shared: *mut Shared = self.data;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  675) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  676)         // Reserving involves abandoning the currently shared buffer and
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  677)         // allocating a new vector with the requested capacity.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  678)         //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  679)         // Compute the new capacity
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  680)         let mut new_cap = match len.checked_add(additional) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  681)             Some(new_cap) => new_cap,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  682)             None if !allocate => return false,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  683)             None => panic!("overflow"),
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  684)         };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  685) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  686)         unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  687)             // First, try to reclaim the buffer. This is possible if the current
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  688)             // handle is the only outstanding handle pointing to the buffer.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  689)             if (*shared).is_unique() {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  690)                 // This is the only handle to the buffer. It can be reclaimed.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  691)                 // However, before doing the work of copying data, check to make
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  692)                 // sure that the vector has enough capacity.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  693)                 let v = &mut (*shared).vec;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  694) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  695)                 let v_capacity = v.capacity();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  696)                 let ptr = v.as_mut_ptr();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  697) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  698)                 let offset = self.ptr.as_ptr().offset_from(ptr) as usize;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  699) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  700)                 let new_cap_plus_offset = match new_cap.checked_add(offset) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  701)                     Some(new_cap_plus_offset) => new_cap_plus_offset,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  702)                     None if !allocate => return false,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  703)                     None => panic!("overflow"),
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  704)                 };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  705) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  706)                 // Compare the condition in the `kind == KIND_VEC` case above
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  707)                 // for more details.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  708)                 if v_capacity >= new_cap_plus_offset {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  709)                     self.cap = new_cap;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  710)                     // no copy is necessary
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  711)                 } else if v_capacity >= new_cap && offset >= len {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  712)                     // The capacity is sufficient, and copying is not too much
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  713)                     // overhead: reclaim the buffer!
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  714) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  715)                     // `offset >= len` means: no overlap
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  716)                     ptr::copy_nonoverlapping(self.ptr.as_ptr(), ptr, len);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  717) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  718)                     self.ptr = vptr(ptr);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  719)                     self.cap = v.capacity();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  720)                 } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  721)                     if !allocate {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  722)                         return false;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  723)                     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  724) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  725)                     // new_cap is calculated in terms of `BytesMut`, not the underlying
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  726)                     // `Vec`, so it does not take the offset into account.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  727)                     //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  728)                     // Thus we have to manually add it here.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  729)                     new_cap = new_cap_plus_offset;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  730) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  731)                     // The vector capacity is not sufficient. The reserve request is
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  732)                     // asking for more than the initial buffer capacity. Allocate more
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  733)                     // than requested if `new_cap` is not much bigger than the current
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  734)                     // capacity.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  735)                     //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  736)                     // There are some situations, using `reserve_exact` that the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  737)                     // buffer capacity could be below `original_capacity`, so do a
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  738)                     // check.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  739)                     let double = v.capacity().checked_shl(1).unwrap_or(new_cap);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  740) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  741)                     new_cap = cmp::max(double, new_cap);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  742) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  743)                     // No space - allocate more
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  744)                     //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  745)                     // The length field of `Shared::vec` is not used by the `BytesMut`;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  746)                     // instead we use the `len` field in the `BytesMut` itself. However,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  747)                     // when calling `reserve`, it doesn't guarantee that data stored in
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  748)                     // the unused capacity of the vector is copied over to the new
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  749)                     // allocation, so we need to ensure that we don't have any data we
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  750)                     // care about in the unused capacity before calling `reserve`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  751)                     debug_assert!(offset + len <= v.capacity());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  752)                     v.set_len(offset + len);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  753)                     v.reserve(new_cap - v.len());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  754) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  755)                     // Update the info
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  756)                     self.ptr = vptr(v.as_mut_ptr().add(offset));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  757)                     self.cap = v.capacity() - offset;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  758)                 }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  759) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  760)                 return true;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  761)             }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  762)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  763)         if !allocate {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  764)             return false;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  765)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  766) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  767)         let original_capacity_repr = unsafe { (*shared).original_capacity_repr };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  768)         let original_capacity = original_capacity_from_repr(original_capacity_repr);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  769) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  770)         new_cap = cmp::max(new_cap, original_capacity);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  771) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  772)         // Create a new vector to store the data
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  773)         let mut v = ManuallyDrop::new(Vec::with_capacity(new_cap));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  774) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  775)         // Copy the bytes
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  776)         v.extend_from_slice(self.as_ref());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  777) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  778)         // Release the shared handle. This must be done *after* the bytes are
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  779)         // copied.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  780)         unsafe { release_shared(shared) };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  781) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  782)         // Update self
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  783)         let data = (original_capacity_repr << ORIGINAL_CAPACITY_OFFSET) | KIND_VEC;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  784)         self.data = invalid_ptr(data);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  785)         self.ptr = vptr(v.as_mut_ptr());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  786)         self.cap = v.capacity();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  787)         debug_assert_eq!(self.len, v.len());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  788)         true
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  789)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  790) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  791)     /// Attempts to cheaply reclaim already allocated capacity for at least `additional` more
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  792)     /// bytes to be inserted into the given `BytesMut` and returns `true` if it succeeded.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  793)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  794)     /// `try_reclaim` behaves exactly like `reserve`, except that it never allocates new storage
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  795)     /// and returns a `bool` indicating whether it was successful in doing so:
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  796)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  797)     /// `try_reclaim` returns false under these conditions:
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  798)     ///  - The spare capacity left is less than `additional` bytes AND
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  799)     ///  - The existing allocation cannot be reclaimed cheaply or it was less than
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  800)     ///    `additional` bytes in size
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  801)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  802)     /// Reclaiming the allocation cheaply is possible if the `BytesMut` has no outstanding
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  803)     /// references through other `BytesMut`s or `Bytes` which point to the same underlying
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  804)     /// storage.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  805)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  806)     /// This method does not preserve data stored in the unused capacity.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  807)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  808)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  809)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  810)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  811)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  812)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  813)     /// let mut buf = BytesMut::with_capacity(64);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  814)     /// assert_eq!(true, buf.try_reclaim(64));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  815)     /// assert_eq!(64, buf.capacity());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  816)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  817)     /// buf.extend_from_slice(b"abcd");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  818)     /// let mut split = buf.split();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  819)     /// assert_eq!(60, buf.capacity());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  820)     /// assert_eq!(4, split.capacity());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  821)     /// assert_eq!(false, split.try_reclaim(64));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  822)     /// assert_eq!(false, buf.try_reclaim(64));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  823)     /// // The split buffer is filled with "abcd"
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  824)     /// assert_eq!(false, split.try_reclaim(4));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  825)     /// // buf is empty and has capacity for 60 bytes
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  826)     /// assert_eq!(true, buf.try_reclaim(60));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  827)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  828)     /// drop(buf);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  829)     /// assert_eq!(false, split.try_reclaim(64));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  830)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  831)     /// split.clear();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  832)     /// assert_eq!(4, split.capacity());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  833)     /// assert_eq!(true, split.try_reclaim(64));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  834)     /// assert_eq!(64, split.capacity());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  835)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  836)     // I tried splitting out try_reclaim_inner after the short circuits, but it was inlined
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  837)     // regardless with Rust 1.78.0 so probably not worth it
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  838)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  839)     #[must_use = "consider BytesMut::reserve if you need an infallible reservation"]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  840)     pub fn try_reclaim(&mut self, additional: usize) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  841)         let len = self.len();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  842)         let rem = self.capacity() - len;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  843) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  844)         if additional <= rem {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  845)             // The handle can already store at least `additional` more bytes, so
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  846)             // there is no further work needed to be done.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  847)             return true;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  848)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  849) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  850)         self.reserve_inner(additional, false)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  851)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  852) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  853)     /// Appends given bytes to this `BytesMut`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  854)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  855)     /// If this `BytesMut` object does not have enough capacity, it is resized
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  856)     /// first.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  857)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  858)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  859)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  860)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  861)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  862)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  863)     /// let mut buf = BytesMut::with_capacity(0);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  864)     /// buf.extend_from_slice(b"aaabbb");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  865)     /// buf.extend_from_slice(b"cccddd");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  866)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  867)     /// assert_eq!(b"aaabbbcccddd", &buf[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  868)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  869)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  870)     pub fn extend_from_slice(&mut self, extend: &[u8]) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  871)         let cnt = extend.len();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  872)         self.reserve(cnt);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  873) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  874)         unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  875)             let dst = self.spare_capacity_mut();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  876)             // Reserved above
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  877)             debug_assert!(dst.len() >= cnt);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  878) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  879)             ptr::copy_nonoverlapping(extend.as_ptr(), dst.as_mut_ptr().cast(), cnt);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  880)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  881) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  882)         unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  883)             self.advance_mut(cnt);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  884)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  885)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  886) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  887)     /// Absorbs a `BytesMut` that was previously split off if they are
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  888)     /// contiguous, otherwise appends its bytes to this `BytesMut`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  889)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  890)     /// If the two `BytesMut` objects were previously contiguous and not mutated
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  891)     /// in a way that causes re-allocation i.e., if `other` was created by
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  892)     /// calling `split_off` on this `BytesMut`, then this is an `O(1)` operation
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  893)     /// that just decreases a reference count and sets a few indices.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  894)     /// Otherwise this method degenerates to
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  895)     /// `self.extend_from_slice(other.as_ref())`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  896)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  897)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  898)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  899)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  900)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  901)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  902)     /// let mut buf = BytesMut::with_capacity(64);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  903)     /// buf.extend_from_slice(b"aaabbbcccddd");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  904)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  905)     /// let split = buf.split_off(6);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  906)     /// assert_eq!(b"aaabbb", &buf[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  907)     /// assert_eq!(b"cccddd", &split[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  908)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  909)     /// buf.unsplit(split);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  910)     /// assert_eq!(b"aaabbbcccddd", &buf[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  911)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  912)     pub fn unsplit(&mut self, other: BytesMut) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  913)         if self.is_empty() {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  914)             *self = other;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  915)             return;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  916)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  917) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  918)         if let Err(other) = self.try_unsplit(other) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  919)             self.extend_from_slice(other.as_ref());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  920)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  921)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  922) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  923)     // private
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  924) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  925)     // For now, use a `Vec` to manage the memory for us, but we may want to
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  926)     // change that in the future to some alternate allocator strategy.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  927)     //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  928)     // Thus, we don't expose an easy way to construct from a `Vec` since an
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  929)     // internal change could make a simple pattern (`BytesMut::from(vec)`)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  930)     // suddenly a lot more expensive.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  931)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  932)     pub(crate) fn from_vec(vec: Vec<u8>) -> BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  933)         let mut vec = ManuallyDrop::new(vec);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  934)         let ptr = vptr(vec.as_mut_ptr());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  935)         let len = vec.len();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  936)         let cap = vec.capacity();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  937) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  938)         let original_capacity_repr = original_capacity_to_repr(cap);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  939)         let data = (original_capacity_repr << ORIGINAL_CAPACITY_OFFSET) | KIND_VEC;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  940) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  941)         BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  942)             ptr,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  943)             len,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  944)             cap,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  945)             data: invalid_ptr(data),
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  946)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  947)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  948) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  949)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  950)     fn as_slice(&self) -> &[u8] {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  951)         unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  952)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  953) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  954)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  955)     fn as_slice_mut(&mut self) -> &mut [u8] {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  956)         unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  957)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  958) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  959)     /// Advance the buffer without bounds checking.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  960)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  961)     /// # SAFETY
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  962)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  963)     /// The caller must ensure that `count` <= `self.cap`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  964)     pub(crate) unsafe fn advance_unchecked(&mut self, count: usize) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  965)         // Setting the start to 0 is a no-op, so return early if this is the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  966)         // case.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  967)         if count == 0 {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  968)             return;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  969)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  970) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  971)         debug_assert!(count <= self.cap, "internal: set_start out of bounds");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  972) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  973)         let kind = self.kind();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  974) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  975)         if kind == KIND_VEC {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  976)             // Setting the start when in vec representation is a little more
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  977)             // complicated. First, we have to track how far ahead the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  978)             // "start" of the byte buffer from the beginning of the vec. We
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  979)             // also have to ensure that we don't exceed the maximum shift.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  980)             let pos = self.get_vec_pos() + count;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  981) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  982)             if pos <= MAX_VEC_POS {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  983)                 self.set_vec_pos(pos);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  984)             } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  985)                 // The repr must be upgraded to ARC. This will never happen
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  986)                 // on 64 bit systems and will only happen on 32 bit systems
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  987)                 // when shifting past 134,217,727 bytes. As such, we don't
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  988)                 // worry too much about performance here.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  989)                 self.promote_to_shared(/*ref_count = */ 1);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  990)             }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  991)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  992) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  993)         // Updating the start of the view is setting `ptr` to point to the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  994)         // new start and updating the `len` field to reflect the new length
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  995)         // of the view.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  996)         self.ptr = vptr(self.ptr.as_ptr().add(count));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  997)         self.len = self.len.saturating_sub(count);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  998)         self.cap -= count;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200  999)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1000) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1001)     /// Absorbs a `BytesMut` that was previously split off.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1002)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1003)     /// If the two `BytesMut` objects were previously contiguous, i.e., if
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1004)     /// `other` was created by calling `split_off` on this `BytesMut`, then
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1005)     /// this is an `O(1)` operation that just decreases a reference
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1006)     /// count and sets a few indices. Otherwise this method returns an error
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1007)     /// containing the original `other`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1008)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1009)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1010)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1011)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1012)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1013)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1014)     /// let mut buf = BytesMut::with_capacity(64);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1015)     /// buf.extend_from_slice(b"aaabbbcccddd");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1016)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1017)     /// let mut split_1 = buf.split_off(3);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1018)     /// let split_2 = split_1.split_off(3);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1019)     /// assert_eq!(b"aaa", &buf[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1020)     /// assert_eq!(b"bbb", &split_1[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1021)     /// assert_eq!(b"cccddd", &split_2[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1022)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1023)     /// let split_2 = buf.try_unsplit(split_2).unwrap_err();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1024)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1025)     /// buf.try_unsplit(split_1).unwrap();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1026)     /// buf.try_unsplit(split_2).unwrap();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1027)     /// assert_eq!(b"aaabbbcccddd", &buf[..]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1028)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1029)     pub fn try_unsplit(&mut self, other: BytesMut) -> Result<(), BytesMut> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1030)         if other.capacity() == 0 {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1031)             return Ok(());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1032)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1033) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1034)         let ptr = unsafe { self.ptr.as_ptr().add(self.len) };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1035)         if ptr == other.ptr.as_ptr()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1036)             && self.kind() == KIND_ARC
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1037)             && other.kind() == KIND_ARC
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1038)             && self.data == other.data
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1039)         {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1040)             // Contiguous blocks, just combine directly
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1041)             self.len += other.len;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1042)             self.cap += other.cap;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1043)             Ok(())
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1044)         } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1045)             Err(other)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1046)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1047)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1048) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1049)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1050)     fn kind(&self) -> usize {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1051)         self.data as usize & KIND_MASK
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1052)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1053) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1054)     unsafe fn promote_to_shared(&mut self, ref_cnt: usize) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1055)         debug_assert_eq!(self.kind(), KIND_VEC);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1056)         debug_assert!(ref_cnt == 1 || ref_cnt == 2);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1057) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1058)         let original_capacity_repr =
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1059)             (self.data as usize & ORIGINAL_CAPACITY_MASK) >> ORIGINAL_CAPACITY_OFFSET;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1060) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1061)         // The vec offset cannot be concurrently mutated, so there
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1062)         // should be no danger reading it.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1063)         let off = (self.data as usize) >> VEC_POS_OFFSET;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1064) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1065)         // First, allocate a new `Shared` instance containing the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1066)         // `Vec` fields. It's important to note that `ptr`, `len`,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1067)         // and `cap` cannot be mutated without having `&mut self`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1068)         // This means that these fields will not be concurrently
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1069)         // updated and since the buffer hasn't been promoted to an
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1070)         // `Arc`, those three fields still are the components of the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1071)         // vector.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1072)         let shared = Box::new(Shared {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1073)             vec: rebuild_vec(self.ptr.as_ptr(), self.len, self.cap, off),
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1074)             original_capacity_repr,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1075)             ref_count: AtomicUsize::new(ref_cnt),
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1076)         });
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1077) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1078)         let shared = Box::into_raw(shared);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1079) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1080)         // The pointer should be aligned, so this assert should
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1081)         // always succeed.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1082)         debug_assert_eq!(shared as usize & KIND_MASK, KIND_ARC);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1083) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1084)         self.data = shared;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1085)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1086) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1087)     /// Makes an exact shallow clone of `self`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1088)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1089)     /// The kind of `self` doesn't matter, but this is unsafe
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1090)     /// because the clone will have the same offsets. You must
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1091)     /// be sure the returned value to the user doesn't allow
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1092)     /// two views into the same range.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1093)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1094)     unsafe fn shallow_clone(&mut self) -> BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1095)         if self.kind() == KIND_ARC {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1096)             increment_shared(self.data);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1097)             ptr::read(self)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1098)         } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1099)             self.promote_to_shared(/*ref_count = */ 2);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1100)             ptr::read(self)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1101)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1102)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1103) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1104)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1105)     unsafe fn get_vec_pos(&self) -> usize {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1106)         debug_assert_eq!(self.kind(), KIND_VEC);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1107) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1108)         self.data as usize >> VEC_POS_OFFSET
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1109)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1110) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1111)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1112)     unsafe fn set_vec_pos(&mut self, pos: usize) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1113)         debug_assert_eq!(self.kind(), KIND_VEC);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1114)         debug_assert!(pos <= MAX_VEC_POS);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1115) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1116)         self.data = invalid_ptr((pos << VEC_POS_OFFSET) | (self.data as usize & NOT_VEC_POS_MASK));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1117)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1118) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1119)     /// Returns the remaining spare capacity of the buffer as a slice of `MaybeUninit<u8>`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1120)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1121)     /// The returned slice can be used to fill the buffer with data (e.g. by
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1122)     /// reading from a file) before marking the data as initialized using the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1123)     /// [`set_len`] method.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1124)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1125)     /// [`set_len`]: BytesMut::set_len
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1126)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1127)     /// # Examples
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1128)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1129)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1130)     /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1131)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1132)     /// // Allocate buffer big enough for 10 bytes.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1133)     /// let mut buf = BytesMut::with_capacity(10);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1134)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1135)     /// // Fill in the first 3 elements.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1136)     /// let uninit = buf.spare_capacity_mut();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1137)     /// uninit[0].write(0);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1138)     /// uninit[1].write(1);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1139)     /// uninit[2].write(2);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1140)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1141)     /// // Mark the first 3 bytes of the buffer as being initialized.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1142)     /// unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1143)     ///     buf.set_len(3);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1144)     /// }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1145)     ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1146)     /// assert_eq!(&buf[..], &[0, 1, 2]);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1147)     /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1148)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1149)     pub fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1150)         unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1151)             let ptr = self.ptr.as_ptr().add(self.len);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1152)             let len = self.cap - self.len;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1153) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1154)             slice::from_raw_parts_mut(ptr.cast(), len)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1155)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1156)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1157) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1158) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1159) impl Drop for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1160)     fn drop(&mut self) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1161)         let kind = self.kind();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1162) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1163)         if kind == KIND_VEC {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1164)             unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1165)                 let off = self.get_vec_pos();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1166) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1167)                 // Vector storage, free the vector
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1168)                 let _ = rebuild_vec(self.ptr.as_ptr(), self.len, self.cap, off);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1169)             }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1170)         } else if kind == KIND_ARC {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1171)             unsafe { release_shared(self.data) };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1172)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1173)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1174) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1175) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1176) impl Buf for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1177)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1178)     fn remaining(&self) -> usize {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1179)         self.len()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1180)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1181) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1182)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1183)     fn chunk(&self) -> &[u8] {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1184)         self.as_slice()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1185)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1186) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1187)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1188)     fn advance(&mut self, cnt: usize) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1189)         assert!(
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1190)             cnt <= self.remaining(),
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1191)             "cannot advance past `remaining`: {:?} <= {:?}",
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1192)             cnt,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1193)             self.remaining(),
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1194)         );
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1195)         unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1196)             // SAFETY: We've checked that `cnt` <= `self.remaining()` and we know that
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1197)             // `self.remaining()` <= `self.cap`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1198)             self.advance_unchecked(cnt);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1199)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1200)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1201) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1202)     fn copy_to_bytes(&mut self, len: usize) -> Bytes {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1203)         self.split_to(len).freeze()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1204)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1205) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1206) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1207) unsafe impl BufMut for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1208)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1209)     fn remaining_mut(&self) -> usize {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1210)         // Max allocation size is isize::MAX.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1211)         isize::MAX as usize - self.len()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1212)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1213) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1214)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1215)     unsafe fn advance_mut(&mut self, cnt: usize) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1216)         let remaining = self.cap - self.len();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1217)         if cnt > remaining {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1218)             super::panic_advance(&TryGetError {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1219)                 requested: cnt,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1220)                 available: remaining,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1221)             });
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1222)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1223)         // Addition won't overflow since it is at most `self.cap`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1224)         self.len = self.len() + cnt;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1225)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1226) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1227)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1228)     fn chunk_mut(&mut self) -> &mut UninitSlice {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1229)         if self.capacity() == self.len() {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1230)             self.reserve(64);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1231)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1232)         self.spare_capacity_mut().into()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1233)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1234) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1235)     // Specialize these methods so they can skip checking `remaining_mut`
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1236)     // and `advance_mut`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1237) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1238)     fn put<T: Buf>(&mut self, mut src: T)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1239)     where
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1240)         Self: Sized,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1241)     {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1242)         if !src.has_remaining() {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1243)             // prevent calling `copy_to_bytes`->`put`->`copy_to_bytes` infintely when src is empty
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1244)             return;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1245)         } else if self.capacity() == 0 {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1246)             // When capacity is zero, try reusing allocation of `src`.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1247)             let src_copy = src.copy_to_bytes(src.remaining());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1248)             drop(src);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1249)             match src_copy.try_into_mut() {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1250)                 Ok(bytes_mut) => *self = bytes_mut,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1251)                 Err(bytes) => self.extend_from_slice(&bytes),
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1252)             }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1253)         } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1254)             // In case the src isn't contiguous, reserve upfront.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1255)             self.reserve(src.remaining());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1256) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1257)             while src.has_remaining() {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1258)                 let s = src.chunk();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1259)                 let l = s.len();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1260)                 self.extend_from_slice(s);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1261)                 src.advance(l);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1262)             }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1263)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1264)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1265) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1266)     fn put_slice(&mut self, src: &[u8]) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1267)         self.extend_from_slice(src);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1268)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1269) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1270)     fn put_bytes(&mut self, val: u8, cnt: usize) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1271)         self.reserve(cnt);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1272)         unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1273)             let dst = self.spare_capacity_mut();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1274)             // Reserved above
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1275)             debug_assert!(dst.len() >= cnt);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1276) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1277)             ptr::write_bytes(dst.as_mut_ptr(), val, cnt);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1278) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1279)             self.advance_mut(cnt);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1280)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1281)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1282) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1283) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1284) impl AsRef<[u8]> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1285)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1286)     fn as_ref(&self) -> &[u8] {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1287)         self.as_slice()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1288)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1289) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1290) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1291) impl Deref for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1292)     type Target = [u8];
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1293) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1294)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1295)     fn deref(&self) -> &[u8] {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1296)         self.as_ref()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1297)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1298) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1299) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1300) impl AsMut<[u8]> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1301)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1302)     fn as_mut(&mut self) -> &mut [u8] {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1303)         self.as_slice_mut()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1304)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1305) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1306) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1307) impl DerefMut for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1308)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1309)     fn deref_mut(&mut self) -> &mut [u8] {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1310)         self.as_mut()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1311)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1312) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1313) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1314) impl<'a> From<&'a [u8]> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1315)     fn from(src: &'a [u8]) -> BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1316)         BytesMut::from_vec(src.to_vec())
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1317)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1318) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1319) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1320) impl<'a> From<&'a str> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1321)     fn from(src: &'a str) -> BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1322)         BytesMut::from(src.as_bytes())
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1323)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1324) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1325) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1326) impl From<BytesMut> for Bytes {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1327)     fn from(src: BytesMut) -> Bytes {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1328)         src.freeze()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1329)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1330) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1331) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1332) impl PartialEq for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1333)     fn eq(&self, other: &BytesMut) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1334)         self.as_slice() == other.as_slice()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1335)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1336) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1337) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1338) impl PartialOrd for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1339)     fn partial_cmp(&self, other: &BytesMut) -> Option<cmp::Ordering> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1340)         Some(self.cmp(other))
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1341)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1342) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1343) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1344) impl Ord for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1345)     fn cmp(&self, other: &BytesMut) -> cmp::Ordering {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1346)         self.as_slice().cmp(other.as_slice())
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1347)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1348) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1349) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1350) impl Eq for BytesMut {}
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1351) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1352) impl Default for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1353)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1354)     fn default() -> BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1355)         BytesMut::new()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1356)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1357) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1358) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1359) impl hash::Hash for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1360)     fn hash<H>(&self, state: &mut H)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1361)     where
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1362)         H: hash::Hasher,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1363)     {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1364)         let s: &[u8] = self.as_ref();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1365)         s.hash(state);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1366)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1367) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1368) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1369) impl Borrow<[u8]> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1370)     fn borrow(&self) -> &[u8] {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1371)         self.as_ref()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1372)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1373) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1374) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1375) impl BorrowMut<[u8]> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1376)     fn borrow_mut(&mut self) -> &mut [u8] {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1377)         self.as_mut()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1378)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1379) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1380) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1381) impl fmt::Write for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1382)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1383)     fn write_str(&mut self, s: &str) -> fmt::Result {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1384)         if self.remaining_mut() >= s.len() {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1385)             self.put_slice(s.as_bytes());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1386)             Ok(())
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1387)         } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1388)             Err(fmt::Error)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1389)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1390)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1391) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1392)     #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1393)     fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> fmt::Result {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1394)         fmt::write(self, args)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1395)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1396) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1397) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1398) impl Clone for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1399)     fn clone(&self) -> BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1400)         BytesMut::from(&self[..])
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1401)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1402) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1403) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1404) impl IntoIterator for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1405)     type Item = u8;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1406)     type IntoIter = IntoIter<BytesMut>;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1407) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1408)     fn into_iter(self) -> Self::IntoIter {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1409)         IntoIter::new(self)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1410)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1411) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1412) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1413) impl<'a> IntoIterator for &'a BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1414)     type Item = &'a u8;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1415)     type IntoIter = core::slice::Iter<'a, u8>;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1416) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1417)     fn into_iter(self) -> Self::IntoIter {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1418)         self.as_ref().iter()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1419)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1420) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1421) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1422) impl Extend<u8> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1423)     fn extend<T>(&mut self, iter: T)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1424)     where
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1425)         T: IntoIterator<Item = u8>,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1426)     {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1427)         let iter = iter.into_iter();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1428) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1429)         let (lower, _) = iter.size_hint();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1430)         self.reserve(lower);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1431) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1432)         // TODO: optimize
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1433)         // 1. If self.kind() == KIND_VEC, use Vec::extend
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1434)         for b in iter {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1435)             self.put_u8(b);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1436)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1437)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1438) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1439) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1440) impl<'a> Extend<&'a u8> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1441)     fn extend<T>(&mut self, iter: T)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1442)     where
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1443)         T: IntoIterator<Item = &'a u8>,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1444)     {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1445)         self.extend(iter.into_iter().copied())
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1446)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1447) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1448) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1449) impl Extend<Bytes> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1450)     fn extend<T>(&mut self, iter: T)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1451)     where
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1452)         T: IntoIterator<Item = Bytes>,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1453)     {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1454)         for bytes in iter {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1455)             self.extend_from_slice(&bytes)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1456)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1457)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1458) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1459) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1460) impl FromIterator<u8> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1461)     fn from_iter<T: IntoIterator<Item = u8>>(into_iter: T) -> Self {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1462)         BytesMut::from_vec(Vec::from_iter(into_iter))
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1463)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1464) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1465) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1466) impl<'a> FromIterator<&'a u8> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1467)     fn from_iter<T: IntoIterator<Item = &'a u8>>(into_iter: T) -> Self {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1468)         BytesMut::from_iter(into_iter.into_iter().copied())
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1469)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1470) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1471) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1472) /*
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1473)  *
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1474)  * ===== Inner =====
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1475)  *
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1476)  */
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1477) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1478) unsafe fn increment_shared(ptr: *mut Shared) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1479)     let old_size = (*ptr).ref_count.fetch_add(1, Ordering::Relaxed);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1480) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1481)     if old_size > isize::MAX as usize {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1482)         crate::abort();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1483)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1484) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1485) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1486) unsafe fn release_shared(ptr: *mut Shared) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1487)     // `Shared` storage... follow the drop steps from Arc.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1488)     if (*ptr).ref_count.fetch_sub(1, Ordering::Release) != 1 {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1489)         return;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1490)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1491) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1492)     // This fence is needed to prevent reordering of use of the data and
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1493)     // deletion of the data.  Because it is marked `Release`, the decreasing
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1494)     // of the reference count synchronizes with this `Acquire` fence. This
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1495)     // means that use of the data happens before decreasing the reference
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1496)     // count, which happens before this fence, which happens before the
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1497)     // deletion of the data.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1498)     //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1499)     // As explained in the [Boost documentation][1],
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1500)     //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1501)     // > It is important to enforce any possible access to the object in one
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1502)     // > thread (through an existing reference) to *happen before* deleting
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1503)     // > the object in a different thread. This is achieved by a "release"
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1504)     // > operation after dropping a reference (any access to the object
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1505)     // > through this reference must obviously happened before), and an
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1506)     // > "acquire" operation before deleting the object.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1507)     //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1508)     // [1]: (www.boost.org/doc/libs/1_55_0/doc/html/atomic/usage_examples.html)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1509)     //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1510)     // Thread sanitizer does not support atomic fences. Use an atomic load
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1511)     // instead.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1512)     (*ptr).ref_count.load(Ordering::Acquire);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1513) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1514)     // Drop the data
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1515)     drop(Box::from_raw(ptr));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1516) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1517) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1518) impl Shared {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1519)     fn is_unique(&self) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1520)         // The goal is to check if the current handle is the only handle
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1521)         // that currently has access to the buffer. This is done by
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1522)         // checking if the `ref_count` is currently 1.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1523)         //
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1524)         // The `Acquire` ordering synchronizes with the `Release` as
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1525)         // part of the `fetch_sub` in `release_shared`. The `fetch_sub`
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1526)         // operation guarantees that any mutations done in other threads
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1527)         // are ordered before the `ref_count` is decremented. As such,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1528)         // this `Acquire` will guarantee that those mutations are
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1529)         // visible to the current thread.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1530)         self.ref_count.load(Ordering::Acquire) == 1
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1531)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1532) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1533) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1534) #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1535) fn original_capacity_to_repr(cap: usize) -> usize {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1536)     let width = PTR_WIDTH - ((cap >> MIN_ORIGINAL_CAPACITY_WIDTH).leading_zeros() as usize);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1537)     cmp::min(
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1538)         width,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1539)         MAX_ORIGINAL_CAPACITY_WIDTH - MIN_ORIGINAL_CAPACITY_WIDTH,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1540)     )
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1541) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1542) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1543) fn original_capacity_from_repr(repr: usize) -> usize {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1544)     if repr == 0 {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1545)         return 0;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1546)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1547) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1548)     1 << (repr + (MIN_ORIGINAL_CAPACITY_WIDTH - 1))
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1549) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1550) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1551) #[cfg(test)]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1552) mod tests {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1553)     use super::*;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1554) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1555)     #[test]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1556)     fn test_original_capacity_to_repr() {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1557)         assert_eq!(original_capacity_to_repr(0), 0);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1558) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1559)         let max_width = 32;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1560) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1561)         for width in 1..(max_width + 1) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1562)             let cap = 1 << width - 1;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1563) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1564)             let expected = if width < MIN_ORIGINAL_CAPACITY_WIDTH {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1565)                 0
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1566)             } else if width < MAX_ORIGINAL_CAPACITY_WIDTH {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1567)                 width - MIN_ORIGINAL_CAPACITY_WIDTH
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1568)             } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1569)                 MAX_ORIGINAL_CAPACITY_WIDTH - MIN_ORIGINAL_CAPACITY_WIDTH
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1570)             };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1571) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1572)             assert_eq!(original_capacity_to_repr(cap), expected);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1573) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1574)             if width > 1 {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1575)                 assert_eq!(original_capacity_to_repr(cap + 1), expected);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1576)             }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1577) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1578)             //  MIN_ORIGINAL_CAPACITY_WIDTH must be bigger than 7 to pass tests below
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1579)             if width == MIN_ORIGINAL_CAPACITY_WIDTH + 1 {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1580)                 assert_eq!(original_capacity_to_repr(cap - 24), expected - 1);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1581)                 assert_eq!(original_capacity_to_repr(cap + 76), expected);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1582)             } else if width == MIN_ORIGINAL_CAPACITY_WIDTH + 2 {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1583)                 assert_eq!(original_capacity_to_repr(cap - 1), expected - 1);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1584)                 assert_eq!(original_capacity_to_repr(cap - 48), expected - 1);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1585)             }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1586)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1587)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1588) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1589)     #[test]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1590)     fn test_original_capacity_from_repr() {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1591)         assert_eq!(0, original_capacity_from_repr(0));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1592) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1593)         let min_cap = 1 << MIN_ORIGINAL_CAPACITY_WIDTH;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1594) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1595)         assert_eq!(min_cap, original_capacity_from_repr(1));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1596)         assert_eq!(min_cap * 2, original_capacity_from_repr(2));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1597)         assert_eq!(min_cap * 4, original_capacity_from_repr(3));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1598)         assert_eq!(min_cap * 8, original_capacity_from_repr(4));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1599)         assert_eq!(min_cap * 16, original_capacity_from_repr(5));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1600)         assert_eq!(min_cap * 32, original_capacity_from_repr(6));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1601)         assert_eq!(min_cap * 64, original_capacity_from_repr(7));
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1602)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1603) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1604) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1605) unsafe impl Send for BytesMut {}
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1606) unsafe impl Sync for BytesMut {}
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1607) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1608) /*
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1609)  *
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1610)  * ===== PartialEq / PartialOrd =====
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1611)  *
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1612)  */
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1613) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1614) impl PartialEq<[u8]> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1615)     fn eq(&self, other: &[u8]) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1616)         &**self == other
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1617)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1618) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1619) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1620) impl PartialOrd<[u8]> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1621)     fn partial_cmp(&self, other: &[u8]) -> Option<cmp::Ordering> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1622)         (**self).partial_cmp(other)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1623)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1624) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1625) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1626) impl PartialEq<BytesMut> for [u8] {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1627)     fn eq(&self, other: &BytesMut) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1628)         *other == *self
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1629)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1630) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1631) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1632) impl PartialOrd<BytesMut> for [u8] {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1633)     fn partial_cmp(&self, other: &BytesMut) -> Option<cmp::Ordering> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1634)         <[u8] as PartialOrd<[u8]>>::partial_cmp(self, other)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1635)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1636) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1637) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1638) impl PartialEq<str> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1639)     fn eq(&self, other: &str) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1640)         &**self == other.as_bytes()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1641)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1642) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1643) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1644) impl PartialOrd<str> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1645)     fn partial_cmp(&self, other: &str) -> Option<cmp::Ordering> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1646)         (**self).partial_cmp(other.as_bytes())
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1647)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1648) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1649) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1650) impl PartialEq<BytesMut> for str {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1651)     fn eq(&self, other: &BytesMut) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1652)         *other == *self
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1653)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1654) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1655) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1656) impl PartialOrd<BytesMut> for str {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1657)     fn partial_cmp(&self, other: &BytesMut) -> Option<cmp::Ordering> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1658)         <[u8] as PartialOrd<[u8]>>::partial_cmp(self.as_bytes(), other)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1659)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1660) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1661) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1662) impl PartialEq<Vec<u8>> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1663)     fn eq(&self, other: &Vec<u8>) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1664)         *self == other[..]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1665)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1666) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1667) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1668) impl PartialOrd<Vec<u8>> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1669)     fn partial_cmp(&self, other: &Vec<u8>) -> Option<cmp::Ordering> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1670)         (**self).partial_cmp(&other[..])
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1671)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1672) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1673) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1674) impl PartialEq<BytesMut> for Vec<u8> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1675)     fn eq(&self, other: &BytesMut) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1676)         *other == *self
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1677)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1678) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1679) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1680) impl PartialOrd<BytesMut> for Vec<u8> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1681)     fn partial_cmp(&self, other: &BytesMut) -> Option<cmp::Ordering> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1682)         other.partial_cmp(self)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1683)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1684) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1685) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1686) impl PartialEq<String> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1687)     fn eq(&self, other: &String) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1688)         *self == other[..]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1689)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1690) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1691) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1692) impl PartialOrd<String> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1693)     fn partial_cmp(&self, other: &String) -> Option<cmp::Ordering> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1694)         (**self).partial_cmp(other.as_bytes())
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1695)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1696) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1697) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1698) impl PartialEq<BytesMut> for String {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1699)     fn eq(&self, other: &BytesMut) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1700)         *other == *self
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1701)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1702) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1703) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1704) impl PartialOrd<BytesMut> for String {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1705)     fn partial_cmp(&self, other: &BytesMut) -> Option<cmp::Ordering> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1706)         <[u8] as PartialOrd<[u8]>>::partial_cmp(self.as_bytes(), other)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1707)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1708) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1709) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1710) impl<'a, T: ?Sized> PartialEq<&'a T> for BytesMut
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1711) where
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1712)     BytesMut: PartialEq<T>,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1713) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1714)     fn eq(&self, other: &&'a T) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1715)         *self == **other
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1716)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1717) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1718) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1719) impl<'a, T: ?Sized> PartialOrd<&'a T> for BytesMut
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1720) where
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1721)     BytesMut: PartialOrd<T>,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1722) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1723)     fn partial_cmp(&self, other: &&'a T) -> Option<cmp::Ordering> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1724)         self.partial_cmp(*other)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1725)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1726) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1727) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1728) impl PartialEq<BytesMut> for &[u8] {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1729)     fn eq(&self, other: &BytesMut) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1730)         *other == *self
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1731)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1732) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1733) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1734) impl PartialOrd<BytesMut> for &[u8] {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1735)     fn partial_cmp(&self, other: &BytesMut) -> Option<cmp::Ordering> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1736)         <[u8] as PartialOrd<[u8]>>::partial_cmp(self, other)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1737)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1738) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1739) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1740) impl PartialEq<BytesMut> for &str {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1741)     fn eq(&self, other: &BytesMut) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1742)         *other == *self
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1743)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1744) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1745) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1746) impl PartialOrd<BytesMut> for &str {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1747)     fn partial_cmp(&self, other: &BytesMut) -> Option<cmp::Ordering> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1748)         other.partial_cmp(self)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1749)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1750) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1751) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1752) impl PartialEq<BytesMut> for Bytes {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1753)     fn eq(&self, other: &BytesMut) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1754)         other[..] == self[..]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1755)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1756) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1757) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1758) impl PartialEq<Bytes> for BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1759)     fn eq(&self, other: &Bytes) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1760)         other[..] == self[..]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1761)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1762) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1763) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1764) impl From<BytesMut> for Vec<u8> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1765)     fn from(bytes: BytesMut) -> Self {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1766)         let kind = bytes.kind();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1767)         let bytes = ManuallyDrop::new(bytes);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1768) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1769)         let mut vec = if kind == KIND_VEC {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1770)             unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1771)                 let off = bytes.get_vec_pos();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1772)                 rebuild_vec(bytes.ptr.as_ptr(), bytes.len, bytes.cap, off)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1773)             }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1774)         } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1775)             let shared = bytes.data;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1776) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1777)             if unsafe { (*shared).is_unique() } {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1778)                 let vec = core::mem::take(unsafe { &mut (*shared).vec });
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1779) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1780)                 unsafe { release_shared(shared) };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1781) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1782)                 vec
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1783)             } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1784)                 return ManuallyDrop::into_inner(bytes).deref().to_vec();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1785)             }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1786)         };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1787) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1788)         let len = bytes.len;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1789) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1790)         unsafe {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1791)             ptr::copy(bytes.ptr.as_ptr(), vec.as_mut_ptr(), len);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1792)             vec.set_len(len);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1793)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1794) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1795)         vec
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1796)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1797) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1798) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1799) #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1800) fn vptr(ptr: *mut u8) -> NonNull<u8> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1801)     if cfg!(debug_assertions) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1802)         NonNull::new(ptr).expect("Vec pointer should be non-null")
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1803)     } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1804)         unsafe { NonNull::new_unchecked(ptr) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1805)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1806) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1807) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1808) /// Returns a dangling pointer with the given address. This is used to store
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1809) /// integer data in pointer fields.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1810) ///
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1811) /// It is equivalent to `addr as *mut T`, but this fails on miri when strict
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1812) /// provenance checking is enabled.
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1813) #[inline]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1814) fn invalid_ptr<T>(addr: usize) -> *mut T {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1815)     let ptr = core::ptr::null_mut::<u8>().wrapping_add(addr);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1816)     debug_assert_eq!(ptr as usize, addr);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1817)     ptr.cast::<T>()
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1818) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1819) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1820) unsafe fn rebuild_vec(ptr: *mut u8, mut len: usize, mut cap: usize, off: usize) -> Vec<u8> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1821)     let ptr = ptr.sub(off);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1822)     len += off;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1823)     cap += off;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1824) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1825)     Vec::from_raw_parts(ptr, len, cap)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1826) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1827) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1828) // ===== impl SharedVtable =====
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1829) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1830) static SHARED_VTABLE: Vtable = Vtable {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1831)     clone: shared_v_clone,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1832)     into_vec: shared_v_to_vec,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1833)     into_mut: shared_v_to_mut,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1834)     is_unique: shared_v_is_unique,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1835)     drop: shared_v_drop,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1836) };
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1837) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1838) unsafe fn shared_v_clone(data: &AtomicPtr<()>, ptr: *const u8, len: usize) -> Bytes {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1839)     let shared = data.load(Ordering::Relaxed) as *mut Shared;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1840)     increment_shared(shared);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1841) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1842)     let data = AtomicPtr::new(shared as *mut ());
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1843)     Bytes::with_vtable(ptr, len, data, &SHARED_VTABLE)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1844) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1845) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1846) unsafe fn shared_v_to_vec(data: &AtomicPtr<()>, ptr: *const u8, len: usize) -> Vec<u8> {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1847)     let shared: *mut Shared = data.load(Ordering::Relaxed).cast();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1848) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1849)     if (*shared).is_unique() {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1850)         let shared = &mut *shared;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1851) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1852)         // Drop shared
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1853)         let mut vec = core::mem::take(&mut shared.vec);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1854)         release_shared(shared);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1855) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1856)         // Copy back buffer
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1857)         ptr::copy(ptr, vec.as_mut_ptr(), len);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1858)         vec.set_len(len);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1859) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1860)         vec
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1861)     } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1862)         let v = slice::from_raw_parts(ptr, len).to_vec();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1863)         release_shared(shared);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1864)         v
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1865)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1866) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1867) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1868) unsafe fn shared_v_to_mut(data: &AtomicPtr<()>, ptr: *const u8, len: usize) -> BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1869)     let shared: *mut Shared = data.load(Ordering::Relaxed).cast();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1870) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1871)     if (*shared).is_unique() {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1872)         let shared = &mut *shared;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1873) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1874)         // The capacity is always the original capacity of the buffer
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1875)         // minus the offset from the start of the buffer
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1876)         let v = &mut shared.vec;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1877)         let v_capacity = v.capacity();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1878)         let v_ptr = v.as_mut_ptr();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1879)         let offset = ptr.offset_from(v_ptr) as usize;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1880)         let cap = v_capacity - offset;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1881) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1882)         let ptr = vptr(ptr as *mut u8);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1883) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1884)         BytesMut {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1885)             ptr,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1886)             len,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1887)             cap,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1888)             data: shared,
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1889)         }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1890)     } else {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1891)         let v = slice::from_raw_parts(ptr, len).to_vec();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1892)         release_shared(shared);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1893)         BytesMut::from_vec(v)
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1894)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1895) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1896) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1897) unsafe fn shared_v_is_unique(data: &AtomicPtr<()>) -> bool {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1898)     let shared = data.load(Ordering::Acquire);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1899)     let ref_count = (*shared.cast::<Shared>()).ref_count.load(Ordering::Relaxed);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1900)     ref_count == 1
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1901) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1902) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1903) unsafe fn shared_v_drop(data: &mut AtomicPtr<()>, _ptr: *const u8, _len: usize) {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1904)     data.with_mut(|shared| {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1905)         release_shared(*shared as *mut Shared);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1906)     });
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1907) }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1908) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1909) // compile-fails
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1910) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1911) /// ```compile_fail
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1912) /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1913) /// #[deny(unused_must_use)]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1914) /// {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1915) ///     let mut b1 = BytesMut::from("hello world");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1916) ///     b1.split_to(6);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1917) /// }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1918) /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1919) fn _split_to_must_use() {}
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1920) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1921) /// ```compile_fail
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1922) /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1923) /// #[deny(unused_must_use)]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1924) /// {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1925) ///     let mut b1 = BytesMut::from("hello world");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1926) ///     b1.split_off(6);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1927) /// }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1928) /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1929) fn _split_off_must_use() {}
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1930) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1931) /// ```compile_fail
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1932) /// use bytes::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1933) /// #[deny(unused_must_use)]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1934) /// {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1935) ///     let mut b1 = BytesMut::from("hello world");
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1936) ///     b1.split();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1937) /// }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1938) /// ```
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1939) fn _split_must_use() {}
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1940) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1941) // fuzz tests
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1942) #[cfg(all(test, loom))]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1943) mod fuzz {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1944)     use loom::sync::Arc;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1945)     use loom::thread;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1946) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1947)     use super::BytesMut;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1948)     use crate::Bytes;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1949) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1950)     #[test]
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1951)     fn bytes_mut_cloning_frozen() {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1952)         loom::model(|| {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1953)             let a = BytesMut::from(&b"abcdefgh"[..]).split().freeze();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1954)             let addr = a.as_ptr() as usize;
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1955) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1956)             // test the Bytes::clone is Sync by putting it in an Arc
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1957)             let a1 = Arc::new(a);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1958)             let a2 = a1.clone();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1959) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1960)             let t1 = thread::spawn(move || {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1961)                 let b: Bytes = (*a1).clone();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1962)                 assert_eq!(b.as_ptr() as usize, addr);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1963)             });
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1964) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1965)             let t2 = thread::spawn(move || {
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1966)                 let b: Bytes = (*a2).clone();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1967)                 assert_eq!(b.as_ptr() as usize, addr);
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1968)             });
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1969) 
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1970)             t1.join().unwrap();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1971)             t2.join().unwrap();
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1972)         });
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1973)     }
+^f1bb864 (evals 2026-10-22 12:37:59 +0200 1974) }

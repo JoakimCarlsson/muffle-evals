@@ -1,0 +1,622 @@
+$ git show HEAD
+909604fc 2026-10-22 evals: base
+=== .github/FUNDING.yml
+new file mode 100644
+@@ -0,0 +1,2 @@
++open_collective: "marshmallow"
++tidelift: "pypi/marshmallow"
+=== .github/dependabot.yml
+new file mode 100644
+@@ -0,0 +1,11 @@
++version: 2
++updates:
++- package-ecosystem: pip
++  directory: "/"
++  schedule:
++    interval: daily
++  open-pull-requests-limit: 10
++- package-ecosystem: "github-actions"
++  directory: "/"
++  schedule:
++    interval: "monthly"
+=== .github/workflows/build-release.yml
+new file mode 100644
+@@ -0,0 +1,87 @@
++name: build
++on:
++  push:
++    branches: ["dev", "*.x-line"]
++    tags: ["*"]
++  pull_request:
++
++jobs:
++  docs:
++    name: docs
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v6
++      - uses: actions/setup-python@v6
++        with:
++          python-version: "3.14"
++      - run: pip install tox
++      - run: tox -e docs
++  tests:
++    name: ${{ matrix.name }}
++    runs-on: ubuntu-latest
++    strategy:
++      fail-fast: false
++      matrix:
++        include:
++          - { name: "3.10", python: "3.10", tox: py310 }
++          - { name: "3.14", python: "3.14", tox: py314 }
++          - { name: "mypy", python: "3.13", tox: mypy }
++    steps:
++      - uses: actions/checkout@v6
++      - uses: actions/setup-python@v6
++        with:
++          python-version: ${{ matrix.python }}
++          allow-prereleases: true
++      - run: python -m pip install tox
++      - run: python -m tox -e ${{ matrix.tox }}
++  build:
++    name: Build package
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v6
++      - uses: actions/setup-python@v6
++        with:
++          python-version: "3.14"
++      - name: Install pypa/build
++        run: python -m pip install build
++      - name: Build a binary wheel and a source tarball
++        run: python -m build
++      - name: Install twine
++        run: python -m pip install twine
++      - name: Check build
++        run: python -m twine check --strict dist/*
++      - name: Store the distribution packages
++        uses: actions/upload-artifact@v7
++        with:
++          name: python-package-distributions
++          path: dist/
++  # this duplicates pre-commit.ci, so only run it on tags
++  # it guarantees that linting is passing prior to a release
++  lint-pre-release:
++    if: startsWith(github.ref, 'refs/tags')
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v6
++      - uses: actions/setup-python@v6
++        with:
++          python-version: "3.14"
++      - run: python -m pip install tox
++      - run: python -m tox -e lint
++  publish-to-pypi:
++    name: PyPI release
++    if: startsWith(github.ref, 'refs/tags/')
++    needs: [build, tests, lint-pre-release]
++    runs-on: ubuntu-latest
++    environment:
++      name: pypi
++      url: https://pypi.org/p/marshmallow
++    permissions:
++      id-token: write
++    steps:
++      - name: Download all the dists
++        uses: actions/download-artifact@v8
++        with:
++          name: python-package-distributions
++          path: dist/
++      - name: Publish distribution to PyPI
++        uses: pypa/gh-action-pypi-publish@release/v1
+=== .gitignore
+new file mode 100644
+@@ -0,0 +1,84 @@
++*.py[cod]
++
++# C extensions
++*.so
++
++# Packages
++*.egg
++*.egg-info
++dist
++build
++eggs
++parts
++bin
++var
++sdist
++develop-eggs
++.installed.cfg
++lib
++lib64
++pip-wheel-metadata
++
++# Installer logs
++pip-log.txt
++
++# Unit test / coverage reports
++.coverage
++htmlcov
++.tox
++nosetests.xml
++.cache
++.pytest_cache
++
++# Translations
++*.mo
++
++# Mr Developer
++.mr.developer.cfg
++
++# IDE
++.project
++.pydevproject
++.idea
++
++# Coverage
++cover
++.coveragerc
++
++# Sphinx
++docs/_build
++README.html
++
++*.ipynb
++.ipynb_checkpoints
++
++Vagrantfile
++.vagrant
++
++*.db
++*.ai
++.konchrc
++_sandbox
++pylintrc
++
++# Virtualenvs
++env
++venv
++
++# pyenv
++.python-version
++
++# pytest
++.pytest_cache
++
++# Other
++.directory
++*.pprof
++
++# mypy
++.mypy_cache/
++.dmypy.json
++dmypy.json
++
++# ruff
++.ruff_cache
+=== .pre-commit-config.yaml
+new file mode 100644
+@@ -0,0 +1,19 @@
++ci:
++  autoupdate_schedule: monthly
++repos:
++- repo: https://github.com/astral-sh/ruff-pre-commit
++  rev: v0.15.4
++  hooks:
++    - id: ruff-check
++    - id: ruff-format
++- repo: https://github.com/python-jsonschema/check-jsonschema
++  rev: 0.37.0
++  hooks:
++    - id: check-github-workflows
++    - id: check-readthedocs
++# TODO: Remove blacken-docs when https://github.com/astral-sh/ruff/issues/8237 is implemented
++- repo: https://github.com/asottile/blacken-docs
++  rev: 1.20.0
++  hooks:
++  - id: blacken-docs
++    additional_dependencies: [black==25.1.0]
+=== .readthedocs.yml
+new file mode 100644
+@@ -0,0 +1,15 @@
++version: 2
++sphinx:
++  configuration: docs/conf.py
++formats:
++  - pdf
++build:
++  os: ubuntu-22.04
++  tools:
++    python: "3.13"
++python:
++  install:
++    - method: pip
++      path: .
++      extra_requirements:
++        - docs
+=== AUTHORS.rst
+new file mode 100644
+@@ -0,0 +1,186 @@
++*******
++Authors
++*******
++
++Leads
++=====
++
++- Steven Loria `@sloria <https://github.com/sloria>`_
++- Jérôme Lafréchoux  `@lafrech <https://github.com/lafrech>`_
++- Jared Deckard `@deckar01 <https://github.com/deckar01>`_
++
++Contributors (chronological)
++============================
++
++- Sebastian Vetter `@elbaschid <https://github.com/elbaschid>`_
++- Eduard Carreras `@ecarreras <https://github.com/ecarreras>`_
++- Joakim Ekberg `@kalasjocke <https://github.com/kalasjocke>`_
++- Mark Grey `@DeaconDesperado <https://github.com/DeaconDesperado>`_
++- Anders Steinlein `@asteinlein <https://github.com/asteinlein>`_
++- Cyril Thomas `@Ketouem <https://github.com/Ketouem>`_
++- Austin Macdonald `@asmacdo <https://github.com/asmacdo>`_
++- Josh Carp `@jmcarp <https://github.com/jmcarp>`_
++- `@amikholap <https://github.com/amikholap>`_
++- Sven-Hendrik Haase `@svenstaro <https://github.com/svenstaro>`_
++- Eric Wang `@ewang <https://github.com/ewang>`_
++- `@philtay <https://github.com/philtay>`_
++- `@malexer <https://github.com/malexer>`_
++- Andriy Yurchuk `@Ch00k <https://github.com/Ch00k>`_
++- Vesa Uimonen `@vesauimonen <https://github.com/vesauimonen>`_
++- David Lord `@davidism <https://github.com/davidism>`_
++- Daniel Castro `@0xDCA <https://github.com/0xDCA>`_
++- Ben Jones `@RealSalmon <https://github.com/RealSalmon>`_
++- Patrick Woods `@hakjoon <https://github.com/hakjoon>`_
++- Lukas Heiniger `@3rdcycle <https://github.com/3rdcycle>`_
++- Ryan Lowe `@ryanlowe0 <https://github.com/ryanlowe0>`_
++- Jimmy Jia `@taion <https://github.com/taion>`_
++- `@lustdante <https://github.com/lustdante>`_
++- Sergey Aganezov, Jr. `@sergey-aganezov-jr <https://github.com/sergey-aganezov-jr>`_
++- Kevin Stone `@kevinastone <https://github.com/kevinastone>`_
++- Alex Morken `@alexmorken <https://github.com/alexmorken>`_
++- Sergey Polzunov `@traut <https://github.com/traut>`_
++- Kelvin Hammond `@kelvinhammond <https://github.com/kelvinhammond>`_
++- Matt Stobo `@mwstobo <https://github.com/mwstobo>`_
++- Max Orhai `@max-orhai <https://github.com/max-orhai>`_
++- Praveen `@praveen-p <https://github.com/praveen-p>`_
++- Stas Sușcov `@stas <https://github.com/stas>`_
++- Florian `@floqqi <https://github.com/floqqi>`_
++- Evgeny Sureev `@evgeny-sureev <https://github.com/evgeny-sureev>`_
++- Matt Bachmann `@Bachmann1234 <https://github.com/Bachmann1234>`_
++- Daniel Imhoff `@dwieeb <https://github.com/dwieeb>`_
++- Juan Rossi `@juanrossi <https://github.com/juanrossi>`_
++- Andrew Haigh `@nelfin <https://github.com/nelfin>`_
++- `@Mise <https://github.com/Mise>`_
++- Taylor Edmiston `@tedmiston <https://github.com/tedmiston>`_
++- Francisco Demartino `@franciscod <https://github.com/franciscod>`_
++- Eric Wang `@ewang <https://github.com/ewang>`_
++- Eugene Prikazchikov `@eprikazc <https://github.com/eprikazc>`_
++- Damian Heard `@DamianHeard <https://github.com/DamianHeard>`_
++- Alec Reiter `@justanr <https://github.com/justanr>`_
++- Dan Sutherland `@d-sutherland <https://github.com/d-sutherland>`_
++- Jeff Widman `@jeffwidman <https://github.com/jeffwidman>`_
++- Simeon Visser `@svisser <https://github.com/svisser>`_
++- Taylan Develioglu `@tdevelioglu <https://github.com/tdevelioglu>`_
++- Danilo Akamine `@daniloakamine <https://github.com/daniloakamine>`_
++- Maxim Kulkin `@maximkulkin <https://github.com/maximkulkin>`_
++- `@immerrr <https://github.com/immerrr>`_
++- Mike Yumatov `@yumike <https://github.com/yumike>`_
++- Tim Mundt `@Tim-Erwin <https://github.com/Tim-Erwin>`_
++- Russell Davies `@russelldavies <https://github.com/russelldavies>`_
++- Jared Deckard `@deckar01 <https://github.com/deckar01>`_
++- David Thornton `@davidthornton <https://github.com/davidthornton>`_
++- Vuong Hoang `@vuonghv <https://github.com/vuonghv>`_
++- David Bertouille `@dbertouille <https://github.com/dbertouille>`_
++- Alexandre Bonnetain `@Shir0kamii <https://github.com/Shir0kamii>`_
++- Tuukka Mustonen `@tuukkamustonen <https://github.com/tuukkamustonen>`_
++- Tero Vuotila `@tvuotila <https://github.com/tvuotila>`_
++- Paul Zumbrun `@pauljz <https://github.com/pauljz>`_
++- Gary Wilson Jr. `@gdub <https://github.com/gdub>`_
++- Sabine Maennel `@sabinem <https://github.com/sabinem>`_
++- Victor Varvaryuk `@mindojo-victor <https://github.com/mindojo-victor>`_
++- Jāzeps Baško `@jbasko <https://github.com/jbasko>`_
++- `@podhmo <https://github.com/podhmo>`_
++- Dmitry Orlov `@mosquito <https://github.com/mosquito>`_
++- Yuri Heupa `@YuriHeupa <https://github.com/YuriHeupa>`_
++- Roy Williams `@rowillia <https://github.com/rowillia>`_
++- Vlad Frolov `@frol <https://github.com/frol>`_
++- Erling Børresen `@erlingbo <https://github.com/erlingbo>`_
++- Jérôme Lafréchoux  `@lafrech <https://github.com/lafrech>`_
++- Roy Williams `@rowillia <https://github.com/rowillia>`_
++- `@dradetsky <https://github.com/dradetsky>`_
++- Michal Kononenko `@MichalKononenko <https://github.com/MichalKononenko>`_
++- Yoichi NAKAYAMA `@yoichi <https://github.com/yoichi>`_
++- Bernhard M. Wiedemann `@bmwiedemann <https://github.com/bmwiedemann>`_
++- Scott Werner `@scottwernervt <https://github.com/scottwernervt>`_
++- Leonardo Fedalto `@Fedalto <https://github.com/Fedalto>`_
++- `@sduthil <https://github.com/sduthil>`_
++- Steven Sklar `@sklarsa <https://github.com/sklarsa>`_
++- Alisson Silveira `@4lissonsilveira <https://github.com/4lissonsilveira>`_
++- Harlov Nikita `@harlov <https://github.com/harlov>`_
++- `@stj <https://github.com/stj>`_
++- Tomasz Magulski `@magul <https://github.com/magul>`_
++- Suren Khorenyan `@mahenzon <https://github.com/mahenzon>`_
++- Jeffrey Berger `@JeffBerger <https://github.com/JeffBerger>`_
++- Felix Yan `@felixonmars <https://github.com/felixonmars>`_
++- Prasanjit Prakash `@ikilledthecat <https://github.com/ikilledthecat>`_
++- Guillaume Gelin `@ramnes <https://github.com/ramnes>`_
++- Maxim Novikov `@m-novikov <https://github.com/m-novikov>`_
++- James Remeika `@remeika <https://github.com/remeika>`_
++- Karandeep Singh Nagra `@knagra <https://github.com/knagra>`_
++- Dushyant Rijhwani `@dushr <https://github.com/dushr>`_
++- Viktor Kerkez `@alefnula <https://github.com/alefnula>`_
++- Victor Gavro `@vgavro <https://github.com/vgavro>`_
++- Kamil Gałuszka `@galuszkak <https://github.com/galuszkak>`_
++- David Watson `@arbor-dwatson <https://github.com/arbor-dwatson>`_
++- Jan Margeta `@jmargeta <https://github.com/jmargeta>`_
++- AlexV `@asmodehn <https://github.com/asmodehn>`_
++- `@toffan <https://github.com/toffan>`_
++- Hampus Dunström `@Dunstrom <https://github.com/Dunstrom>`_
++- Robert Jensen `@r1b <https://github.com/r1b>`_
++- Arijit Basu `@sayanarijit <https://github.com/sayanarijit>`_
++- Sanjay P `@snjypl <https://github.com/snjypl>`_
++- Víctor Zabalza `@zblz <https://github.com/zblz>`_
++- Riley Gibbs `@rileyjohngibbs <https://github.com/rileyjohngibbs>`_
++- Henry Doupe `@hdoupe <https://github.com/hdoupe>`_
++- `@miniscruff <https://github.com/miniscruff>`_
++- `@maxalbert <https://github.com/maxalbert>`_
++- Kim Gustyr `@khvn26 <https://github.com/khvn26>`_
++- Bryce Drennan `@brycedrennan <https://github.com/brycedrennan>`_
++- Tim Shaffer `@timster <https://github.com/timster>`_
++- Hugo van Kemenade `@hugovk <https://github.com/hugovk>`_
++- Maciej Urbański `@rooterkyberian <https://github.com/rooterkyberian>`_
++- Kostas Konstantopoulos `@kdop <https://github.com/kdop>`_
++- Stephen J. Fuhry `@fuhrysteve <https://github.com/fuhrysteve>`_
++- `@dursk <https://github.com/dursk>`_
++- Ezra MacDonald `@macdonaldezra <https://github.com/macdonaldezra>`_
++- Stanislav Rogovskiy `@atmo <https://github.com/atmo>`_
++- Cristi Scoarta `@cristi23 <https://github.com/cristi23>`_
++- Anthony Sottile `@asottile <https://github.com/asottile>`_
++- Charles-Axel Dein `@charlax <https://github.com/charlax>`_
++- `@phrfpeixoto <https://github.com/phrfpeixoto>`_
++- `@jceresini <https://github.com/jceresini>`_
++- Nikolay Shebanov `@killthekitten <https://github.com/killthekitten>`_
++- Taneli Hukkinen `@hukkinj1 <https://github.com/hukkinj1>`_
++- `@Reskov <https://github.com/Reskov>`_
++- Albert Tugushev `@atugushev <https://github.com/atugushev>`_
++- `@dfirst <https://github.com/dfirst>`_
++- Tim Gates `@timgates42 <https://github.com/timgates42>`_
++- Nathan `@nbanmp <https://github.com/nbanmp>`_
++- Ronan Murphy `@Resinderate <https://github.com/Resinderate>`_
++- Laurie Opperman `@EpicWink <https://github.com/EpicWink>`_
++- Ram Rachum `@cool-RR <https://github.com/cool-RR>`_
++- `@weeix <https://github.com/weeix>`_
++- Juan Norris `@juannorris <https://github.com/juannorris>`_
++- 장준영 `@jun0jang <https://github.com/jun0jang>`_
++- `@ebargtuo <https://github.com/ebargtuo>`_
++- Michał Getka `@mgetka <https://github.com/mgetka>`_
++- Nadège Michel `@nadege <https://github.com/nadege>`_
++- Tamara `@infinityxxx <https://github.com/infinityxxx>`_
++- Stephen Rosen `@sirosen <https://github.com/sirosen>`_
++- Vladimir Mikhaylov `@vemikhaylov <https://github.com/vemikhaylov>`_
++- Stephen Eaton `@madeinoz67 <https://github.com/madeinoz67>`_
++- Antonio Lassandro `@lassandroan <https://github.com/lassandroan>`_
++- Javier Fernández `@jfernandz <https://github.com/jfernandz>`_
++- Michael Dimchuk  `@michaeldimchuk <https://github.com/michaeldimchuk>`_
++- Jochen Kupperschmidt  `@homeworkprod <https://github.com/homeworkprod>`_
++- `@yourun-proger <https://github.com/yourun-proger>`_
++- Ryan Morehart `@traherom <https://github.com/traherom>`_
++- Ben Windsor `@bwindsor <https://github.com/bwindsor>`_
++- Kevin Kirsche `@kkirsche <https://github.com/kkirsche>`_
++- Isira Seneviratne `@Isira-Seneviratne <https://github.com/Isira-Seneviratne>`_
++- Karthikeyan Singaravelan `@tirkarthi  <https://github.com/tirkarthi>`_
++- Marco Satti `@marcosatti  <https://github.com/marcosatti>`_
++- Ivo Reumkens `@vanHoi <https://github.com/vanHoi>`_
++- Aditya Tewary `@aditkumar72 <https://github.com/aditkumar72>`_
++- Sebastien Lovergne `@TheBigRoomXXL <https://github.com/TheBigRoomXXL>`_
+[+11 more diff lines]
+=== CHANGELOG.rst +2643 -0
+new file mode 100644
+=== CODE_OF_CONDUCT.md +1 -0
+new file mode 100644
+=== CONTRIBUTING.rst +156 -0
+new file mode 100644
+=== LICENSE +19 -0
+new file mode 100644
+=== NOTICE +32 -0
+new file mode 100644
+=== README.rst +161 -0
+new file mode 100644
+=== RELEASING.md +8 -0
+new file mode 100644
+=== SECURITY.md +5 -0
+new file mode 100644
+=== docs/.gitignore +2 -0
+new file mode 100644
+=== docs/_static/apple-touch-icon.png
+new file mode 100644
+Binary files /dev/null and b/docs/_static/apple-touch-icon.png differ
+=== docs/_static/custom.css +17 -0
+new file mode 100644
+=== docs/_static/favicon.ico
+new file mode 100644
+Binary files /dev/null and b/docs/_static/favicon.ico differ
+=== docs/_static/marshmallow-logo-200.png
+new file mode 100644
+Binary files /dev/null and b/docs/_static/marshmallow-logo-200.png differ
+=== docs/_static/marshmallow-logo-with-title-for-dark-theme.png
+new file mode 100644
+Binary files /dev/null and b/docs/_static/marshmallow-logo-with-title-for-dark-theme.png differ
+=== docs/_static/marshmallow-logo-with-title.png
+new file mode 100644
+Binary files /dev/null and b/docs/_static/marshmallow-logo-with-title.png differ
+=== docs/_static/marshmallow-logo.png
+new file mode 100644
+Binary files /dev/null and b/docs/_static/marshmallow-logo.png differ
+=== docs/api_reference.rst +23 -0
+new file mode 100644
+=== docs/authors.rst +1 -0
+new file mode 100644
+=== docs/changelog.rst +4 -0
+new file mode 100644
+=== docs/code_of_conduct.rst +274 -0
+new file mode 100644
+=== docs/conf.py +70 -0
+new file mode 100644
+=== docs/contributing.rst +1 -0
+new file mode 100644
+=== docs/custom_fields.rst +201 -0
+new file mode 100644
+=== docs/dashing.json +22 -0
+new file mode 100644
+=== docs/donate.rst +12 -0
+new file mode 100644
+=== docs/examples/index.rst +16 -0
+new file mode 100644
+=== docs/examples/inflection.rst +19 -0
+new file mode 100644
+=== docs/examples/quotes_api.rst +96 -0
+new file mode 100644
+=== docs/examples/validating_package_json.rst +51 -0
+new file mode 100644
+=== docs/extending/custom_error_handling.rst +28 -0
+new file mode 100644
+=== docs/extending/custom_error_messages.rst +31 -0
+new file mode 100644
+=== docs/extending/custom_options.rst +81 -0
+new file mode 100644
+=== docs/extending/index.rst +15 -0
+new file mode 100644
+=== docs/extending/overriding_attribute_access.rst +17 -0
+new file mode 100644
+=== docs/extending/pre_and_post_processing_methods.rst +210 -0
+new file mode 100644
+=== docs/extending/schema_validation.rst +83 -0
+new file mode 100644
+=== docs/extending/using_original_input_data.rst +30 -0
+new file mode 100644
+=== docs/index.rst +94 -0
+new file mode 100644
+=== docs/install.rst +31 -0
+new file mode 100644
+=== docs/kudos.rst +11 -0
+new file mode 100644
+=== docs/license.rst +4 -0
+new file mode 100644
+=== docs/marshmallow.class_registry.rst +5 -0
+new file mode 100644
+=== docs/marshmallow.decorators.rst +6 -0
+new file mode 100644
+=== docs/marshmallow.error_store.rst +6 -0
+new file mode 100644
+=== docs/marshmallow.exceptions.rst +5 -0
+new file mode 100644
+=== docs/marshmallow.experimental.context.rst +5 -0
+new file mode 100644
+=== docs/marshmallow.fields.rst +18 -0
+new file mode 100644
+=== docs/marshmallow.schema.rst +9 -0
+new file mode 100644
+=== docs/marshmallow.types.rst +5 -0
+new file mode 100644
+=== docs/marshmallow.utils.rst +5 -0
+new file mode 100644
+=== docs/marshmallow.validate.rst +8 -0
+new file mode 100644
+=== docs/nesting.rst +316 -0
+new file mode 100644
+=== docs/quickstart.rst +555 -0
+new file mode 100644
+=== docs/top_level.rst +35 -0
+new file mode 100644
+=== docs/upgrading.rst +2230 -0
+new file mode 100644
+=== docs/whos_using.rst +8 -0
+new file mode 100644
+=== docs/why.rst +62 -0
+new file mode 100644
+=== examples/flask_example.py +162 -0
+new file mode 100644
+=== examples/inflection_example.py +38 -0
+new file mode 100644
+=== examples/invalid_package.json +7 -0
+new file mode 100644
+=== examples/package.json +13 -0
+new file mode 100644
+=== examples/package_json_example.py +58 -0
+new file mode 100644
+=== performance/benchmark.py +152 -0
+new file mode 100644
+=== pyproject.toml +140 -0
+new file mode 100644
+=== src/marshmallow/__init__.py +30 -0
+new file mode 100644
+=== src/marshmallow/class_registry.py +103 -0
+new file mode 100644
+=== src/marshmallow/constants.py +25 -0
+new file mode 100644
+=== src/marshmallow/decorators.py +254 -0
+new file mode 100644
+=== src/marshmallow/error_store.py +71 -0
+new file mode 100644
+=== src/marshmallow/exceptions.py +70 -0
+new file mode 100644
+=== src/marshmallow/experimental/__init__.py +5 -0
+new file mode 100644
+=== src/marshmallow/experimental/context.py +73 -0
+new file mode 100644
+=== src/marshmallow/fields.py +2094 -0
+new file mode 100644
+=== src/marshmallow/orderedset.py +89 -0
+new file mode 100644
+=== src/marshmallow/py.typed
+new file mode 100644
+=== src/marshmallow/schema.py +1249 -0
+new file mode 100644
+=== src/marshmallow/types.py +41 -0
+new file mode 100644
+=== src/marshmallow/utils.py +164 -0
+new file mode 100644
+=== src/marshmallow/validate.py +685 -0
+new file mode 100644
+=== tests/__init__.py
+new file mode 100644
+=== tests/base.py +284 -0
+new file mode 100644
+=== tests/conftest.py +27 -0
+new file mode 100644
+=== tests/foo_serializer.py +5 -0
+new file mode 100644
+=== tests/mypy_test_cases/test_class_registry.py +4 -0
+new file mode 100644
+=== tests/mypy_test_cases/test_schema.py +29 -0
+new file mode 100644
+=== tests/mypy_test_cases/test_validation_error.py +20 -0
+new file mode 100644
+=== tests/test_context.py +251 -0
+new file mode 100644
+=== tests/test_decorators.py +987 -0
+new file mode 100644
+=== tests/test_deserialization.py +2346 -0
+new file mode 100644
+=== tests/test_error_store.py +167 -0
+new file mode 100644
+=== tests/test_exceptions.py +42 -0
+new file mode 100644
+=== tests/test_fields.py +633 -0
+new file mode 100644
+=== tests/test_options.py +165 -0
+new file mode 100644
+=== tests/test_registry.py +231 -0
+new file mode 100644
+=== tests/test_schema.py +2551 -0
+new file mode 100644
+=== tests/test_serialization.py +1002 -0
+new file mode 100644
+=== tests/test_utils.py +141 -0
+new file mode 100644
+=== tests/test_validate.py +1033 -0
+new file mode 100644
+=== tox.ini +37 -0
+new file mode 100644
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-nlkln7lp.log]

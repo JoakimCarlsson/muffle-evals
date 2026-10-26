@@ -1,0 +1,112 @@
+$ git blame src/utils.ts
+e028782 evals 2026-10-22
+1	import { join } from "./path";
+2	import { normalizeWindowsPath } from "./_internal";
+3	
+4	const pathSeparators = new Set(["/", "\\", undefined]);
+5	
+6	const normalizedAliasSymbol = Symbol.for("pathe:normalizedAlias");
+7	
+8	const SLASH_RE = /[/\\]/;
+9	
+10	/**
+11	 * Normalises alias mappings, ensuring that more specific aliases are resolved before less specific ones.
+12	 * This function also ensures that aliases do not resolve to themselves cyclically.
+13	 *
+14	 * @param _aliases - A set of alias mappings where each key is an alias and its value is the actual path it points to.
+15	 * @returns a set of normalised alias mappings.
+16	 */
+17	export function normalizeAliases(_aliases: Record<string, string>) {
+18	  if ((_aliases as any)[normalizedAliasSymbol]) {
+19	    return _aliases;
+20	  }
+21	
+22	  // Sort aliases from specific to general (ie. fs/promises before fs)
+23	  const aliases = Object.fromEntries(
+24	    Object.entries(_aliases).sort(([a], [b]) => _compareAliases(a, b)),
+25	  );
+26	
+27	  // Resolve alias values in relation to each other
+28	  for (const key in aliases) {
+29	    for (const alias in aliases) {
+30	      // don't resolve a more specific alias with regard to a less specific one
+31	      if (alias === key || key.startsWith(alias)) {
+32	        continue;
+33	      }
+34	
+35	      if (
+36	        aliases[key].startsWith(alias) &&
+37	        pathSeparators.has(aliases[key][alias.length])
+38	      ) {
+39	        aliases[key] = aliases[alias] + aliases[key].slice(alias.length);
+40	      }
+41	    }
+42	  }
+43	
+44	  Object.defineProperty(aliases, normalizedAliasSymbol, {
+45	    value: true,
+46	    enumerable: false,
+47	  });
+48	  return aliases;
+49	}
+50	
+51	/**
+52	 * Resolves a path string to its alias if applicable, otherwise returns the original path.
+53	 * This function normalises the path, resolves the alias and then joins it to the alias target if necessary.
+54	 *
+55	 * @param path - The path string to resolve.
+56	 * @param aliases - A set of alias mappings to use for resolution.
+57	 * @returns the resolved path as a string.
+58	 */
+59	export function resolveAlias(path: string, aliases: Record<string, string>) {
+60	  const _path = normalizeWindowsPath(path);
+61	  aliases = normalizeAliases(aliases);
+62	  for (const [alias, to] of Object.entries(aliases)) {
+63	    if (!_path.startsWith(alias)) {
+64	      continue;
+65	    }
+66	
+67	    // Strip trailing slash from alias for check
+68	    const _alias = hasTrailingSlash(alias) ? alias.slice(0, -1) : alias;
+69	
+70	    if (hasTrailingSlash(_path[_alias.length])) {
+71	      return join(to, _path.slice(alias.length));
+72	    }
+73	  }
+74	  return _path;
+75	}
+76	
+77	/**
+78	 * Extracts the filename from a given path, excluding any directory paths and the file extension.
+79	 *
+80	 * @param path - The full path of the file from which to extract the filename.
+81	 * @returns the filename without the extension, or `undefined` if the filename cannot be extracted.
+82	 */
+83	export function filename(path: string) {
+84	  const base = path.split(SLASH_RE).pop();
+85	
+86	  if (!base) {
+87	    return undefined;
+88	  }
+89	
+90	  const separatorIndex = base.lastIndexOf(".");
+91	
+92	  if (separatorIndex <= 0) {
+93	    return base;
+94	  }
+95	
+96	  return base.slice(0, separatorIndex);
+97	}
+98	
+99	// --- internals ---
+100	
+101	function _compareAliases(a: string, b: string) {
+102	  return b.split("/").length - a.split("/").length;
+103	}
+104	
+105	// Returns true if path ends with a slash or **is empty**
+106	function hasTrailingSlash(path = "/") {
+107	  const lastChar = path[path.length - 1];
+108	  return lastChar === "/" || lastChar === "\\";
+109	}
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-ou050ncb.log]

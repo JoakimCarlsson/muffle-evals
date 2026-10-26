@@ -1,0 +1,969 @@
+$ git blame src/parse/parser.ts
+^b0e2824 (evals 2026-10-22 10:55:31 +0200   1) import type {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200   2)   SourceToken,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200   3)   Token,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200   4)   FlowScalar,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200   5)   FlowCollection,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200   6)   Document,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200   7)   BlockMap,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200   8)   BlockScalar,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200   9)   BlockSequence,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  10)   DocumentEnd,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  11)   TokenType
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  12) } from './cst.ts'
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  13) import { prettyToken, tokenType } from './cst.ts'
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  14) import { lex } from './lexer.ts'
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  15) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  16) function includesToken(list: SourceToken[], type: SourceToken['type']) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  17)   for (let i = 0; i < list.length; ++i) if (list[i].type === type) return true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  18)   return false
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  19) }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  20) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  21) const logToken =
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  22)   typeof process !== 'undefined' && process.env?.LOG_TOKENS
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  23)     ? (token: string) => console.log('|', prettyToken(token))
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  24)     : () => {}
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  25) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  26) function findNonEmptyIndex(list: SourceToken[]) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  27)   for (let i = 0; i < list.length; ++i) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  28)     switch (list[i].type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  29)       case 'space':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  30)       case 'comment':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  31)       case 'newline':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  32)         break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  33)       default:
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  34)         return i
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  35)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  36)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  37)   return -1
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  38) }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  39) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  40) function isFlowToken(
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  41)   token: Token | null | undefined
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  42) ): token is FlowScalar | FlowCollection {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  43)   switch (token?.type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  44)     case 'alias':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  45)     case 'scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  46)     case 'single-quoted-scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  47)     case 'double-quoted-scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  48)     case 'flow-collection':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  49)       return true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  50)     default:
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  51)       return false
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  52)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  53) }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  54) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  55) function getPrevProps(parent: Token) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  56)   switch (parent.type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  57)     case 'document':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  58)       return parent.start
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  59)     case 'block-map': {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  60)       const it = parent.items[parent.items.length - 1]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  61)       return it.sep ?? it.start
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  62)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  63)     case 'block-seq':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  64)       return parent.items[parent.items.length - 1].start
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  65)     /* istanbul ignore next should not happen */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  66)     default:
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  67)       return []
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  68)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  69) }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  70) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  71) /** Note: May modify input array */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  72) function getFirstKeyStartProps(prev: SourceToken[]) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  73)   if (prev.length === 0) return []
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  74) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  75)   let i = prev.length
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  76)   loop: while (--i >= 0) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  77)     switch (prev[i].type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  78)       case 'doc-start':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  79)       case 'explicit-key-ind':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  80)       case 'map-value-ind':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  81)       case 'seq-item-ind':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  82)       case 'newline':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  83)         break loop
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  84)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  85)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  86)   while (prev[++i]?.type === 'space') {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  87)     /* loop */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  88)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  89)   return prev.splice(i, prev.length)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  90) }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  91) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  92) function fixFlowSeqItems(fc: FlowCollection) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  93)   if (fc.start.type === 'flow-seq-start') {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  94)     for (const it of fc.items) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  95)       if (
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  96)         it.sep &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  97)         !it.value &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  98)         !includesToken(it.start, 'explicit-key-ind') &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200  99)         !includesToken(it.sep, 'map-value-ind')
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 100)       ) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 101)         if (it.key) it.value = it.key
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 102)         delete it.key
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 103)         if (isFlowToken(it.value)) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 104)           if (it.value.end) Array.prototype.push.apply(it.value.end, it.sep)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 105)           else it.value.end = it.sep
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 106)         } else Array.prototype.push.apply(it.start, it.sep)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 107)         delete it.sep
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 108)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 109)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 110)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 111) }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 112) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 113) /**
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 114)  * A YAML concrete syntax tree (CST) parser
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 115)  *
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 116)  * ```ts
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 117)  * const src: string = ...
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 118)  * for (const token of new Parser().parse(src)) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 119)  *   // token: Token
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 120)  * }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 121)  * ```
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 122)  *
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 123)  * To use the parser with a user-provided lexer:
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 124)  *
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 125)  * ```ts
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 126)  * function parse(source: string, lexTokens: string[]) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 127)  *   const parser = new Parser()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 128)  *   for (const lexeme of lexTokens) parser.next(lexeme)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 129)  *   return parser.end()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 130)  * }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 131)  *
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 132)  * const src: string = ...
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 133)  * for (const token of parse(src, lex(src))) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 134)  *   // token: Token
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 135)  * }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 136)  * ```
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 137)  */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 138) export class Parser {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 139)   private onNewLine?: (offset: number) => void
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 140) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 141)   /** If true, space and sequence indicators count as indentation */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 142)   private atNewLine = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 143) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 144)   /** If true, next token is a scalar value */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 145)   private atScalar = false
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 146) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 147)   /** Current indentation level */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 148)   private indent = 0
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 149) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 150)   /** Current offset since the start of parsing */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 151)   offset = 0
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 152) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 153)   /** On the same line with a block map key */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 154)   private onKeyLine = false
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 155) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 156)   /** Top indicates the node that's currently being built */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 157)   stack: Token[] = []
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 158) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 159)   /** The source of the current token, set in parse() */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 160)   private source = ''
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 161) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 162)   /** The type of the current token, set in parse() */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 163)   private type = '' as TokenType
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 164) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 165)   tokens: Token[] = []
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 166) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 167)   /**
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 168)    * @param onNewLine - If defined, called separately with the start position of
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 169)    *   each new line (in `parse()`, including the start of input).
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 170)    */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 171)   constructor(onNewLine?: (offset: number) => void) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 172)     this.onNewLine = onNewLine
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 173)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 174) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 175)   /**
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 176)    * Parse `source` as a YAML stream.
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 177)    *
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 178)    * Errors are not thrown, but included in the result as `{ type: 'error', message }` tokens.
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 179)    *
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 180)    * @returns Tokens representing each directive, document, and other structure.
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 181)    */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 182)   parse(source: string): Token[] {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 183)     if (this.onNewLine && this.offset === 0) this.onNewLine(0)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 184)     for (const lexeme of lex(source)) this.next(lexeme)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 185)     return this.end()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 186)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 187) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 188)   /**
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 189)    * Advance the parser by the `source` of one lexical token.
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 190)    */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 191)   next(source: string): void {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 192)     this.source = source
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 193)     logToken(source)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 194) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 195)     if (this.atScalar) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 196)       this.atScalar = false
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 197)       this.step()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 198)       this.offset += source.length
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 199)       return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 200)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 201) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 202)     const type = tokenType(source)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 203)     if (!type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 204)       const message = `Not a YAML token: ${source}`
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 205)       this.pop({ type: 'error', offset: this.offset, message, source })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 206)       this.offset += source.length
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 207)     } else if (type === 'scalar') {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 208)       this.atNewLine = false
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 209)       this.atScalar = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 210)       this.type = 'scalar'
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 211)     } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 212)       this.type = type
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 213)       this.step()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 214)       switch (type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 215)         case 'newline':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 216)           this.atNewLine = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 217)           this.indent = 0
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 218)           if (this.onNewLine) this.onNewLine(this.offset + source.length)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 219)           break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 220)         case 'space':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 221)           if (this.atNewLine && source[0] === ' ') this.indent += source.length
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 222)           break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 223)         case 'explicit-key-ind':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 224)         case 'map-value-ind':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 225)         case 'seq-item-ind':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 226)           if (this.atNewLine) this.indent += source.length
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 227)           break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 228)         case 'doc-mode':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 229)         case 'flow-error-end':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 230)           return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 231)         default:
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 232)           this.atNewLine = false
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 233)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 234)       this.offset += source.length
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 235)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 236)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 237) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 238)   /** Call at end of input to account for any remaining constructions */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 239)   end(): Token[] {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 240)     while (this.stack.length > 0) this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 241)     return this.tokens
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 242)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 243) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 244)   private get sourceToken() {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 245)     const st: SourceToken = {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 246)       type: this.type as SourceToken['type'],
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 247)       offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 248)       indent: this.indent,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 249)       source: this.source
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 250)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 251)     return st
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 252)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 253) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 254)   private step(): void {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 255)     const top = this.peek(1)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 256)     if (this.type === 'doc-end' && top?.type !== 'doc-end') {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 257)       while (this.stack.length > 0) this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 258)       this.stack.push({
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 259)         type: 'doc-end',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 260)         offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 261)         source: this.source
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 262)       })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 263)       return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 264)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 265)     if (!top) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 266)       const token = this.stream()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 267)       if (token) this.tokens.push(token)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 268)       return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 269)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 270)     switch (top.type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 271)       case 'document':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 272)         return this.document(top)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 273)       case 'alias':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 274)       case 'scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 275)       case 'single-quoted-scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 276)       case 'double-quoted-scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 277)         return this.scalar(top)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 278)       case 'block-scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 279)         return this.blockScalar(top)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 280)       case 'block-map':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 281)         return this.blockMap(top)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 282)       case 'block-seq':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 283)         return this.blockSequence(top)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 284)       case 'flow-collection':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 285)         return this.flowCollection(top)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 286)       case 'doc-end':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 287)         return this.documentEnd(top)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 288)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 289)     /* istanbul ignore next should not happen */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 290)     this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 291)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 292) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 293)   private peek(n: number) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 294)     return this.stack[this.stack.length - n]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 295)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 296) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 297)   private pop(error?: Token): void {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 298)     const token = error ?? this.stack.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 299)     /* istanbul ignore if should not happen */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 300)     if (!token) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 301)       const message = 'Tried to pop an empty stack'
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 302)       this.tokens.push({
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 303)         type: 'error',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 304)         offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 305)         source: '',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 306)         message
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 307)       })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 308)     } else if (this.stack.length === 0) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 309)       this.tokens.push(token)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 310)     } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 311)       const top = this.peek(1)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 312)       if (token.type === 'block-scalar') {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 313)         // Block scalars use their parent rather than header indent
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 314)         token.indent = 'indent' in top ? top.indent : 0
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 315)       } else if (token.type === 'flow-collection' && top.type === 'document') {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 316)         // Ignore all indent for top-level flow collections
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 317)         token.indent = 0
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 318)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 319)       if (token.type === 'flow-collection') fixFlowSeqItems(token)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 320)       switch (top.type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 321)         case 'document':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 322)           top.value = token
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 323)           break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 324)         case 'block-scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 325)           top.props.push(token) // error
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 326)           break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 327)         case 'block-map': {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 328)           const it = top.items[top.items.length - 1]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 329)           if (it.value) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 330)             top.items.push({ start: [], key: token, sep: [] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 331)             this.onKeyLine = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 332)             return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 333)           } else if (it.sep) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 334)             it.value = token
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 335)           } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 336)             Object.assign(it, { key: token, sep: [] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 337)             this.onKeyLine = !it.explicitKey
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 338)             return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 339)           }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 340)           break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 341)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 342)         case 'block-seq': {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 343)           const it = top.items[top.items.length - 1]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 344)           if (it.value) top.items.push({ start: [], value: token })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 345)           else it.value = token
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 346)           break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 347)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 348)         case 'flow-collection': {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 349)           const it = top.items[top.items.length - 1]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 350)           if (!it || it.value)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 351)             top.items.push({ start: [], key: token, sep: [] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 352)           else if (it.sep) it.value = token
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 353)           else Object.assign(it, { key: token, sep: [] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 354)           return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 355)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 356)         /* istanbul ignore next should not happen */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 357)         default:
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 358)           this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 359)           this.pop(token)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 360)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 361) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 362)       if (
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 363)         (top.type === 'document' ||
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 364)           top.type === 'block-map' ||
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 365)           top.type === 'block-seq') &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 366)         (token.type === 'block-map' || token.type === 'block-seq')
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 367)       ) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 368)         const last = token.items[token.items.length - 1]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 369)         if (
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 370)           last &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 371)           !last.sep &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 372)           !last.value &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 373)           last.start.length > 0 &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 374)           findNonEmptyIndex(last.start) === -1 &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 375)           (token.indent === 0 ||
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 376)             last.start.every(
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 377)               st => st.type !== 'comment' || st.indent < token.indent
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 378)             ))
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 379)         ) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 380)           if (top.type === 'document') top.end = last.start
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 381)           else top.items.push({ start: last.start })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 382)           token.items.splice(-1, 1)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 383)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 384)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 385)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 386)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 387) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 388)   private stream(): Token | null {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 389)     switch (this.type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 390)       case 'directive-line':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 391)         return { type: 'directive', offset: this.offset, source: this.source }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 392)       case 'byte-order-mark':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 393)       case 'space':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 394)       case 'comment':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 395)       case 'newline':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 396)         return this.sourceToken
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 397)       case 'doc-mode':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 398)       case 'doc-start': {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 399)         const doc: Document = {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 400)           type: 'document',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 401)           offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 402)           start: []
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 403)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 404)         if (this.type === 'doc-start') doc.start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 405)         this.stack.push(doc)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 406)         return null
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 407)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 408)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 409)     return {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 410)       type: 'error',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 411)       offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 412)       message: `Unexpected ${this.type} token in YAML stream`,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 413)       source: this.source
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 414)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 415)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 416) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 417)   private document(doc: Document) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 418)     if (doc.value) return this.lineEnd(doc)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 419)     switch (this.type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 420)       case 'doc-start': {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 421)         if (findNonEmptyIndex(doc.start) !== -1) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 422)           this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 423)           this.step()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 424)         } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 425)           doc.start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 426)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 427)         return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 428)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 429)       case 'anchor':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 430)       case 'tag':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 431)       case 'space':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 432)       case 'comment':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 433)       case 'newline':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 434)         doc.start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 435)         return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 436)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 437)     const bv = this.startBlockValue(doc)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 438)     if (bv) this.stack.push(bv)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 439)     else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 440)       this.tokens.push({
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 441)         type: 'error',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 442)         offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 443)         message: `Unexpected ${this.type} token in YAML document`,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 444)         source: this.source
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 445)       })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 446)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 447)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 448) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 449)   private scalar(scalar: FlowScalar) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 450)     if (this.type === 'map-value-ind') {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 451)       const prev = getPrevProps(this.peek(2))
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 452)       const start = getFirstKeyStartProps(prev)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 453) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 454)       let sep: SourceToken[]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 455)       if (scalar.end) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 456)         sep = scalar.end
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 457)         sep.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 458)         delete scalar.end
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 459)       } else sep = [this.sourceToken]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 460) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 461)       const map: BlockMap = {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 462)         type: 'block-map',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 463)         offset: scalar.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 464)         indent: scalar.indent,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 465)         items: [{ start, key: scalar, sep }]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 466)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 467)       this.onKeyLine = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 468)       this.stack[this.stack.length - 1] = map
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 469)     } else this.lineEnd(scalar)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 470)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 471) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 472)   private blockScalar(scalar: BlockScalar) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 473)     switch (this.type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 474)       case 'space':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 475)       case 'comment':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 476)       case 'newline':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 477)         scalar.props.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 478)         return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 479)       case 'scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 480)         scalar.source = this.source
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 481)         // block-scalar source includes trailing newline
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 482)         this.atNewLine = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 483)         this.indent = 0
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 484)         if (this.onNewLine) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 485)           let nl = this.source.indexOf('\n') + 1
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 486)           while (nl !== 0) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 487)             this.onNewLine(this.offset + nl)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 488)             nl = this.source.indexOf('\n', nl) + 1
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 489)           }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 490)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 491)         this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 492)         break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 493)       /* istanbul ignore next should not happen */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 494)       default:
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 495)         this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 496)         this.step()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 497)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 498)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 499) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 500)   private blockMap(map: BlockMap) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 501)     const it = map.items[map.items.length - 1]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 502) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 503)     // it.sep is true-ish if pair already has key or : separator
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 504)     switch (this.type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 505)       case 'newline':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 506)         this.onKeyLine = false
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 507)         if (it.value) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 508)           const end = 'end' in it.value ? it.value.end : undefined
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 509)           const last = Array.isArray(end) ? end[end.length - 1] : undefined
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 510)           if (last?.type === 'comment') end?.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 511)           else map.items.push({ start: [this.sourceToken] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 512)         } else if (it.sep) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 513)           it.sep.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 514)         } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 515)           it.start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 516)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 517)         return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 518)       case 'space':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 519)       case 'comment':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 520)         if (it.value) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 521)           map.items.push({ start: [this.sourceToken] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 522)         } else if (it.sep) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 523)           it.sep.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 524)         } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 525)           if (this.atIndentedComment(it.start, map.indent)) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 526)             const prev = map.items[map.items.length - 2]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 527)             const end = (prev?.value as { end: SourceToken[] })?.end
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 528)             if (Array.isArray(end)) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 529)               Array.prototype.push.apply(end, it.start)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 530)               end.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 531)               map.items.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 532)               return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 533)             }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 534)           }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 535)           it.start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 536)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 537)         return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 538)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 539) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 540)     if (this.indent >= map.indent) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 541)       const atMapIndent = !this.onKeyLine && this.indent === map.indent
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 542)       const atNextItem =
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 543)         atMapIndent &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 544)         (it.sep || it.explicitKey) &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 545)         this.type !== 'seq-item-ind'
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 546) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 547)       // For empty nodes, assign newline-separated not indented empty tokens to following node
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 548)       let start: SourceToken[] = []
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 549)       if (atNextItem && it.sep && !it.value) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 550)         const nl: number[] = []
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 551)         for (let i = 0; i < it.sep.length; ++i) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 552)           const st = it.sep[i]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 553)           switch (st.type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 554)             case 'newline':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 555)               nl.push(i)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 556)               break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 557)             case 'space':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 558)               break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 559)             case 'comment':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 560)               if (st.indent > map.indent) nl.length = 0
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 561)               break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 562)             default:
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 563)               nl.length = 0
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 564)           }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 565)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 566)         if (nl.length >= 2) start = it.sep.splice(nl[1])
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 567)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 568) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 569)       switch (this.type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 570)         case 'anchor':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 571)         case 'tag':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 572)           if (atNextItem || it.value) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 573)             start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 574)             map.items.push({ start })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 575)             this.onKeyLine = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 576)           } else if (it.sep) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 577)             it.sep.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 578)           } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 579)             it.start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 580)           }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 581)           return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 582) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 583)         case 'explicit-key-ind':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 584)           if (!it.sep && !it.explicitKey) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 585)             it.start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 586)             it.explicitKey = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 587)           } else if (atNextItem || it.value) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 588)             start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 589)             map.items.push({ start, explicitKey: true })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 590)           } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 591)             this.stack.push({
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 592)               type: 'block-map',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 593)               offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 594)               indent: this.indent,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 595)               items: [{ start: [this.sourceToken], explicitKey: true }]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 596)             })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 597)           }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 598)           this.onKeyLine = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 599)           return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 600) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 601)         case 'map-value-ind':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 602)           if (it.explicitKey) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 603)             if (!it.sep) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 604)               if (includesToken(it.start, 'newline')) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 605)                 Object.assign(it, { key: null, sep: [this.sourceToken] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 606)               } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 607)                 const start = getFirstKeyStartProps(it.start)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 608)                 this.stack.push({
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 609)                   type: 'block-map',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 610)                   offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 611)                   indent: this.indent,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 612)                   items: [{ start, key: null, sep: [this.sourceToken] }]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 613)                 })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 614)               }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 615)             } else if (it.value) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 616)               map.items.push({ start: [], key: null, sep: [this.sourceToken] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 617)             } else if (includesToken(it.sep, 'map-value-ind')) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 618)               this.stack.push({
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 619)                 type: 'block-map',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 620)                 offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 621)                 indent: this.indent,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 622)                 items: [{ start, key: null, sep: [this.sourceToken] }]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 623)               })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 624)             } else if (
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 625)               isFlowToken(it.key) &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 626)               !includesToken(it.sep, 'newline')
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 627)             ) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 628)               const start = getFirstKeyStartProps(it.start)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 629)               const key = it.key
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 630)               const sep = it.sep
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 631)               sep.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 632)               // @ts-expect-error type guard is wrong here
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 633)               delete it.key
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 634)               // @ts-expect-error type guard is wrong here
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 635)               delete it.sep
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 636)               this.stack.push({
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 637)                 type: 'block-map',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 638)                 offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 639)                 indent: this.indent,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 640)                 items: [{ start, key, sep }]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 641)               })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 642)             } else if (start.length > 0) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 643)               // Not actually at next item
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 644)               it.sep = [...it.sep, ...start, this.sourceToken]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 645)             } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 646)               it.sep.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 647)             }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 648)           } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 649)             if (!it.sep) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 650)               Object.assign(it, { key: null, sep: [this.sourceToken] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 651)             } else if (it.value || atNextItem) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 652)               map.items.push({ start, key: null, sep: [this.sourceToken] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 653)             } else if (includesToken(it.sep, 'map-value-ind')) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 654)               this.stack.push({
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 655)                 type: 'block-map',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 656)                 offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 657)                 indent: this.indent,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 658)                 items: [{ start: [], key: null, sep: [this.sourceToken] }]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 659)               })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 660)             } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 661)               it.sep.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 662)             }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 663)           }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 664)           this.onKeyLine = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 665)           return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 666) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 667)         case 'alias':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 668)         case 'scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 669)         case 'single-quoted-scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 670)         case 'double-quoted-scalar': {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 671)           const fs = this.flowScalar(this.type)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 672)           if (atNextItem || it.value) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 673)             map.items.push({ start, key: fs, sep: [] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 674)             this.onKeyLine = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 675)           } else if (it.sep) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 676)             this.stack.push(fs)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 677)           } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 678)             Object.assign(it, { key: fs, sep: [] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 679)             this.onKeyLine = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 680)           }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 681)           return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 682)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 683) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 684)         default: {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 685)           const bv = this.startBlockValue(map)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 686)           if (bv) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 687)             if (bv.type === 'block-seq') {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 688)               if (
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 689)                 !it.explicitKey &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 690)                 it.sep &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 691)                 !includesToken(it.sep, 'newline')
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 692)               ) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 693)                 this.pop({
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 694)                   type: 'error',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 695)                   offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 696)                   message: 'Unexpected block-seq-ind on same line with key',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 697)                   source: this.source
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 698)                 })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 699)                 return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 700)               }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 701)             } else if (atMapIndent) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 702)               map.items.push({ start })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 703)             }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 704)             this.stack.push(bv)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 705)             return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 706)           }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 707)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 708)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 709)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 710)     this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 711)     this.step()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 712)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 713) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 714)   private blockSequence(seq: BlockSequence) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 715)     const it = seq.items[seq.items.length - 1]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 716)     switch (this.type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 717)       case 'newline':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 718)         if (it.value) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 719)           const end = 'end' in it.value ? it.value.end : undefined
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 720)           const last = Array.isArray(end) ? end[end.length - 1] : undefined
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 721)           if (last?.type === 'comment') end?.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 722)           else seq.items.push({ start: [this.sourceToken] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 723)         } else it.start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 724)         return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 725)       case 'space':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 726)       case 'comment':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 727)         if (it.value) seq.items.push({ start: [this.sourceToken] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 728)         else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 729)           if (this.atIndentedComment(it.start, seq.indent)) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 730)             const prev = seq.items[seq.items.length - 2]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 731)             const end = (prev?.value as { end: SourceToken[] })?.end
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 732)             if (Array.isArray(end)) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 733)               Array.prototype.push.apply(end, it.start)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 734)               end.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 735)               seq.items.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 736)               return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 737)             }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 738)           }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 739)           it.start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 740)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 741)         return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 742)       case 'anchor':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 743)       case 'tag':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 744)         if (it.value || this.indent <= seq.indent) break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 745)         it.start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 746)         return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 747)       case 'seq-item-ind':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 748)         if (this.indent !== seq.indent) break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 749)         if (it.value || includesToken(it.start, 'seq-item-ind'))
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 750)           seq.items.push({ start: [this.sourceToken] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 751)         else it.start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 752)         return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 753)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 754)     if (this.indent > seq.indent) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 755)       const bv = this.startBlockValue(seq)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 756)       if (bv) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 757)         this.stack.push(bv)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 758)         return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 759)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 760)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 761)     this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 762)     this.step()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 763)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 764) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 765)   private flowCollection(fc: FlowCollection) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 766)     const it = fc.items[fc.items.length - 1]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 767)     if (this.type === 'flow-error-end') {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 768)       let top: Token | undefined
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 769)       do {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 770)         this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 771)         top = this.peek(1)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 772)       } while (top?.type === 'flow-collection')
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 773)     } else if (fc.end.length === 0) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 774)       switch (this.type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 775)         case 'comma':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 776)         case 'explicit-key-ind':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 777)           if (!it || it.sep) fc.items.push({ start: [this.sourceToken] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 778)           else it.start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 779)           return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 780) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 781)         case 'map-value-ind':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 782)           if (!it || it.value)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 783)             fc.items.push({ start: [], key: null, sep: [this.sourceToken] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 784)           else if (it.sep) it.sep.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 785)           else Object.assign(it, { key: null, sep: [this.sourceToken] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 786)           return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 787) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 788)         case 'space':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 789)         case 'comment':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 790)         case 'newline':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 791)         case 'anchor':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 792)         case 'tag':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 793)           if (!it || it.value) fc.items.push({ start: [this.sourceToken] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 794)           else if (it.sep) it.sep.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 795)           else it.start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 796)           return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 797) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 798)         case 'alias':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 799)         case 'scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 800)         case 'single-quoted-scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 801)         case 'double-quoted-scalar': {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 802)           const fs = this.flowScalar(this.type)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 803)           if (!it || it.value) fc.items.push({ start: [], key: fs, sep: [] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 804)           else if (it.sep) this.stack.push(fs)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 805)           else Object.assign(it, { key: fs, sep: [] })
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 806)           return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 807)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 808) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 809)         case 'flow-map-end':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 810)         case 'flow-seq-end':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 811)           fc.end.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 812)           return
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 813)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 814)       const bv = this.startBlockValue(fc)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 815)       /* istanbul ignore else should not happen */
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 816)       if (bv) this.stack.push(bv)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 817)       else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 818)         this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 819)         this.step()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 820)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 821)     } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 822)       const parent = this.peek(2)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 823)       if (
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 824)         parent.type === 'block-map' &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 825)         ((this.type === 'map-value-ind' && parent.indent === fc.indent) ||
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 826)           (this.type === 'newline' &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 827)             !parent.items[parent.items.length - 1].sep))
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 828)       ) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 829)         this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 830)         this.step()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 831)       } else if (
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 832)         this.type === 'map-value-ind' &&
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 833)         parent.type !== 'flow-collection'
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 834)       ) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 835)         const prev = getPrevProps(parent)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 836)         const start = getFirstKeyStartProps(prev)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 837)         fixFlowSeqItems(fc)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 838)         const sep = fc.end.splice(1, fc.end.length)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 839)         sep.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 840)         const map: BlockMap = {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 841)           type: 'block-map',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 842)           offset: fc.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 843)           indent: fc.indent,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 844)           items: [{ start, key: fc, sep }]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 845)         }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 846)         this.onKeyLine = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 847)         this.stack[this.stack.length - 1] = map
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 848)       } else {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 849)         this.lineEnd(fc)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 850)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 851)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 852)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 853) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 854)   private flowScalar(
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 855)     type: 'alias' | 'scalar' | 'single-quoted-scalar' | 'double-quoted-scalar'
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 856)   ): FlowScalar {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 857)     if (this.onNewLine) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 858)       let nl = this.source.indexOf('\n') + 1
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 859)       while (nl !== 0) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 860)         this.onNewLine(this.offset + nl)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 861)         nl = this.source.indexOf('\n', nl) + 1
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 862)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 863)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 864)     return {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 865)       type,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 866)       offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 867)       indent: this.indent,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 868)       source: this.source
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 869)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 870)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 871) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 872)   private startBlockValue(parent: Token) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 873)     switch (this.type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 874)       case 'alias':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 875)       case 'scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 876)       case 'single-quoted-scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 877)       case 'double-quoted-scalar':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 878)         return this.flowScalar(this.type)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 879)       case 'block-scalar-header':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 880)         return {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 881)           type: 'block-scalar',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 882)           offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 883)           indent: this.indent,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 884)           props: [this.sourceToken],
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 885)           source: ''
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 886)         } as BlockScalar
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 887)       case 'flow-map-start':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 888)       case 'flow-seq-start':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 889)         return {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 890)           type: 'flow-collection',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 891)           offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 892)           indent: this.indent,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 893)           start: this.sourceToken,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 894)           items: [],
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 895)           end: []
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 896)         } as FlowCollection
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 897)       case 'seq-item-ind':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 898)         return {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 899)           type: 'block-seq',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 900)           offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 901)           indent: this.indent,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 902)           items: [{ start: [this.sourceToken] }]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 903)         } as BlockSequence
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 904)       case 'explicit-key-ind': {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 905)         this.onKeyLine = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 906)         const prev = getPrevProps(parent)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 907)         const start = getFirstKeyStartProps(prev)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 908)         start.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 909)         return {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 910)           type: 'block-map',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 911)           offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 912)           indent: this.indent,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 913)           items: [{ start, explicitKey: true }]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 914)         } as BlockMap
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 915)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 916)       case 'map-value-ind': {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 917)         this.onKeyLine = true
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 918)         const prev = getPrevProps(parent)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 919)         const start = getFirstKeyStartProps(prev)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 920)         return {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 921)           type: 'block-map',
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 922)           offset: this.offset,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 923)           indent: this.indent,
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 924)           items: [{ start, key: null, sep: [this.sourceToken] }]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 925)         } as BlockMap
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 926)       }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 927)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 928)     return null
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 929)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 930) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 931)   private atIndentedComment(start: SourceToken[], indent: number) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 932)     if (this.type !== 'comment') return false
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 933)     if (this.indent <= indent) return false
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 934)     return start.every(st => st.type === 'newline' || st.type === 'space')
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 935)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 936) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 937)   private documentEnd(docEnd: DocumentEnd) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 938)     if (this.type !== 'doc-mode') {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 939)       if (docEnd.end) docEnd.end.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 940)       else docEnd.end = [this.sourceToken]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 941)       if (this.type === 'newline') this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 942)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 943)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 944) 
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 945)   private lineEnd(token: Document | FlowCollection | FlowScalar) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 946)     switch (this.type) {
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 947)       case 'comma':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 948)       case 'doc-start':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 949)       case 'doc-end':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 950)       case 'flow-seq-end':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 951)       case 'flow-map-end':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 952)       case 'map-value-ind':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 953)         this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 954)         this.step()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 955)         break
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 956)       case 'newline':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 957)         this.onKeyLine = false
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 958)       // fallthrough
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 959)       case 'space':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 960)       case 'comment':
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 961)       default:
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 962)         // all other values are errors
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 963)         if (token.end) token.end.push(this.sourceToken)
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 964)         else token.end = [this.sourceToken]
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 965)         if (this.type === 'newline') this.pop()
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 966)     }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 967)   }
+^b0e2824 (evals 2026-10-22 10:55:31 +0200 968) }

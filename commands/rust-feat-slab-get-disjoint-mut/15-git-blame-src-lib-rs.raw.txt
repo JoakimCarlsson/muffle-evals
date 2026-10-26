@@ -1,0 +1,1573 @@
+$ git blame src/lib.rs
+^f4fe561 (evals 2026-10-22 12:37:52 +0200    1) #![no_std]
+^f4fe561 (evals 2026-10-22 12:37:52 +0200    2) #![warn(
+^f4fe561 (evals 2026-10-22 12:37:52 +0200    3)     missing_debug_implementations,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200    4)     missing_docs,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200    5)     rust_2018_idioms,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200    6)     unreachable_pub
+^f4fe561 (evals 2026-10-22 12:37:52 +0200    7) )]
+^f4fe561 (evals 2026-10-22 12:37:52 +0200    8) #![doc(test(
+^f4fe561 (evals 2026-10-22 12:37:52 +0200    9)     no_crate_inject,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   10)     attr(deny(warnings, rust_2018_idioms), allow(dead_code, unused_variables))
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   11) ))]
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   12) #![allow(clippy::incompatible_msrv)] // false positive: https://github.com/rust-lang/rust-clippy/issues/12280
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   13) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   14) //! Pre-allocated storage for a uniform data type.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   15) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   16) //! `Slab` provides pre-allocated storage for a single data type. If many values
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   17) //! of a single type are being allocated, it can be more efficient to
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   18) //! pre-allocate the necessary storage. Since the size of the type is uniform,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   19) //! memory fragmentation can be avoided. Storing, clearing, and lookup
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   20) //! operations become very cheap.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   21) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   22) //! While `Slab` may look like other Rust collections, it is not intended to be
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   23) //! used as a general purpose collection. The primary difference between `Slab`
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   24) //! and `Vec` is that `Slab` returns the key when storing the value.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   25) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   26) //! It is important to note that keys may be reused. In other words, once a
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   27) //! value associated with a given key is removed from a slab, that key may be
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   28) //! returned from future calls to `insert`.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   29) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   30) //! # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   31) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   32) //! Basic storing and retrieval.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   33) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   34) //! ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   35) //! # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   36) //! let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   37) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   38) //! let hello = slab.insert("hello");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   39) //! let world = slab.insert("world");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   40) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   41) //! assert_eq!(slab[hello], "hello");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   42) //! assert_eq!(slab[world], "world");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   43) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   44) //! slab[world] = "earth";
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   45) //! assert_eq!(slab[world], "earth");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   46) //! ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   47) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   48) //! Sometimes it is useful to be able to associate the key with the value being
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   49) //! inserted in the slab. This can be done with the `vacant_entry` API as such:
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   50) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   51) //! ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   52) //! # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   53) //! let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   54) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   55) //! let hello = {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   56) //!     let entry = slab.vacant_entry();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   57) //!     let key = entry.key();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   58) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   59) //!     entry.insert((key, "hello"));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   60) //!     key
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   61) //! };
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   62) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   63) //! assert_eq!(hello, slab[hello].0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   64) //! assert_eq!("hello", slab[hello].1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   65) //! ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   66) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   67) //! It is generally a good idea to specify the desired capacity of a slab at
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   68) //! creation time. Note that `Slab` will grow the internal capacity when
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   69) //! attempting to insert a new value once the existing capacity has been reached.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   70) //! To avoid this, add a check.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   71) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   72) //! ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   73) //! # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   74) //! let mut slab = Slab::with_capacity(1024);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   75) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   76) //! // ... use the slab
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   77) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   78) //! if slab.len() == slab.capacity() {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   79) //!     panic!("slab full");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   80) //! }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   81) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   82) //! slab.insert("the slab is not at capacity yet");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   83) //! ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   84) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   85) //! # Capacity and reallocation
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   86) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   87) //! The capacity of a slab is the amount of space allocated for any future
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   88) //! values that will be inserted in the slab. This is not to be confused with
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   89) //! the *length* of the slab, which specifies the number of actual values
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   90) //! currently being inserted. If a slab's length is equal to its capacity, the
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   91) //! next value inserted into the slab will require growing the slab by
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   92) //! reallocating.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   93) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   94) //! For example, a slab with capacity 10 and length 0 would be an empty slab
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   95) //! with space for 10 more stored values. Storing 10 or fewer elements into the
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   96) //! slab will not change its capacity or cause reallocation to occur. However,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   97) //! if the slab length is increased to 11 (due to another `insert`), it will
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   98) //! have to reallocate, which can be slow. For this reason, it is recommended to
+^f4fe561 (evals 2026-10-22 12:37:52 +0200   99) //! use [`Slab::with_capacity`] whenever possible to specify how many values the
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  100) //! slab is expected to store.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  101) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  102) //! # Implementation
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  103) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  104) //! `Slab` is backed by a `Vec` of slots. Each slot is either occupied or
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  105) //! vacant. `Slab` maintains a stack of vacant slots using a linked list. To
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  106) //! find a vacant slot, the stack is popped. When a slot is released, it is
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  107) //! pushed onto the stack.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  108) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  109) //! If there are no more available slots in the stack, then `Vec::reserve(1)` is
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  110) //! called and a new slot is created.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  111) //!
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  112) //! [`Slab::with_capacity`]: struct.Slab.html#with_capacity
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  113) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  114) #[cfg(not(feature = "std"))]
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  115) extern crate alloc;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  116) #[cfg(feature = "std")]
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  117) extern crate std;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  118) #[cfg(feature = "std")]
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  119) extern crate std as alloc;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  120) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  121) #[cfg(feature = "serde")]
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  122) mod serde;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  123) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  124) mod builder;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  125) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  126) use alloc::vec::{self, Vec};
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  127) use core::iter::{self, FromIterator, FusedIterator};
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  128) use core::{fmt, mem, ops, slice};
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  129) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  130) /// Pre-allocated storage for a uniform data type
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  131) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  132) /// See the [module documentation] for more details.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  133) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  134) /// [module documentation]: index.html
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  135) pub struct Slab<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  136)     // Chunk of memory
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  137)     entries: Vec<Entry<T>>,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  138) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  139)     // Number of Filled elements currently in the slab
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  140)     len: usize,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  141) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  142)     // Offset of the next available slot in the slab. Set to the slab's
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  143)     // capacity when the slab is full.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  144)     next: usize,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  145) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  146) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  147) impl<T> Clone for Slab<T>
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  148) where
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  149)     T: Clone,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  150) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  151)     fn clone(&self) -> Self {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  152)         Self {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  153)             entries: self.entries.clone(),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  154)             len: self.len,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  155)             next: self.next,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  156)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  157)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  158) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  159)     fn clone_from(&mut self, source: &Self) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  160)         self.entries.clone_from(&source.entries);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  161)         self.len = source.len;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  162)         self.next = source.next;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  163)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  164) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  165) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  166) impl<T> Default for Slab<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  167)     fn default() -> Self {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  168)         Slab::new()
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  169)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  170) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  171) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  172) /// A handle to a vacant entry in a `Slab`.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  173) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  174) /// `VacantEntry` allows constructing values with the key that they will be
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  175) /// assigned to.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  176) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  177) /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  178) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  179) /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  180) /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  181) /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  182) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  183) /// let hello = {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  184) ///     let entry = slab.vacant_entry();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  185) ///     let key = entry.key();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  186) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  187) ///     entry.insert((key, "hello"));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  188) ///     key
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  189) /// };
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  190) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  191) /// assert_eq!(hello, slab[hello].0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  192) /// assert_eq!("hello", slab[hello].1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  193) /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  194) #[derive(Debug)]
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  195) pub struct VacantEntry<'a, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  196)     slab: &'a mut Slab<T>,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  197)     key: usize,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  198) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  199) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  200) /// A consuming iterator over the values stored in a `Slab`
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  201) pub struct IntoIter<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  202)     entries: iter::Enumerate<vec::IntoIter<Entry<T>>>,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  203)     len: usize,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  204) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  205) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  206) /// An iterator over the values stored in the `Slab`
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  207) pub struct Iter<'a, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  208)     entries: iter::Enumerate<slice::Iter<'a, Entry<T>>>,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  209)     len: usize,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  210) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  211) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  212) impl<T> Clone for Iter<'_, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  213)     fn clone(&self) -> Self {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  214)         Self {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  215)             entries: self.entries.clone(),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  216)             len: self.len,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  217)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  218)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  219) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  220) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  221) /// A mutable iterator over the values stored in the `Slab`
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  222) pub struct IterMut<'a, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  223)     entries: iter::Enumerate<slice::IterMut<'a, Entry<T>>>,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  224)     len: usize,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  225) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  226) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  227) /// A draining iterator for `Slab`
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  228) pub struct Drain<'a, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  229)     inner: vec::Drain<'a, Entry<T>>,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  230)     len: usize,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  231) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  232) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  233) #[derive(Clone)]
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  234) enum Entry<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  235)     Vacant(usize),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  236)     Occupied(T),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  237) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  238) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  239) impl<T> Slab<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  240)     /// Construct a new, empty `Slab`.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  241)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  242)     /// The function does not allocate and the returned slab will have no
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  243)     /// capacity until `insert` is called or capacity is explicitly reserved.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  244)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  245)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  246)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  247)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  248)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  249)     /// let slab: Slab<i32> = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  250)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  251)     pub const fn new() -> Self {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  252)         Self {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  253)             entries: Vec::new(),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  254)             next: 0,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  255)             len: 0,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  256)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  257)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  258) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  259)     /// Construct a new, empty `Slab` with the specified capacity.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  260)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  261)     /// The returned slab will be able to store exactly `capacity` without
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  262)     /// reallocating. If `capacity` is 0, the slab will not allocate.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  263)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  264)     /// It is important to note that this function does not specify the *length*
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  265)     /// of the returned slab, but only the capacity. For an explanation of the
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  266)     /// difference between length and capacity, see [Capacity and
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  267)     /// reallocation](index.html#capacity-and-reallocation).
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  268)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  269)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  270)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  271)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  272)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  273)     /// let mut slab = Slab::with_capacity(10);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  274)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  275)     /// // The slab contains no values, even though it has capacity for more
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  276)     /// assert_eq!(slab.len(), 0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  277)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  278)     /// // These are all done without reallocating...
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  279)     /// for i in 0..10 {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  280)     ///     slab.insert(i);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  281)     /// }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  282)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  283)     /// // ...but this may make the slab reallocate
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  284)     /// slab.insert(11);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  285)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  286)     pub fn with_capacity(capacity: usize) -> Slab<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  287)         Slab {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  288)             entries: Vec::with_capacity(capacity),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  289)             next: 0,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  290)             len: 0,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  291)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  292)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  293) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  294)     /// Return the number of values the slab can store without reallocating.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  295)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  296)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  297)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  298)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  299)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  300)     /// let slab: Slab<i32> = Slab::with_capacity(10);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  301)     /// assert_eq!(slab.capacity(), 10);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  302)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  303)     pub fn capacity(&self) -> usize {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  304)         self.entries.capacity()
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  305)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  306) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  307)     /// Reserve capacity for at least `additional` more values to be stored
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  308)     /// without allocating.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  309)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  310)     /// `reserve` does nothing if the slab already has sufficient capacity for
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  311)     /// `additional` more values. If more capacity is required, a new segment of
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  312)     /// memory will be allocated and all existing values will be copied into it.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  313)     /// As such, if the slab is already very large, a call to `reserve` can end
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  314)     /// up being expensive.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  315)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  316)     /// The slab may reserve more than `additional` extra space in order to
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  317)     /// avoid frequent reallocations. Use `reserve_exact` instead to guarantee
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  318)     /// that only the requested space is allocated.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  319)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  320)     /// # Panics
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  321)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  322)     /// Panics if the new capacity exceeds `isize::MAX` bytes.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  323)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  324)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  325)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  326)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  327)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  328)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  329)     /// slab.insert("hello");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  330)     /// slab.reserve(10);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  331)     /// assert!(slab.capacity() >= 11);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  332)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  333)     pub fn reserve(&mut self, additional: usize) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  334)         if self.capacity() - self.len >= additional {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  335)             return;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  336)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  337)         let need_add = additional - (self.entries.len() - self.len);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  338)         self.entries.reserve(need_add);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  339)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  340) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  341)     /// Reserve the minimum capacity required to store exactly `additional`
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  342)     /// more values.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  343)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  344)     /// `reserve_exact` does nothing if the slab already has sufficient capacity
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  345)     /// for `additional` more values. If more capacity is required, a new segment
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  346)     /// of memory will be allocated and all existing values will be copied into
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  347)     /// it.  As such, if the slab is already very large, a call to `reserve` can
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  348)     /// end up being expensive.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  349)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  350)     /// Note that the allocator may give the slab more space than it requests.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  351)     /// Therefore capacity can not be relied upon to be precisely minimal.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  352)     /// Prefer `reserve` if future insertions are expected.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  353)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  354)     /// # Panics
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  355)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  356)     /// Panics if the new capacity exceeds `isize::MAX` bytes.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  357)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  358)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  359)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  360)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  361)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  362)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  363)     /// slab.insert("hello");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  364)     /// slab.reserve_exact(10);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  365)     /// assert!(slab.capacity() >= 11);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  366)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  367)     pub fn reserve_exact(&mut self, additional: usize) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  368)         if self.capacity() - self.len >= additional {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  369)             return;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  370)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  371)         let need_add = additional - (self.entries.len() - self.len);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  372)         self.entries.reserve_exact(need_add);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  373)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  374) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  375)     /// Shrink the capacity of the slab as much as possible without invalidating keys.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  376)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  377)     /// Because values cannot be moved to a different index, the slab cannot
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  378)     /// shrink past any stored values.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  379)     /// It will drop down as close as possible to the length but the allocator may
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  380)     /// still inform the underlying vector that there is space for a few more elements.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  381)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  382)     /// This function can take O(n) time even when the capacity cannot be reduced
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  383)     /// or the allocation is shrunk in place. Repeated calls run in O(1) though.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  384)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  385)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  386)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  387)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  388)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  389)     /// let mut slab = Slab::with_capacity(10);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  390)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  391)     /// for i in 0..3 {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  392)     ///     slab.insert(i);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  393)     /// }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  394)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  395)     /// slab.shrink_to_fit();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  396)     /// assert!(slab.capacity() >= 3 && slab.capacity() < 10);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  397)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  398)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  399)     /// The slab cannot shrink past the last present value even if previous
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  400)     /// values are removed:
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  401)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  402)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  403)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  404)     /// let mut slab = Slab::with_capacity(10);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  405)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  406)     /// for i in 0..4 {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  407)     ///     slab.insert(i);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  408)     /// }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  409)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  410)     /// slab.remove(0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  411)     /// slab.remove(3);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  412)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  413)     /// slab.shrink_to_fit();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  414)     /// assert!(slab.capacity() >= 3 && slab.capacity() < 10);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  415)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  416)     pub fn shrink_to_fit(&mut self) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  417)         // Remove all vacant entries after the last occupied one, so that
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  418)         // the capacity can be reduced to what is actually needed.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  419)         // If the slab is empty the vector can simply be cleared, but that
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  420)         // optimization would not affect time complexity when T: Drop.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  421)         let len_before = self.entries.len();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  422)         while let Some(&Entry::Vacant(_)) = self.entries.last() {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  423)             self.entries.pop();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  424)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  425) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  426)         // Removing entries breaks the list of vacant entries,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  427)         // so it must be repaired
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  428)         if self.entries.len() != len_before {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  429)             // Some vacant entries were removed, so the list now likely¹
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  430)             // either contains references to the removed entries, or has an
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  431)             // invalid end marker. Fix this by recreating the list.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  432)             self.recreate_vacant_list();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  433)             // ¹: If the removed entries formed the tail of the list, with the
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  434)             // most recently popped entry being the head of them, (so that its
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  435)             // index is now the end marker) the list is still valid.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  436)             // Checking for that unlikely scenario of this infrequently called
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  437)             // is not worth the code complexity.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  438)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  439) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  440)         self.entries.shrink_to_fit();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  441)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  442) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  443)     /// Iterate through all entries to recreate and repair the vacant list.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  444)     /// self.len must be correct and is not modified.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  445)     fn recreate_vacant_list(&mut self) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  446)         self.next = self.entries.len();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  447)         // We can stop once we've found all vacant entries
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  448)         let mut remaining_vacant = self.entries.len() - self.len;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  449)         if remaining_vacant == 0 {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  450)             return;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  451)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  452) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  453)         // Iterate in reverse order so that lower keys are at the start of
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  454)         // the vacant list. This way future shrinks are more likely to be
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  455)         // able to remove vacant entries.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  456)         for (i, entry) in self.entries.iter_mut().enumerate().rev() {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  457)             if let Entry::Vacant(ref mut next) = *entry {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  458)                 *next = self.next;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  459)                 self.next = i;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  460)                 remaining_vacant -= 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  461)                 if remaining_vacant == 0 {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  462)                     break;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  463)                 }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  464)             }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  465)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  466)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  467) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  468)     /// Reduce the capacity as much as possible, changing the key for elements when necessary.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  469)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  470)     /// To allow updating references to the elements which must be moved to a new key,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  471)     /// this function takes a closure which is called before moving each element.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  472)     /// The second and third parameters to the closure are the current key and
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  473)     /// new key respectively.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  474)     /// In case changing the key for one element turns out not to be possible,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  475)     /// the move can be cancelled by returning `false` from the closure.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  476)     /// In that case no further attempts at relocating elements is made.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  477)     /// If the closure unwinds, the slab will be left in a consistent state,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  478)     /// but the value that the closure panicked on might be removed.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  479)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  480)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  481)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  482)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  483)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  484)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  485)     /// let mut slab = Slab::with_capacity(10);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  486)     /// let a = slab.insert('a');
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  487)     /// slab.insert('b');
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  488)     /// slab.insert('c');
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  489)     /// slab.remove(a);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  490)     /// slab.compact(|&mut value, from, to| {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  491)     ///     assert_eq!((value, from, to), ('c', 2, 0));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  492)     ///     true
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  493)     /// });
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  494)     /// assert!(slab.capacity() >= 2 && slab.capacity() < 10);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  495)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  496)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  497)     /// The value is not moved when the closure returns `Err`:
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  498)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  499)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  500)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  501)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  502)     /// let mut slab = Slab::with_capacity(100);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  503)     /// let a = slab.insert('a');
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  504)     /// let b = slab.insert('b');
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  505)     /// slab.remove(a);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  506)     /// slab.compact(|&mut value, from, to| false);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  507)     /// assert_eq!(slab.iter().next(), Some((b, &'b')));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  508)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  509)     pub fn compact<F>(&mut self, mut rekey: F)
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  510)     where
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  511)         F: FnMut(&mut T, usize, usize) -> bool,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  512)     {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  513)         // If the closure unwinds, we need to restore a valid list of vacant entries
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  514)         struct CleanupGuard<'a, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  515)             slab: &'a mut Slab<T>,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  516)             decrement: bool,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  517)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  518)         impl<T> Drop for CleanupGuard<'_, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  519)             fn drop(&mut self) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  520)                 if self.decrement {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  521)                     // Value was popped and not pushed back on
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  522)                     self.slab.len -= 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  523)                 }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  524)                 self.slab.recreate_vacant_list();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  525)             }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  526)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  527)         let mut guard = CleanupGuard {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  528)             slab: self,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  529)             decrement: true,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  530)         };
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  531) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  532)         let mut occupied_until = 0;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  533)         // While there are vacant entries
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  534)         while guard.slab.entries.len() > guard.slab.len {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  535)             // Find a value that needs to be moved,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  536)             // by popping entries until we find an occupied one.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  537)             // (entries cannot be empty because 0 is not greater than anything)
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  538)             if let Some(Entry::Occupied(mut value)) = guard.slab.entries.pop() {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  539)                 // Found one, now find a vacant entry to move it to
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  540)                 while let Some(&Entry::Occupied(_)) = guard.slab.entries.get(occupied_until) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  541)                     occupied_until += 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  542)                 }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  543)                 // Let the caller try to update references to the key
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  544)                 if !rekey(&mut value, guard.slab.entries.len(), occupied_until) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  545)                     // Changing the key failed, so push the entry back on at its old index.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  546)                     guard.slab.entries.push(Entry::Occupied(value));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  547)                     guard.decrement = false;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  548)                     guard.slab.entries.shrink_to_fit();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  549)                     return;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  550)                     // Guard drop handles cleanup
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  551)                 }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  552)                 // Put the value in its new spot
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  553)                 guard.slab.entries[occupied_until] = Entry::Occupied(value);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  554)                 // ... and mark it as occupied (this is optional)
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  555)                 occupied_until += 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  556)             }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  557)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  558)         guard.slab.next = guard.slab.len;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  559)         guard.slab.entries.shrink_to_fit();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  560)         // Normal cleanup is not necessary
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  561)         mem::forget(guard);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  562)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  563) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  564)     /// Clear the slab of all values.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  565)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  566)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  567)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  568)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  569)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  570)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  571)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  572)     /// for i in 0..3 {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  573)     ///     slab.insert(i);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  574)     /// }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  575)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  576)     /// slab.clear();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  577)     /// assert!(slab.is_empty());
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  578)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  579)     pub fn clear(&mut self) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  580)         self.entries.clear();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  581)         self.len = 0;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  582)         self.next = 0;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  583)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  584) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  585)     /// Return the number of stored values.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  586)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  587)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  588)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  589)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  590)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  591)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  592)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  593)     /// for i in 0..3 {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  594)     ///     slab.insert(i);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  595)     /// }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  596)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  597)     /// assert_eq!(3, slab.len());
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  598)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  599)     pub fn len(&self) -> usize {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  600)         self.len
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  601)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  602) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  603)     /// Return `true` if there are no values stored in the slab.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  604)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  605)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  606)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  607)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  608)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  609)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  610)     /// assert!(slab.is_empty());
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  611)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  612)     /// slab.insert(1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  613)     /// assert!(!slab.is_empty());
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  614)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  615)     pub fn is_empty(&self) -> bool {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  616)         self.len == 0
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  617)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  618) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  619)     /// Return an iterator over the slab.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  620)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  621)     /// This function should generally be **avoided** as it is not efficient.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  622)     /// Iterators must iterate over every slot in the slab even if it is
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  623)     /// vacant. As such, a slab with a capacity of 1 million but only one
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  624)     /// stored value must still iterate the million slots.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  625)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  626)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  627)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  628)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  629)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  630)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  631)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  632)     /// for i in 0..3 {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  633)     ///     slab.insert(i);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  634)     /// }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  635)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  636)     /// let mut iterator = slab.iter();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  637)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  638)     /// assert_eq!(iterator.next(), Some((0, &0)));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  639)     /// assert_eq!(iterator.next(), Some((1, &1)));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  640)     /// assert_eq!(iterator.next(), Some((2, &2)));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  641)     /// assert_eq!(iterator.next(), None);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  642)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  643)     pub fn iter(&self) -> Iter<'_, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  644)         Iter {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  645)             entries: self.entries.iter().enumerate(),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  646)             len: self.len,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  647)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  648)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  649) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  650)     /// Return an iterator that allows modifying each value.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  651)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  652)     /// This function should generally be **avoided** as it is not efficient.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  653)     /// Iterators must iterate over every slot in the slab even if it is
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  654)     /// vacant. As such, a slab with a capacity of 1 million but only one
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  655)     /// stored value must still iterate the million slots.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  656)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  657)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  658)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  659)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  660)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  661)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  662)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  663)     /// let key1 = slab.insert(0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  664)     /// let key2 = slab.insert(1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  665)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  666)     /// for (key, val) in slab.iter_mut() {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  667)     ///     if key == key1 {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  668)     ///         *val += 2;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  669)     ///     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  670)     /// }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  671)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  672)     /// assert_eq!(slab[key1], 2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  673)     /// assert_eq!(slab[key2], 1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  674)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  675)     pub fn iter_mut(&mut self) -> IterMut<'_, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  676)         IterMut {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  677)             entries: self.entries.iter_mut().enumerate(),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  678)             len: self.len,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  679)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  680)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  681) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  682)     /// Return a reference to the value associated with the given key.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  683)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  684)     /// If the given key is not associated with a value, then `None` is
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  685)     /// returned.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  686)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  687)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  688)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  689)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  690)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  691)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  692)     /// let key = slab.insert("hello");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  693)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  694)     /// assert_eq!(slab.get(key), Some(&"hello"));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  695)     /// assert_eq!(slab.get(123), None);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  696)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  697)     pub fn get(&self, key: usize) -> Option<&T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  698)         match self.entries.get(key) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  699)             Some(Entry::Occupied(val)) => Some(val),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  700)             _ => None,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  701)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  702)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  703) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  704)     /// Return a mutable reference to the value associated with the given key.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  705)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  706)     /// If the given key is not associated with a value, then `None` is
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  707)     /// returned.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  708)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  709)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  710)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  711)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  712)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  713)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  714)     /// let key = slab.insert("hello");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  715)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  716)     /// *slab.get_mut(key).unwrap() = "world";
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  717)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  718)     /// assert_eq!(slab[key], "world");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  719)     /// assert_eq!(slab.get_mut(123), None);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  720)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  721)     pub fn get_mut(&mut self, key: usize) -> Option<&mut T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  722)         match self.entries.get_mut(key) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  723)             Some(&mut Entry::Occupied(ref mut val)) => Some(val),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  724)             _ => None,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  725)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  726)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  727) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  728)     /// Return two mutable references to the values associated with the two
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  729)     /// given keys simultaneously.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  730)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  731)     /// If any one of the given keys is not associated with a value, then `None`
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  732)     /// is returned.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  733)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  734)     /// This function can be used to get two mutable references out of one slab,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  735)     /// so that you can manipulate both of them at the same time, eg. swap them.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  736)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  737)     /// # Panics
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  738)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  739)     /// This function will panic if `key1` and `key2` are the same.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  740)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  741)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  742)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  743)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  744)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  745)     /// use std::mem;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  746)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  747)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  748)     /// let key1 = slab.insert(1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  749)     /// let key2 = slab.insert(2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  750)     /// let (value1, value2) = slab.get2_mut(key1, key2).unwrap();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  751)     /// mem::swap(value1, value2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  752)     /// assert_eq!(slab[key1], 2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  753)     /// assert_eq!(slab[key2], 1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  754)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  755)     pub fn get2_mut(&mut self, key1: usize, key2: usize) -> Option<(&mut T, &mut T)> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  756)         assert!(key1 != key2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  757) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  758)         let (entry1, entry2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  759) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  760)         if key1 > key2 {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  761)             let (slice1, slice2) = self.entries.split_at_mut(key1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  762)             entry1 = slice2.get_mut(0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  763)             entry2 = slice1.get_mut(key2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  764)         } else {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  765)             let (slice1, slice2) = self.entries.split_at_mut(key2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  766)             entry1 = slice1.get_mut(key1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  767)             entry2 = slice2.get_mut(0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  768)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  769) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  770)         match (entry1, entry2) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  771)             (
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  772)                 Some(&mut Entry::Occupied(ref mut val1)),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  773)                 Some(&mut Entry::Occupied(ref mut val2)),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  774)             ) => Some((val1, val2)),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  775)             _ => None,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  776)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  777)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  778) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  779)     /// Return a reference to the value associated with the given key without
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  780)     /// performing bounds checking.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  781)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  782)     /// For a safe alternative see [`get`](Slab::get).
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  783)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  784)     /// This function should be used with care.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  785)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  786)     /// # Safety
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  787)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  788)     /// The key must be within bounds.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  789)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  790)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  791)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  792)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  793)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  794)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  795)     /// let key = slab.insert(2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  796)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  797)     /// unsafe {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  798)     ///     assert_eq!(slab.get_unchecked(key), &2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  799)     /// }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  800)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  801)     pub unsafe fn get_unchecked(&self, key: usize) -> &T {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  802)         match *self.entries.get_unchecked(key) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  803)             Entry::Occupied(ref val) => val,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  804)             _ => unreachable!(),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  805)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  806)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  807) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  808)     /// Return a mutable reference to the value associated with the given key
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  809)     /// without performing bounds checking.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  810)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  811)     /// For a safe alternative see [`get_mut`](Slab::get_mut).
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  812)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  813)     /// This function should be used with care.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  814)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  815)     /// # Safety
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  816)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  817)     /// The key must be within bounds.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  818)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  819)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  820)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  821)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  822)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  823)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  824)     /// let key = slab.insert(2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  825)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  826)     /// unsafe {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  827)     ///     let val = slab.get_unchecked_mut(key);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  828)     ///     *val = 13;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  829)     /// }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  830)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  831)     /// assert_eq!(slab[key], 13);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  832)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  833)     pub unsafe fn get_unchecked_mut(&mut self, key: usize) -> &mut T {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  834)         match *self.entries.get_unchecked_mut(key) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  835)             Entry::Occupied(ref mut val) => val,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  836)             _ => unreachable!(),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  837)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  838)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  839) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  840)     /// Return two mutable references to the values associated with the two
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  841)     /// given keys simultaneously without performing bounds checking and safety
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  842)     /// condition checking.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  843)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  844)     /// For a safe alternative see [`get2_mut`](Slab::get2_mut).
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  845)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  846)     /// This function should be used with care.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  847)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  848)     /// # Safety
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  849)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  850)     /// - Both keys must be within bounds.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  851)     /// - The condition `key1 != key2` must hold.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  852)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  853)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  854)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  855)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  856)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  857)     /// use std::mem;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  858)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  859)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  860)     /// let key1 = slab.insert(1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  861)     /// let key2 = slab.insert(2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  862)     /// let (value1, value2) = unsafe { slab.get2_unchecked_mut(key1, key2) };
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  863)     /// mem::swap(value1, value2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  864)     /// assert_eq!(slab[key1], 2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  865)     /// assert_eq!(slab[key2], 1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  866)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  867)     pub unsafe fn get2_unchecked_mut(&mut self, key1: usize, key2: usize) -> (&mut T, &mut T) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  868)         debug_assert_ne!(key1, key2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  869)         let ptr = self.entries.as_mut_ptr();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  870)         let ptr1 = ptr.add(key1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  871)         let ptr2 = ptr.add(key2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  872)         match (&mut *ptr1, &mut *ptr2) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  873)             (&mut Entry::Occupied(ref mut val1), &mut Entry::Occupied(ref mut val2)) => {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  874)                 (val1, val2)
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  875)             }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  876)             _ => unreachable!(),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  877)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  878)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  879) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  880)     /// Get the key for an element in the slab.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  881)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  882)     /// The reference must point to an element owned by the slab.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  883)     /// Otherwise this function will panic.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  884)     /// This is a constant-time operation because the key can be calculated
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  885)     /// from the reference with pointer arithmetic.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  886)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  887)     /// # Panics
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  888)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  889)     /// This function will panic if the reference does not point to an element
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  890)     /// of the slab.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  891)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  892)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  893)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  894)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  895)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  896)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  897)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  898)     /// let key = slab.insert(String::from("foo"));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  899)     /// let value = &slab[key];
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  900)     /// assert_eq!(slab.key_of(value), key);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  901)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  902)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  903)     /// Values are not compared, so passing a reference to a different location
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  904)     /// will result in a panic:
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  905)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  906)     /// ```should_panic
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  907)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  908)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  909)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  910)     /// let key = slab.insert(0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  911)     /// let bad = &0;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  912)     /// slab.key_of(bad); // this will panic
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  913)     /// unreachable!();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  914)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  915)     #[track_caller]
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  916)     pub fn key_of(&self, present_element: &T) -> usize {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  917)         let element_ptr = present_element as *const T as usize;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  918)         let base_ptr = self.entries.as_ptr() as usize;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  919)         // Use wrapping subtraction in case the reference is bad
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  920)         let byte_offset = element_ptr.wrapping_sub(base_ptr);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  921)         // The division rounds away any offset of T inside Entry
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  922)         // The size of Entry<T> is never zero even if T is due to Vacant(usize)
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  923)         let key = byte_offset / mem::size_of::<Entry<T>>();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  924)         // Prevent returning unspecified (but out of bounds) values
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  925)         if key >= self.entries.len() {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  926)             panic!("The reference points to a value outside this slab");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  927)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  928)         // The reference cannot point to a vacant entry, because then it would not be valid
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  929)         key
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  930)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  931) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  932)     /// Insert a value in the slab, returning key assigned to the value.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  933)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  934)     /// The returned key can later be used to retrieve or remove the value using indexed
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  935)     /// lookup and `remove`. Additional capacity is allocated if needed. See
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  936)     /// [Capacity and reallocation](index.html#capacity-and-reallocation).
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  937)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  938)     /// # Panics
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  939)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  940)     /// Panics if the new storage in the vector exceeds `isize::MAX` bytes.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  941)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  942)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  943)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  944)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  945)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  946)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  947)     /// let key = slab.insert("hello");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  948)     /// assert_eq!(slab[key], "hello");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  949)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  950)     pub fn insert(&mut self, val: T) -> usize {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  951)         let key = self.next;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  952) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  953)         self.insert_at(key, val);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  954) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  955)         key
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  956)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  957) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  958)     /// Returns the key of the next vacant entry.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  959)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  960)     /// This function returns the key of the vacant entry which  will be used
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  961)     /// for the next insertion. This is equivalent to
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  962)     /// `slab.vacant_entry().key()`, but it doesn't require mutable access.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  963)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  964)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  965)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  966)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  967)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  968)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  969)     /// assert_eq!(slab.vacant_key(), 0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  970)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  971)     /// slab.insert(0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  972)     /// assert_eq!(slab.vacant_key(), 1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  973)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  974)     /// slab.insert(1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  975)     /// slab.remove(0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  976)     /// assert_eq!(slab.vacant_key(), 0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  977)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  978)     pub fn vacant_key(&self) -> usize {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  979)         self.next
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  980)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  981) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  982)     /// Return a handle to a vacant entry allowing for further manipulation.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  983)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  984)     /// This function is useful when creating values that must contain their
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  985)     /// slab key. The returned `VacantEntry` reserves a slot in the slab and is
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  986)     /// able to query the associated key.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  987)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  988)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  989)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  990)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  991)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  992)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  993)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  994)     /// let hello = {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  995)     ///     let entry = slab.vacant_entry();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  996)     ///     let key = entry.key();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  997)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  998)     ///     entry.insert((key, "hello"));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200  999)     ///     key
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1000)     /// };
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1001)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1002)     /// assert_eq!(hello, slab[hello].0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1003)     /// assert_eq!("hello", slab[hello].1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1004)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1005)     pub fn vacant_entry(&mut self) -> VacantEntry<'_, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1006)         VacantEntry {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1007)             key: self.next,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1008)             slab: self,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1009)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1010)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1011) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1012)     fn insert_at(&mut self, key: usize, val: T) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1013)         self.len += 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1014) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1015)         if key == self.entries.len() {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1016)             self.entries.push(Entry::Occupied(val));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1017)             self.next = key + 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1018)         } else {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1019)             self.next = match self.entries.get(key) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1020)                 Some(&Entry::Vacant(next)) => next,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1021)                 _ => unreachable!(),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1022)             };
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1023)             self.entries[key] = Entry::Occupied(val);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1024)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1025)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1026) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1027)     /// Tries to remove the value associated with the given key,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1028)     /// returning the value if the key existed.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1029)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1030)     /// The key is then released and may be associated with future stored
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1031)     /// values.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1032)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1033)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1034)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1035)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1036)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1037)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1038)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1039)     /// let hello = slab.insert("hello");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1040)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1041)     /// assert_eq!(slab.try_remove(hello), Some("hello"));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1042)     /// assert!(!slab.contains(hello));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1043)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1044)     pub fn try_remove(&mut self, key: usize) -> Option<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1045)         if let Some(entry) = self.entries.get_mut(key) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1046)             // Swap the entry at the provided value
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1047)             let prev = mem::replace(entry, Entry::Vacant(self.next));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1048) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1049)             match prev {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1050)                 Entry::Occupied(val) => {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1051)                     self.len -= 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1052)                     self.next = key;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1053)                     return val.into();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1054)                 }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1055)                 _ => {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1056)                     // Woops, the entry is actually vacant, restore the state
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1057)                     *entry = prev;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1058)                 }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1059)             }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1060)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1061)         None
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1062)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1063) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1064)     /// Remove and return the value associated with the given key.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1065)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1066)     /// The key is then released and may be associated with future stored
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1067)     /// values.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1068)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1069)     /// # Panics
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1070)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1071)     /// Panics if `key` is not associated with a value.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1072)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1073)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1074)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1075)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1076)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1077)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1078)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1079)     /// let hello = slab.insert("hello");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1080)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1081)     /// assert_eq!(slab.remove(hello), "hello");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1082)     /// assert!(!slab.contains(hello));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1083)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1084)     #[track_caller]
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1085)     pub fn remove(&mut self, key: usize) -> T {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1086)         self.try_remove(key).expect("invalid key")
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1087)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1088) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1089)     /// Return `true` if a value is associated with the given key.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1090)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1091)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1092)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1093)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1094)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1095)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1096)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1097)     /// let hello = slab.insert("hello");
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1098)     /// assert!(slab.contains(hello));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1099)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1100)     /// slab.remove(hello);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1101)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1102)     /// assert!(!slab.contains(hello));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1103)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1104)     pub fn contains(&self, key: usize) -> bool {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1105)         matches!(self.entries.get(key), Some(&Entry::Occupied(_)))
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1106)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1107) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1108)     /// Retain only the elements specified by the predicate.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1109)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1110)     /// In other words, remove all elements `e` such that `f(usize, &mut e)`
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1111)     /// returns false. This method operates in place and preserves the key
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1112)     /// associated with the retained values.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1113)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1114)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1115)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1116)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1117)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1118)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1119)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1120)     /// let k1 = slab.insert(0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1121)     /// let k2 = slab.insert(1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1122)     /// let k3 = slab.insert(2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1123)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1124)     /// slab.retain(|key, val| key == k1 || *val == 1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1125)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1126)     /// assert!(slab.contains(k1));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1127)     /// assert!(slab.contains(k2));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1128)     /// assert!(!slab.contains(k3));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1129)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1130)     /// assert_eq!(2, slab.len());
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1131)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1132)     pub fn retain<F>(&mut self, mut f: F)
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1133)     where
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1134)         F: FnMut(usize, &mut T) -> bool,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1135)     {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1136)         for i in 0..self.entries.len() {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1137)             let keep = match self.entries[i] {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1138)                 Entry::Occupied(ref mut v) => f(i, v),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1139)                 _ => true,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1140)             };
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1141) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1142)             if !keep {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1143)                 self.remove(i);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1144)             }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1145)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1146)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1147) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1148)     /// Return a draining iterator that removes all elements from the slab and
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1149)     /// yields the removed items.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1150)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1151)     /// Note: Elements are removed even if the iterator is only partially
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1152)     /// consumed or not consumed at all.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1153)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1154)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1155)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1156)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1157)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1158)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1159)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1160)     /// let _ = slab.insert(0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1161)     /// let _ = slab.insert(1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1162)     /// let _ = slab.insert(2);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1163)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1164)     /// {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1165)     ///     let mut drain = slab.drain();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1166)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1167)     ///     assert_eq!(Some(0), drain.next());
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1168)     ///     assert_eq!(Some(1), drain.next());
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1169)     ///     assert_eq!(Some(2), drain.next());
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1170)     ///     assert_eq!(None, drain.next());
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1171)     /// }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1172)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1173)     /// assert!(slab.is_empty());
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1174)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1175)     pub fn drain(&mut self) -> Drain<'_, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1176)         let old_len = self.len;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1177)         self.len = 0;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1178)         self.next = 0;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1179)         Drain {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1180)             inner: self.entries.drain(..),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1181)             len: old_len,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1182)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1183)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1184) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1185) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1186) impl<T> ops::Index<usize> for Slab<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1187)     type Output = T;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1188) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1189)     #[track_caller]
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1190)     fn index(&self, key: usize) -> &T {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1191)         match self.entries.get(key) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1192)             Some(Entry::Occupied(v)) => v,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1193)             _ => panic!("invalid key"),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1194)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1195)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1196) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1197) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1198) impl<T> ops::IndexMut<usize> for Slab<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1199)     #[track_caller]
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1200)     fn index_mut(&mut self, key: usize) -> &mut T {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1201)         match self.entries.get_mut(key) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1202)             Some(&mut Entry::Occupied(ref mut v)) => v,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1203)             _ => panic!("invalid key"),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1204)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1205)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1206) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1207) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1208) impl<T> IntoIterator for Slab<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1209)     type Item = (usize, T);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1210)     type IntoIter = IntoIter<T>;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1211) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1212)     fn into_iter(self) -> IntoIter<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1213)         IntoIter {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1214)             entries: self.entries.into_iter().enumerate(),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1215)             len: self.len,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1216)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1217)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1218) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1219) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1220) impl<'a, T> IntoIterator for &'a Slab<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1221)     type Item = (usize, &'a T);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1222)     type IntoIter = Iter<'a, T>;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1223) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1224)     fn into_iter(self) -> Iter<'a, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1225)         self.iter()
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1226)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1227) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1228) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1229) impl<'a, T> IntoIterator for &'a mut Slab<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1230)     type Item = (usize, &'a mut T);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1231)     type IntoIter = IterMut<'a, T>;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1232) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1233)     fn into_iter(self) -> IterMut<'a, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1234)         self.iter_mut()
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1235)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1236) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1237) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1238) /// Create a slab from an iterator of key-value pairs.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1239) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1240) /// If the iterator produces duplicate keys, the previous value is replaced with the later one.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1241) /// The keys does not need to be sorted beforehand, and this function always
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1242) /// takes O(n) time.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1243) /// Note that the returned slab will use space proportional to the largest key,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1244) /// so don't use `Slab` with untrusted keys.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1245) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1246) /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1247) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1248) /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1249) /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1250) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1251) /// let vec = vec![(2,'a'), (6,'b'), (7,'c')];
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1252) /// let slab = vec.into_iter().collect::<Slab<char>>();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1253) /// assert_eq!(slab.len(), 3);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1254) /// assert!(slab.capacity() >= 8);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1255) /// assert_eq!(slab[2], 'a');
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1256) /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1257) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1258) /// With duplicate and unsorted keys:
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1259) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1260) /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1261) /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1262) ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1263) /// let vec = vec![(20,'a'), (10,'b'), (11,'c'), (10,'d')];
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1264) /// let slab = vec.into_iter().collect::<Slab<char>>();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1265) /// assert_eq!(slab.len(), 3);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1266) /// assert_eq!(slab[10], 'd');
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1267) /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1268) impl<T> FromIterator<(usize, T)> for Slab<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1269)     fn from_iter<I>(iterable: I) -> Self
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1270)     where
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1271)         I: IntoIterator<Item = (usize, T)>,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1272)     {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1273)         let iterator = iterable.into_iter();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1274)         let mut builder = builder::Builder::with_capacity(iterator.size_hint().0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1275) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1276)         for (key, value) in iterator {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1277)             builder.pair(key, value)
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1278)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1279)         builder.build()
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1280)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1281) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1282) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1283) impl<T> fmt::Debug for Slab<T>
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1284) where
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1285)     T: fmt::Debug,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1286) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1287)     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1288)         if fmt.alternate() {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1289)             fmt.debug_map().entries(self.iter()).finish()
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1290)         } else {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1291)             fmt.debug_struct("Slab")
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1292)                 .field("len", &self.len)
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1293)                 .field("cap", &self.capacity())
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1294)                 .finish()
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1295)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1296)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1297) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1298) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1299) impl<T> fmt::Debug for IntoIter<T>
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1300) where
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1301)     T: fmt::Debug,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1302) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1303)     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1304)         fmt.debug_struct("IntoIter")
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1305)             .field("remaining", &self.len)
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1306)             .finish()
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1307)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1308) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1309) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1310) impl<T> fmt::Debug for Iter<'_, T>
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1311) where
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1312)     T: fmt::Debug,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1313) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1314)     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1315)         fmt.debug_struct("Iter")
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1316)             .field("remaining", &self.len)
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1317)             .finish()
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1318)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1319) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1320) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1321) impl<T> fmt::Debug for IterMut<'_, T>
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1322) where
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1323)     T: fmt::Debug,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1324) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1325)     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1326)         fmt.debug_struct("IterMut")
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1327)             .field("remaining", &self.len)
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1328)             .finish()
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1329)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1330) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1331) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1332) impl<T> fmt::Debug for Drain<'_, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1333)     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1334)         fmt.debug_struct("Drain").finish()
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1335)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1336) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1337) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1338) // ===== VacantEntry =====
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1339) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1340) impl<'a, T> VacantEntry<'a, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1341)     /// Insert a value in the entry, returning a mutable reference to the value.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1342)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1343)     /// To get the key associated with the value, use `key` prior to calling
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1344)     /// `insert`.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1345)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1346)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1347)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1348)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1349)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1350)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1351)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1352)     /// let hello = {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1353)     ///     let entry = slab.vacant_entry();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1354)     ///     let key = entry.key();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1355)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1356)     ///     entry.insert((key, "hello"));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1357)     ///     key
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1358)     /// };
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1359)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1360)     /// assert_eq!(hello, slab[hello].0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1361)     /// assert_eq!("hello", slab[hello].1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1362)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1363)     pub fn insert(self, val: T) -> &'a mut T {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1364)         self.slab.insert_at(self.key, val);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1365) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1366)         match self.slab.entries.get_mut(self.key) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1367)             Some(&mut Entry::Occupied(ref mut v)) => v,
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1368)             _ => unreachable!(),
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1369)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1370)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1371) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1372)     /// Return the key associated with this entry.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1373)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1374)     /// A value stored in this entry will be associated with this key.
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1375)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1376)     /// # Examples
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1377)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1378)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1379)     /// # use slab::*;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1380)     /// let mut slab = Slab::new();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1381)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1382)     /// let hello = {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1383)     ///     let entry = slab.vacant_entry();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1384)     ///     let key = entry.key();
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1385)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1386)     ///     entry.insert((key, "hello"));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1387)     ///     key
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1388)     /// };
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1389)     ///
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1390)     /// assert_eq!(hello, slab[hello].0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1391)     /// assert_eq!("hello", slab[hello].1);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1392)     /// ```
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1393)     pub fn key(&self) -> usize {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1394)         self.key
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1395)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1396) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1397) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1398) // ===== IntoIter =====
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1399) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1400) impl<T> Iterator for IntoIter<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1401)     type Item = (usize, T);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1402) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1403)     fn next(&mut self) -> Option<Self::Item> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1404)         for (key, entry) in &mut self.entries {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1405)             if let Entry::Occupied(v) = entry {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1406)                 self.len -= 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1407)                 return Some((key, v));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1408)             }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1409)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1410) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1411)         debug_assert_eq!(self.len, 0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1412)         None
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1413)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1414) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1415)     fn size_hint(&self) -> (usize, Option<usize>) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1416)         (self.len, Some(self.len))
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1417)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1418) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1419) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1420) impl<T> DoubleEndedIterator for IntoIter<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1421)     fn next_back(&mut self) -> Option<Self::Item> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1422)         while let Some((key, entry)) = self.entries.next_back() {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1423)             if let Entry::Occupied(v) = entry {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1424)                 self.len -= 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1425)                 return Some((key, v));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1426)             }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1427)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1428) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1429)         debug_assert_eq!(self.len, 0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1430)         None
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1431)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1432) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1433) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1434) impl<T> ExactSizeIterator for IntoIter<T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1435)     fn len(&self) -> usize {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1436)         self.len
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1437)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1438) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1439) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1440) impl<T> FusedIterator for IntoIter<T> {}
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1441) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1442) // ===== Iter =====
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1443) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1444) impl<'a, T> Iterator for Iter<'a, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1445)     type Item = (usize, &'a T);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1446) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1447)     fn next(&mut self) -> Option<Self::Item> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1448)         for (key, entry) in &mut self.entries {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1449)             if let Entry::Occupied(ref v) = *entry {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1450)                 self.len -= 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1451)                 return Some((key, v));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1452)             }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1453)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1454) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1455)         debug_assert_eq!(self.len, 0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1456)         None
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1457)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1458) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1459)     fn size_hint(&self) -> (usize, Option<usize>) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1460)         (self.len, Some(self.len))
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1461)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1462) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1463) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1464) impl<T> DoubleEndedIterator for Iter<'_, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1465)     fn next_back(&mut self) -> Option<Self::Item> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1466)         while let Some((key, entry)) = self.entries.next_back() {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1467)             if let Entry::Occupied(ref v) = *entry {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1468)                 self.len -= 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1469)                 return Some((key, v));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1470)             }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1471)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1472) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1473)         debug_assert_eq!(self.len, 0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1474)         None
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1475)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1476) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1477) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1478) impl<T> ExactSizeIterator for Iter<'_, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1479)     fn len(&self) -> usize {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1480)         self.len
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1481)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1482) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1483) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1484) impl<T> FusedIterator for Iter<'_, T> {}
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1485) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1486) // ===== IterMut =====
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1487) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1488) impl<'a, T> Iterator for IterMut<'a, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1489)     type Item = (usize, &'a mut T);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1490) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1491)     fn next(&mut self) -> Option<Self::Item> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1492)         for (key, entry) in &mut self.entries {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1493)             if let Entry::Occupied(ref mut v) = *entry {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1494)                 self.len -= 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1495)                 return Some((key, v));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1496)             }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1497)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1498) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1499)         debug_assert_eq!(self.len, 0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1500)         None
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1501)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1502) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1503)     fn size_hint(&self) -> (usize, Option<usize>) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1504)         (self.len, Some(self.len))
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1505)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1506) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1507) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1508) impl<T> DoubleEndedIterator for IterMut<'_, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1509)     fn next_back(&mut self) -> Option<Self::Item> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1510)         while let Some((key, entry)) = self.entries.next_back() {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1511)             if let Entry::Occupied(ref mut v) = *entry {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1512)                 self.len -= 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1513)                 return Some((key, v));
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1514)             }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1515)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1516) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1517)         debug_assert_eq!(self.len, 0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1518)         None
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1519)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1520) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1521) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1522) impl<T> ExactSizeIterator for IterMut<'_, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1523)     fn len(&self) -> usize {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1524)         self.len
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1525)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1526) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1527) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1528) impl<T> FusedIterator for IterMut<'_, T> {}
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1529) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1530) // ===== Drain =====
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1531) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1532) impl<T> Iterator for Drain<'_, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1533)     type Item = T;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1534) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1535)     fn next(&mut self) -> Option<Self::Item> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1536)         for entry in &mut self.inner {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1537)             if let Entry::Occupied(v) = entry {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1538)                 self.len -= 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1539)                 return Some(v);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1540)             }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1541)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1542) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1543)         debug_assert_eq!(self.len, 0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1544)         None
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1545)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1546) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1547)     fn size_hint(&self) -> (usize, Option<usize>) {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1548)         (self.len, Some(self.len))
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1549)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1550) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1551) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1552) impl<T> DoubleEndedIterator for Drain<'_, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1553)     fn next_back(&mut self) -> Option<Self::Item> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1554)         while let Some(entry) = self.inner.next_back() {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1555)             if let Entry::Occupied(v) = entry {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1556)                 self.len -= 1;
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1557)                 return Some(v);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1558)             }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1559)         }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1560) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1561)         debug_assert_eq!(self.len, 0);
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1562)         None
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1563)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1564) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1565) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1566) impl<T> ExactSizeIterator for Drain<'_, T> {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1567)     fn len(&self) -> usize {
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1568)         self.len
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1569)     }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1570) }
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1571) 
+^f4fe561 (evals 2026-10-22 12:37:52 +0200 1572) impl<T> FusedIterator for Drain<'_, T> {}

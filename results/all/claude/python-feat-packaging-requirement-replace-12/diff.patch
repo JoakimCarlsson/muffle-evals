@@ -1,0 +1,210 @@
+diff --git a/CHANGELOG.rst b/CHANGELOG.rst
+index e9bb15a..8475b1f 100644
+--- a/CHANGELOG.rst
++++ b/CHANGELOG.rst
+@@ -4,6 +4,12 @@ Changelog
+ *unreleased*
+ ~~~~~~~~~~~~
+ 
++Features:
++
++* Add :meth:`Requirement.__replace__() <packaging.requirements.Requirement.__replace__>`
++  to copy a requirement with some parts changed; it also works with
++  ``copy.replace()`` on Python 3.13+.
++
+ Removals:
+ 
+ * Drop support for EOL Python 3.9. (:pull:`1263`)
+diff --git a/src/packaging/requirements.py b/src/packaging/requirements.py
+index 124de66..750ff24 100644
+--- a/src/packaging/requirements.py
++++ b/src/packaging/requirements.py
+@@ -8,11 +8,14 @@ from typing import TYPE_CHECKING
+ from ._parser import parse_requirement as _parse_requirement
+ from ._tokenizer import ParserSyntaxError
+ from .markers import Marker, _normalize_extra_values
+-from .specifiers import InvalidSpecifier, SpecifierSet
++from .specifiers import InvalidSpecifier, Specifier, SpecifierSet
+ from .utils import canonicalize_name
++from .version import _UNSET
+ 
+ if TYPE_CHECKING:
+-    from collections.abc import Iterator
++    from collections.abc import Iterable, Iterator
++
++    from typing_extensions import Self
+ 
+ __all__ = [
+     "InvalidRequirement",
+@@ -124,6 +127,61 @@ class Requirement:
+         if self.marker:
+             yield f"; {self.marker}"
+ 
++    def __replace__(
++        self,
++        *,
++        name: str = _UNSET,
++        url: str | None = _UNSET,
++        extras: Iterable[str] = _UNSET,
++        specifier: SpecifierSet = _UNSET,
++        marker: Marker | None = _UNSET,
++    ) -> Self:
++        """
++        __replace__(*, name=..., url=..., extras=..., specifier=..., marker=...)
++
++        Return a new requirement with parts replaced.
++
++        The result is validated and normalized as if its string form had been
++        parsed. The ``specifier`` is copied, keeping its ``prereleases``
++        settings, so nothing is shared with the original or the argument.
++
++        >>> r = Requirement('requests[security]>=2.0')
++        >>> r.__replace__(name="flask")
++        <Requirement('flask[security]>=2.0')>
++
++        :param str name:
++        :param str | None url:
++        :param Iterable[str] extras:
++        :param SpecifierSet specifier:
++        :param Marker | None marker:
++        :raises InvalidRequirement: If the resulting requirement is not valid,
++            or a value would be read back as something different.
++
++        .. versionadded:: 26.4
++        """
++        candidate = Requirement.__new__(Requirement)
++        candidate.name = self.name if name is _UNSET else name
++        candidate.url = (self.url if url is _UNSET else url) or None
++        candidate.extras = set(self.extras if extras is _UNSET else extras)
++        new_specifier = self.specifier if specifier is _UNSET else specifier
++        candidate.specifier = new_specifier
++        candidate.marker = self.marker if marker is _UNSET else marker
++
++        result = self.__class__("".join(candidate._iter_parts(candidate.name)))
++        if (
++            result.name != candidate.name
++            or result.url != candidate.url
++            or result.extras != candidate.extras
++        ):
++            raise InvalidRequirement(
++                f"Replacement values do not round-trip: {str(result)!r}"
++            )
++        result.specifier = SpecifierSet(
++            [Specifier(str(s), s._prereleases) for s in new_specifier._specs],
++            new_specifier._prereleases,
++        )
++        return result
++
+     def __getstate__(self) -> tuple[str, bool | None]:
+         # Return the requirement string for compactness and stability, paired
+         # with the specifier's explicit prereleases override, which is not
+diff --git a/tests/test_requirements.py b/tests/test_requirements.py
+index ad78c2b..f82bcd2 100644
+--- a/tests/test_requirements.py
++++ b/tests/test_requirements.py
+@@ -4,13 +4,15 @@
+ 
+ from __future__ import annotations
+ 
++import copy
+ import pickle
++import sys
+ 
+ import pytest
+ 
+ from packaging.markers import Marker
+ from packaging.requirements import InvalidRequirement, Requirement
+-from packaging.specifiers import SpecifierSet
++from packaging.specifiers import Specifier, SpecifierSet
+ 
+ EQUAL_DEPENDENCIES = [
+     ("packaging>20.1", "packaging>20.1"),
+@@ -1085,3 +1087,88 @@ def test_pickle_requirement_25_0_format_loads() -> None:
+     assert str(r.specifier) == ">=2.0"
+     assert r.marker is None
+     assert r == Requirement("requests>=2.0")
++
++
++class TestReplace:
++    def test_replace_fields(self) -> None:
++        r = Requirement('requests[security]>=2.0; python_version >= "3"')
++        assert str(r.__replace__(name="flask")) == (
++            'flask[security]>=2.0; python_version >= "3"'
++        )
++        assert str(r.__replace__(extras={"a"}, marker=None)) == "requests[a]>=2.0"
++        assert str(r) == 'requests[security]>=2.0; python_version >= "3"'
++
++    def test_copy_replace(self) -> None:
++        if sys.version_info < (3, 13):
++            pytest.skip("copy.replace needs 3.13+")
++        r = Requirement("requests>=2.0")
++        assert str(copy.replace(r, specifier=SpecifierSet(">=3.0"))) == (  # type: ignore[attr-defined]
++            "requests>=3.0"
++        )
++
++    def test_no_args_equal_distinct(self) -> None:
++        r = Requirement("requests>=2.0")
++        new = r.__replace__()
++        assert new == r
++        assert new is not r
++        assert new.specifier is not r.specifier
++
++    def test_url(self) -> None:
++        r = Requirement("foo @ https://example.com/foo.whl")
++        assert r.__replace__(url=None).url is None
++        assert str(Requirement("foo").__replace__(url="https://x.org/f")) == (
++            "foo @ https://x.org/f"
++        )
++
++    def test_unknown_keyword(self) -> None:
++        with pytest.raises(TypeError):
++            Requirement("foo").__replace__(bar=1)  # type: ignore[call-arg]
++        with pytest.raises(TypeError):
++            Requirement("foo").__replace__("bar")  # type: ignore[misc]
++
++    @pytest.mark.parametrize(
++        "kwargs",
++        [
++            {"name": "not a name!"},
++            {"name": "foo[bar]"},
++            {"name": " foo"},
++            {"name": ""},
++            {"extras": {"a,b"}},
++            {"extras": {"a b"}},
++            {"url": "https://x.org/f; python_version > '3'"},
++            {"url": "https://x.org/f"},
++        ],
++    )
++    def test_invalid(self, kwargs: dict[str, object]) -> None:
++        with pytest.raises(InvalidRequirement):
++            Requirement("foo>=1").__replace__(**kwargs)  # type: ignore[arg-type]
++
++    def test_marker_normalized(self) -> None:
++        marker = Marker('extra == "Foo_Bar"')
++        new = Requirement("foo").__replace__(marker=marker)
++        assert new.marker is not None
++        assert str(new.marker) == 'extra == "foo-bar"'
++        assert new.marker is not marker
++
++    def test_specifier_prereleases_copied(self) -> None:
++        spec = SpecifierSet([Specifier(">=1", True), Specifier("<3", False)], False)
++        expected = {">=1": True, "<3": False}
++        new = Requirement("foo").__replace__(specifier=spec)
++        assert new.specifier is not spec
++        assert new.specifier._prereleases is False
++        assert {str(s): s._prereleases for s in new.specifier._specs} == expected
++        assert not set(map(id, new.specifier._specs)) & set(map(id, spec._specs))
++        again = new.__replace__(name="bar")
++        assert again.specifier._prereleases is False
++        assert {str(s): s._prereleases for s in again.specifier._specs} == expected
++        assert again.specifier._specs[0] is not new.specifier._specs[0]
++
++    def test_subclass(self) -> None:
++        class Sub(Requirement):
++            def __init__(self, requirement_string: str) -> None:
++                super().__init__(requirement_string)
++                self.tag = "set"
++
++        new = Sub("foo").__replace__(name="bar")
++        assert type(new) is Sub
++        assert new.tag == "set"

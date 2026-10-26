@@ -1,0 +1,231 @@
+diff --git a/CHANGELOG.rst b/CHANGELOG.rst
+index e9bb15a..b172721 100644
+--- a/CHANGELOG.rst
++++ b/CHANGELOG.rst
+@@ -4,6 +4,11 @@ Changelog
+ *unreleased*
+ ~~~~~~~~~~~~
+ 
++Features:
++
++* Add ``Requirement.__replace__()``, enabling :func:`copy.replace` on Python
++  3.13+.
++
+ Removals:
+ 
+ * Drop support for EOL Python 3.9. (:pull:`1263`)
+diff --git a/src/packaging/requirements.py b/src/packaging/requirements.py
+index 124de66..c69082b 100644
+--- a/src/packaging/requirements.py
++++ b/src/packaging/requirements.py
+@@ -3,16 +3,16 @@
+ # for complete details.
+ from __future__ import annotations
+ 
+-from typing import TYPE_CHECKING
++from typing import TYPE_CHECKING, Any
+ 
+ from ._parser import parse_requirement as _parse_requirement
+ from ._tokenizer import ParserSyntaxError
+ from .markers import Marker, _normalize_extra_values
+-from .specifiers import InvalidSpecifier, SpecifierSet
++from .specifiers import InvalidSpecifier, Specifier, SpecifierSet
+ from .utils import canonicalize_name
+ 
+ if TYPE_CHECKING:
+-    from collections.abc import Iterator
++    from collections.abc import Iterable, Iterator
+ 
+ __all__ = [
+     "InvalidRequirement",
+@@ -24,6 +24,20 @@ def __dir__() -> list[str]:
+     return __all__
+ 
+ 
++_MISSING: Any = object()
++
++
++def _copy_specifier_set(specifier: SpecifierSet) -> SpecifierSet:
++    """Copy a SpecifierSet and its Specifiers, keeping ``prereleases`` overrides."""
++    specs = [
++        Specifier(str(s), prereleases=s._prereleases)
++        if isinstance(s, Specifier)
++        else Specifier(str(s))
++        for s in specifier._specs
++    ]
++    return SpecifierSet(specs, prereleases=specifier._prereleases)
++
++
+ class InvalidRequirement(ValueError):
+     """
+     Raised when attempting to create a :class:`Requirement` with a string that
+@@ -124,6 +138,73 @@ class Requirement:
+         if self.marker:
+             yield f"; {self.marker}"
+ 
++    def __replace__(
++        self,
++        *,
++        name: str = _MISSING,
++        url: str | None = _MISSING,
++        extras: Iterable[str] = _MISSING,
++        specifier: SpecifierSet = _MISSING,
++        marker: Marker | None = _MISSING,
++    ) -> Requirement:
++        """Return a copy of this requirement with the given fields replaced.
++
++        Fields that are not passed are kept. The result is validated as if it
++        had been parsed from its string form.
++
++        :raises InvalidRequirement: If the resulting requirement is invalid, or
++            a value would not read back unchanged from the string form.
++
++        .. versionadded:: 26.3
++        """
++        if name is _MISSING:
++            name = self.name
++        if url is _MISSING:
++            url = self.url
++        if extras is _MISSING:
++            extras = self.extras
++        elif isinstance(extras, str):
++            raise TypeError("extras must be an iterable of strings, not str")
++        if specifier is _MISSING:
++            specifier = self.specifier
++        elif not isinstance(specifier, SpecifierSet):
++            raise TypeError("specifier must be a SpecifierSet")
++        if marker is _MISSING:
++            marker = self.marker
++        elif marker is not None and not isinstance(marker, Marker):
++            raise TypeError("marker must be a Marker or None")
++        if not isinstance(name, str):
++            raise TypeError("name must be a str")
++        if url is not None and not isinstance(url, str):
++            raise TypeError("url must be a str or None")
++        extras = set(extras)
++        if not all(isinstance(e, str) for e in extras):
++            raise TypeError("extras must be strings")
++        specifier = _copy_specifier_set(specifier)
++
++        # Build the string form and parse it, so the result is exactly what
++        # parsing would give.
++        parts = [name]
++        if extras:
++            parts.append(f"[{','.join(sorted(extras))}]")
++        if specifier:
++            parts.append(str(specifier))
++        if url:
++            parts.append(f" @ {url}")
++            if marker:
++                parts.append(" ")
++        if marker:
++            parts.append(f"; {marker}")
++        new = self.__class__("".join(parts))
++
++        # Reject values that parsed as something other than what was passed.
++        if new.name != name or new.extras != extras or new.url != url:
++            raise InvalidRequirement(
++                f"Replacement values do not round-trip: {''.join(parts)!r}"
++            )
++        new.specifier = specifier
++        return new
++
+     def __getstate__(self) -> tuple[str, bool | None]:
+         # Return the requirement string for compactness and stability, paired
+         # with the specifier's explicit prereleases override, which is not
+diff --git a/tests/test_requirements.py b/tests/test_requirements.py
+index ad78c2b..0c4da1e 100644
+--- a/tests/test_requirements.py
++++ b/tests/test_requirements.py
+@@ -5,12 +5,13 @@
+ from __future__ import annotations
+ 
+ import pickle
++import sys
+ 
+ import pytest
+ 
+ from packaging.markers import Marker
+ from packaging.requirements import InvalidRequirement, Requirement
+-from packaging.specifiers import SpecifierSet
++from packaging.specifiers import Specifier, SpecifierSet
+ 
+ EQUAL_DEPENDENCIES = [
+     ("packaging>20.1", "packaging>20.1"),
+@@ -1085,3 +1086,76 @@ def test_pickle_requirement_25_0_format_loads() -> None:
+     assert str(r.specifier) == ">=2.0"
+     assert r.marker is None
+     assert r == Requirement("requests>=2.0")
++
++
++class TestRequirementReplace:
++    def test_replace_name_and_specifier(self) -> None:
++        r = Requirement('requests[security]>=2.0; python_version >= "3"')
++        new = r.__replace__(name="flask")
++        assert str(new) == 'flask[security]>=2.0; python_version >= "3"'
++        assert str(r) == 'requests[security]>=2.0; python_version >= "3"'
++        new = r.__replace__(specifier=SpecifierSet(">=3.0"))
++        assert str(new.specifier) == ">=3.0"
++
++    def test_no_args_equal_but_distinct(self) -> None:
++        r = Requirement("a[x]>=1; python_version > '3'")
++        new = r.__replace__()
++        assert new == r
++        assert new is not r
++        assert new.specifier is not r.specifier
++        assert new.extras is not r.extras
++
++    def test_unknown_keyword(self) -> None:
++        with pytest.raises(TypeError):
++            Requirement("a").__replace__(foo=1)  # type: ignore[call-arg]
++        with pytest.raises(TypeError):
++            Requirement("a").__replace__("b")  # type: ignore[misc]
++
++    @pytest.mark.parametrize(
++        "kwargs",
++        [
++            {"name": "not a name!"},
++            {"name": "foo[bar]"},
++            {"extras": {"a,b"}},
++            {"extras": {""}},
++            {"url": "http://x ; python_version > '3'"},
++            {"url": ""},
++        ],
++    )
++    def test_invalid(self, kwargs: dict[str, object]) -> None:
++        with pytest.raises(InvalidRequirement):
++            Requirement("a").__replace__(**kwargs)  # type: ignore[arg-type]
++
++    def test_marker_normalized(self) -> None:
++        new = Requirement("a").__replace__(marker=Marker('extra == "Foo_Bar"'))
++        assert str(new.marker) == 'extra == "foo-bar"'
++
++    def test_prereleases_kept_and_not_shared(self) -> None:
++        spec = SpecifierSet(
++            [Specifier(">=1", prereleases=True)], prereleases=False
++        )
++        new = Requirement("a").__replace__(specifier=spec)
++        assert new.specifier is not spec
++        assert new.specifier._prereleases is False
++        assert new.specifier._specs[0] is not spec._specs[0]
++        assert new.specifier._specs[0]._prereleases is True
++        r = Requirement("a>=1")
++        r.specifier.prereleases = True
++        assert r.__replace__().specifier.prereleases is True
++
++    def test_subclass(self) -> None:
++        class Sub(Requirement):
++            def __init__(self, s: str) -> None:
++                super().__init__(s)
++                self.extra_attr = 1
++
++        new = Sub("a").__replace__(name="b")
++        assert type(new) is Sub
++        assert new.extra_attr == 1
++
++    @pytest.mark.skipif(sys.version_info < (3, 13), reason="copy.replace is 3.13+")
++    def test_copy_replace(self) -> None:
++        import copy
++
++        new = copy.replace(Requirement("a>=2.0"), name="b")  # type: ignore[attr-defined]
++        assert str(new) == "b>=2.0"

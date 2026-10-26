@@ -1,0 +1,1264 @@
+$ git blame tomlkit/container.py
+493abcd evals 2026-10-22
+1	from __future__ import annotations
+2	
+3	import copy
+4	import math
+5	
+6	from collections.abc import Iterator
+7	from typing import TYPE_CHECKING
+8	from typing import Any
+9	
+10	
+11	if TYPE_CHECKING:
+12	    from typing import Self
+13	
+14	from tomlkit._compat import decode
+15	from tomlkit._types import _CustomDict
+16	from tomlkit._utils import merge_dicts
+17	from tomlkit.exceptions import KeyAlreadyPresent
+18	from tomlkit.exceptions import NonExistentKey
+19	from tomlkit.exceptions import TOMLKitError
+20	from tomlkit.items import AoT
+21	from tomlkit.items import Comment
+22	from tomlkit.items import Item
+23	from tomlkit.items import Key
+24	from tomlkit.items import Null
+25	from tomlkit.items import SingleKey
+26	from tomlkit.items import Table
+27	from tomlkit.items import Trivia
+28	from tomlkit.items import Whitespace
+29	from tomlkit.items import item as _item
+30	
+31	
+32	_NOT_SET = object()
+33	
+34	
+35	class Container(_CustomDict):  # type: ignore[type-arg]
+36	    """
+37	    A container for items within a TOMLDocument.
+38	
+39	    This class implements the `dict` interface with copy/deepcopy protocol.
+40	    """
+41	
+42	    def __init__(self, parsed: bool = False) -> None:
+43	        self._map: dict[Key, int | tuple[int, ...]] = {}
+44	        self._body: list[tuple[Key | None, Item]] = []
+45	        self._parsed = parsed
+46	        self._table_keys: list[Key] = []
+47	        # number of already-validated fragments and the temp container they
+48	        # were merged into, per out-of-order key; lets parse-time validation
+49	        # resume where the previous pass stopped instead of re-merging every
+50	        # fragment (quadratic) on each append
+51	        self._validation_cache: dict[Key, tuple[int, Container]] = {}
+52	        # superset of the keys mapped to an index tuple, so validating all
+53	        # out-of-order tables doesn't have to scan every key in the map;
+54	        # stale entries are filtered by the per-key isinstance check
+55	        self._out_of_order_keys: set[Key] = set()
+56	
+57	    @property
+58	    def body(self) -> list[tuple[Key | None, Item]]:
+59	        return self._body
+60	
+61	    def unwrap(self) -> dict[str, Any]:
+62	        """Returns as pure python object (ppo)"""
+63	        unwrapped: dict[str, Any] = {}
+64	        # Resolve each key straight from _map, which already holds the parsed
+65	        # Key objects and their body index, instead of via self.items(): the
+66	        # inherited MutableMapping iteration goes through __getitem__, which
+67	        # rebuilds a SingleKey from the bare string on every key only to throw
+68	        # it away. Out-of-order keys (a tuple index) still go through
+69	        # OutOfOrderTableProxy so their validation (and fragment merge) runs
+70	        # exactly as before. _map iterates in the same insertion order as the
+71	        # old self.items().
+72	        for key, idx in self._map.items():
+73	            if isinstance(idx, tuple):
+74	                value: Any = OutOfOrderTableProxy(self, idx)
+75	            else:
+76	                value = self._body[idx][1]
+77	            unwrapped[key.key] = value.unwrap() if hasattr(value, "unwrap") else value
+78	
+79	        return unwrapped
+80	
+81	    @property
+82	    def value(self) -> dict[str, Any]:
+83	        """The wrapped dict value"""
+84	        d: dict[str, Any] = {}
+85	        for k, v in self._body:
+86	            if k is None:
+87	                continue
+88	
+89	            key_str = k.key
+90	            val: Any = v.value
+91	
+92	            if isinstance(val, Container):
+93	                val = val.value
+94	
+95	            if key_str in d:
+96	                merge_dicts(d[key_str], val)
+97	            else:
+98	                d[key_str] = val
+99	
+100	        return d
+101	
+102	    def parsing(self, parsing: bool) -> None:
+103	        self._parsed = parsing
+104	        self._validation_cache.clear()
+105	
+106	        for _, v in self._body:
+107	            if isinstance(v, Table):
+108	                v.value.parsing(parsing)
+109	            elif isinstance(v, AoT):
+110	                for t in v.body:
+111	                    t.value.parsing(parsing)
+112	
+113	    def add(self, key: Key | Item | str, item: Any = None) -> Container:
+114	        """
+115	        Adds an item to the current Container.
+116	
+117	        :Example:
+118	
+119	        >>> # add a key-value pair
+120	        >>> doc.add('key', 'value')
+121	        >>> # add a comment or whitespace or newline
+122	        >>> doc.add(comment('# comment'))
+123	        """
+124	        if item is None:
+125	            if not isinstance(key, (Comment, Whitespace)):
+126	                raise ValueError(
+127	                    "Non comment/whitespace items must have an associated key"
+128	                )
+129	
+130	            return self.append(None, key)
+131	
+132	        assert not isinstance(key, Item)
+133	        return self.append(key, item)
+134	
+135	    def _handle_dotted_key(self, key: Key, value: Item) -> None:
+136	        if isinstance(value, (Table, AoT)):
+137	            raise TOMLKitError("Can't add a table to a dotted key")
+138	        name, *mid, last = key
+139	        name._dotted = True
+140	        table = current = Table(Container(True), Trivia(), False, is_super_table=True)
+141	        for _name in mid:
+142	            _name._dotted = True
+143	            new_table = Table(Container(True), Trivia(), False, is_super_table=True)
+144	            current.append(_name, new_table)
+145	            current = new_table
+146	
+147	        last.sep = key.sep
+148	        current.append(last, value)
+149	
+150	        self.append(name, table)
+151	        return
+152	
+153	    def _get_last_index_before_table(self) -> int:
+154	        last_index = -1
+155	        for i, (k, v) in enumerate(self._body):
+156	            if isinstance(v, Null):
+157	                continue  # Null elements are inserted after deletion
+158	
+159	            if isinstance(v, Whitespace) and not v.is_fixed():
+160	                continue
+161	
+162	            if isinstance(v, (Table, AoT)) and k is not None and not k.is_dotted():
+163	                break
+164	            last_index = i
+165	        return last_index + 1
+166	
+167	    def _validate_out_of_order_table(self, key: Key | None = None) -> None:
+168	        if key is None:
+169	            for k in list(self._out_of_order_keys):
+170	                assert k is not None
+171	                self._validate_out_of_order_table(k)
+172	            return
+173	        if key not in self._map:
+174	            return
+175	        current_idx = self._map[key]
+176	        if not isinstance(current_idx, tuple):
+177	            return
+178	        if self._parsed:
+179	            # while parsing, every fragment appended to an out-of-order key
+180	            # triggers a validation pass; resume from the cached temp
+181	            # container so each fragment is merged (and deep-copied) once
+182	            # instead of on every later pass. Fragments are only ever
+183	            # appended during parsing, so a count prefix stays valid; any
+184	            # other mutation clears the cache.
+185	            validated, temp = self._validation_cache.get(key, (0, None))
+186	            if validated > len(current_idx):
+187	                validated, temp = 0, None
+188	            try:
+189	                temp = OutOfOrderTableProxy.validate(
+190	                    self, current_idx[validated:], temp
+191	                )
+192	            except Exception:
+193	                # the temp container may be partially mutated; don't let a
+194	                # caught-and-retried failure resume from a poisoned cache
+195	                self._validation_cache.pop(key, None)
+196	                raise
+197	            self._validation_cache[key] = (len(current_idx), temp)
+198	            return
+199	        OutOfOrderTableProxy.validate(self, current_idx)
+200	
+201	    def append(
+202	        self, key: Key | str | None, item: Any, validate: bool = True
+203	    ) -> Container:
+204	        """Similar to :meth:`add` but both key and value must be given."""
+205	        if not isinstance(key, Key) and key is not None:
+206	            key = SingleKey(key)
+207	
+208	        if not isinstance(item, Item):
+209	            item = _item(item)
+210	
+211	        if key is not None and key.is_multi():
+212	            self._handle_dotted_key(key, item)
+213	            return self
+214	
+215	        if isinstance(item, (AoT, Table)) and item.name is None:
+216	            assert isinstance(key, Key)
+217	            item.name = key.key
+218	
+219	        prev = self._previous_item()
+220	        prev_ws = isinstance(prev, Whitespace) or ends_with_whitespace(prev)
+221	        if isinstance(item, Table):
+222	            if not self._parsed:
+223	                item.invalidate_display_name()
+224	            if (
+225	                self._body
+226	                and not (self._parsed or item.trivia.indent or prev_ws)
+227	                and key is not None
+228	                and not key.is_dotted()
+229	            ):
+230	                item.trivia.indent = "\n"
+231	
+232	        if isinstance(item, AoT) and self._body and not self._parsed:
+233	            item.invalidate_display_name()
+234	            if item and not ("\n" in item[0].trivia.indent or prev_ws):
+235	                item[0].trivia.indent = "\n" + item[0].trivia.indent
+236	
+237	        if key is not None and key in self:
+238	            current_idx = self._map[key]
+239	            if isinstance(current_idx, tuple):
+240	                current_body_element = self._body[current_idx[-1]]
+241	            else:
+242	                current_body_element = self._body[current_idx]
+243	
+244	            current = current_body_element[1]
+245	
+246	            if isinstance(item, Table):
+247	                if not isinstance(current, (Table, AoT)):
+248	                    raise KeyAlreadyPresent(key)
+249	
+250	                if item.is_aot_element():
+251	                    # New AoT element found later on
+252	                    # Adding it to the current AoT
+253	                    if not isinstance(current, AoT):
+254	                        current = AoT([current, item], parsed=self._parsed)
+255	
+256	                        self._replace(key, key, current)
+257	                    else:
+258	                        current.append(item)
+259	
+260	                    return self
+261	                elif isinstance(current, AoT):
+262	                    if not item.is_aot_element():
+263	                        if item.is_super_table() and len(current.body):
+264	                            # A sub-table header such as `[fruit.apple.texture]`
+265	                            # appearing after the array `[[fruit]]` (possibly with
+266	                            # unrelated tables in between) extends the last element
+267	                            # of the array, per the TOML spec.
+268	                            last = current[-1]
+269	                            for k, v in item.value.body:
+270	                                last.value.append(k, v)
+271	
+272	                            return self
+273	                        # Tried to define a table after an AoT with the same name.
+274	                        raise KeyAlreadyPresent(key)
+275	
+276	                    current.append(item)
+277	
+278	                    return self
+279	                elif current.is_super_table():
+280	                    if item.is_super_table():
+281	                        # We need to merge both super tables
+282	                        if (
+283	                            key.is_dotted()
+284	                            or (
+285	                                current_body_element[0] is not None
+286	                                and current_body_element[0].is_dotted()
+287	                            )
+288	                            or self._table_keys[-1] != current_body_element[0]
+289	                        ):
+290	                            if key.is_dotted() and not self._parsed:
+291	                                idx = self._get_last_index_before_table()
+292	                            else:
+293	                                idx = len(self._body)
+294	
+295	                            if idx < len(self._body):
+296	                                self._insert_at(idx, key, item)
+297	                            else:
+298	                                self._raw_append(key, item)
+299	
+300	                            if validate:
+301	                                self._validate_out_of_order_table(key)
+302	
+303	                            return self
+304	
+305	                        # Merge the new super table's body into the existing one
+306	                        # in place. Previously this deep-copied `current` before
+307	                        # appending, which is O(size of current) on every merge
+308	                        # and therefore O(n^2) when many subtables share a super
+309	                        # table (e.g. consecutive `[a.b.c]` / `[a.b.d]` headers).
+310	                        # Mutating in place is O(1) per merge. The defensive copy
+311	                        # that protected the out-of-order validation pass has been
+312	                        # moved into OutOfOrderTableProxy (its only consumer).
+313	                        for k, v in item.value.body:
+314	                            current.append(k, v)
+315	
+316	                        return self
+317	                    elif (
+318	                        current_body_element[0] is not None
+319	                        and current_body_element[0].is_dotted()
+320	                    ):
+321	                        raise TOMLKitError("Redefinition of an existing table")
+322	                    else:
+323	                        # Merging a concrete table into an existing implicit/super
+324	                        # table is only valid if it does not redefine existing
+325	                        # subtrees via dotted keys and does not change prior types.
+326	                        assert isinstance(current, Table)
+327	                        self._validate_table_candidate(current, item)
+328	                elif not item.is_super_table():
+329	                    raise KeyAlreadyPresent(key)
+330	                else:
+331	                    # An existing concrete table (current) is being extended by
+332	                    # a super-table (item) — e.g. [a] b=1 then [a.b] c=2 out of
+333	                    # order, or [a] b.c=1 then [a.b] d=2.  Validate that the
+334	                    # super-table does not redefine any existing key, raising
+335	                    # early at parse time.  When validation passes, fall through
+336	                    # — _raw_append below will create an out-of-order entry and
+337	                    # preserve table ordering in the document.
+338	                    assert isinstance(current, Table)
+339	                    self._validate_table_candidate(current, item)
+340	            elif isinstance(item, AoT):
+341	                if not isinstance(current, AoT):
+342	                    # Tried to define an AoT after a table with the same name.
+343	                    raise KeyAlreadyPresent(key)
+344	
+345	                for table in item.body:
+346	                    current.append(table)
+347	
+348	                return self
+349	            else:
+350	                raise KeyAlreadyPresent(key)
+351	
+352	        is_table = isinstance(item, (Table, AoT))
+353	        if (
+354	            key is not None
+355	            and self._body
+356	            and not self._parsed
+357	            and (not is_table or key.is_dotted())
+358	        ):
+359	            # If there is already at least one table in the current container
+360	            # and the given item is not a table, we need to find the last
+361	            # item that is not a table and insert after it
+362	            # If no such item exists, insert at the top of the table
+363	            last_index = self._get_last_index_before_table()
+364	
+365	            if last_index < len(self._body):
+366	                after_item = self._body[last_index][1]
+367	                if not (
+368	                    isinstance(after_item, Whitespace)
+369	                    or "\n" in after_item.trivia.indent
+370	                ):
+371	                    after_item.trivia.indent = "\n" + after_item.trivia.indent
+372	                return self._insert_at(last_index, key, item)
+373	            else:
+374	                previous_item = self._body[-1][1]
+375	                if isinstance(previous_item, Table) and previous_item.is_super_table():
+376	                    previous_child = previous_item.value._previous_item()
+377	                    if (
+378	                        previous_child is not None
+379	                        and not isinstance(previous_child, Whitespace)
+380	                        and "\n" in previous_item.trivia.trail
+381	                        and "\n" not in previous_child.trivia.trail
+382	                    ):
+383	                        previous_child.trivia.trail += previous_item.trivia.trail
+384	                if not (
+385	                    isinstance(previous_item, Whitespace)
+386	                    or ends_with_whitespace(previous_item)
+387	                    or "\n" in previous_item.trivia.trail
+388	                ):
+389	                    previous_item.trivia.trail += "\n"
+390	
+391	        self._raw_append(key, item)
+392	        if validate and key is not None:
+393	            self._validate_out_of_order_table(key)
+394	        return self
+395	
+396	    def _validate_table_candidate(self, current: Table, candidate: Table) -> None:
+397	        for k, v in candidate.value.body:
+398	            if k is None:
+399	                continue
+400	
+401	            if k in current.value._map:
+402	                existing = current.value.item(k)
+403	                if isinstance(existing, (Table, AoT)) != isinstance(v, (Table, AoT)):
+404	                    raise KeyAlreadyPresent(k)
+405	                if k.is_dotted():
+406	                    raise TOMLKitError("Redefinition of an existing table")
+407	                if isinstance(existing, Table) and isinstance(v, Table):
+408	                    if not existing.is_super_table() and not v.is_super_table():
+409	                        # Both sides are concrete `[table]` definitions of the
+410	                        # same name; the table is declared twice.
+411	                        raise KeyAlreadyPresent(k)
+412	                    # One side is still an implicit/super table, so a duplicate
+413	                    # (if any) is nested deeper - keep checking the subtree.
+414	                    self._validate_table_candidate(existing, v)
+415	                continue
+416	
+417	            if not k.is_dotted():
+418	                # Even when the candidate key itself is not dotted, an
+419	                # existing dotted key may already use it as a prefix —
+420	                # e.g.  [a] b.c=1 then [a.b] d=2  (b prefixes b.c).
+421	                for existing_key in current.value._map:
+422	                    if existing_key.is_dotted() and next(iter(existing_key)) == k:
+423	                        raise TOMLKitError("Redefinition of an existing table")
+424	                continue
+425	
+426	            head = next(iter(k))
+427	            if head in current.value._map:
+428	                raise TOMLKitError("Redefinition of an existing table")
+429	
+430	    def _raw_append(self, key: Key | None, item: Item) -> None:
+431	        if key is not None and key in self._map:
+432	            current_idx = self._map[key]
+433	            if not isinstance(current_idx, tuple):
+434	                current_idx = (current_idx,)
+435	
+436	            current = self._body[current_idx[-1]][1]
+437	            if not isinstance(current, Table):
+438	                raise KeyAlreadyPresent(key)
+439	
+440	            self._map[key] = (*current_idx, len(self._body))
+441	            self._out_of_order_keys.add(key)
+442	        elif key is not None:
+443	            self._map[key] = len(self._body)
+444	
+445	        self._body.append((key, item))
+446	        if item.is_table() and key is not None:
+447	            self._table_keys.append(key)
+448	
+449	        if key is not None:
+450	            dict.__setitem__(self, key.key, item.value)
+451	
+452	    def _remove_at(self, idx: int) -> None:
+453	        key = self._body[idx][0]
+454	        assert key is not None
+455	        index = self._map.get(key)
+456	        if index is None:
+457	            raise NonExistentKey(key)
+458	        self._validation_cache.clear()
+459	        self._body[idx] = (None, Null())
+460	
+461	        if isinstance(index, tuple):
+462	            index_list = list(index)
+463	            index_list.remove(idx)
+464	            if len(index_list) == 1:
+465	                self._map[key] = index_list.pop()
+466	            else:
+467	                self._map[key] = tuple(index_list)
+468	        else:
+469	            dict.__delitem__(self, key.key)
+470	            self._map.pop(key)
+471	
+472	    def remove(self, key: Key | str) -> Container:
+473	        """Remove a key from the container."""
+474	        if not isinstance(key, Key):
+475	            key = SingleKey(key)
+476	
+477	        idx = self._map.pop(key, None)
+478	        if idx is None:
+479	            raise NonExistentKey(key)
+480	
+481	        self._validation_cache.clear()
+482	        if isinstance(idx, tuple):
+483	            for i in idx:
+484	                self._body[i] = (None, Null())
+485	        else:
+486	            self._body[idx] = (None, Null())
+487	
+488	        dict.__delitem__(self, key.key)
+489	
+490	        return self
+491	
+492	    def _insert_after(
+493	        self, key: Key | str, other_key: Key | str, item: Any
+494	    ) -> Container:
+495	        if key is None:
+496	            raise ValueError("Key cannot be null in insert_after()")
+497	
+498	        if key not in self:
+499	            raise NonExistentKey(key)
+500	
+501	        if not isinstance(key, Key):
+502	            key = SingleKey(key)
+503	
+504	        if not isinstance(other_key, Key):
+505	            other_key = SingleKey(other_key)
+506	
+507	        item = _item(item)
+508	
+509	        idx = self._map[key]
+510	        # Insert after the max index if there are many.
+511	        if isinstance(idx, tuple):
+512	            idx = max(idx)
+513	        current_item = self._body[idx][1]
+514	        if "\n" not in current_item.trivia.trail:
+515	            current_item.trivia.trail += "\n"
+516	
+517	        # Increment indices after the current index
+518	        for k, v in self._map.items():
+519	            if isinstance(v, tuple):
+520	                new_indices = []
+521	                for v_ in v:
+522	                    if v_ > idx:
+523	                        v_ = v_ + 1
+524	
+525	                    new_indices.append(v_)
+526	
+527	                self._map[k] = tuple(new_indices)
+528	            elif v > idx:
+529	                self._map[k] = v + 1
+530	
+531	        self._map[other_key] = idx + 1
+532	        self._body.insert(idx + 1, (other_key, item))
+533	
+534	        if key is not None:
+535	            dict.__setitem__(self, other_key.key, item.value)
+536	
+537	        return self
+538	
+539	    def _insert_at(self, idx: int, key: Key | str, item: Any) -> Container:
+540	        if idx > len(self._body) - 1:
+541	            raise ValueError(f"Unable to insert at position {idx}")
+542	
+543	        if not isinstance(key, Key):
+544	            key = SingleKey(key)
+545	
+546	        item = _item(item)
+547	
+548	        if idx > 0:
+549	            previous_item = self._body[idx - 1][1]
+550	            if not (
+551	                isinstance(previous_item, Whitespace)
+552	                or ends_with_whitespace(previous_item)
+553	                or isinstance(item, (AoT, Table))
+554	                or "\n" in previous_item.trivia.trail
+555	            ):
+556	                previous_item.trivia.trail += "\n"
+557	
+558	        # Increment indices after the current index
+559	        for k, v in self._map.items():
+560	            if isinstance(v, tuple):
+561	                new_indices = []
+562	                for v_ in v:
+563	                    if v_ >= idx:
+564	                        v_ = v_ + 1
+565	
+566	                    new_indices.append(v_)
+567	
+568	                self._map[k] = tuple(new_indices)
+569	            elif v >= idx:
+570	                self._map[k] = v + 1
+571	
+572	        if key in self._map:
+573	            current_idx = self._map[key]
+574	            if not isinstance(current_idx, tuple):
+575	                current_idx = (current_idx,)
+576	            self._map[key] = (*current_idx, idx)
+577	            self._out_of_order_keys.add(key)
+578	        else:
+579	            self._map[key] = idx
+580	        self._body.insert(idx, (key, item))
+581	
+582	        dict.__setitem__(self, key.key, item.value)
+583	
+584	        return self
+585	
+586	    def item(self, key: Key | str) -> Item | OutOfOrderTableProxy:
+587	        """Get an item for the given key."""
+588	        if not isinstance(key, Key):
+589	            key = SingleKey(key)
+590	
+591	        idx = self._map.get(key)
+592	        if idx is None:
+593	            raise NonExistentKey(key)
+594	
+595	        if isinstance(idx, tuple):
+596	            # The item we are getting is an out of order table
+597	            # so we need a proxy to retrieve the proper objects
+598	            # from the parent container
+599	            return OutOfOrderTableProxy(self, idx)
+600	
+601	        return self._body[idx][1]
+602	
+603	    def last_item(self) -> Item | None:
+604	        """Get the last item."""
+605	        if self._body:
+606	            return self._body[-1][1]
+607	        return None
+608	
+609	    def as_string(self) -> str:
+610	        """Render as TOML string."""
+611	        s = ""
+612	        for k, v in self._body:
+613	            if k is not None:
+614	                if isinstance(v, Table):
+615	                    if (
+616	                        s.strip(" ")
+617	                        and not s.strip(" ").endswith("\n")
+618	                        and "\n" not in v.trivia.indent
+619	                    ):
+620	                        s += "\n"
+621	                    s += self._render_table(k, v)
+622	                elif isinstance(v, AoT):
+623	                    if (
+624	                        s.strip(" ")
+625	                        and not s.strip(" ").endswith("\n")
+626	                        and "\n" not in v.trivia.indent
+627	                    ):
+628	                        s += "\n"
+629	                    s += self._render_aot(k, v)
+630	                else:
+631	                    s += self._render_simple_item(k, v)
+632	            else:
+633	                s += self._render_simple_item(k, v)
+634	
+635	        return s
+636	
+637	    def _render_table(self, key: Key, table: Table, prefix: str | None = None) -> str:
+638	        cur = ""
+639	
+640	        if table.display_name is not None:
+641	            _key = table.display_name
+642	        else:
+643	            _key = key.as_string()
+644	
+645	            if prefix is not None:
+646	                _key = prefix + "." + _key
+647	
+648	        if (
+649	            not table.is_super_table()
+650	            or (
+651	                any(
+652	                    not isinstance(v, (Table, AoT, Whitespace, Null))
+653	                    for _, v in table.value.body
+654	                )
+655	                and not key.is_dotted()
+656	            )
+657	            or (
+658	                any(
+659	                    k is not None and k.is_dotted()
+660	                    for k, v in table.value.body
+661	                    if isinstance(v, Table)
+662	                )
+663	                and not key.is_dotted()
+664	            )
+665	        ):
+666	            open_, close = "[", "]"
+667	            if table.is_aot_element():
+668	                open_, close = "[[", "]]"
+669	
+670	            newline_in_table_trivia = (
+671	                "\n" if "\n" not in table.trivia.trail and len(table.value) > 0 else ""
+672	            )
+673	            cur += (
+674	                f"{table.trivia.indent}"
+675	                f"{open_}"
+676	                f"{decode(_key)}"
+677	                f"{close}"
+678	                f"{table.trivia.comment_ws}"
+679	                f"{decode(table.trivia.comment)}"
+680	                f"{table.trivia.trail}"
+681	                f"{newline_in_table_trivia}"
+682	            )
+683	        elif table.trivia.indent == "\n":
+684	            cur += table.trivia.indent
+685	
+686	        for k, v in table.value.body:
+687	            if isinstance(v, Table):
+688	                if (
+689	                    cur.strip(" ")
+690	                    and not cur.strip(" ").endswith("\n")
+691	                    and "\n" not in v.trivia.indent
+692	                ):
+693	                    cur += "\n"
+694	                assert k is not None
+695	                if v.is_super_table():
+696	                    if k.is_dotted() and not key.is_dotted():
+697	                        # Dotted key inside table
+698	                        cur += self._render_table(k, v)
+699	                    else:
+700	                        cur += self._render_table(k, v, prefix=_key)
+701	                else:
+702	                    cur += self._render_table(k, v, prefix=_key)
+703	            elif isinstance(v, AoT):
+704	                if (
+705	                    cur.strip(" ")
+706	                    and not cur.strip(" ").endswith("\n")
+707	                    and "\n" not in v.trivia.indent
+708	                ):
+709	                    cur += "\n"
+710	                assert k is not None
+711	                cur += self._render_aot(k, v, prefix=_key)
+712	            else:
+713	                cur += self._render_simple_item(
+714	                    k, v, prefix=_key if key.is_dotted() else None
+715	                )
+716	
+717	        return cur
+718	
+719	    def _render_aot(self, key: Key, aot: AoT, prefix: str | None = None) -> str:
+720	        _key = key.as_string()
+721	        if prefix is not None:
+722	            _key = prefix + "." + _key
+723	
+724	        cur = ""
+725	        _key = decode(_key)
+726	        for table in aot.body:
+727	            cur += self._render_aot_table(table, prefix=_key)
+728	
+729	        return cur
+730	
+731	    def _render_aot_table(self, table: Table, prefix: str | None = None) -> str:
+732	        cur = ""
+733	        _key = prefix or ""
+734	        open_, close = "[[", "]]"
+735	
+736	        cur += (
+737	            f"{table.trivia.indent}"
+738	            f"{open_}"
+739	            f"{decode(_key)}"
+740	            f"{close}"
+741	            f"{table.trivia.comment_ws}"
+742	            f"{decode(table.trivia.comment)}"
+743	            f"{table.trivia.trail}"
+744	        )
+745	
+746	        for k, v in table.value.body:
+747	            if isinstance(v, Table):
+748	                assert k is not None
+749	                if v.is_super_table():
+750	                    if k.is_dotted():
+751	                        # Dotted key inside table
+752	                        cur += self._render_table(k, v)
+753	                    else:
+754	                        cur += self._render_table(k, v, prefix=_key)
+755	                else:
+756	                    cur += self._render_table(k, v, prefix=_key)
+757	            elif isinstance(v, AoT):
+758	                assert k is not None
+759	                cur += self._render_aot(k, v, prefix=_key)
+760	            else:
+761	                cur += self._render_simple_item(k, v)
+762	
+763	        return cur
+764	
+765	    def _render_simple_item(
+766	        self, key: Key | None, item: Item, prefix: str | None = None
+767	    ) -> str:
+768	        if key is None:
+769	            return item.as_string()
+770	
+771	        _key = key.as_string()
+772	        if prefix is not None:
+773	            _key = prefix + "." + _key
+774	
+775	        return (
+776	            f"{item.trivia.indent}"
+777	            f"{decode(_key)}"
+778	            f"{key.sep}"
+779	            f"{decode(item.as_string())}"
+780	            f"{item.trivia.comment_ws}"
+781	            f"{decode(item.trivia.comment)}"
+782	            f"{item.trivia.trail}"
+783	        )
+784	
+785	    def __len__(self) -> int:
+786	        return dict.__len__(self)
+787	
+788	    def __iter__(self) -> Iterator[str]:
+789	        return iter(dict.keys(self))
+790	
+791	    # Dictionary methods
+792	    def __getitem__(self, key: Key | str) -> Any:
+793	        item = self.item(key)
+794	        if isinstance(item, Item) and item.is_boolean():
+795	            return item.value
+796	
+797	        return item
+798	
+799	    def __contains__(self, key: object) -> bool:
+800	        # Native membership test. The inherited ``MutableMapping.__contains__``
+801	        # resolves the value via ``__getitem__``/``item()`` (and builds a
+802	        # ``NonExistentKey`` on every absent key) only to discard it. Resolve the
+803	        # key the same way ``item()`` does -- ``str`` becomes a ``SingleKey``
+804	        # (a non-str/non-``Key`` argument still raises ``TypeError``) -- then
+805	        # probe ``_map`` directly. For an out-of-order table the proxy is still
+806	        # built so its validation runs exactly as before.
+807	        if not isinstance(key, Key):
+808	            key = SingleKey(key)  # type: ignore[arg-type]
+809	        idx = self._map.get(key)
+810	        if idx is None:
+811	            return False
+812	        if isinstance(idx, tuple):
+813	            # during parsing every fragment append re-probes membership;
+814	            # if the validation cache covers exactly these fragments they
+815	            # are already known to merge cleanly, so skip rebuilding the
+816	            # proxy (which is linear in the number of fragments)
+817	            validated, _ = self._validation_cache.get(key, (0, None))
+818	            if not (self._parsed and validated == len(idx)):
+819	                OutOfOrderTableProxy(self, idx)
+820	        return True
+821	
+822	    def __setitem__(self, key: Key | str, value: Any) -> None:
+823	        if key in self:
+824	            old_key = next(filter(lambda k: k == key, self._map))
+825	            self._replace(old_key, key, value)
+826	        else:
+827	            self.append(key, value)
+828	
+829	    def __delitem__(self, key: Key | str) -> None:
+830	        self.remove(key)
+831	
+832	    def setdefault(self, key: Key | str, default: Any = None) -> Any:
+833	        if key not in self:
+834	            self[key] = default
+835	        return self[key]
+836	
+837	    def _replace(self, key: Key | str, new_key: Key | str, value: Item) -> None:
+838	        if not isinstance(key, Key):
+839	            key = SingleKey(key)
+840	
+841	        idx = self._map.get(key)
+842	        if idx is None:
+843	            raise NonExistentKey(key)
+844	
+845	        self._replace_at(idx, new_key, value)
+846	
+847	    def _replace_at(
+848	        self, idx: int | tuple[int, ...], new_key: Key | str, value: Item
+849	    ) -> None:
+850	        value = _item(value)
+851	        self._validation_cache.clear()
+852	
+853	        if isinstance(idx, tuple):
+854	            for i in idx[1:]:
+855	                self._body[i] = (None, Null())
+856	
+857	            idx = idx[0]
+858	
+859	        k, v = self._body[idx]
+860	        assert k is not None
+861	        # A dotted key renders its value inline (e.g. ``a.b = 1``), which is only
+862	        # consistent with a super table. When the replacement value renders with
+863	        # its own ``[header]`` instead (a non-super table), keeping the dotted key
+864	        # duplicates the prefix onto the header (#524). Drop the dotted key so the
+865	        # replacement renders as a plain table.
+866	        dotted_to_header = (
+867	            k.is_dotted() and isinstance(value, Table) and not value.is_super_table()
+868	        )
+869	        # That new header also captures every sibling that renders inline -- plain
+870	        # values and dotted keys -- if any still follow it (#513), so it must be
+871	        # moved past them, exactly as a value-to-table change already is.
+872	        reposition_dotted = dotted_to_header and any(
+873	            not isinstance(cur_val, (Null, Whitespace))
+874	            and not (
+875	                isinstance(cur_val, (Table, AoT))
+876	                and (cur_key is None or not cur_key.is_dotted())
+877	            )
+878	            for cur_key, cur_val in self._body[idx + 1 :]
+879	        )
+880	        if not isinstance(new_key, Key):
+881	            if (
+882	                isinstance(value, (AoT, Table)) != isinstance(v, (AoT, Table))
+883	                or new_key != k.key
+884	                or dotted_to_header
+885	            ):
+886	                new_key = SingleKey(new_key)
+887	            else:  # Inherit the sep of the old key
+888	                new_key = k
+889	
+890	        del self._map[k]
+891	        self._map[new_key] = idx
+892	        if new_key != k:
+893	            dict.__delitem__(self, k.key)
+894	
+895	        if (
+896	            isinstance(value, (AoT, Table)) != isinstance(v, (AoT, Table))
+897	            or reposition_dotted
+898	        ):
+899	            self.remove(k)
+900	            if isinstance(value, (AoT, Table)):
+901	                # New tables must appear after all entries that render inline:
+902	                # plain values and dotted keys (which are super tables). Skip
+903	                # those and insert before the first real ``[header]`` so the new
+904	                # table cannot swallow a following sibling on round-trip.
+905	                for i in range(idx, len(self._body)):
+906	                    cur_key, cur_val = self._body[i]
+907	                    if isinstance(cur_val, (AoT, Table)) and not (
+908	                        cur_key is not None and cur_key.is_dotted()
+909	                    ):
+910	                        self._insert_at(i, new_key, value)
+911	                        idx = i
+912	                        break
+913	                else:
+914	                    idx = -1
+915	                    self.append(new_key, value)
+916	            else:
+917	                # the replaced table's slot lies in the table region, where a
+918	                # plain value would be captured by the preceding table on
+919	                # round-trip; append() puts it with the other root-level values
+920	                idx = -1
+921	                self.append(new_key, value)
+922	        else:
+923	            # Copying trivia
+924	            if not isinstance(value, (Whitespace, AoT)):
+925	                value.trivia.indent = v.trivia.indent
+926	                value.trivia.comment_ws = value.trivia.comment_ws or v.trivia.comment_ws
+927	                value.trivia.comment = value.trivia.comment or v.trivia.comment
+928	                value.trivia.trail = v.trivia.trail
+929	            self._body[idx] = (new_key, value)
+930	
+931	        if value is not v and hasattr(value, "invalidate_display_name"):
+932	            value.invalidate_display_name()
+933	
+934	        if isinstance(value, Table):
+935	            # Insert a cosmetic new line for tables if:
+936	            # - it does not have it yet OR is not followed by one
+937	            # - it is not the last item, or
+938	            # - The table being replaced has a newline
+939	            result = self._previous_item_with_index()
+940	            assert result is not None
+941	            last, _ = result
+942	            idx = last if idx < 0 else idx
+943	            has_ws = ends_with_whitespace(value)
+944	            replace_has_ws = (
+945	                isinstance(v, Table)
+946	                and v.value.body
+947	                and isinstance(v.value.body[-1][1], Whitespace)
+948	            )
+949	            next_ws = idx < last and isinstance(self._body[idx + 1][1], Whitespace)
+950	            if (idx < last or replace_has_ws) and not (next_ws or has_ws):
+951	                value.append(None, Whitespace("\n"))
+952	
+953	            assert isinstance(new_key, Key)
+954	            dict.__setitem__(self, new_key.key, value.value)
+955	
+956	    def __str__(self) -> str:
+957	        return str(self.value)
+958	
+959	    def __repr__(self) -> str:
+960	        return repr(self.value)
+961	
+962	    def __eq__(self, other: object) -> bool:
+963	        if not isinstance(other, dict):
+964	            return NotImplemented
+965	
+966	        return bool(_equal_with_nan(self.value, other))
+967	
+968	    def _getstate(self, protocol: int) -> tuple[bool]:
+969	        return (self._parsed,)
+970	
+971	    def __reduce__(self) -> tuple[type, tuple[bool], tuple[Any, ...]]:
+972	        return self.__reduce_ex__(2)
+973	
+974	    def __reduce_ex__(self, protocol: int) -> tuple[type, tuple[bool], tuple[Any, ...]]:  # type: ignore[override]
+975	        return (
+976	            self.__class__,
+977	            self._getstate(protocol),
+978	            (self._map, self._body, self._parsed, self._table_keys),
+979	        )
+980	
+981	    def __setstate__(self, state: tuple[Any, ...]) -> None:
+982	        self._map = state[0]
+983	        self._body = state[1]
+984	        self._parsed = state[2]
+985	        self._table_keys = state[3]
+986	        self._out_of_order_keys = {
+987	            k for k, v in self._map.items() if isinstance(v, tuple)
+988	        }
+989	
+990	        for key, item in self._body:
+991	            if key is not None:
+992	                dict.__setitem__(self, key.key, item.value)
+993	
+994	    def copy(self) -> Self:
+995	        return copy.copy(self)
+996	
+997	    def __copy__(self) -> Self:
+998	        c = self.__class__(self._parsed)
+999	        for k, v in dict.items(self):
+1000	            dict.__setitem__(c, k, v)
+1001	
+1002	        c._body += self.body
+1003	        c._map.update(self._map)
+1004	        c._out_of_order_keys |= self._out_of_order_keys
+1005	
+1006	        return c
+1007	
+1008	    def _previous_item_with_index(
+1009	        self, idx: int | None = None, ignore: tuple[type, ...] = (Null,)
+1010	    ) -> tuple[int, Item] | None:
+1011	        """Find the immediate previous item before index ``idx``"""
+1012	        if idx is None or idx > len(self._body):
+1013	            idx = len(self._body)
+1014	        for i in range(idx - 1, -1, -1):
+1015	            v = self._body[i][-1]
+1016	            if not isinstance(v, ignore):
+1017	                return i, v
+1018	        return None
+1019	
+1020	    def _previous_item(
+1021	        self, idx: int | None = None, ignore: tuple[type, ...] = (Null,)
+1022	    ) -> Item | None:
+1023	        """Find the immediate previous item before index ``idx``.
+1024	        If ``idx`` is not given, the last item is returned.
+1025	        """
+1026	        prev = self._previous_item_with_index(idx, ignore)
+1027	        return prev[-1] if prev else None
+1028	
+1029	
+1030	class OutOfOrderTableProxy(_CustomDict):  # type: ignore[type-arg]
+1031	    @staticmethod
+1032	    def validate(
+1033	        container: Container,
+1034	        indices: tuple[int, ...],
+1035	        temp_container: Container | None = None,
+1036	    ) -> Container:
+1037	        """Validate out of order tables in the given container"""
+1038	        # Append all items to a temp container to see if there is any error.
+1039	        # We deep-copy each value before appending: appending a super table
+1040	        # merges it in place into a matching one already in temp_container, and
+1041	        # those values are the live subtables of `container`. Without the copy
+1042	        # the merge would mutate the caller's tables (and corrupt a later
+1043	        # validation pass). The container merge itself is now copy-free for
+1044	        # speed, so this is where the isolation lives.
+1045	        # Passing a previous pass's temp container back in (with the already
+1046	        # validated indices stripped from `indices`) resumes the validation
+1047	        # incrementally.
+1048	        if temp_container is None:
+1049	            temp_container = Container(True)
+1050	        for i in indices:
+1051	            _, item = container._body[i]
+1052	
+1053	            if isinstance(item, Table):
+1054	                for k, v in item.value.body:
+1055	                    temp_container.append(k, copy.deepcopy(v), validate=True)
+1056	
+1057	        temp_container._validate_out_of_order_table()
+1058	        return temp_container
+1059	
+1060	    def __init__(self, container: Container, indices: tuple[int, ...]) -> None:
+1061	        self._container = container
+1062	        self._internal_container = Container(True)
+1063	        self._tables: list[Table] = []
+1064	        self._tables_map: dict[Key, list[int]] = {}
+1065	
+1066	        for i in indices:
+1067	            _, _item = self._container._body[i]
+1068	
+1069	            if isinstance(_item, Table):
+1070	                self._tables.append(_item)
+1071	                table_idx = len(self._tables) - 1
+1072	                for k, v in _item.value.body:
+1073	                    merged = self._merge_aot_fragment(k, v)
+1074	                    if merged is None:
+1075	                        self._internal_container._raw_append(k, v)
+1076	                    else:
+1077	                        v = merged
+1078	                    key_indices = self._tables_map.setdefault(k, [])  # type: ignore[arg-type]
+1079	                    if table_idx not in key_indices:
+1080	                        key_indices.append(table_idx)
+1081	                    if k is not None:
+1082	                        dict.__setitem__(self, k.key, v)
+1083	
+1084	        self._internal_container._validate_out_of_order_table()
+1085	
+1086	    def _merge_aot_fragment(self, key: Key | None, item: Item) -> AoT | None:
+1087	        """
+1088	        Merge an array-of-tables fragment from a later out-of-order table part.
+1089	
+1090	        An AoT whose elements are split across out-of-order parts of the same
+1091	        table arrives here once per part; ``_raw_append`` only knows how to
+1092	        chain duplicate ``Table`` parts and would raise ``KeyAlreadyPresent``.
+1093	        The fragments are presented as a new merged ``AoT`` referencing the
+1094	        live element tables, without mutating either fragment (the parts keep
+1095	        rendering their own elements).
+1096	
+1097	        Returns the merged ``AoT``, or ``None`` if this is not such a fragment.
+1098	        """
+1099	        internal = self._internal_container
+1100	        if key is None or not isinstance(item, AoT) or key not in internal._map:
+1101	            return None
+1102	        idx = internal._map[key]
+1103	        if isinstance(idx, tuple):
+1104	            # A tuple index means the key already resolved to several body
+1105	            # positions, which here only happens for a degenerate collision
+1106	            # (e.g. a non-AoT part sharing the key). Three or more genuine AoT
+1107	            # fragments do not reach this branch: each later fragment merges
+1108	            # into the single growing AoT below, so ``idx`` stays an int.
+1109	            return None
+1110	        existing = internal._body[idx][1]
+1111	        if not isinstance(existing, AoT):
+1112	            return None
+1113	
+1114	        merged = AoT([*existing.body, *item.body], parsed=True)
+1115	        internal._body[idx] = (internal._body[idx][0], merged)
+1116	        dict.__setitem__(internal, key.key, merged.value)
+1117	        return merged
+1118	
+1119	    def unwrap(self) -> dict[str, Any]:
+1120	        return self._internal_container.unwrap()
+1121	
+1122	    @property
+1123	    def value(self) -> dict[str, Any]:
+1124	        return self._internal_container.value
+1125	
+1126	    def __str__(self) -> str:
+1127	        return str(self.value)
+1128	
+1129	    def __repr__(self) -> str:
+1130	        return repr(self.value)
+1131	
+1132	    def __contains__(self, key: object) -> bool:
+1133	        # Native membership test. The inherited ``MutableMapping.__contains__``
+1134	        # resolves the value via ``__getitem__`` (and builds a ``NonExistentKey``
+1135	        # on every absent key) only to discard it. Probe the internal container
+1136	        # directly -- the same predicate ``__getitem__`` already uses -- which is
+1137	        # itself a native ``_map`` lookup that still rebuilds the proxy for an
+1138	        # out-of-order key so its validation runs exactly as before.
+1139	        return key in self._internal_container
+1140	
+1141	    def __getitem__(self, key: Key | str) -> Any:
+1142	        if key not in self._internal_container:
+1143	            raise NonExistentKey(key)
+1144	
+1145	        return self._internal_container[key]
+1146	
+1147	    def __setitem__(self, key: Key | str, value: Any) -> None:
+1148	        from .items import item as _item_fn
+1149	
+1150	        def _is_table_or_aot(it: Any) -> bool:
+1151	            return isinstance(_item_fn(it), (Table, AoT))
+1152	
+1153	        _key: Key = key if isinstance(key, Key) else SingleKey(key)
+1154	
+1155	        if _key in self._tables_map:
+1156	            # Overwrite the first table and remove others
+1157	            map_indices = self._tables_map[_key]
+1158	            while len(map_indices) > 1:
+1159	                table = self._tables[map_indices.pop()]
+1160	                self._remove_table(table)
+1161	            old_value = self._tables[map_indices[0]][key]
+1162	            if _is_table_or_aot(old_value) and not _is_table_or_aot(value):
+1163	                # Remove the entry from the map and set value again.
+1164	                del self._tables[map_indices[0]][key]
+1165	                del self._tables_map[_key]
+1166	                self[key] = value
+1167	                return
+1168	            self._tables[map_indices[0]][key] = value
+1169	        elif self._tables:
+1170	            if not _is_table_or_aot(value):  # if the value is a plain value
+1171	                for table in self._tables:
+1172	                    # find the first table that allows plain values
+1173	                    if any(not _is_table_or_aot(v) for _, v in table.items()):
+1174	                        table[key] = value
+1175	                        break
+1176	                else:
+1177	                    # No part holds a plain value yet, so the chosen part must
+1178	                    # start rendering its own ``[key]`` header. Prefer a part
+1179	                    # that is not a super table (it already renders that header):
+1180	                    # turning a header-less super part concrete here would emit a
+1181	                    # second, duplicate header next to an existing concrete part
+1182	                    # and produce TOML that no longer parses.
+1183	                    for table in self._tables:
+1184	                        if not table.is_super_table():
+1185	                            table[key] = value
+1186	                            break
+1187	                    else:
+1188	                        self._tables[0][key] = value
+1189	            else:
+1190	                self._tables[0][key] = value
+1191	        else:
+1192	            self._container[key] = value
+1193	
+1194	        self._internal_container[key] = value
+1195	        if key is not None:
+1196	            dict.__setitem__(self, key, value)
+1197	
+1198	    def _remove_table(self, table: Table) -> None:
+1199	        """Remove table from the parent container"""
+1200	        self._tables.remove(table)
+1201	        for idx, body_item in enumerate(self._container._body):
+1202	            if body_item[1] is table:
+1203	                self._container._remove_at(idx)
+1204	                break
+1205	
+1206	    def __delitem__(self, key: Key | str) -> None:
+1207	        _key: Key = key if isinstance(key, Key) else SingleKey(key)
+1208	        if _key not in self._tables_map:
+1209	            raise NonExistentKey(key)
+1210	
+1211	        for i in reversed(self._tables_map[_key]):
+1212	            table = self._tables[i]
+1213	            del table[key]
+1214	            if not table and len(self._tables) > 1:
+1215	                self._remove_table(table)
+1216	
+1217	        del self._tables_map[_key]
+1218	        del self._internal_container[key]
+1219	        if key is not None:
+1220	            dict.__delitem__(self, key)
+1221	
+1222	    def __iter__(self) -> Iterator[str]:
+1223	        return iter(dict.keys(self))
+1224	
+1225	    def __len__(self) -> int:
+1226	        return dict.__len__(self)
+1227	
+1228	    def setdefault(self, key: Key | str, default: Any = None) -> Any:
+1229	        if key not in self:
+1230	            self[key] = default
+1231	        return self[key]
+1232	
+1233	
+1234	def ends_with_whitespace(it: Any) -> bool:
+1235	    """Returns ``True`` if the given item ``it`` is a ``Table`` or ``AoT`` object
+1236	    ending with a ``Whitespace``.
+1237	    """
+1238	    if isinstance(it, Whitespace):
+1239	        return True
+1240	    if isinstance(it, Table):
+1241	        previous = it.value._previous_item()
+1242	        return previous is not None and ends_with_whitespace(previous)
+1243	    return isinstance(it, AoT) and len(it) > 0 and ends_with_whitespace(it[-1])
+1244	
+1245	
+1246	def _equal_with_nan(left: Any, right: Any) -> bool:
+1247	    if isinstance(left, dict) and isinstance(right, dict):
+1248	        if left.keys() != right.keys():
+1249	            return False
+1250	        return all(_equal_with_nan(left[k], right[k]) for k in left)
+1251	
+1252	    if isinstance(left, list) and isinstance(right, list):
+1253	        if len(left) != len(right):
+1254	            return False
+1255	        return all(_equal_with_nan(l, r) for l, r in zip(left, right))  # noqa: B905, E741
+1256	
+1257	    if isinstance(left, float) and isinstance(right, float):
+1258	        if math.isnan(left) and math.isnan(right):
+1259	            return True
+1260	
+1261	    return bool(left == right)
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-nqet3kxg.log]

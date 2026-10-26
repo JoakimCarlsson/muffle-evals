@@ -1,0 +1,552 @@
+$ git show HEAD
+e3dd6b2e 2026-10-22 evals: base
+=== .git-ignore-revs
+new file mode 100644
+@@ -0,0 +1,1 @@
++febb8dc168325ac471b54591c925c48b6a485962  # cargo fmt
+=== .github/codecov.yml
+new file mode 100644
+@@ -0,0 +1,5 @@
++coverage:
++  status:
++    project:
++      default:
++        threshold: 1%
+=== .github/dependabot.yml
+new file mode 100644
+@@ -0,0 +1,17 @@
++version: 2
++updates:
++  - package-ecosystem: "cargo"
++    directory: "/"
++    schedule:
++      interval: "weekly"
++    target-branch: "main"
++  - package-ecosystem: "cargo"
++    directory: "/fuzz/"
++    schedule:
++      interval: "weekly"
++    target-branch: "main"
++  - package-ecosystem: "github-actions"
++    directory: "/"
++    schedule:
++      interval: "weekly"
++    target-branch: "main"
+=== .github/pull_request_template.md
+new file mode 100644
+@@ -0,0 +1,6 @@
++### Thanks for contributing to chrono!
++
++If your feature is semver-compatible, please target the main branch;
++for semver-incompatible changes, please target the `0.5.x` branch.
++
++Please consider adding a test to ensure your bug fix/feature will not break in the future.
+=== .github/workflows/codecov.yml
+new file mode 100644
+@@ -0,0 +1,36 @@
++name: codecov
++
++env:
++  # It's really `--all-features`, but not adding the mutually exclusive features from rkyv
++  ALL_NON_EXCLUSIVE_FEATURES: --features "default unstable-locales rkyv-64 rkyv-validation serde arbitrary"
++
++on:
++  push:
++    branches: [main, 0.5.x]
++  pull_request:
++jobs:
++  # Run code coverage using cargo-llvm-cov then upload to codecov.io
++  job_code_coverage:
++    name: llvm-cov
++    runs-on: ubuntu-latest
++    environment: Coverage
++    env:
++      CARGO_TERM_COLOR: always
++    steps:
++      - uses: actions/checkout@v7
++      # nightly is required for --doctests, see cargo-llvm-cov#2
++      - uses: dtolnay/rust-toolchain@master
++        with:
++          toolchain: nightly
++          components: rustfmt
++      - name: Install cargo-llvm-cov
++        uses: taiki-e/install-action@cargo-llvm-cov
++      - name: Generate code coverage
++        run: cargo +nightly llvm-cov ${{ env.ALL_NON_EXCLUSIVE_FEATURES }} --workspace --lcov --doctests --output-path lcov.info
++      - name: Upload coverage to Codecov
++        uses: codecov/codecov-action@v6
++        env:
++          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
++        with:
++          files: lcov.info
++          fail_ci_if_error: true
+=== .github/workflows/lint.yml
+new file mode 100644
+@@ -0,0 +1,66 @@
++name: lint
++
++env:
++  # It's really `--all-features`, but not adding the mutually exclusive features from rkyv
++  ALL_NON_EXCLUSIVE_FEATURES: --features "default unstable-locales rkyv-64 rkyv-validation serde arbitrary"
++
++on:
++  push:
++    branches: [main, 0.5.x]
++  pull_request:
++
++jobs:
++  lint:
++    runs-on: ubuntu-latest
++
++    steps:
++      - uses: actions/checkout@v7
++      - uses: dtolnay/rust-toolchain@stable
++        with:
++          targets: x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc
++          components: clippy, rustfmt
++      - uses: Swatinem/rust-cache@v2
++      - run: cargo fmt --check -- --color=always
++      - run: cargo fmt --check --manifest-path fuzz/Cargo.toml
++      - run: cargo fmt --check --manifest-path bench/Cargo.toml
++      - run: |
++          cargo clippy ${{ env.ALL_NON_EXCLUSIVE_FEATURES }} --all-targets --color=always \
++            -- -D warnings
++      - run: |
++          cargo clippy --target=x86_64-pc-windows-msvc --all-targets --color=always \
++            -- -D warnings
++      - run: |
++          cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --color=always \
++            -- -D warnings
++      - run: |
++          cargo clippy --manifest-path bench/Cargo.toml --all-targets --color=always \
++            -- -D warnings
++        env:
++          RUSTFLAGS: "-Dwarnings"
++
++  cargo-deny:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v7
++      - uses: EmbarkStudios/cargo-deny-action@v2
++
++  check-doc:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v7
++      - uses: dtolnay/rust-toolchain@stable
++      - run: cargo install cargo-deadlinks
++      - run: cargo deadlinks -- ${{ env.ALL_NON_EXCLUSIVE_FEATURES }}
++      - run: cargo doc ${{ env.ALL_NON_EXCLUSIVE_FEATURES }} --no-deps
++        env:
++          RUSTDOCFLAGS: -Dwarnings
++
++  cffconvert:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v7
++        with:
++          persist-credentials: false
++      - uses: citation-file-format/cffconvert-github-action@2.0.0
++        with:
++          args: --validate
+=== .github/workflows/test.yml
+new file mode 100644
+@@ -0,0 +1,194 @@
++name: All Tests and Builds
++
++env:
++  # It's really `--all-features`, but not adding the mutually exclusive features from rkyv
++  ALL_NON_EXCLUSIVE_FEATURES: --features "default unstable-locales rkyv-32 rkyv-validation serde arbitrary"
++
++on:
++  push:
++    branches: [main, 0.5.x]
++  pull_request:
++
++jobs:
++  timezones:
++    strategy:
++      matrix:
++        os: [ubuntu-latest, macos-latest, windows-latest]
++        tz: ["ACST-9:30", "EST4", "UTC0", "Asia/Katmandu"]
++    runs-on: ${{ matrix.os }}
++    steps:
++      - uses: actions/checkout@v7
++      - uses: dtolnay/rust-toolchain@stable
++        with:
++          components: rustfmt
++      - uses: Swatinem/rust-cache@v2
++      - run: cargo test ${{ env.ALL_NON_EXCLUSIVE_FEATURES }} --color=always -- --color=always
++
++  # later this may be able to be included with the below
++  # kept separate for now as the following don't compile on 1.60
++  # * arbitrary (requires 1.63 as of v1.3.0)
++  rust_msrv:
++    strategy:
++      matrix:
++        os: [ubuntu-latest]
++    runs-on: ${{ matrix.os }}
++    steps:
++      - uses: actions/checkout@v7
++      - uses: dtolnay/rust-toolchain@master
++        with:
++          toolchain: "1.62.0"
++      - uses: Swatinem/rust-cache@v2
++      # run --lib and --doc to avoid the long running integration tests
++      # which are run elsewhere
++      - run: |
++          cargo check --lib --features unstable-locales,wasmbind,oldtime,clock,winapi,serde
++
++  rust_versions:
++    strategy:
++      matrix:
++        os: [ubuntu-latest]
++        rust_version: ["stable", "beta", "nightly"]
++    runs-on: ${{ matrix.os }}
++    steps:
++      - uses: actions/checkout@v7
++      - uses: dtolnay/rust-toolchain@master
++        with:
++          toolchain: ${{ matrix.rust_version }}
++          components: rustfmt
++      - uses: Swatinem/rust-cache@v2
++      - run: cargo check --manifest-path bench/Cargo.toml --benches
++      - run: cargo check --manifest-path fuzz/Cargo.toml --all-targets
++      # run --lib and --doc to avoid the long running integration tests
++      # which are run elsewhere
++      - run: cargo test --lib ${{ env.ALL_NON_EXCLUSIVE_FEATURES }} --color=always -- --color=always
++      - run: cargo test --doc ${{ env.ALL_NON_EXCLUSIVE_FEATURES }} --color=always -- --color=always
++
++  features_check:
++    strategy:
++      matrix:
++        os: [ubuntu-latest]
++    runs-on: ${{ matrix.os }}
++    steps:
++      - uses: actions/checkout@v7
++      - uses: dtolnay/rust-toolchain@stable
++        with:
++          components: rustfmt
++      - uses: taiki-e/install-action@cargo-hack
++      - uses: Swatinem/rust-cache@v2
++      - run: |
++          cargo hack check --feature-powerset --optional-deps arbitrary,serde \
++            --skip __internal_bench,iana-time-zone,oldtime,pure-rust-locales,libc,winapi,rkyv-validation,wasmbind \
++            --mutually-exclusive-features arbitrary,rkyv,rkyv-16,rkyv-32,rkyv-64,serde \
++            --all-targets
++        # run using `bash` on all platforms for consistent
++        # line-continuation marks
++        shell: bash
++        env:
++          RUSTFLAGS: "-D warnings"
++      - run: cargo test --no-default-features
++      - run: cargo test --no-default-features --features=alloc
++      - run: cargo test --no-default-features --features=unstable-locales
++      - run: cargo test --no-default-features --features=alloc,unstable-locales
++      - run: cargo test --no-default-features --features=now
++
++  no_std:
++    strategy:
++      matrix:
++        os: [ubuntu-latest]
++        target: [thumbv6m-none-eabi, x86_64-fortanix-unknown-sgx]
++    runs-on: ${{ matrix.os }}
++    steps:
++      - uses: actions/checkout@v7
++      - uses: dtolnay/rust-toolchain@stable
++        with:
++          targets: ${{ matrix.target }}
++      - uses: Swatinem/rust-cache@v2
++      - run: cargo build --target ${{ matrix.target }} --color=always
++        working-directory: ./ci/core-test
++
++  alternative_targets:
++    strategy:
++      matrix:
++        os: [ubuntu-latest]
++        target:
++          [
++            wasm32-unknown-emscripten,
++            aarch64-apple-ios,
++            aarch64-linux-android,
++          ]
++    runs-on: ${{ matrix.os }}
++    steps:
++      - uses: actions/checkout@v7
++      - uses: dtolnay/rust-toolchain@stable
++        with:
++          targets: ${{ matrix.target }}
++      - uses: Swatinem/rust-cache@v2
++      - run: cargo build --target ${{ matrix.target }}  --color=always
++
++  test_wasm:
++    strategy:
++      matrix:
++        os: [ubuntu-latest]
++    runs-on: ${{ matrix.os }}
++    steps:
++      - uses: actions/checkout@v7
++      - uses: dtolnay/rust-toolchain@stable
++        with:
++          targets: wasm32-unknown-unknown
++          components: rustfmt
++      - uses: Swatinem/rust-cache@v2
++      - uses: actions/setup-node@v7
++      - uses: jetli/wasm-pack-action@v0.4.0
++      # The `TZ` and `NOW` variables are used to compare the results inside the WASM environment
++      # with the host system.
++      - run: TZ="$(date +%z)" NOW="$(date +%s)" wasm-pack test --node -- --features wasmbind
++
++  test_wasip1:
++    strategy:
++      matrix:
++        os: [ubuntu-latest]
++        target: [wasm32-wasip1]
++    runs-on: ${{ matrix.os }}
++    steps:
++      - uses: actions/checkout@v7
++      - uses: dtolnay/rust-toolchain@stable
++        with:
++          targets: ${{ matrix.target }}
++      - uses: Swatinem/rust-cache@v2
++      # We can't use `--all-features` because rkyv uses the mutually-exclusive-feature pattern
++      - run: cargo check --target ${{ matrix.target }} --all-targets --features=serde,unstable-locales
++
++  cross-targets:
++    strategy:
++      matrix:
++        target:
++          - x86_64-unknown-illumos
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v7
++      - run: cargo install cross
++      - uses: Swatinem/rust-cache@v2
++      - run: cross check --target ${{ matrix.target }}
++
++  cross-tests:
++    strategy:
++      matrix:
++        os: [ubuntu-latest]
++    runs-on: ${{ matrix.os }}
++    steps:
++      - uses: actions/checkout@v7
++      - run: cargo install cross
++      - uses: Swatinem/rust-cache@v2
++      - run: cross test --lib ${{ env.ALL_NON_EXCLUSIVE_FEATURES }} --target i686-unknown-linux-gnu --color=always
++      - run: cross test --doc ${{ env.ALL_NON_EXCLUSIVE_FEATURES }} --target i686-unknown-linux-gnu --color=always
++      - run: cross test --lib ${{ env.ALL_NON_EXCLUSIVE_FEATURES }} --target i686-unknown-linux-musl --color=always
++      - run: cross test --doc ${{ env.ALL_NON_EXCLUSIVE_FEATURES }} --target i686-unknown-linux-musl --color=always
++
++  check-docs:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v7
++      - uses: dtolnay/rust-toolchain@nightly
++      - run: cargo +nightly doc ${{ env.ALL_NON_EXCLUSIVE_FEATURES }} --no-deps
++        env:
++          RUSTDOCFLAGS: "-D warnings --cfg docsrs"
+=== .gitignore
+new file mode 100644
+@@ -0,0 +1,6 @@
++target
++Cargo.lock
++.tool-versions
++
++# for jetbrains users
++.idea/
+=== CHANGELOG.md
+new file mode 100644
+@@ -0,0 +1,731 @@
++ChangeLog for Chrono
++====================
++
++This documents notable changes to [Chrono](https://github.com/chronotope/chrono)
++up to and including version 0.4.19. For later releases, please review the
++release notes on [GitHub](https://github.com/chronotope/chrono/releases).
++
++## 0.4.19
++
++* Correct build on solaris/illumos
++
++## 0.4.18
++
++* Restore support for x86_64-fortanix-unknown-sgx
++
++## 0.4.17
++
++* Fix a name resolution error in wasm-bindgen code introduced by removing the dependency on time
++  v0.1
++
++## 0.4.16
++
++### Features
++
++* Add %Z specifier to the `FromStr`, similar to the glibc strptime
++  (does not set the offset from the timezone name)
++
++* Drop the dependency on time v0.1, which is deprecated, unless the `oldtime`
++  feature is active. This feature is active by default in v0.4.16 for backwards
++  compatibility, but will likely be removed in v0.5. Code that imports
++  `time::Duration` should be switched to import `chrono::Duration` instead to
++  avoid breakage.
++
++## 0.4.15
++
++### Fixes
++
++* Correct usage of vec in specific feature combinations (@quodlibetor)
++
++## 0.4.14 **YANKED**
++
++### Features
++
++* Add day and week iterators for `NaiveDate` (@gnzlbg & @robyoung)
++* Add a `Month` enum (@hhamana)
++* Add `locales`. All format functions can now use locales, see the documentation for the
++  `unstable-locales` feature.
++* Fix `Local.from_local_datetime` method for wasm
++
++### Improvements
++
++* Added MIN and MAX values for `NaiveTime`, `NaiveDateTime` and `DateTime<Utc>`.
++
++## 0.4.13
++
++### Features
++
++* Add `DurationRound` trait that allows rounding and truncating by `Duration` (@robyoung)
++
++### Internal Improvements
+[+671 more diff lines]
+=== CITATION.cff +33 -0
+new file mode 100644
+=== Cargo.toml +75 -0
+new file mode 100644
+=== LICENSE.txt +240 -0
+new file mode 100644
+=== README.md +92 -0
+new file mode 100644
+=== bench/Cargo.toml +27 -0
+new file mode 100644
+=== bench/benches/chrono.rs +270 -0
+new file mode 100644
+=== bench/benches/serde.rs +27 -0
+new file mode 100644
+=== bench/src/lib.rs +1 -0
+new file mode 100644
+=== ci/core-test/Cargo.toml +14 -0
+new file mode 100644
+=== ci/core-test/src/lib.rs +7 -0
+new file mode 100644
+=== deny.toml +12 -0
+new file mode 100644
+=== fuzz/.gitignore +4 -0
+new file mode 100644
+=== fuzz/Cargo.toml +28 -0
+new file mode 100644
+=== fuzz/README.md +12 -0
+new file mode 100644
+=== fuzz/fuzz_targets/fuzz_format.rs +7 -0
+new file mode 100644
+=== fuzz/fuzz_targets/fuzz_reader.rs +10 -0
+new file mode 100644
+=== rustfmt.toml +2 -0
+new file mode 100644
+=== src/date.rs +677 -0
+new file mode 100644
+=== src/datetime/mod.rs +2016 -0
+new file mode 100644
+=== src/datetime/serde.rs +1351 -0
+new file mode 100644
+=== src/datetime/tests.rs +1912 -0
+new file mode 100644
+=== src/format/formatting.rs +990 -0
+new file mode 100644
+=== src/format/locales.rs +103 -0
+new file mode 100644
+=== src/format/mod.rs +593 -0
+new file mode 100644
+=== src/format/parse.rs +1941 -0
+new file mode 100644
+=== src/format/parsed.rs +1913 -0
+new file mode 100644
+=== src/format/scan.rs +432 -0
+new file mode 100644
+=== src/format/strftime.rs +1217 -0
+new file mode 100644
+=== src/lib.rs +743 -0
+new file mode 100644
+=== src/month.rs +484 -0
+new file mode 100644
+=== src/naive/date/mod.rs +2634 -0
+new file mode 100644
+=== src/naive/date/tests.rs +920 -0
+new file mode 100644
+=== src/naive/datetime/mod.rs +2171 -0
+new file mode 100644
+=== src/naive/datetime/serde.rs +1304 -0
+new file mode 100644
+=== src/naive/datetime/tests.rs +405 -0
+new file mode 100644
+=== src/naive/internals.rs +591 -0
+new file mode 100644
+=== src/naive/isoweek.rs +248 -0
+new file mode 100644
+=== src/naive/mod.rs +340 -0
+new file mode 100644
+=== src/naive/time/mod.rs +1668 -0
+new file mode 100644
+=== src/naive/time/serde.rs +143 -0
+new file mode 100644
+=== src/naive/time/tests.rs +390 -0
+new file mode 100644
+=== src/offset/fixed.rs +253 -0
+new file mode 100644
+=== src/offset/local/mod.rs +543 -0
+new file mode 100644
+=== src/offset/local/tz_data.rs +291 -0
+new file mode 100644
+=== src/offset/local/tz_info/mod.rs +116 -0
+new file mode 100644
+=== src/offset/local/tz_info/parser.rs +348 -0
+new file mode 100644
+=== src/offset/local/tz_info/rule.rs +1048 -0
+new file mode 100644
+=== src/offset/local/tz_info/timezone.rs +989 -0
+new file mode 100644
+=== src/offset/local/unix.rs +171 -0
+new file mode 100644
+=== src/offset/local/win_bindings.rs +59 -0
+new file mode 100644
+=== src/offset/local/windows.rs +293 -0
+new file mode 100644
+=== src/offset/mod.rs +715 -0
+new file mode 100644
+=== src/offset/utc.rs +159 -0
+new file mode 100644
+=== src/round.rs +1095 -0
+new file mode 100644
+=== src/time_delta.rs +1456 -0
+new file mode 100644
+=== src/traits.rs +409 -0
+new file mode 100644
+=== src/weekday.rs +419 -0
+new file mode 100644
+=== src/weekday_set.rs +500 -0
+new file mode 100644
+=== taplo.toml +4 -0
+new file mode 100644
+=== tests/android/tzdata
+new file mode 100644
+Binary files /dev/null and b/tests/android/tzdata differ
+=== tests/dateutils.rs +162 -0
+new file mode 100644
+=== tests/ohos/tzdata
+new file mode 100644
+Binary files /dev/null and b/tests/ohos/tzdata differ
+=== tests/wasm.rs +89 -0
+new file mode 100644
+=== tests/win_bindings.rs +39 -0
+new file mode 100644
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-nwu5dqiy.log]

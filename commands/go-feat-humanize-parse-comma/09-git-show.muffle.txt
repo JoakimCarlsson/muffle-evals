@@ -1,0 +1,478 @@
+$ git show HEAD
+22801cf8 2026-10-22 evals: base
+=== .envrc
+new file mode 100644
+@@ -0,0 +1,4 @@
++# shellcheck shell=bash
++set -eu
++
++use flake
+=== .github/dependabot.yml
+new file mode 100644
+@@ -0,0 +1,8 @@
++version: 2
++updates:
++
++  - package-ecosystem: "github-actions"
++    directory: "/"
++    schedule:
++      # Check for updates to GitHub Actions every week
++      interval: "weekly"
+=== .github/workflows/coverage.yml
+new file mode 100644
+@@ -0,0 +1,49 @@
++# Generates an HTML test coverage report and publishes it to GitHub
++# Pages, served at https://dustin.github.io/go-humanize/
++
++name: Coverage
++
++on:
++  push:
++    branches: [ "master" ]
++
++permissions:
++  contents: read
++  pages: write
++  id-token: write
++
++concurrency:
++  group: "pages"
++  cancel-in-progress: false
++
++jobs:
++  coverage:
++    runs-on: ubuntu-latest
++    environment:
++      name: github-pages
++      url: ${{ steps.deployment.outputs.page_url }}
++    steps:
++    - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
++
++    - name: Set up Go
++      uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
++      with:
++        go-version: "1.27"
++
++    - name: Generate coverage report
++      run: |
++        go test -coverprofile=coverage.out ./...
++        mkdir -p public
++        go tool cover -html=coverage.out -o public/index.html
++
++    - name: Configure Pages
++      uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
++
++    - name: Upload coverage report
++      uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
++      with:
++        path: public
++
++    - name: Deploy to GitHub Pages
++      id: deployment
++      uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+=== .github/workflows/go.yml
+new file mode 100644
+@@ -0,0 +1,34 @@
++# This workflow will build a golang project
++# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
++
++name: Go
++
++on:
++  push:
++    branches: [ "master" ]
++  pull_request:
++    branches: [ "master" ]
++
++permissions:
++  contents: read
++
++jobs:
++
++  build:
++    runs-on: ubuntu-latest
++    strategy:
++      matrix:
++        go-version: ["1.21", "1.27"]
++    steps:
++    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
++
++    - name: Set up Go
++      uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
++      with:
++        go-version: ${{ matrix.go-version }}
++
++    - name: Build
++      run: go build -v ./...
++
++    - name: Test
++      run: go test -v ./...
+=== .gitignore
+new file mode 100644
+@@ -0,0 +1,1 @@
++.direnv
+=== LICENSE
+new file mode 100644
+@@ -0,0 +1,21 @@
++Copyright (c) 2005-2008  Dustin Sallings <dustin@spy.net>
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in
++all copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
++
++<http://www.opensource.org/licenses/mit-license.php>
+=== README.markdown
+new file mode 100644
+@@ -0,0 +1,127 @@
++# Humane Units [![Build Status](https://travis-ci.org/dustin/go-humanize.svg?branch=master)](https://travis-ci.org/dustin/go-humanize) [![GoDoc](https://godoc.org/github.com/dustin/go-humanize?status.svg)](https://godoc.org/github.com/dustin/go-humanize) [![Coverage](https://img.shields.io/badge/coverage-report-brightgreen)](https://dustin.github.io/go-humanize/)
++
++Just a few functions for helping humanize times and sizes.
++
++`go get` it as `github.com/dustin/go-humanize`, import it as
++`"github.com/dustin/go-humanize"`, use it as `humanize`.
++
++See [godoc](https://pkg.go.dev/github.com/dustin/go-humanize) for
++complete documentation.
++
++See the [test coverage report](https://dustin.github.io/go-humanize/) for
++coverage details.
++
++## Sizes
++
++This lets you take numbers like `82854982` and convert them to useful
++strings like, `83 MB` or `79 MiB` (whichever you prefer).
++
++Example:
++
++```go
++fmt.Printf("That file is %s.", humanize.Bytes(82854982)) // That file is 83 MB.
++```
++
++## Times
++
++This lets you take a `time.Time` and spit it out in relative terms.
++For example, `12 seconds ago` or `3 days from now`.
++
++Example:
++
++```go
++fmt.Printf("This was touched %s.", humanize.Time(someTimeInstance)) // This was touched 7 hours ago.
++```
++
++Thanks to Kyle Lemons for the time implementation from an IRC
++conversation one day. It's pretty neat.
++
++## Ordinals
++
++From a [mailing list discussion][odisc] where a user wanted to be able
++to label ordinals.
++
++    0 -> 0th
++    1 -> 1st
++    2 -> 2nd
++    3 -> 3rd
++    4 -> 4th
++    [...]
++
++Example:
++
++```go
++fmt.Printf("You're my %s best friend.", humanize.Ordinal(193)) // You are my 193rd best friend.
++```
++
++## Commas
++
++Want to shove commas into numbers? Be my guest.
++
++    0 -> 0
++    100 -> 100
++    1000 -> 1,000
++    1000000000 -> 1,000,000,000
++    -100000 -> -100,000
++
++Example:
++
++```go
++fmt.Printf("You owe $%s.\n", humanize.Comma(6582491)) // You owe $6,582,491.
++```
++
++## Ftoa
++
++Nicer float64 formatter that removes trailing zeros.
++
++```go
++fmt.Printf("%f", 2.24)                // 2.240000
++fmt.Printf("%s", humanize.Ftoa(2.24)) // 2.24
++fmt.Printf("%f", 2.0)                 // 2.000000
++fmt.Printf("%s", humanize.Ftoa(2.0))  // 2
++```
++
++## SI notation
++
++Format numbers with [SI notation][sinotation].
++
++Example:
++
++```go
++humanize.SI(0.00000000223, "M") // 2.23 nM
++```
++
++## English-specific functions
++
++The following functions are in the `humanize/english` subpackage.
++
++### Plurals
++
++Simple English pluralization
++
++```go
++english.PluralWord(1, "object", "") // object
++english.PluralWord(42, "object", "") // objects
++english.PluralWord(2, "bus", "") // buses
++english.PluralWord(99, "locus", "loci") // loci
++
++english.Plural(1, "object", "") // 1 object
++english.Plural(42, "object", "") // 42 objects
++english.Plural(2, "bus", "") // 2 buses
++english.Plural(99, "locus", "loci") // 99 loci
++```
++
++### Word series
++
++Format comma-separated words lists with conjuctions:
++
++```go
++english.WordSeries([]string{"foo"}, "and") // foo
++english.WordSeries([]string{"foo", "bar"}, "and") // foo and bar
++english.WordSeries([]string{"foo", "bar", "baz"}, "and") // foo, bar and baz
++
++english.OxfordWordSeries([]string{"foo", "bar", "baz"}, "and") // foo, bar, and baz
++```
++
++[odisc]: https://groups.google.com/d/topic/golang-nuts/l8NhI74jl-4/discussion
++[sinotation]: http://en.wikipedia.org/wiki/Metric_prefix
+=== SECURITY.md
+new file mode 100644
+@@ -0,0 +1,5 @@
++# Security Policy
++
++To report a security issue, please disclose it at [security advisory](https://github.com/dustin/go-humanize/security/advisories/new).
++
++We will respond within 7 working days of your submission. If the issue is confirmed as a vulnerability, we will open a Security Advisory and acknowledge your contributions as part of it. This project follows a 90 day disclosure timeline.
+=== big.go
+new file mode 100644
+@@ -0,0 +1,31 @@
++package humanize
++
++import (
++	"math/big"
++)
++
++// order of magnitude (to a max order)
++func oomm(n, b *big.Int, maxmag int) (float64, int) {
++	mag := 0
++	m := &big.Int{}
++	for n.Cmp(b) >= 0 {
++		n.DivMod(n, b, m)
++		mag++
++		if mag == maxmag && maxmag >= 0 {
++			break
++		}
++	}
++	return float64(n.Int64()) + (float64(m.Int64()) / float64(b.Int64())), mag
++}
++
++// total order of magnitude
++// (same as above, but with no upper limit)
++func oom(n, b *big.Int) (float64, int) {
++	mag := 0
++	m := &big.Int{}
++	for n.Cmp(b) >= 0 {
++		n.DivMod(n, b, m)
++		mag++
++	}
++	return float64(n.Int64()) + (float64(m.Int64()) / float64(b.Int64())), mag
++}
+=== bigbytes.go
+new file mode 100644
+@@ -0,0 +1,189 @@
++package humanize
++
++import (
++	"fmt"
++	"math/big"
++	"strings"
++	"unicode"
++)
++
++var (
++	bigIECExp = big.NewInt(1024)
++
++	// BigByte is one byte in bit.Ints
++	BigByte = big.NewInt(1)
++	// BigKiByte is 1,024 bytes in bit.Ints
++	BigKiByte = (&big.Int{}).Mul(BigByte, bigIECExp)
++	// BigMiByte is 1,024 k bytes in bit.Ints
++	BigMiByte = (&big.Int{}).Mul(BigKiByte, bigIECExp)
++	// BigGiByte is 1,024 m bytes in bit.Ints
++	BigGiByte = (&big.Int{}).Mul(BigMiByte, bigIECExp)
++	// BigTiByte is 1,024 g bytes in bit.Ints
++	BigTiByte = (&big.Int{}).Mul(BigGiByte, bigIECExp)
++	// BigPiByte is 1,024 t bytes in bit.Ints
++	BigPiByte = (&big.Int{}).Mul(BigTiByte, bigIECExp)
++	// BigEiByte is 1,024 p bytes in bit.Ints
++	BigEiByte = (&big.Int{}).Mul(BigPiByte, bigIECExp)
++	// BigZiByte is 1,024 e bytes in bit.Ints
++	BigZiByte = (&big.Int{}).Mul(BigEiByte, bigIECExp)
++	// BigYiByte is 1,024 z bytes in bit.Ints
++	BigYiByte = (&big.Int{}).Mul(BigZiByte, bigIECExp)
++	// BigRiByte is 1,024 y bytes in bit.Ints
++	BigRiByte = (&big.Int{}).Mul(BigYiByte, bigIECExp)
++	// BigQiByte is 1,024 r bytes in bit.Ints
++	BigQiByte = (&big.Int{}).Mul(BigRiByte, bigIECExp)
++)
++
++var (
++	bigSIExp = big.NewInt(1000)
++
++	// BigSIByte is one SI byte in big.Ints
++	BigSIByte = big.NewInt(1)
++	// BigKByte is 1,000 SI bytes in big.Ints
++	BigKByte = (&big.Int{}).Mul(BigSIByte, bigSIExp)
++	// BigMByte is 1,000 SI k bytes in big.Ints
++	BigMByte = (&big.Int{}).Mul(BigKByte, bigSIExp)
++	// BigGByte is 1,000 SI m bytes in big.Ints
++	BigGByte = (&big.Int{}).Mul(BigMByte, bigSIExp)
++	// BigTByte is 1,000 SI g bytes in big.Ints
++	BigTByte = (&big.Int{}).Mul(BigGByte, bigSIExp)
++	// BigPByte is 1,000 SI t bytes in big.Ints
++	BigPByte = (&big.Int{}).Mul(BigTByte, bigSIExp)
++	// BigEByte is 1,000 SI p bytes in big.Ints
++	BigEByte = (&big.Int{}).Mul(BigPByte, bigSIExp)
++	// BigZByte is 1,000 SI e bytes in big.Ints
++	BigZByte = (&big.Int{}).Mul(BigEByte, bigSIExp)
++	// BigYByte is 1,000 SI z bytes in big.Ints
++	BigYByte = (&big.Int{}).Mul(BigZByte, bigSIExp)
++	// BigRByte is 1,000 SI y bytes in big.Ints
++	BigRByte = (&big.Int{}).Mul(BigYByte, bigSIExp)
++	// BigQByte is 1,000 SI r bytes in big.Ints
++	BigQByte = (&big.Int{}).Mul(BigRByte, bigSIExp)
++)
++
++var bigBytesSizeTable = map[string]*big.Int{
++	"b":   BigByte,
++	"kib": BigKiByte,
++	"kb":  BigKByte,
++	"mib": BigMiByte,
++	"mb":  BigMByte,
++	"gib": BigGiByte,
++	"gb":  BigGByte,
++	"tib": BigTiByte,
++	"tb":  BigTByte,
++	"pib": BigPiByte,
++	"pb":  BigPByte,
++	"eib": BigEiByte,
++	"eb":  BigEByte,
++	"zib": BigZiByte,
++	"zb":  BigZByte,
++	"yib": BigYiByte,
++	"yb":  BigYByte,
++	"rib": BigRiByte,
++	"rb":  BigRByte,
++	"qib": BigQiByte,
++	"qb":  BigQByte,
++	// Without suffix
++	"":   BigByte,
++	"ki": BigKiByte,
++	"k":  BigKByte,
++	"mi": BigMiByte,
++	"m":  BigMByte,
++	"gi": BigGiByte,
++	"g":  BigGByte,
++	"ti": BigTiByte,
++	"t":  BigTByte,
++	"pi": BigPiByte,
++	"p":  BigPByte,
++	"ei": BigEiByte,
++	"e":  BigEByte,
++	"z":  BigZByte,
++	"zi": BigZiByte,
++	"y":  BigYByte,
++	"yi": BigYiByte,
++	"r":  BigRByte,
++	"ri": BigRiByte,
++	"q":  BigQByte,
++	"qi": BigQiByte,
++}
++
++var ten = big.NewInt(10)
+[+79 more diff lines]
+=== bigbytes_test.go +240 -0
+new file mode 100644
+=== bytes.go +194 -0
+new file mode 100644
+=== bytes_test.go +183 -0
+new file mode 100644
+=== comma.go +141 -0
+new file mode 100644
+=== comma_fuzz_test.go +58 -0
+new file mode 100644
+=== comma_test.go +159 -0
+new file mode 100644
+=== commaf.go +48 -0
+new file mode 100644
+=== commaf_test.go +47 -0
+new file mode 100644
+=== common_test.go +18 -0
+new file mode 100644
+=== english/words.go +98 -0
+new file mode 100644
+=== english/words_test.go +95 -0
+new file mode 100644
+=== flake.lock +58 -0
+new file mode 100644
+=== flake.nix +15 -0
+new file mode 100644
+=== ftoa.go +49 -0
+new file mode 100644
+=== ftoa_precision_test.go +14 -0
+new file mode 100644
+=== ftoa_test.go +125 -0
+new file mode 100644
+=== go.mod +3 -0
+new file mode 100644
+=== humanize.go +8 -0
+new file mode 100644
+=== number.go +193 -0
+new file mode 100644
+=== number_test.go +83 -0
+new file mode 100644
+=== ordinals.go +25 -0
+new file mode 100644
+=== ordinals_test.go +28 -0
+new file mode 100644
+=== shell.nix +11 -0
+new file mode 100644
+=== si.go +169 -0
+new file mode 100644
+=== si_test.go +217 -0
+new file mode 100644
+=== times.go +117 -0
+new file mode 100644
+=== times_test.go +124 -0
+new file mode 100644
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-n3taz9l1.log]

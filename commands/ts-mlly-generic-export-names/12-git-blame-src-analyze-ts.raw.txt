@@ -1,0 +1,767 @@
+$ git blame src/analyze.ts
+^e955e30 (evals 2026-10-22 10:55:25 +0200   1) import { tokenizer } from "acorn";
+^e955e30 (evals 2026-10-22 10:55:25 +0200   2) import { matchAll, clearImports, getImportNames } from "./_utils";
+^e955e30 (evals 2026-10-22 10:55:25 +0200   3) import { resolvePath, type ResolveOptions } from "./resolve";
+^e955e30 (evals 2026-10-22 10:55:25 +0200   4) import { loadURL } from "./utils";
+^e955e30 (evals 2026-10-22 10:55:25 +0200   5) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200   6) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200   7)  * Represents a general structure for ECMAScript module imports.
+^e955e30 (evals 2026-10-22 10:55:25 +0200   8)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200   9) export interface ESMImport {
+^e955e30 (evals 2026-10-22 10:55:25 +0200  10)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  11)    * Specifies the type of import: "static" for static imports and "dynamic" for dynamic imports.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  12)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  13)   type: "static" | "dynamic";
+^e955e30 (evals 2026-10-22 10:55:25 +0200  14) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200  15)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  16)    * The full import declaration code snippet as a string.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  17)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  18)   code: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200  19) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200  20)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  21)    * The starting position (index) of the import declaration in the source code.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  22)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  23)   start: number;
+^e955e30 (evals 2026-10-22 10:55:25 +0200  24) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200  25)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  26)    * The end position (index) of the import declaration in the source code.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  27)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  28)   end: number;
+^e955e30 (evals 2026-10-22 10:55:25 +0200  29) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200  30) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200  31) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  32)  * Represents a static import declaration in an ECMAScript module.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  33)  * Extends {@link ESMImport}.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  34)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  35) export interface StaticImport extends ESMImport {
+^e955e30 (evals 2026-10-22 10:55:25 +0200  36)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  37)    * Indicates the type of import, specifically a static import.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  38)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  39)   type: "static";
+^e955e30 (evals 2026-10-22 10:55:25 +0200  40) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200  41)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  42)    * Contains the entire import statement as a string, excluding the module specifier.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  43)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  44)   imports: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200  45) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200  46)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  47)    * The module specifier from which imports are being brought in.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  48)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  49)   specifier: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200  50) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200  51) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200  52) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  53)  * Represents a parsed static import declaration with detailed components of the import.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  54)  * Extends {@link StaticImport}.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  55)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  56) export interface ParsedStaticImport extends StaticImport {
+^e955e30 (evals 2026-10-22 10:55:25 +0200  57)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  58)    * The default import name, if any.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  59)    * @optional
+^e955e30 (evals 2026-10-22 10:55:25 +0200  60)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  61)   defaultImport?: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200  62) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200  63)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  64)    * The namespace import name, if any, using the `* as` syntax.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  65)    * @optional
+^e955e30 (evals 2026-10-22 10:55:25 +0200  66)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  67)   namespacedImport?: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200  68) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200  69)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  70)    * An object representing named imports, with their local aliases if specified.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  71)    * Each property key is the original name and its value is the alias.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  72)    * @optional
+^e955e30 (evals 2026-10-22 10:55:25 +0200  73)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  74)   namedImports?: { [name: string]: string };
+^e955e30 (evals 2026-10-22 10:55:25 +0200  75) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200  76) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200  77) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  78)  * Represents a dynamic import declaration that is loaded at runtime.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  79)  * Extends {@link ESMImport}.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  80)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  81) export interface DynamicImport extends ESMImport {
+^e955e30 (evals 2026-10-22 10:55:25 +0200  82)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  83)    * Indicates that this is a dynamic import.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  84)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  85)   type: "dynamic";
+^e955e30 (evals 2026-10-22 10:55:25 +0200  86) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200  87)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  88)    * The expression or path to be dynamically imported, typically a module path or URL.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  89)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  90)   expression: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200  91) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200  92) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200  93) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  94)  * Represents a type-specific import, primarily used for importing types in TypeScript.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  95)  * Extends {@link ESMImport} but omits the 'type' to redefine it specifically for type imports.
+^e955e30 (evals 2026-10-22 10:55:25 +0200  96)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200  97) export interface TypeImport extends Omit<ESMImport, "type"> {
+^e955e30 (evals 2026-10-22 10:55:25 +0200  98)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200  99)    * Specifies that this is a type import.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 100)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 101)   type: "type";
+^e955e30 (evals 2026-10-22 10:55:25 +0200 102) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 103)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 104)    * Contains the entire type import statement as a string, excluding the module specifier.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 105)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 106)   imports: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 107) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 108)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 109)    * The module specifier from which to import types.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 110)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 111)   specifier: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 112) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 113) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 114) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 115)  * Represents a general structure for ECMAScript module exports.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 116)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 117) export interface ESMExport {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 118)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 119)    * Optional explicit type for complex scenarios, often used internally.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 120)    * @optional
+^e955e30 (evals 2026-10-22 10:55:25 +0200 121)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 122)   _type?: "declaration" | "named" | "default" | "star";
+^e955e30 (evals 2026-10-22 10:55:25 +0200 123) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 124)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 125)    * The type of export (declaration, named, default or star).
+^e955e30 (evals 2026-10-22 10:55:25 +0200 126)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 127)   type: "declaration" | "named" | "default" | "star";
+^e955e30 (evals 2026-10-22 10:55:25 +0200 128) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 129)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 130)    * The specific type of declaration being exported, if applicable.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 131)    * @optional
+^e955e30 (evals 2026-10-22 10:55:25 +0200 132)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 133)   declarationType?:
+^e955e30 (evals 2026-10-22 10:55:25 +0200 134)     | "let"
+^e955e30 (evals 2026-10-22 10:55:25 +0200 135)     | "var"
+^e955e30 (evals 2026-10-22 10:55:25 +0200 136)     | "const"
+^e955e30 (evals 2026-10-22 10:55:25 +0200 137)     | "enum"
+^e955e30 (evals 2026-10-22 10:55:25 +0200 138)     | "const enum"
+^e955e30 (evals 2026-10-22 10:55:25 +0200 139)     | "class"
+^e955e30 (evals 2026-10-22 10:55:25 +0200 140)     | "function"
+^e955e30 (evals 2026-10-22 10:55:25 +0200 141)     | "async function";
+^e955e30 (evals 2026-10-22 10:55:25 +0200 142) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 143)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 144)    * The full code snippet of the export statement.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 145)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 146)   code: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 147) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 148)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 149)    * The starting position (index) of the export declaration in the source code.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 150)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 151)   start: number;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 152) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 153)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 154)    * The end position (index) of the export declaration in the source code.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 155)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 156)   end: number;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 157) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 158)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 159)    * The name of the variable, function or class being exported, if given explicitly.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 160)    * @optional
+^e955e30 (evals 2026-10-22 10:55:25 +0200 161)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 162)   name?: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 163) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 164)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 165)    * The name used for default exports when a specific identifier isn't given.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 166)    * @optional
+^e955e30 (evals 2026-10-22 10:55:25 +0200 167)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 168)   defaultName?: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 169) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 170)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 171)    * An array of names to export, applicable to named and destructured exports.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 172)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 173)   names: string[];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 174) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 175)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 176)    * The module specifier, if any, from which exports are being re-exported.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 177)    * @optional
+^e955e30 (evals 2026-10-22 10:55:25 +0200 178)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 179)   specifier?: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 180) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 181) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 182) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 183)  * Represents a declaration export within an ECMAScript module.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 184)  * Extends {@link ESMExport}.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 185)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 186) export interface DeclarationExport extends ESMExport {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 187)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 188)    * Indicates that this export is a declaration export.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 189)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 190)   type: "declaration";
+^e955e30 (evals 2026-10-22 10:55:25 +0200 191) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 192)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 193)    * The declaration string, such as 'let', 'const', 'class', etc., describing what is being exported.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 194)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 195)   declaration: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 196) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 197)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 198)    * The name of the declaration to be exported.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 199)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 200)   name: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 201) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 202) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 203) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 204)  * Represents a named export within an ECMAScript module.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 205)  * Extends {@link ESMExport}.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 206)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 207) export interface NamedExport extends ESMExport {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 208)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 209)    * Specifies that this export is a named export.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 210)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 211)   type: "named";
+^e955e30 (evals 2026-10-22 10:55:25 +0200 212) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 213)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 214)    * The export string, containing all exported identifiers.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 215)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 216)   exports: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 217) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 218)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 219)    * An array of names to export.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 220)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 221)   names: string[];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 222) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 223)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 224)    * The module specifier, if any, from which exports are being re-exported.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 225)    * @optional
+^e955e30 (evals 2026-10-22 10:55:25 +0200 226)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 227)   specifier?: string;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 228) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 229) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 230) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 231)  * Represents a standard export within an ECMAScript module.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 232)  * Extends {@link ESMExport}.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 233)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 234) export interface DefaultExport extends ESMExport {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 235)   /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 236)    * Specifies that this export is a standard export.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 237)    */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 238)   type: "default";
+^e955e30 (evals 2026-10-22 10:55:25 +0200 239) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 240) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 241) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 242)  * Regular expression to match static import statements in JavaScript/TypeScript code.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 243)  * @example `import { foo, bar as baz } from 'module'`
+^e955e30 (evals 2026-10-22 10:55:25 +0200 244)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 245) export const ESM_STATIC_IMPORT_RE =
+^e955e30 (evals 2026-10-22 10:55:25 +0200 246)   /(?<=\s|^|;|\})import\s*(?:[\s"']*(?<imports>[\p{L}\p{M}\w\t\n\r $*,/{}@.]+)from\s*)?["']\s*(?<specifier>(?<="\s*)[^"]*[^\s"](?=\s*")|(?<='\s*)[^']*[^\s'](?=\s*'))\s*["'][\s;]*/gmu;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 247) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 248) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 249)  * Regular expression to match dynamic import statements in JavaScript/TypeScript code.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 250)  * @example `import('module')`
+^e955e30 (evals 2026-10-22 10:55:25 +0200 251)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 252) export const DYNAMIC_IMPORT_RE =
+^e955e30 (evals 2026-10-22 10:55:25 +0200 253)   /import\s*\((?<expression>(?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*)\)/gm;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 254) const IMPORT_NAMED_TYPE_RE =
+^e955e30 (evals 2026-10-22 10:55:25 +0200 255)   /(?<=\s|^|;|})import\s*type\s+(?:[\s"']*(?<imports>[\w\t\n\r $*,/{}]+)from\s*)?["']\s*(?<specifier>(?<="\s*)[^"]*[^\s"](?=\s*")|(?<='\s*)[^']*[^\s'](?=\s*'))\s*["'][\s;]*/gm;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 256) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 257) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 258)  * Regular expression to match various types of export declarations including variables, functions, and classes.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 259)  * @example `export const num = 1, str = 'hello'; export class Example {}`
+^e955e30 (evals 2026-10-22 10:55:25 +0200 260)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 261) export const EXPORT_DECAL_RE =
+^e955e30 (evals 2026-10-22 10:55:25 +0200 262)   /\bexport\s+(?<declaration>(?:async function\s*\*?|function\s*\*?|let|const enum|const|enum|var|class))\s+\*?(?<name>[\w$]+)(?<extraNames>.*,\s*[\s\w:[\]{}]*[\w$\]}]+)*/g;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 263) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 264)  * Regular expression to match export declarations specifically for types, interfaces, and type aliases in TypeScript.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 265)  * @example `export type Result = { success: boolean; }; export interface User { name: string; age: number; };`
+^e955e30 (evals 2026-10-22 10:55:25 +0200 266)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 267) export const EXPORT_DECAL_TYPE_RE =
+^e955e30 (evals 2026-10-22 10:55:25 +0200 268)   /\bexport\s+(?<declaration>(?:interface|type|declare (?:async function|function|let|const enum|const|enum|var|class)))\s+(?<name>[\w$]+)/g;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 269) const EXPORT_NAMED_RE =
+^e955e30 (evals 2026-10-22 10:55:25 +0200 270)   /\bexport\s*{(?<exports>[^}]+?)[\s,]*}(?:\s*from\s*["']\s*(?<specifier>(?<="\s*)[^"]*[^\s"](?=\s*")|(?<='\s*)[^']*[^\s'](?=\s*'))\s*["'][^\n;]*)?/g;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 271) const EXPORT_NAMED_TYPE_RE =
+^e955e30 (evals 2026-10-22 10:55:25 +0200 272)   /\bexport\s+type\s*{(?<exports>[^}]+?)[\s,]*}(?:\s*from\s*["']\s*(?<specifier>(?<="\s*)[^"]*[^\s"](?=\s*")|(?<='\s*)[^']*[^\s'](?=\s*'))\s*["'][^\n;]*)?/g;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 273) const EXPORT_NAMED_DESTRUCT =
+^e955e30 (evals 2026-10-22 10:55:25 +0200 274)   /\bexport\s+(?:let|var|const)\s+(?:{(?<exports1>[^}]+?)[\s,]*}|\[(?<exports2>[^\]]+?)[\s,]*])\s+=/gm;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 275) const EXPORT_STAR_RE =
+^e955e30 (evals 2026-10-22 10:55:25 +0200 276)   /\bexport\s*\*(?:\s*as\s+(?<name>[\w$]+)\s+)?\s*(?:\s*from\s*["']\s*(?<specifier>(?<="\s*)[^"]*[^\s"](?=\s*")|(?<='\s*)[^']*[^\s'](?=\s*'))\s*["'][^\n;]*)?/g;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 277) const EXPORT_DEFAULT_RE =
+^e955e30 (evals 2026-10-22 10:55:25 +0200 278)   /\bexport\s+default\s+(async function|function|class|true|false|\W|\d)|\bexport\s+default\s+(?<defaultName>.*)/g;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 279) const EXPORT_DEFAULT_CLASS_RE =
+^e955e30 (evals 2026-10-22 10:55:25 +0200 280)   /\bexport\s+default\s+(?<declaration>class)\s+(?<name>[\w$]+)/g;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 281) const TYPE_RE = /^\s*?type\s/;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 282) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 283) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 284)  * Finds all static import statements within the given code string.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 285)  * @param {string} code - The source code to search for static imports.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 286)  * @returns {StaticImport[]} An array of {@link StaticImport} objects representing each static import found.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 287)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 288) export function findStaticImports(code: string): StaticImport[] {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 289)   return _filterStatement(
+^e955e30 (evals 2026-10-22 10:55:25 +0200 290)     _tryGetLocations(code, "import"),
+^e955e30 (evals 2026-10-22 10:55:25 +0200 291)     matchAll(ESM_STATIC_IMPORT_RE, code, { type: "static" }),
+^e955e30 (evals 2026-10-22 10:55:25 +0200 292)   );
+^e955e30 (evals 2026-10-22 10:55:25 +0200 293) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 294) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 295) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 296)  * Searches for dynamic import statements in the given source code.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 297)  * @param {string} code - The source to search for dynamic imports in.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 298)  * @returns {DynamicImport[]} An array of {@link DynamicImport} objects representing each dynamic import found.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 299)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 300) export function findDynamicImports(code: string): DynamicImport[] {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 301)   return _filterStatement(
+^e955e30 (evals 2026-10-22 10:55:25 +0200 302)     _tryGetLocations(code, "import"),
+^e955e30 (evals 2026-10-22 10:55:25 +0200 303)     matchAll(DYNAMIC_IMPORT_RE, code, { type: "dynamic" }),
+^e955e30 (evals 2026-10-22 10:55:25 +0200 304)   );
+^e955e30 (evals 2026-10-22 10:55:25 +0200 305) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 306) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 307) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 308)  * Identifies and returns all type import statements in the given source code.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 309)  * This function is specifically targeted at type imports used in TypeScript.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 310)  * @param {string} code - The source code to search for type imports.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 311)  * @returns {TypeImport[]} An array of {@link TypeImport} objects representing each type import found.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 312)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 313) export function findTypeImports(code: string): TypeImport[] {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 314)   return [
+^e955e30 (evals 2026-10-22 10:55:25 +0200 315)     ...matchAll(IMPORT_NAMED_TYPE_RE, code, { type: "type" }),
+^e955e30 (evals 2026-10-22 10:55:25 +0200 316)     ...matchAll(ESM_STATIC_IMPORT_RE, code, { type: "static" }).filter(
+^e955e30 (evals 2026-10-22 10:55:25 +0200 317)       (match) => /[^A-Za-z]type\s/.test(match.imports),
+^e955e30 (evals 2026-10-22 10:55:25 +0200 318)     ),
+^e955e30 (evals 2026-10-22 10:55:25 +0200 319)   ];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 320) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 321) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 322) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 323)  * Parses a static import or type import to extract detailed import elements such as default, namespace and named imports.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 324)  * @param {StaticImport | TypeImport} matched - The matched import statement to parse. See {@link StaticImport} and {@link TypeImport}.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 325)  * @returns {ParsedStaticImport} A structured object representing the parsed static import. See {@link ParsedStaticImport}.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 326)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 327) export function parseStaticImport(
+^e955e30 (evals 2026-10-22 10:55:25 +0200 328)   matched: StaticImport | TypeImport,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 329) ): ParsedStaticImport {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 330)   const cleanedImports = clearImports(matched.imports);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 331) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 332)   const namedImports: Record<string, string> = {};
+^e955e30 (evals 2026-10-22 10:55:25 +0200 333)   const _matches = cleanedImports.match(/{([^}]*)}/)?.[1]?.split(",") || [];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 334)   for (const namedImport of _matches) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 335)     const _match = namedImport.match(/^\s*(\S*) as (\S*)\s*$/);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 336)     const source = _match?.[1] || namedImport.trim();
+^e955e30 (evals 2026-10-22 10:55:25 +0200 337)     const importName = _match?.[2] || source;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 338)     if (source && !TYPE_RE.test(source)) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 339)       namedImports[source] = importName;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 340)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 341)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 342)   const { namespacedImport, defaultImport } = getImportNames(cleanedImports);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 343) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 344)   return {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 345)     ...matched,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 346)     defaultImport,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 347)     namespacedImport,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 348)     namedImports,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 349)   } as ParsedStaticImport;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 350) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 351) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 352) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 353)  * Parses a static import or type import to extract detailed import elements such as default, namespace and named imports.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 354)  * @param {StaticImport | TypeImport} matched - The matched import statement to parse. See {@link StaticImport} and {@link TypeImport}.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 355)  * @returns {ParsedStaticImport} A structured object representing the parsed static import. See {@link ParsedStaticImport}.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 356)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 357) export function parseTypeImport(
+^e955e30 (evals 2026-10-22 10:55:25 +0200 358)   matched: TypeImport | StaticImport,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 359) ): ParsedStaticImport {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 360)   if (matched.type === "type") {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 361)     return parseStaticImport(matched);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 362)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 363) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 364)   const cleanedImports = clearImports(matched.imports);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 365) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 366)   const namedImports: Record<string, string> = {};
+^e955e30 (evals 2026-10-22 10:55:25 +0200 367)   const _matches = cleanedImports.match(/{([^}]*)}/)?.[1]?.split(",") || [];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 368)   for (const namedImport of _matches) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 369)     const _match = /\s+as\s+/.test(namedImport)
+^e955e30 (evals 2026-10-22 10:55:25 +0200 370)       ? namedImport.match(/^\s*type\s+(\S*) as (\S*)\s*$/)
+^e955e30 (evals 2026-10-22 10:55:25 +0200 371)       : namedImport.match(/^\s*type\s+(\S*)\s*$/);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 372)     const source = _match?.[1] || namedImport.trim();
+^e955e30 (evals 2026-10-22 10:55:25 +0200 373)     const importName = _match?.[2] || source;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 374)     if (source && TYPE_RE.test(namedImport)) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 375)       namedImports[source] = importName;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 376)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 377)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 378) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 379)   const { namespacedImport, defaultImport } = getImportNames(cleanedImports);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 380) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 381)   return {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 382)     ...matched,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 383)     defaultImport,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 384)     namespacedImport,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 385)     namedImports,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 386)   } as ParsedStaticImport;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 387) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 388) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 389) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 390)  * Extracts extra variable names from a comma-separated declaration list,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 391)  * ignoring commas nested inside parentheses, brackets, braces, generics, or strings.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 392)  *
+^e955e30 (evals 2026-10-22 10:55:25 +0200 393)  * For `export const foo = fn('a', bar), baz = 2`, only `baz` should be
+^e955e30 (evals 2026-10-22 10:55:25 +0200 394)  * extracted — commas inside `fn(...)` or `Handler<A, B>` are not declaration separators.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 395)  * @param {string} extraNamesStr - The string containing the extra variable declarations to parse.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 396)  * @returns {string[]} An array of variable names extracted from the declaration list.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 397)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 398) function _extractExtraNames(extraNamesStr: string): string[] {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 399)   const names: string[] = [];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 400)   let depth = 0;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 401)   let angleDepth = 0;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 402)   let inString: string | false = false;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 403)   let inTypeAnnotation = false;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 404) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 405)   for (let i = 0; i < extraNamesStr.length; i++) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 406)     const char = extraNamesStr[i];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 407) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 408)     // Handle string literals — skip their contents entirely
+^e955e30 (evals 2026-10-22 10:55:25 +0200 409)     if (inString) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 410)       if (char === inString) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 411)         let backslashCount = 0;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 412)         for (let j = i - 1; j >= 0 && extraNamesStr[j] === "\\"; j--) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 413)           backslashCount++;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 414)         }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 415)         if (backslashCount % 2 === 0) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 416)           inString = false;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 417)         }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 418)       }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 419)       continue;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 420)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 421)     if (char === '"' || char === "'" || char === "`") {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 422)       inString = char;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 423)       continue;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 424)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 425) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 426)     // Track type annotations (between `:` and `=` at depth 0) for generic angle brackets
+^e955e30 (evals 2026-10-22 10:55:25 +0200 427)     if (char === ":" && depth === 0 && angleDepth === 0) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 428)       inTypeAnnotation = true;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 429)       continue;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 430)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 431)     if (
+^e955e30 (evals 2026-10-22 10:55:25 +0200 432)       char === "=" &&
+^e955e30 (evals 2026-10-22 10:55:25 +0200 433)       extraNamesStr[i + 1] !== ">" &&
+^e955e30 (evals 2026-10-22 10:55:25 +0200 434)       depth === 0 &&
+^e955e30 (evals 2026-10-22 10:55:25 +0200 435)       angleDepth === 0
+^e955e30 (evals 2026-10-22 10:55:25 +0200 436)     ) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 437)       inTypeAnnotation = false;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 438)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 439)     if (inTypeAnnotation && char === "<") {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 440)       angleDepth++;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 441)       continue;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 442)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 443)     if (inTypeAnnotation && char === ">" && angleDepth > 0) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 444)       angleDepth--;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 445)       continue;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 446)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 447) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 448)     // Track bracket nesting
+^e955e30 (evals 2026-10-22 10:55:25 +0200 449)     if (char === "(" || char === "[" || char === "{") {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 450)       depth++;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 451)     } else if (char === ")" || char === "]" || char === "}") {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 452)       depth--;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 453)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 454) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 455)     // A comma at depth 0 (outside generics) is a real declaration separator
+^e955e30 (evals 2026-10-22 10:55:25 +0200 456)     if (char === "," && depth === 0 && angleDepth === 0) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 457)       // Extract the identifier that follows this comma
+^e955e30 (evals 2026-10-22 10:55:25 +0200 458)       const rest = extraNamesStr.slice(i + 1);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 459)       const match = rest.match(/^\s*([\w$]+)/);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 460)       if (match) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 461)         names.push(match[1]);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 462)       }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 463)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 464)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 465) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 466)   return names;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 467) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 468) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 469) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 470)  * Identifies all export statements in the supplied source code and categorises them into different types such as declarations, named, default and star exports.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 471)  * This function processes the code to capture different forms of export statements and normalise their representation for further processing.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 472)  *
+^e955e30 (evals 2026-10-22 10:55:25 +0200 473)  * @param {string} code - The source code containing the export statements to be analysed.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 474)  * @returns {ESMExport[]} An array of {@link ESMExport} objects representing each export found, properly categorised and structured.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 475)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 476) export function findExports(code: string): ESMExport[] {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 477)   // Find declarations like export const foo = 'bar'
+^e955e30 (evals 2026-10-22 10:55:25 +0200 478)   const declaredExports: DeclarationExport[] = matchAll(EXPORT_DECAL_RE, code, {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 479)     type: "declaration",
+^e955e30 (evals 2026-10-22 10:55:25 +0200 480)   });
+^e955e30 (evals 2026-10-22 10:55:25 +0200 481)   // Parse extra names (foo, bar)
+^e955e30 (evals 2026-10-22 10:55:25 +0200 482)   for (const declaredExport of declaredExports) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 483)     // function declarations don't have extra names
+^e955e30 (evals 2026-10-22 10:55:25 +0200 484)     if (/^export\s+(?:async\s+)?function/.test(declaredExport.code)) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 485)       continue;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 486)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 487)     const extraNamesStr = (declaredExport as any).extraNames as
+^e955e30 (evals 2026-10-22 10:55:25 +0200 488)       | string
+^e955e30 (evals 2026-10-22 10:55:25 +0200 489)       | undefined;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 490)     if (extraNamesStr) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 491)       const extraNames = _extractExtraNames(extraNamesStr);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 492)       if (extraNames.length > 0) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 493)         declaredExport.names = [declaredExport.name, ...extraNames];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 494)       }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 495)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 496)     delete (declaredExport as any).extraNames;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 497)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 498) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 499)   // Find named exports
+^e955e30 (evals 2026-10-22 10:55:25 +0200 500)   const namedExports: NamedExport[] = normalizeNamedExports(
+^e955e30 (evals 2026-10-22 10:55:25 +0200 501)     matchAll(EXPORT_NAMED_RE, code, {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 502)       type: "named",
+^e955e30 (evals 2026-10-22 10:55:25 +0200 503)     }),
+^e955e30 (evals 2026-10-22 10:55:25 +0200 504)   );
+^e955e30 (evals 2026-10-22 10:55:25 +0200 505) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 506)   const destructuredExports: NamedExport[] = matchAll(
+^e955e30 (evals 2026-10-22 10:55:25 +0200 507)     EXPORT_NAMED_DESTRUCT,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 508)     code,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 509)     { type: "named" },
+^e955e30 (evals 2026-10-22 10:55:25 +0200 510)   );
+^e955e30 (evals 2026-10-22 10:55:25 +0200 511)   for (const namedExport of destructuredExports) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 512)     // @ts-expect-error groups
+^e955e30 (evals 2026-10-22 10:55:25 +0200 513)     namedExport.exports = namedExport.exports1 || namedExport.exports2;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 514)     namedExport.names = namedExport.exports
+^e955e30 (evals 2026-10-22 10:55:25 +0200 515)       .replace(/^\r?\n?/, "")
+^e955e30 (evals 2026-10-22 10:55:25 +0200 516)       .split(/\s*,\s*/g)
+^e955e30 (evals 2026-10-22 10:55:25 +0200 517)       .filter((name) => !TYPE_RE.test(name))
+^e955e30 (evals 2026-10-22 10:55:25 +0200 518)       .map((name) =>
+^e955e30 (evals 2026-10-22 10:55:25 +0200 519)         name
+^e955e30 (evals 2026-10-22 10:55:25 +0200 520)           .replace(/^.*?\s*:\s*/, "")
+^e955e30 (evals 2026-10-22 10:55:25 +0200 521)           .replace(/\s*=\s*.*$/, "")
+^e955e30 (evals 2026-10-22 10:55:25 +0200 522)           .trim(),
+^e955e30 (evals 2026-10-22 10:55:25 +0200 523)       );
+^e955e30 (evals 2026-10-22 10:55:25 +0200 524)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 525) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 526)   // Find export default
+^e955e30 (evals 2026-10-22 10:55:25 +0200 527)   const defaultExport: DefaultExport[] = matchAll(EXPORT_DEFAULT_RE, code, {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 528)     type: "default",
+^e955e30 (evals 2026-10-22 10:55:25 +0200 529)     name: "default",
+^e955e30 (evals 2026-10-22 10:55:25 +0200 530)   });
+^e955e30 (evals 2026-10-22 10:55:25 +0200 531) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 532)   // Find export default class
+^e955e30 (evals 2026-10-22 10:55:25 +0200 533)   const defaultClassExports = matchAll(EXPORT_DEFAULT_CLASS_RE, code, {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 534)     type: "declaration",
+^e955e30 (evals 2026-10-22 10:55:25 +0200 535)   });
+^e955e30 (evals 2026-10-22 10:55:25 +0200 536) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 537)   // Find export star
+^e955e30 (evals 2026-10-22 10:55:25 +0200 538)   const starExports: ESMExport[] = matchAll(EXPORT_STAR_RE, code, {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 539)     type: "star",
+^e955e30 (evals 2026-10-22 10:55:25 +0200 540)   });
+^e955e30 (evals 2026-10-22 10:55:25 +0200 541) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 542)   // Merge and normalize exports
+^e955e30 (evals 2026-10-22 10:55:25 +0200 543) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 544)   const exports: ESMExport[] = normalizeExports([
+^e955e30 (evals 2026-10-22 10:55:25 +0200 545)     ...declaredExports,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 546)     ...namedExports,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 547)     ...destructuredExports,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 548)     ...defaultExport,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 549)     ...defaultClassExports,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 550)     ...starExports,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 551)   ]);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 552) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 553)   // Return early when there is no  export statement
+^e955e30 (evals 2026-10-22 10:55:25 +0200 554)   if (exports.length === 0) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 555)     return [];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 556)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 557)   const exportLocations = _tryGetLocations(code, "export");
+^e955e30 (evals 2026-10-22 10:55:25 +0200 558)   if (exportLocations && exportLocations.length === 0) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 559)     return [];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 560)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 561) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 562)   return (
+^e955e30 (evals 2026-10-22 10:55:25 +0200 563)     // Filter false positive export matches
+^e955e30 (evals 2026-10-22 10:55:25 +0200 564)     _filterStatement(exportLocations, exports)
+^e955e30 (evals 2026-10-22 10:55:25 +0200 565)       // Prevent multiple exports of same function, only keep latest iteration of signatures
+^e955e30 (evals 2026-10-22 10:55:25 +0200 566)       .filter((exp, index, exports) => {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 567)         const nextExport = exports[index + 1];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 568)         return (
+^e955e30 (evals 2026-10-22 10:55:25 +0200 569)           !nextExport ||
+^e955e30 (evals 2026-10-22 10:55:25 +0200 570)           exp.type !== nextExport.type ||
+^e955e30 (evals 2026-10-22 10:55:25 +0200 571)           !exp.name ||
+^e955e30 (evals 2026-10-22 10:55:25 +0200 572)           exp.name !== nextExport.name
+^e955e30 (evals 2026-10-22 10:55:25 +0200 573)         );
+^e955e30 (evals 2026-10-22 10:55:25 +0200 574)       })
+^e955e30 (evals 2026-10-22 10:55:25 +0200 575)   );
+^e955e30 (evals 2026-10-22 10:55:25 +0200 576) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 577) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 578) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 579)  * Searches specifically for type-related exports in TypeScript code, such as exported interfaces, types, and declarations prefixed with 'declare'.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 580)  * This function uses specialised regular expressions to identify type exports and normalises them for consistency.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 581)  *
+^e955e30 (evals 2026-10-22 10:55:25 +0200 582)  * @param {string} code - The TypeScript source code to search for type exports.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 583)  * @returns {ESMExport[]} An array of {@link ESMExport} objects representing each type export found.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 584)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 585) export function findTypeExports(code: string): ESMExport[] {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 586)   // Find declarations like export const foo = 'bar'
+^e955e30 (evals 2026-10-22 10:55:25 +0200 587)   const declaredExports: DeclarationExport[] = matchAll(
+^e955e30 (evals 2026-10-22 10:55:25 +0200 588)     EXPORT_DECAL_TYPE_RE,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 589)     code,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 590)     { type: "declaration" },
+^e955e30 (evals 2026-10-22 10:55:25 +0200 591)   );
+^e955e30 (evals 2026-10-22 10:55:25 +0200 592) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 593)   // Find named exports
+^e955e30 (evals 2026-10-22 10:55:25 +0200 594)   const namedExports: NamedExport[] = normalizeNamedExports(
+^e955e30 (evals 2026-10-22 10:55:25 +0200 595)     matchAll(EXPORT_NAMED_TYPE_RE, code, {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 596)       type: "named",
+^e955e30 (evals 2026-10-22 10:55:25 +0200 597)     }),
+^e955e30 (evals 2026-10-22 10:55:25 +0200 598)   );
+^e955e30 (evals 2026-10-22 10:55:25 +0200 599) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 600)   // Merge and normalize exports
+^e955e30 (evals 2026-10-22 10:55:25 +0200 601)   const exports: ESMExport[] = normalizeExports([
+^e955e30 (evals 2026-10-22 10:55:25 +0200 602)     ...declaredExports,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 603)     ...namedExports,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 604)   ]);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 605) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 606)   // Return early when there is no  export statement
+^e955e30 (evals 2026-10-22 10:55:25 +0200 607)   if (exports.length === 0) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 608)     return [];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 609)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 610)   const exportLocations = _tryGetLocations(code, "export");
+^e955e30 (evals 2026-10-22 10:55:25 +0200 611)   if (exportLocations && exportLocations.length === 0) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 612)     return [];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 613)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 614) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 615)   return (
+^e955e30 (evals 2026-10-22 10:55:25 +0200 616)     // Filter false positive export matches
+^e955e30 (evals 2026-10-22 10:55:25 +0200 617)     _filterStatement(exportLocations, exports)
+^e955e30 (evals 2026-10-22 10:55:25 +0200 618)       // Prevent multiple exports of same function, only keep latest iteration of signatures
+^e955e30 (evals 2026-10-22 10:55:25 +0200 619)       .filter((exp, index, exports) => {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 620)         const nextExport = exports[index + 1];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 621)         return (
+^e955e30 (evals 2026-10-22 10:55:25 +0200 622)           !nextExport ||
+^e955e30 (evals 2026-10-22 10:55:25 +0200 623)           exp.type !== nextExport.type ||
+^e955e30 (evals 2026-10-22 10:55:25 +0200 624)           !exp.name ||
+^e955e30 (evals 2026-10-22 10:55:25 +0200 625)           exp.name !== nextExport.name
+^e955e30 (evals 2026-10-22 10:55:25 +0200 626)         );
+^e955e30 (evals 2026-10-22 10:55:25 +0200 627)       })
+^e955e30 (evals 2026-10-22 10:55:25 +0200 628)   );
+^e955e30 (evals 2026-10-22 10:55:25 +0200 629) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 630) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 631) function normalizeExports(exports: (ESMExport & { declaration?: string })[]) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 632)   for (const exp of exports) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 633)     if (!exp.name && exp.names && exp.names.length === 1) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 634)       exp.name = exp.names[0];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 635)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 636)     if (exp.name === "default" && exp.type !== "default") {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 637)       exp._type = exp.type;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 638)       exp.type = "default";
+^e955e30 (evals 2026-10-22 10:55:25 +0200 639)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 640)     if (!exp.names && exp.name) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 641)       exp.names = [exp.name];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 642)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 643)     if (exp.type === "declaration" && exp.declaration) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 644)       exp.declarationType = exp.declaration.replace(
+^e955e30 (evals 2026-10-22 10:55:25 +0200 645)         /^declare\s*/,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 646)         "",
+^e955e30 (evals 2026-10-22 10:55:25 +0200 647)       ) as ESMExport["declarationType"];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 648)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 649)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 650)   return exports;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 651) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 652) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 653) function normalizeNamedExports(namedExports: NamedExport[]) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 654)   for (const namedExport of namedExports) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 655)     namedExport.names = namedExport.exports
+^e955e30 (evals 2026-10-22 10:55:25 +0200 656)       .replace(/^\r?\n?/, "")
+^e955e30 (evals 2026-10-22 10:55:25 +0200 657)       .split(/\s*,\s*/g)
+^e955e30 (evals 2026-10-22 10:55:25 +0200 658)       .filter((name) => !TYPE_RE.test(name))
+^e955e30 (evals 2026-10-22 10:55:25 +0200 659)       .map((name) => name.replace(/^.*?\sas\s/, "").trim());
+^e955e30 (evals 2026-10-22 10:55:25 +0200 660)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 661)   return namedExports;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 662) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 663) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 664) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 665)  * Extracts and returns a list of all export names from the given source.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 666)  * This function uses {@link findExports} to retrieve all types of exports and consolidates their names into a single array.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 667)  *
+^e955e30 (evals 2026-10-22 10:55:25 +0200 668)  * @param {string} code - The source code to search for export names.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 669)  * @returns {string[]} An array containing the names of all exports found in the code.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 670)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 671) export function findExportNames(code: string): string[] {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 672)   return findExports(code)
+^e955e30 (evals 2026-10-22 10:55:25 +0200 673)     .flatMap((exp) => exp.names)
+^e955e30 (evals 2026-10-22 10:55:25 +0200 674)     .filter(Boolean);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 675) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 676) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 677) /**
+^e955e30 (evals 2026-10-22 10:55:25 +0200 678)  * Asynchronously resolves and returns all export names from a module specified by its module identifier.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 679)  * This function recursively resolves all explicitly named and asterisked (* as) exports to fully enumerate the exported identifiers.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 680)  *
+^e955e30 (evals 2026-10-22 10:55:25 +0200 681)  * @param {string} id - The module identifier to resolve.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 682)  * @param {ResolveOptions} [options] - Optional settings for resolving the module path, such as the base URL.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 683)  * @returns {Promise<string[]>} A promise that resolves to an array of export names from the module.
+^e955e30 (evals 2026-10-22 10:55:25 +0200 684)  */
+^e955e30 (evals 2026-10-22 10:55:25 +0200 685) export async function resolveModuleExportNames(
+^e955e30 (evals 2026-10-22 10:55:25 +0200 686)   id: string,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 687)   options?: ResolveOptions,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 688) ): Promise<string[]> {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 689)   const url = await resolvePath(id, options);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 690)   const code = await loadURL(url);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 691)   const exports = findExports(code);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 692) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 693)   // Explicit named exports
+^e955e30 (evals 2026-10-22 10:55:25 +0200 694)   const exportNames = new Set(
+^e955e30 (evals 2026-10-22 10:55:25 +0200 695)     exports.flatMap((exp) => exp.names).filter(Boolean),
+^e955e30 (evals 2026-10-22 10:55:25 +0200 696)   );
+^e955e30 (evals 2026-10-22 10:55:25 +0200 697) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 698)   // Recursive * exports
+^e955e30 (evals 2026-10-22 10:55:25 +0200 699)   for (const exp of exports) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 700)     if (exp.type !== "star" || !exp.specifier) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 701)       continue;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 702)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 703)     const subExports = await resolveModuleExportNames(exp.specifier, {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 704)       ...options,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 705)       url,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 706)     });
+^e955e30 (evals 2026-10-22 10:55:25 +0200 707)     for (const subExport of subExports) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 708)       exportNames.add(subExport);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 709)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 710)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 711) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 712)   return [...exportNames];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 713) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 714) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 715) // --- Internal ---
+^e955e30 (evals 2026-10-22 10:55:25 +0200 716) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 717) interface TokenLocation {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 718)   start: number;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 719)   end: number;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 720) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 721) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 722) function _filterStatement<T extends TokenLocation>(
+^e955e30 (evals 2026-10-22 10:55:25 +0200 723)   locations: TokenLocation[] | undefined,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 724)   statements: T[],
+^e955e30 (evals 2026-10-22 10:55:25 +0200 725) ): T[] {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 726)   return statements.filter((exp) => {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 727)     return (
+^e955e30 (evals 2026-10-22 10:55:25 +0200 728)       !locations ||
+^e955e30 (evals 2026-10-22 10:55:25 +0200 729)       locations.some((location) => {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 730)         // AST token inside the regex match
+^e955e30 (evals 2026-10-22 10:55:25 +0200 731)         return exp.start <= location.start && exp.end >= location.end;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 732)         // AST Token start or end is within the regex match
+^e955e30 (evals 2026-10-22 10:55:25 +0200 733)         // return (exp.start <= location.start && location.start <= exp.end) ||
+^e955e30 (evals 2026-10-22 10:55:25 +0200 734)         // (exp.start <= location.end && location.end <= exp.end)
+^e955e30 (evals 2026-10-22 10:55:25 +0200 735)       })
+^e955e30 (evals 2026-10-22 10:55:25 +0200 736)     );
+^e955e30 (evals 2026-10-22 10:55:25 +0200 737)   });
+^e955e30 (evals 2026-10-22 10:55:25 +0200 738) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 739) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 740) function _tryGetLocations(code: string, label: string) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 741)   try {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 742)     return _getLocations(code, label);
+^e955e30 (evals 2026-10-22 10:55:25 +0200 743)   } catch {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 744)     // Ignore error
+^e955e30 (evals 2026-10-22 10:55:25 +0200 745)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 746) }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 747) 
+^e955e30 (evals 2026-10-22 10:55:25 +0200 748) function _getLocations(code: string, label: string) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 749)   const tokens = tokenizer(code, {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 750)     ecmaVersion: "latest",
+^e955e30 (evals 2026-10-22 10:55:25 +0200 751)     sourceType: "module",
+^e955e30 (evals 2026-10-22 10:55:25 +0200 752)     allowHashBang: true,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 753)     allowAwaitOutsideFunction: true,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 754)     allowImportExportEverywhere: true,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 755)   });
+^e955e30 (evals 2026-10-22 10:55:25 +0200 756)   const locations: TokenLocation[] = [];
+^e955e30 (evals 2026-10-22 10:55:25 +0200 757)   for (const token of tokens) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 758)     if (token.type.label === label) {
+^e955e30 (evals 2026-10-22 10:55:25 +0200 759)       locations.push({
+^e955e30 (evals 2026-10-22 10:55:25 +0200 760)         start: token.start,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 761)         end: token.end,
+^e955e30 (evals 2026-10-22 10:55:25 +0200 762)       });
+^e955e30 (evals 2026-10-22 10:55:25 +0200 763)     }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 764)   }
+^e955e30 (evals 2026-10-22 10:55:25 +0200 765)   return locations;
+^e955e30 (evals 2026-10-22 10:55:25 +0200 766) }

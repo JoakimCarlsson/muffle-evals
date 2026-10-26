@@ -1,0 +1,1356 @@
+$ git blame compiler/compiler.go
+^e63192b (evals 2026-10-22 10:53:55 +0200    1) package compiler
+^e63192b (evals 2026-10-22 10:53:55 +0200    2) 
+^e63192b (evals 2026-10-22 10:53:55 +0200    3) import (
+^e63192b (evals 2026-10-22 10:53:55 +0200    4) 	"fmt"
+^e63192b (evals 2026-10-22 10:53:55 +0200    5) 	"math"
+^e63192b (evals 2026-10-22 10:53:55 +0200    6) 	"reflect"
+^e63192b (evals 2026-10-22 10:53:55 +0200    7) 	"regexp"
+^e63192b (evals 2026-10-22 10:53:55 +0200    8) 	"runtime/debug"
+^e63192b (evals 2026-10-22 10:53:55 +0200    9) 
+^e63192b (evals 2026-10-22 10:53:55 +0200   10) 	"github.com/expr-lang/expr/ast"
+^e63192b (evals 2026-10-22 10:53:55 +0200   11) 	"github.com/expr-lang/expr/builtin"
+^e63192b (evals 2026-10-22 10:53:55 +0200   12) 	"github.com/expr-lang/expr/checker"
+^e63192b (evals 2026-10-22 10:53:55 +0200   13) 	. "github.com/expr-lang/expr/checker/nature"
+^e63192b (evals 2026-10-22 10:53:55 +0200   14) 	"github.com/expr-lang/expr/conf"
+^e63192b (evals 2026-10-22 10:53:55 +0200   15) 	"github.com/expr-lang/expr/file"
+^e63192b (evals 2026-10-22 10:53:55 +0200   16) 	"github.com/expr-lang/expr/parser"
+^e63192b (evals 2026-10-22 10:53:55 +0200   17) 	. "github.com/expr-lang/expr/vm"
+^e63192b (evals 2026-10-22 10:53:55 +0200   18) 	"github.com/expr-lang/expr/vm/runtime"
+^e63192b (evals 2026-10-22 10:53:55 +0200   19) )
+^e63192b (evals 2026-10-22 10:53:55 +0200   20) 
+^e63192b (evals 2026-10-22 10:53:55 +0200   21) const (
+^e63192b (evals 2026-10-22 10:53:55 +0200   22) 	placeholder = 12345
+^e63192b (evals 2026-10-22 10:53:55 +0200   23) )
+^e63192b (evals 2026-10-22 10:53:55 +0200   24) 
+^e63192b (evals 2026-10-22 10:53:55 +0200   25) func Compile(tree *parser.Tree, config *conf.Config) (program *Program, err error) {
+^e63192b (evals 2026-10-22 10:53:55 +0200   26) 	defer func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200   27) 		if r := recover(); r != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200   28) 			err = fmt.Errorf("%v\n%s", r, debug.Stack())
+^e63192b (evals 2026-10-22 10:53:55 +0200   29) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200   30) 	}()
+^e63192b (evals 2026-10-22 10:53:55 +0200   31) 
+^e63192b (evals 2026-10-22 10:53:55 +0200   32) 	c := &compiler{
+^e63192b (evals 2026-10-22 10:53:55 +0200   33) 		config:         config,
+^e63192b (evals 2026-10-22 10:53:55 +0200   34) 		locations:      make([]file.Location, 0),
+^e63192b (evals 2026-10-22 10:53:55 +0200   35) 		constantsIndex: make(map[any]int),
+^e63192b (evals 2026-10-22 10:53:55 +0200   36) 		functionsIndex: make(map[string]int),
+^e63192b (evals 2026-10-22 10:53:55 +0200   37) 		debugInfo:      make(map[string]string),
+^e63192b (evals 2026-10-22 10:53:55 +0200   38) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200   39) 
+^e63192b (evals 2026-10-22 10:53:55 +0200   40) 	if config != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200   41) 		c.ntCache = &c.config.NtCache
+^e63192b (evals 2026-10-22 10:53:55 +0200   42) 	} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200   43) 		c.ntCache = new(Cache)
+^e63192b (evals 2026-10-22 10:53:55 +0200   44) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200   45) 
+^e63192b (evals 2026-10-22 10:53:55 +0200   46) 	c.compile(tree.Node)
+^e63192b (evals 2026-10-22 10:53:55 +0200   47) 
+^e63192b (evals 2026-10-22 10:53:55 +0200   48) 	if c.config != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200   49) 		switch c.config.Expect {
+^e63192b (evals 2026-10-22 10:53:55 +0200   50) 		case reflect.Int:
+^e63192b (evals 2026-10-22 10:53:55 +0200   51) 			c.emit(OpCast, 0)
+^e63192b (evals 2026-10-22 10:53:55 +0200   52) 		case reflect.Int64:
+^e63192b (evals 2026-10-22 10:53:55 +0200   53) 			c.emit(OpCast, 1)
+^e63192b (evals 2026-10-22 10:53:55 +0200   54) 		case reflect.Float64:
+^e63192b (evals 2026-10-22 10:53:55 +0200   55) 			c.emit(OpCast, 2)
+^e63192b (evals 2026-10-22 10:53:55 +0200   56) 		case reflect.Bool:
+^e63192b (evals 2026-10-22 10:53:55 +0200   57) 			c.emit(OpCast, 3)
+^e63192b (evals 2026-10-22 10:53:55 +0200   58) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200   59) 		if c.config.Optimize {
+^e63192b (evals 2026-10-22 10:53:55 +0200   60) 			c.optimize()
+^e63192b (evals 2026-10-22 10:53:55 +0200   61) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200   62) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200   63) 
+^e63192b (evals 2026-10-22 10:53:55 +0200   64) 	var span *Span
+^e63192b (evals 2026-10-22 10:53:55 +0200   65) 	if len(c.spans) > 0 {
+^e63192b (evals 2026-10-22 10:53:55 +0200   66) 		span = c.spans[0]
+^e63192b (evals 2026-10-22 10:53:55 +0200   67) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200   68) 
+^e63192b (evals 2026-10-22 10:53:55 +0200   69) 	program = NewProgram(
+^e63192b (evals 2026-10-22 10:53:55 +0200   70) 		tree.Source,
+^e63192b (evals 2026-10-22 10:53:55 +0200   71) 		tree.Node,
+^e63192b (evals 2026-10-22 10:53:55 +0200   72) 		c.locations,
+^e63192b (evals 2026-10-22 10:53:55 +0200   73) 		c.variables,
+^e63192b (evals 2026-10-22 10:53:55 +0200   74) 		c.constants,
+^e63192b (evals 2026-10-22 10:53:55 +0200   75) 		c.bytecode,
+^e63192b (evals 2026-10-22 10:53:55 +0200   76) 		c.arguments,
+^e63192b (evals 2026-10-22 10:53:55 +0200   77) 		c.functions,
+^e63192b (evals 2026-10-22 10:53:55 +0200   78) 		c.debugInfo,
+^e63192b (evals 2026-10-22 10:53:55 +0200   79) 		span,
+^e63192b (evals 2026-10-22 10:53:55 +0200   80) 	)
+^e63192b (evals 2026-10-22 10:53:55 +0200   81) 	return
+^e63192b (evals 2026-10-22 10:53:55 +0200   82) }
+^e63192b (evals 2026-10-22 10:53:55 +0200   83) 
+^e63192b (evals 2026-10-22 10:53:55 +0200   84) type compiler struct {
+^e63192b (evals 2026-10-22 10:53:55 +0200   85) 	config         *conf.Config
+^e63192b (evals 2026-10-22 10:53:55 +0200   86) 	ntCache        *Cache
+^e63192b (evals 2026-10-22 10:53:55 +0200   87) 	locations      []file.Location
+^e63192b (evals 2026-10-22 10:53:55 +0200   88) 	bytecode       []Opcode
+^e63192b (evals 2026-10-22 10:53:55 +0200   89) 	variables      int
+^e63192b (evals 2026-10-22 10:53:55 +0200   90) 	scopes         []scope
+^e63192b (evals 2026-10-22 10:53:55 +0200   91) 	constants      []any
+^e63192b (evals 2026-10-22 10:53:55 +0200   92) 	constantsIndex map[any]int
+^e63192b (evals 2026-10-22 10:53:55 +0200   93) 	functions      []Function
+^e63192b (evals 2026-10-22 10:53:55 +0200   94) 	functionsIndex map[string]int
+^e63192b (evals 2026-10-22 10:53:55 +0200   95) 	debugInfo      map[string]string
+^e63192b (evals 2026-10-22 10:53:55 +0200   96) 	nodes          []ast.Node
+^e63192b (evals 2026-10-22 10:53:55 +0200   97) 	spans          []*Span
+^e63192b (evals 2026-10-22 10:53:55 +0200   98) 	chains         [][]int
+^e63192b (evals 2026-10-22 10:53:55 +0200   99) 	arguments      []int
+^e63192b (evals 2026-10-22 10:53:55 +0200  100) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  101) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  102) type scope struct {
+^e63192b (evals 2026-10-22 10:53:55 +0200  103) 	variableName string
+^e63192b (evals 2026-10-22 10:53:55 +0200  104) 	index        int
+^e63192b (evals 2026-10-22 10:53:55 +0200  105) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  106) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  107) func (c *compiler) nodeParent() ast.Node {
+^e63192b (evals 2026-10-22 10:53:55 +0200  108) 	if len(c.nodes) > 1 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  109) 		return c.nodes[len(c.nodes)-2]
+^e63192b (evals 2026-10-22 10:53:55 +0200  110) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  111) 	return nil
+^e63192b (evals 2026-10-22 10:53:55 +0200  112) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  113) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  114) func (c *compiler) emitLocation(loc file.Location, op Opcode, arg int) int {
+^e63192b (evals 2026-10-22 10:53:55 +0200  115) 	c.bytecode = append(c.bytecode, op)
+^e63192b (evals 2026-10-22 10:53:55 +0200  116) 	current := len(c.bytecode)
+^e63192b (evals 2026-10-22 10:53:55 +0200  117) 	c.arguments = append(c.arguments, arg)
+^e63192b (evals 2026-10-22 10:53:55 +0200  118) 	c.locations = append(c.locations, loc)
+^e63192b (evals 2026-10-22 10:53:55 +0200  119) 	return current
+^e63192b (evals 2026-10-22 10:53:55 +0200  120) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  121) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  122) func (c *compiler) emit(op Opcode, args ...int) int {
+^e63192b (evals 2026-10-22 10:53:55 +0200  123) 	arg := 0
+^e63192b (evals 2026-10-22 10:53:55 +0200  124) 	if len(args) > 1 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  125) 		panic("too many arguments")
+^e63192b (evals 2026-10-22 10:53:55 +0200  126) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  127) 	if len(args) == 1 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  128) 		arg = args[0]
+^e63192b (evals 2026-10-22 10:53:55 +0200  129) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  130) 	var loc file.Location
+^e63192b (evals 2026-10-22 10:53:55 +0200  131) 	if len(c.nodes) > 0 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  132) 		loc = c.nodes[len(c.nodes)-1].Location()
+^e63192b (evals 2026-10-22 10:53:55 +0200  133) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  134) 	return c.emitLocation(loc, op, arg)
+^e63192b (evals 2026-10-22 10:53:55 +0200  135) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  136) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  137) func (c *compiler) emitPush(value any) int {
+^e63192b (evals 2026-10-22 10:53:55 +0200  138) 	return c.emit(OpPush, c.addConstant(value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  139) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  140) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  141) func (c *compiler) addConstant(constant any) int {
+^e63192b (evals 2026-10-22 10:53:55 +0200  142) 	indexable := true
+^e63192b (evals 2026-10-22 10:53:55 +0200  143) 	hash := constant
+^e63192b (evals 2026-10-22 10:53:55 +0200  144) 	switch reflect.TypeOf(constant).Kind() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  145) 	case reflect.Slice, reflect.Map, reflect.Struct, reflect.Func:
+^e63192b (evals 2026-10-22 10:53:55 +0200  146) 		indexable = false
+^e63192b (evals 2026-10-22 10:53:55 +0200  147) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  148) 	if field, ok := constant.(*runtime.Field); ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  149) 		indexable = true
+^e63192b (evals 2026-10-22 10:53:55 +0200  150) 		hash = fmt.Sprintf("%v", field)
+^e63192b (evals 2026-10-22 10:53:55 +0200  151) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  152) 	if method, ok := constant.(*runtime.Method); ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  153) 		indexable = true
+^e63192b (evals 2026-10-22 10:53:55 +0200  154) 		hash = fmt.Sprintf("%v", method)
+^e63192b (evals 2026-10-22 10:53:55 +0200  155) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  156) 	if indexable {
+^e63192b (evals 2026-10-22 10:53:55 +0200  157) 		if p, ok := c.constantsIndex[hash]; ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  158) 			return p
+^e63192b (evals 2026-10-22 10:53:55 +0200  159) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  160) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  161) 	c.constants = append(c.constants, constant)
+^e63192b (evals 2026-10-22 10:53:55 +0200  162) 	p := len(c.constants) - 1
+^e63192b (evals 2026-10-22 10:53:55 +0200  163) 	if indexable {
+^e63192b (evals 2026-10-22 10:53:55 +0200  164) 		c.constantsIndex[hash] = p
+^e63192b (evals 2026-10-22 10:53:55 +0200  165) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  166) 	return p
+^e63192b (evals 2026-10-22 10:53:55 +0200  167) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  168) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  169) func (c *compiler) addVariable(name string) int {
+^e63192b (evals 2026-10-22 10:53:55 +0200  170) 	c.variables++
+^e63192b (evals 2026-10-22 10:53:55 +0200  171) 	c.debugInfo[fmt.Sprintf("var_%d", c.variables-1)] = name
+^e63192b (evals 2026-10-22 10:53:55 +0200  172) 	return c.variables - 1
+^e63192b (evals 2026-10-22 10:53:55 +0200  173) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  174) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  175) // emitFunction adds builtin.Function.Func to the program.functions and emits call opcode.
+^e63192b (evals 2026-10-22 10:53:55 +0200  176) func (c *compiler) emitFunction(fn *builtin.Function, argsLen int) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  177) 	switch argsLen {
+^e63192b (evals 2026-10-22 10:53:55 +0200  178) 	case 0:
+^e63192b (evals 2026-10-22 10:53:55 +0200  179) 		c.emit(OpCall0, c.addFunction(fn.Name, fn.Func))
+^e63192b (evals 2026-10-22 10:53:55 +0200  180) 	case 1:
+^e63192b (evals 2026-10-22 10:53:55 +0200  181) 		c.emit(OpCall1, c.addFunction(fn.Name, fn.Func))
+^e63192b (evals 2026-10-22 10:53:55 +0200  182) 	case 2:
+^e63192b (evals 2026-10-22 10:53:55 +0200  183) 		c.emit(OpCall2, c.addFunction(fn.Name, fn.Func))
+^e63192b (evals 2026-10-22 10:53:55 +0200  184) 	case 3:
+^e63192b (evals 2026-10-22 10:53:55 +0200  185) 		c.emit(OpCall3, c.addFunction(fn.Name, fn.Func))
+^e63192b (evals 2026-10-22 10:53:55 +0200  186) 	default:
+^e63192b (evals 2026-10-22 10:53:55 +0200  187) 		c.emit(OpLoadFunc, c.addFunction(fn.Name, fn.Func))
+^e63192b (evals 2026-10-22 10:53:55 +0200  188) 		c.emit(OpCallN, argsLen)
+^e63192b (evals 2026-10-22 10:53:55 +0200  189) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  190) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  191) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  192) // addFunction adds builtin.Function.Func to the program.functions and returns its index.
+^e63192b (evals 2026-10-22 10:53:55 +0200  193) func (c *compiler) addFunction(name string, fn Function) int {
+^e63192b (evals 2026-10-22 10:53:55 +0200  194) 	if fn == nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  195) 		panic("function is nil")
+^e63192b (evals 2026-10-22 10:53:55 +0200  196) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  197) 	if p, ok := c.functionsIndex[name]; ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  198) 		return p
+^e63192b (evals 2026-10-22 10:53:55 +0200  199) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  200) 	p := len(c.functions)
+^e63192b (evals 2026-10-22 10:53:55 +0200  201) 	c.functions = append(c.functions, fn)
+^e63192b (evals 2026-10-22 10:53:55 +0200  202) 	c.functionsIndex[name] = p
+^e63192b (evals 2026-10-22 10:53:55 +0200  203) 	c.debugInfo[fmt.Sprintf("func_%d", p)] = name
+^e63192b (evals 2026-10-22 10:53:55 +0200  204) 	return p
+^e63192b (evals 2026-10-22 10:53:55 +0200  205) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  206) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  207) func (c *compiler) patchJump(placeholder int) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  208) 	offset := len(c.bytecode) - placeholder
+^e63192b (evals 2026-10-22 10:53:55 +0200  209) 	c.arguments[placeholder-1] = offset
+^e63192b (evals 2026-10-22 10:53:55 +0200  210) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  211) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  212) func (c *compiler) calcBackwardJump(to int) int {
+^e63192b (evals 2026-10-22 10:53:55 +0200  213) 	return len(c.bytecode) + 1 - to
+^e63192b (evals 2026-10-22 10:53:55 +0200  214) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  215) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  216) func (c *compiler) compile(node ast.Node) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  217) 	c.nodes = append(c.nodes, node)
+^e63192b (evals 2026-10-22 10:53:55 +0200  218) 	defer func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  219) 		c.nodes = c.nodes[:len(c.nodes)-1]
+^e63192b (evals 2026-10-22 10:53:55 +0200  220) 	}()
+^e63192b (evals 2026-10-22 10:53:55 +0200  221) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  222) 	if c.config != nil && c.config.Profile {
+^e63192b (evals 2026-10-22 10:53:55 +0200  223) 		span := &Span{
+^e63192b (evals 2026-10-22 10:53:55 +0200  224) 			Name:       reflect.TypeOf(node).String(),
+^e63192b (evals 2026-10-22 10:53:55 +0200  225) 			Expression: node.String(),
+^e63192b (evals 2026-10-22 10:53:55 +0200  226) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  227) 		if len(c.spans) > 0 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  228) 			prev := c.spans[len(c.spans)-1]
+^e63192b (evals 2026-10-22 10:53:55 +0200  229) 			prev.Children = append(prev.Children, span)
+^e63192b (evals 2026-10-22 10:53:55 +0200  230) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  231) 		c.spans = append(c.spans, span)
+^e63192b (evals 2026-10-22 10:53:55 +0200  232) 		defer func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  233) 			if len(c.spans) > 1 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  234) 				c.spans = c.spans[:len(c.spans)-1]
+^e63192b (evals 2026-10-22 10:53:55 +0200  235) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200  236) 		}()
+^e63192b (evals 2026-10-22 10:53:55 +0200  237) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  238) 		c.emit(OpProfileStart, c.addConstant(span))
+^e63192b (evals 2026-10-22 10:53:55 +0200  239) 		defer func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  240) 			c.emit(OpProfileEnd, c.addConstant(span))
+^e63192b (evals 2026-10-22 10:53:55 +0200  241) 		}()
+^e63192b (evals 2026-10-22 10:53:55 +0200  242) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  243) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  244) 	switch n := node.(type) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  245) 	case *ast.NilNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  246) 		c.NilNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  247) 	case *ast.IdentifierNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  248) 		c.IdentifierNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  249) 	case *ast.IntegerNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  250) 		c.IntegerNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  251) 	case *ast.FloatNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  252) 		c.FloatNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  253) 	case *ast.BoolNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  254) 		c.BoolNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  255) 	case *ast.StringNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  256) 		c.StringNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  257) 	case *ast.BytesNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  258) 		c.BytesNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  259) 	case *ast.ConstantNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  260) 		c.ConstantNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  261) 	case *ast.UnaryNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  262) 		c.UnaryNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  263) 	case *ast.BinaryNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  264) 		c.BinaryNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  265) 	case *ast.ChainNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  266) 		c.ChainNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  267) 	case *ast.MemberNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  268) 		c.MemberNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  269) 	case *ast.SliceNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  270) 		c.SliceNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  271) 	case *ast.CallNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  272) 		c.CallNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  273) 	case *ast.BuiltinNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  274) 		c.BuiltinNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  275) 	case *ast.PredicateNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  276) 		c.PredicateNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  277) 	case *ast.PointerNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  278) 		c.PointerNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  279) 	case *ast.VariableDeclaratorNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  280) 		c.VariableDeclaratorNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  281) 	case *ast.SequenceNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  282) 		c.SequenceNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  283) 	case *ast.ConditionalNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  284) 		c.ConditionalNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  285) 	case *ast.ArrayNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  286) 		c.ArrayNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  287) 	case *ast.MapNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  288) 		c.MapNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  289) 	case *ast.PairNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  290) 		c.PairNode(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200  291) 	default:
+^e63192b (evals 2026-10-22 10:53:55 +0200  292) 		panic(fmt.Sprintf("undefined node type (%T)", node))
+^e63192b (evals 2026-10-22 10:53:55 +0200  293) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  294) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  295) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  296) func (c *compiler) NilNode(_ *ast.NilNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  297) 	c.emit(OpNil)
+^e63192b (evals 2026-10-22 10:53:55 +0200  298) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  299) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  300) func (c *compiler) IdentifierNode(node *ast.IdentifierNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  301) 	if index, ok := c.lookupVariable(node.Value); ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  302) 		c.emit(OpLoadVar, index)
+^e63192b (evals 2026-10-22 10:53:55 +0200  303) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200  304) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  305) 	if node.Value == "$env" {
+^e63192b (evals 2026-10-22 10:53:55 +0200  306) 		c.emit(OpLoadEnv)
+^e63192b (evals 2026-10-22 10:53:55 +0200  307) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200  308) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  309) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  310) 	var env Nature
+^e63192b (evals 2026-10-22 10:53:55 +0200  311) 	if c.config != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  312) 		env = c.config.Env
+^e63192b (evals 2026-10-22 10:53:55 +0200  313) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  314) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  315) 	if env.IsFastMap() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  316) 		c.emit(OpLoadFast, c.addConstant(node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  317) 	} else if ok, index, name := checker.FieldIndex(c.ntCache, env, node); ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  318) 		c.emit(OpLoadField, c.addConstant(&runtime.Field{
+^e63192b (evals 2026-10-22 10:53:55 +0200  319) 			Index: index,
+^e63192b (evals 2026-10-22 10:53:55 +0200  320) 			Path:  []string{name},
+^e63192b (evals 2026-10-22 10:53:55 +0200  321) 		}))
+^e63192b (evals 2026-10-22 10:53:55 +0200  322) 	} else if ok, index, name := checker.MethodIndex(c.ntCache, env, node); ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  323) 		c.emit(OpLoadMethod, c.addConstant(&runtime.Method{
+^e63192b (evals 2026-10-22 10:53:55 +0200  324) 			Name:  name,
+^e63192b (evals 2026-10-22 10:53:55 +0200  325) 			Index: index,
+^e63192b (evals 2026-10-22 10:53:55 +0200  326) 		}))
+^e63192b (evals 2026-10-22 10:53:55 +0200  327) 	} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  328) 		c.emit(OpLoadConst, c.addConstant(node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  329) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  330) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  331) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  332) func (c *compiler) IntegerNode(node *ast.IntegerNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  333) 	t := node.Type()
+^e63192b (evals 2026-10-22 10:53:55 +0200  334) 	if t == nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  335) 		c.emitPush(node.Value)
+^e63192b (evals 2026-10-22 10:53:55 +0200  336) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200  337) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  338) 	switch t.Kind() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  339) 	case reflect.Float32:
+^e63192b (evals 2026-10-22 10:53:55 +0200  340) 		c.emitPush(float32(node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  341) 	case reflect.Float64:
+^e63192b (evals 2026-10-22 10:53:55 +0200  342) 		c.emitPush(float64(node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  343) 	case reflect.Int:
+^e63192b (evals 2026-10-22 10:53:55 +0200  344) 		c.emitPush(node.Value)
+^e63192b (evals 2026-10-22 10:53:55 +0200  345) 	case reflect.Int8:
+^e63192b (evals 2026-10-22 10:53:55 +0200  346) 		if node.Value > math.MaxInt8 || node.Value < math.MinInt8 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  347) 			panic(fmt.Sprintf("constant %d overflows int8", node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  348) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  349) 		c.emitPush(int8(node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  350) 	case reflect.Int16:
+^e63192b (evals 2026-10-22 10:53:55 +0200  351) 		if node.Value > math.MaxInt16 || node.Value < math.MinInt16 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  352) 			panic(fmt.Sprintf("constant %d overflows int16", node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  353) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  354) 		c.emitPush(int16(node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  355) 	case reflect.Int32:
+^e63192b (evals 2026-10-22 10:53:55 +0200  356) 		if node.Value > math.MaxInt32 || node.Value < math.MinInt32 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  357) 			panic(fmt.Sprintf("constant %d overflows int32", node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  358) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  359) 		c.emitPush(int32(node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  360) 	case reflect.Int64:
+^e63192b (evals 2026-10-22 10:53:55 +0200  361) 		c.emitPush(int64(node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  362) 	case reflect.Uint:
+^e63192b (evals 2026-10-22 10:53:55 +0200  363) 		if node.Value < 0 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  364) 			panic(fmt.Sprintf("constant %d overflows uint", node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  365) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  366) 		c.emitPush(uint(node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  367) 	case reflect.Uint8:
+^e63192b (evals 2026-10-22 10:53:55 +0200  368) 		if node.Value > math.MaxUint8 || node.Value < 0 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  369) 			panic(fmt.Sprintf("constant %d overflows uint8", node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  370) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  371) 		c.emitPush(uint8(node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  372) 	case reflect.Uint16:
+^e63192b (evals 2026-10-22 10:53:55 +0200  373) 		if node.Value > math.MaxUint16 || node.Value < 0 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  374) 			panic(fmt.Sprintf("constant %d overflows uint16", node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  375) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  376) 		c.emitPush(uint16(node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  377) 	case reflect.Uint32:
+^e63192b (evals 2026-10-22 10:53:55 +0200  378) 		if node.Value < 0 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  379) 			panic(fmt.Sprintf("constant %d overflows uint32", node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  380) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  381) 		c.emitPush(uint32(node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  382) 	case reflect.Uint64:
+^e63192b (evals 2026-10-22 10:53:55 +0200  383) 		if node.Value < 0 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  384) 			panic(fmt.Sprintf("constant %d overflows uint64", node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  385) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  386) 		c.emitPush(uint64(node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  387) 	default:
+^e63192b (evals 2026-10-22 10:53:55 +0200  388) 		c.emitPush(node.Value)
+^e63192b (evals 2026-10-22 10:53:55 +0200  389) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  390) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  391) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  392) func (c *compiler) FloatNode(node *ast.FloatNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  393) 	switch node.Type().Kind() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  394) 	case reflect.Float32:
+^e63192b (evals 2026-10-22 10:53:55 +0200  395) 		c.emitPush(float32(node.Value))
+^e63192b (evals 2026-10-22 10:53:55 +0200  396) 	case reflect.Float64:
+^e63192b (evals 2026-10-22 10:53:55 +0200  397) 		c.emitPush(node.Value)
+^e63192b (evals 2026-10-22 10:53:55 +0200  398) 	default:
+^e63192b (evals 2026-10-22 10:53:55 +0200  399) 		c.emitPush(node.Value)
+^e63192b (evals 2026-10-22 10:53:55 +0200  400) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  401) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  402) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  403) func (c *compiler) BoolNode(node *ast.BoolNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  404) 	if node.Value {
+^e63192b (evals 2026-10-22 10:53:55 +0200  405) 		c.emit(OpTrue)
+^e63192b (evals 2026-10-22 10:53:55 +0200  406) 	} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  407) 		c.emit(OpFalse)
+^e63192b (evals 2026-10-22 10:53:55 +0200  408) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  409) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  410) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  411) func (c *compiler) StringNode(node *ast.StringNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  412) 	c.emitPush(node.Value)
+^e63192b (evals 2026-10-22 10:53:55 +0200  413) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  414) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  415) func (c *compiler) BytesNode(node *ast.BytesNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  416) 	c.emitPush(node.Value)
+^e63192b (evals 2026-10-22 10:53:55 +0200  417) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  418) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  419) func (c *compiler) ConstantNode(node *ast.ConstantNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  420) 	if node.Value == nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  421) 		c.emit(OpNil)
+^e63192b (evals 2026-10-22 10:53:55 +0200  422) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200  423) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  424) 	c.emitPush(node.Value)
+^e63192b (evals 2026-10-22 10:53:55 +0200  425) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  426) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  427) func (c *compiler) UnaryNode(node *ast.UnaryNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  428) 	c.compile(node.Node)
+^e63192b (evals 2026-10-22 10:53:55 +0200  429) 	c.derefInNeeded(node.Node)
+^e63192b (evals 2026-10-22 10:53:55 +0200  430) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  431) 	switch node.Operator {
+^e63192b (evals 2026-10-22 10:53:55 +0200  432) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  433) 	case "!", "not":
+^e63192b (evals 2026-10-22 10:53:55 +0200  434) 		c.emit(OpNot)
+^e63192b (evals 2026-10-22 10:53:55 +0200  435) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  436) 	case "+":
+^e63192b (evals 2026-10-22 10:53:55 +0200  437) 		// Do nothing
+^e63192b (evals 2026-10-22 10:53:55 +0200  438) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  439) 	case "-":
+^e63192b (evals 2026-10-22 10:53:55 +0200  440) 		c.emit(OpNegate)
+^e63192b (evals 2026-10-22 10:53:55 +0200  441) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  442) 	default:
+^e63192b (evals 2026-10-22 10:53:55 +0200  443) 		panic(fmt.Sprintf("unknown operator (%v)", node.Operator))
+^e63192b (evals 2026-10-22 10:53:55 +0200  444) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  445) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  446) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  447) func (c *compiler) BinaryNode(node *ast.BinaryNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  448) 	switch node.Operator {
+^e63192b (evals 2026-10-22 10:53:55 +0200  449) 	case "==":
+^e63192b (evals 2026-10-22 10:53:55 +0200  450) 		c.equalBinaryNode(node)
+^e63192b (evals 2026-10-22 10:53:55 +0200  451) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  452) 	case "!=":
+^e63192b (evals 2026-10-22 10:53:55 +0200  453) 		c.equalBinaryNode(node)
+^e63192b (evals 2026-10-22 10:53:55 +0200  454) 		c.emit(OpNot)
+^e63192b (evals 2026-10-22 10:53:55 +0200  455) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  456) 	case "or", "||":
+^e63192b (evals 2026-10-22 10:53:55 +0200  457) 		if c.config != nil && !c.config.ShortCircuit {
+^e63192b (evals 2026-10-22 10:53:55 +0200  458) 			c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  459) 			c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  460) 			c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  461) 			c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  462) 			c.emit(OpOr)
+^e63192b (evals 2026-10-22 10:53:55 +0200  463) 			break
+^e63192b (evals 2026-10-22 10:53:55 +0200  464) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  465) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  466) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  467) 		end := c.emit(OpJumpIfTrue, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200  468) 		c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200  469) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  470) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  471) 		c.patchJump(end)
+^e63192b (evals 2026-10-22 10:53:55 +0200  472) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  473) 	case "and", "&&":
+^e63192b (evals 2026-10-22 10:53:55 +0200  474) 		if c.config != nil && !c.config.ShortCircuit {
+^e63192b (evals 2026-10-22 10:53:55 +0200  475) 			c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  476) 			c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  477) 			c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  478) 			c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  479) 			c.emit(OpAnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200  480) 			break
+^e63192b (evals 2026-10-22 10:53:55 +0200  481) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  482) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  483) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  484) 		end := c.emit(OpJumpIfFalse, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200  485) 		c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200  486) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  487) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  488) 		c.patchJump(end)
+^e63192b (evals 2026-10-22 10:53:55 +0200  489) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  490) 	case "<":
+^e63192b (evals 2026-10-22 10:53:55 +0200  491) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  492) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  493) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  494) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  495) 		c.emit(OpLess)
+^e63192b (evals 2026-10-22 10:53:55 +0200  496) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  497) 	case ">":
+^e63192b (evals 2026-10-22 10:53:55 +0200  498) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  499) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  500) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  501) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  502) 		c.emit(OpMore)
+^e63192b (evals 2026-10-22 10:53:55 +0200  503) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  504) 	case "<=":
+^e63192b (evals 2026-10-22 10:53:55 +0200  505) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  506) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  507) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  508) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  509) 		c.emit(OpLessOrEqual)
+^e63192b (evals 2026-10-22 10:53:55 +0200  510) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  511) 	case ">=":
+^e63192b (evals 2026-10-22 10:53:55 +0200  512) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  513) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  514) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  515) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  516) 		c.emit(OpMoreOrEqual)
+^e63192b (evals 2026-10-22 10:53:55 +0200  517) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  518) 	case "+":
+^e63192b (evals 2026-10-22 10:53:55 +0200  519) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  520) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  521) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  522) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  523) 		c.emit(OpAdd)
+^e63192b (evals 2026-10-22 10:53:55 +0200  524) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  525) 	case "-":
+^e63192b (evals 2026-10-22 10:53:55 +0200  526) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  527) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  528) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  529) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  530) 		c.emit(OpSubtract)
+^e63192b (evals 2026-10-22 10:53:55 +0200  531) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  532) 	case "*":
+^e63192b (evals 2026-10-22 10:53:55 +0200  533) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  534) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  535) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  536) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  537) 		c.emit(OpMultiply)
+^e63192b (evals 2026-10-22 10:53:55 +0200  538) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  539) 	case "/":
+^e63192b (evals 2026-10-22 10:53:55 +0200  540) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  541) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  542) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  543) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  544) 		c.emit(OpDivide)
+^e63192b (evals 2026-10-22 10:53:55 +0200  545) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  546) 	case "%":
+^e63192b (evals 2026-10-22 10:53:55 +0200  547) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  548) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  549) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  550) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  551) 		c.emit(OpModulo)
+^e63192b (evals 2026-10-22 10:53:55 +0200  552) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  553) 	case "**", "^":
+^e63192b (evals 2026-10-22 10:53:55 +0200  554) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  555) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  556) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  557) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  558) 		c.emit(OpExponent)
+^e63192b (evals 2026-10-22 10:53:55 +0200  559) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  560) 	case "in":
+^e63192b (evals 2026-10-22 10:53:55 +0200  561) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  562) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  563) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  564) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  565) 		c.emit(OpIn)
+^e63192b (evals 2026-10-22 10:53:55 +0200  566) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  567) 	case "matches":
+^e63192b (evals 2026-10-22 10:53:55 +0200  568) 		if str, ok := node.Right.(*ast.StringNode); ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  569) 			re, err := regexp.Compile(str.Value)
+^e63192b (evals 2026-10-22 10:53:55 +0200  570) 			if err != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  571) 				panic(err)
+^e63192b (evals 2026-10-22 10:53:55 +0200  572) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200  573) 			c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  574) 			c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  575) 			c.emit(OpMatchesConst, c.addConstant(re))
+^e63192b (evals 2026-10-22 10:53:55 +0200  576) 		} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  577) 			c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  578) 			c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  579) 			c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  580) 			c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  581) 			c.emit(OpMatches)
+^e63192b (evals 2026-10-22 10:53:55 +0200  582) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  583) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  584) 	case "contains":
+^e63192b (evals 2026-10-22 10:53:55 +0200  585) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  586) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  587) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  588) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  589) 		c.emit(OpContains)
+^e63192b (evals 2026-10-22 10:53:55 +0200  590) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  591) 	case "startsWith":
+^e63192b (evals 2026-10-22 10:53:55 +0200  592) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  593) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  594) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  595) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  596) 		c.emit(OpStartsWith)
+^e63192b (evals 2026-10-22 10:53:55 +0200  597) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  598) 	case "endsWith":
+^e63192b (evals 2026-10-22 10:53:55 +0200  599) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  600) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  601) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  602) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  603) 		c.emit(OpEndsWith)
+^e63192b (evals 2026-10-22 10:53:55 +0200  604) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  605) 	case "..":
+^e63192b (evals 2026-10-22 10:53:55 +0200  606) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  607) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  608) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  609) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  610) 		c.emit(OpRange)
+^e63192b (evals 2026-10-22 10:53:55 +0200  611) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  612) 	case "??":
+^e63192b (evals 2026-10-22 10:53:55 +0200  613) 		c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  614) 		c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  615) 		end := c.emit(OpJumpIfNotNil, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200  616) 		c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200  617) 		c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  618) 		c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  619) 		c.patchJump(end)
+^e63192b (evals 2026-10-22 10:53:55 +0200  620) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  621) 	default:
+^e63192b (evals 2026-10-22 10:53:55 +0200  622) 		panic(fmt.Sprintf("unknown operator (%v)", node.Operator))
+^e63192b (evals 2026-10-22 10:53:55 +0200  623) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  624) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  625) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  626) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  627) func (c *compiler) equalBinaryNode(node *ast.BinaryNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  628) 	l := kind(node.Left.Type())
+^e63192b (evals 2026-10-22 10:53:55 +0200  629) 	r := kind(node.Right.Type())
+^e63192b (evals 2026-10-22 10:53:55 +0200  630) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  631) 	leftIsSimple := isSimpleType(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  632) 	rightIsSimple := isSimpleType(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  633) 	leftAndRightAreSimple := leftIsSimple && rightIsSimple
+^e63192b (evals 2026-10-22 10:53:55 +0200  634) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  635) 	c.compile(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  636) 	c.derefInNeeded(node.Left)
+^e63192b (evals 2026-10-22 10:53:55 +0200  637) 	c.compile(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  638) 	c.derefInNeeded(node.Right)
+^e63192b (evals 2026-10-22 10:53:55 +0200  639) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  640) 	if l == r && l == reflect.Int && leftAndRightAreSimple {
+^e63192b (evals 2026-10-22 10:53:55 +0200  641) 		c.emit(OpEqualInt)
+^e63192b (evals 2026-10-22 10:53:55 +0200  642) 	} else if l == r && l == reflect.String && leftAndRightAreSimple {
+^e63192b (evals 2026-10-22 10:53:55 +0200  643) 		c.emit(OpEqualString)
+^e63192b (evals 2026-10-22 10:53:55 +0200  644) 	} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  645) 		c.emit(OpEqual)
+^e63192b (evals 2026-10-22 10:53:55 +0200  646) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  647) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  648) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  649) func isSimpleType(node ast.Node) bool {
+^e63192b (evals 2026-10-22 10:53:55 +0200  650) 	if node == nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  651) 		return false
+^e63192b (evals 2026-10-22 10:53:55 +0200  652) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  653) 	t := node.Type()
+^e63192b (evals 2026-10-22 10:53:55 +0200  654) 	if t == nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  655) 		return false
+^e63192b (evals 2026-10-22 10:53:55 +0200  656) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  657) 	return t.PkgPath() == ""
+^e63192b (evals 2026-10-22 10:53:55 +0200  658) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  659) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  660) func (c *compiler) ChainNode(node *ast.ChainNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  661) 	c.chains = append(c.chains, []int{})
+^e63192b (evals 2026-10-22 10:53:55 +0200  662) 	c.compile(node.Node)
+^e63192b (evals 2026-10-22 10:53:55 +0200  663) 	for _, ph := range c.chains[len(c.chains)-1] {
+^e63192b (evals 2026-10-22 10:53:55 +0200  664) 		c.patchJump(ph) // If chain activated jump here (got nit somewhere).
+^e63192b (evals 2026-10-22 10:53:55 +0200  665) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  666) 	parent := c.nodeParent()
+^e63192b (evals 2026-10-22 10:53:55 +0200  667) 	if binary, ok := parent.(*ast.BinaryNode); ok && binary.Operator == "??" {
+^e63192b (evals 2026-10-22 10:53:55 +0200  668) 		// If chain is used in nil coalescing operator, we can omit
+^e63192b (evals 2026-10-22 10:53:55 +0200  669) 		// nil push at the end of the chain. The ?? operator will
+^e63192b (evals 2026-10-22 10:53:55 +0200  670) 		// handle it.
+^e63192b (evals 2026-10-22 10:53:55 +0200  671) 	} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  672) 		// We need to put the nil on the stack, otherwise "typed"
+^e63192b (evals 2026-10-22 10:53:55 +0200  673) 		// nil will be used as a result of the chain.
+^e63192b (evals 2026-10-22 10:53:55 +0200  674) 		j := c.emit(OpJumpIfNotNil, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200  675) 		c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200  676) 		c.emit(OpNil)
+^e63192b (evals 2026-10-22 10:53:55 +0200  677) 		c.patchJump(j)
+^e63192b (evals 2026-10-22 10:53:55 +0200  678) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  679) 	c.chains = c.chains[:len(c.chains)-1]
+^e63192b (evals 2026-10-22 10:53:55 +0200  680) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  681) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  682) func (c *compiler) MemberNode(node *ast.MemberNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  683) 	var env Nature
+^e63192b (evals 2026-10-22 10:53:55 +0200  684) 	if c.config != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  685) 		env = c.config.Env
+^e63192b (evals 2026-10-22 10:53:55 +0200  686) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  687) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  688) 	if ok, index, name := checker.MethodIndex(c.ntCache, env, node); ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  689) 		c.compile(node.Node)
+^e63192b (evals 2026-10-22 10:53:55 +0200  690) 		c.emit(OpMethod, c.addConstant(&runtime.Method{
+^e63192b (evals 2026-10-22 10:53:55 +0200  691) 			Name:  name,
+^e63192b (evals 2026-10-22 10:53:55 +0200  692) 			Index: index,
+^e63192b (evals 2026-10-22 10:53:55 +0200  693) 		}))
+^e63192b (evals 2026-10-22 10:53:55 +0200  694) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200  695) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  696) 	op := OpFetch
+^e63192b (evals 2026-10-22 10:53:55 +0200  697) 	base := node.Node
+^e63192b (evals 2026-10-22 10:53:55 +0200  698) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  699) 	ok, index, nodeName := checker.FieldIndex(c.ntCache, env, node)
+^e63192b (evals 2026-10-22 10:53:55 +0200  700) 	path := []string{nodeName}
+^e63192b (evals 2026-10-22 10:53:55 +0200  701) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  702) 	if ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  703) 		op = OpFetchField
+^e63192b (evals 2026-10-22 10:53:55 +0200  704) 		for !node.Optional {
+^e63192b (evals 2026-10-22 10:53:55 +0200  705) 			if ident, isIdent := base.(*ast.IdentifierNode); isIdent {
+^e63192b (evals 2026-10-22 10:53:55 +0200  706) 				if ok, identIndex, name := checker.FieldIndex(c.ntCache, env, ident); ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  707) 					index = append(identIndex, index...)
+^e63192b (evals 2026-10-22 10:53:55 +0200  708) 					path = append([]string{name}, path...)
+^e63192b (evals 2026-10-22 10:53:55 +0200  709) 					c.emitLocation(ident.Location(), OpLoadField, c.addConstant(
+^e63192b (evals 2026-10-22 10:53:55 +0200  710) 						&runtime.Field{Index: index, Path: path},
+^e63192b (evals 2026-10-22 10:53:55 +0200  711) 					))
+^e63192b (evals 2026-10-22 10:53:55 +0200  712) 					return
+^e63192b (evals 2026-10-22 10:53:55 +0200  713) 				}
+^e63192b (evals 2026-10-22 10:53:55 +0200  714) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200  715) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  716) 			if member, isMember := base.(*ast.MemberNode); isMember {
+^e63192b (evals 2026-10-22 10:53:55 +0200  717) 				if ok, memberIndex, name := checker.FieldIndex(c.ntCache, env, member); ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  718) 					index = append(memberIndex, index...)
+^e63192b (evals 2026-10-22 10:53:55 +0200  719) 					path = append([]string{name}, path...)
+^e63192b (evals 2026-10-22 10:53:55 +0200  720) 					node = member
+^e63192b (evals 2026-10-22 10:53:55 +0200  721) 					base = member.Node
+^e63192b (evals 2026-10-22 10:53:55 +0200  722) 				} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  723) 					break
+^e63192b (evals 2026-10-22 10:53:55 +0200  724) 				}
+^e63192b (evals 2026-10-22 10:53:55 +0200  725) 			} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  726) 				break
+^e63192b (evals 2026-10-22 10:53:55 +0200  727) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200  728) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  729) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  730) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  731) 	c.compile(base)
+^e63192b (evals 2026-10-22 10:53:55 +0200  732) 	// If the field is optional, we need to jump over the fetch operation.
+^e63192b (evals 2026-10-22 10:53:55 +0200  733) 	// If no ChainNode (none c.chains) is used, do not compile the optional fetch.
+^e63192b (evals 2026-10-22 10:53:55 +0200  734) 	if node.Optional && len(c.chains) > 0 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  735) 		ph := c.emit(OpJumpIfNil, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200  736) 		c.chains[len(c.chains)-1] = append(c.chains[len(c.chains)-1], ph)
+^e63192b (evals 2026-10-22 10:53:55 +0200  737) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  738) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  739) 	if op == OpFetch {
+^e63192b (evals 2026-10-22 10:53:55 +0200  740) 		c.compile(node.Property)
+^e63192b (evals 2026-10-22 10:53:55 +0200  741) 		deref := true
+^e63192b (evals 2026-10-22 10:53:55 +0200  742) 		// If the map key is a pointer, we should not dereference the property.
+^e63192b (evals 2026-10-22 10:53:55 +0200  743) 		if node.Node.Type() != nil && node.Node.Type().Kind() == reflect.Map {
+^e63192b (evals 2026-10-22 10:53:55 +0200  744) 			keyType := node.Node.Type().Key()
+^e63192b (evals 2026-10-22 10:53:55 +0200  745) 			propType := node.Property.Type()
+^e63192b (evals 2026-10-22 10:53:55 +0200  746) 			if propType != nil && propType.AssignableTo(keyType) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  747) 				deref = false
+^e63192b (evals 2026-10-22 10:53:55 +0200  748) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200  749) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  750) 		if deref {
+^e63192b (evals 2026-10-22 10:53:55 +0200  751) 			c.derefInNeeded(node.Property)
+^e63192b (evals 2026-10-22 10:53:55 +0200  752) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  753) 		c.emit(OpFetch)
+^e63192b (evals 2026-10-22 10:53:55 +0200  754) 	} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  755) 		c.emitLocation(node.Location(), op, c.addConstant(
+^e63192b (evals 2026-10-22 10:53:55 +0200  756) 			&runtime.Field{Index: index, Path: path},
+^e63192b (evals 2026-10-22 10:53:55 +0200  757) 		))
+^e63192b (evals 2026-10-22 10:53:55 +0200  758) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  759) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  760) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  761) func (c *compiler) SliceNode(node *ast.SliceNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  762) 	c.compile(node.Node)
+^e63192b (evals 2026-10-22 10:53:55 +0200  763) 	if node.To != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  764) 		c.compile(node.To)
+^e63192b (evals 2026-10-22 10:53:55 +0200  765) 		c.derefInNeeded(node.To)
+^e63192b (evals 2026-10-22 10:53:55 +0200  766) 	} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  767) 		c.emit(OpLen)
+^e63192b (evals 2026-10-22 10:53:55 +0200  768) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  769) 	if node.From != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  770) 		c.compile(node.From)
+^e63192b (evals 2026-10-22 10:53:55 +0200  771) 		c.derefInNeeded(node.From)
+^e63192b (evals 2026-10-22 10:53:55 +0200  772) 	} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  773) 		c.emitPush(0)
+^e63192b (evals 2026-10-22 10:53:55 +0200  774) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  775) 	c.emit(OpSlice)
+^e63192b (evals 2026-10-22 10:53:55 +0200  776) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  777) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  778) func (c *compiler) CallNode(node *ast.CallNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  779) 	fn := node.Callee.Type()
+^e63192b (evals 2026-10-22 10:53:55 +0200  780) 	if fn.Kind() == reflect.Func {
+^e63192b (evals 2026-10-22 10:53:55 +0200  781) 		fnInOffset := 0
+^e63192b (evals 2026-10-22 10:53:55 +0200  782) 		fnNumIn := fn.NumIn()
+^e63192b (evals 2026-10-22 10:53:55 +0200  783) 		switch callee := node.Callee.(type) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  784) 		case *ast.MemberNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  785) 			if prop, ok := callee.Property.(*ast.StringNode); ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  786) 				if _, ok = callee.Node.Type().MethodByName(prop.Value); ok && callee.Node.Type().Kind() != reflect.Interface {
+^e63192b (evals 2026-10-22 10:53:55 +0200  787) 					fnInOffset = 1
+^e63192b (evals 2026-10-22 10:53:55 +0200  788) 					fnNumIn--
+^e63192b (evals 2026-10-22 10:53:55 +0200  789) 				}
+^e63192b (evals 2026-10-22 10:53:55 +0200  790) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200  791) 		case *ast.IdentifierNode:
+^e63192b (evals 2026-10-22 10:53:55 +0200  792) 			if t, ok := c.config.Env.MethodByName(c.ntCache, callee.Value); ok && t.Method {
+^e63192b (evals 2026-10-22 10:53:55 +0200  793) 				fnInOffset = 1
+^e63192b (evals 2026-10-22 10:53:55 +0200  794) 				fnNumIn--
+^e63192b (evals 2026-10-22 10:53:55 +0200  795) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200  796) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  797) 		for i, arg := range node.Arguments {
+^e63192b (evals 2026-10-22 10:53:55 +0200  798) 			c.compile(arg)
+^e63192b (evals 2026-10-22 10:53:55 +0200  799) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  800) 			var in reflect.Type
+^e63192b (evals 2026-10-22 10:53:55 +0200  801) 			if fn.IsVariadic() && i >= fnNumIn-1 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  802) 				in = fn.In(fn.NumIn() - 1).Elem()
+^e63192b (evals 2026-10-22 10:53:55 +0200  803) 			} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  804) 				in = fn.In(i + fnInOffset)
+^e63192b (evals 2026-10-22 10:53:55 +0200  805) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200  806) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  807) 			c.derefParam(in, arg)
+^e63192b (evals 2026-10-22 10:53:55 +0200  808) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  809) 	} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  810) 		for _, arg := range node.Arguments {
+^e63192b (evals 2026-10-22 10:53:55 +0200  811) 			c.compile(arg)
+^e63192b (evals 2026-10-22 10:53:55 +0200  812) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  813) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  814) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  815) 	if ident, ok := node.Callee.(*ast.IdentifierNode); ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  816) 		if c.config != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  817) 			if fn, ok := c.config.Functions[ident.Value]; ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  818) 				c.emitFunction(fn, len(node.Arguments))
+^e63192b (evals 2026-10-22 10:53:55 +0200  819) 				return
+^e63192b (evals 2026-10-22 10:53:55 +0200  820) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200  821) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  822) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  823) 	c.compile(node.Callee)
+^e63192b (evals 2026-10-22 10:53:55 +0200  824) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  825) 	if c.config != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  826) 		isMethod, _, _ := checker.MethodIndex(c.ntCache, c.config.Env, node.Callee)
+^e63192b (evals 2026-10-22 10:53:55 +0200  827) 		if index, ok := checker.TypedFuncIndex(node.Callee.Type(), isMethod); ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200  828) 			c.emit(OpCallTyped, index)
+^e63192b (evals 2026-10-22 10:53:55 +0200  829) 			return
+^e63192b (evals 2026-10-22 10:53:55 +0200  830) 		} else if checker.IsFastFunc(node.Callee.Type(), isMethod) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  831) 			c.emit(OpCallFast, len(node.Arguments))
+^e63192b (evals 2026-10-22 10:53:55 +0200  832) 		} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  833) 			c.emit(OpCall, len(node.Arguments))
+^e63192b (evals 2026-10-22 10:53:55 +0200  834) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  835) 	} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  836) 		c.emit(OpCall, len(node.Arguments))
+^e63192b (evals 2026-10-22 10:53:55 +0200  837) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200  838) }
+^e63192b (evals 2026-10-22 10:53:55 +0200  839) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  840) func (c *compiler) BuiltinNode(node *ast.BuiltinNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200  841) 	switch node.Name {
+^e63192b (evals 2026-10-22 10:53:55 +0200  842) 	case "all":
+^e63192b (evals 2026-10-22 10:53:55 +0200  843) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  844) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  845) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200  846) 		var loopBreak int
+^e63192b (evals 2026-10-22 10:53:55 +0200  847) 		c.emitLoop(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  848) 			c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200  849) 			loopBreak = c.emit(OpJumpIfFalse, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200  850) 			c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200  851) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200  852) 		c.emit(OpTrue)
+^e63192b (evals 2026-10-22 10:53:55 +0200  853) 		c.patchJump(loopBreak)
+^e63192b (evals 2026-10-22 10:53:55 +0200  854) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200  855) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200  856) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  857) 	case "none":
+^e63192b (evals 2026-10-22 10:53:55 +0200  858) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  859) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  860) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200  861) 		var loopBreak int
+^e63192b (evals 2026-10-22 10:53:55 +0200  862) 		c.emitLoop(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  863) 			c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200  864) 			c.emit(OpNot)
+^e63192b (evals 2026-10-22 10:53:55 +0200  865) 			loopBreak = c.emit(OpJumpIfFalse, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200  866) 			c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200  867) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200  868) 		c.emit(OpTrue)
+^e63192b (evals 2026-10-22 10:53:55 +0200  869) 		c.patchJump(loopBreak)
+^e63192b (evals 2026-10-22 10:53:55 +0200  870) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200  871) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200  872) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  873) 	case "any":
+^e63192b (evals 2026-10-22 10:53:55 +0200  874) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  875) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  876) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200  877) 		var loopBreak int
+^e63192b (evals 2026-10-22 10:53:55 +0200  878) 		c.emitLoop(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  879) 			c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200  880) 			loopBreak = c.emit(OpJumpIfTrue, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200  881) 			c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200  882) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200  883) 		c.emit(OpFalse)
+^e63192b (evals 2026-10-22 10:53:55 +0200  884) 		c.patchJump(loopBreak)
+^e63192b (evals 2026-10-22 10:53:55 +0200  885) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200  886) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200  887) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  888) 	case "one":
+^e63192b (evals 2026-10-22 10:53:55 +0200  889) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  890) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  891) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200  892) 		c.emitLoop(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  893) 			c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200  894) 			c.emitCond(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  895) 				c.emit(OpIncrementCount)
+^e63192b (evals 2026-10-22 10:53:55 +0200  896) 			})
+^e63192b (evals 2026-10-22 10:53:55 +0200  897) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200  898) 		c.emit(OpGetCount)
+^e63192b (evals 2026-10-22 10:53:55 +0200  899) 		c.emitPush(1)
+^e63192b (evals 2026-10-22 10:53:55 +0200  900) 		c.emit(OpEqual)
+^e63192b (evals 2026-10-22 10:53:55 +0200  901) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200  902) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200  903) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  904) 	case "filter":
+^e63192b (evals 2026-10-22 10:53:55 +0200  905) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  906) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  907) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200  908) 		c.emitLoop(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  909) 			c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200  910) 			c.emitCond(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  911) 				c.emit(OpIncrementCount)
+^e63192b (evals 2026-10-22 10:53:55 +0200  912) 				if node.Map != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  913) 					c.compile(node.Map)
+^e63192b (evals 2026-10-22 10:53:55 +0200  914) 				} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  915) 					c.emit(OpPointer)
+^e63192b (evals 2026-10-22 10:53:55 +0200  916) 				}
+^e63192b (evals 2026-10-22 10:53:55 +0200  917) 			})
+^e63192b (evals 2026-10-22 10:53:55 +0200  918) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200  919) 		c.emit(OpGetCount)
+^e63192b (evals 2026-10-22 10:53:55 +0200  920) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200  921) 		c.emit(OpArray)
+^e63192b (evals 2026-10-22 10:53:55 +0200  922) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200  923) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  924) 	case "map":
+^e63192b (evals 2026-10-22 10:53:55 +0200  925) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  926) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  927) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200  928) 		c.emitLoop(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  929) 			c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200  930) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200  931) 		c.emit(OpGetLen)
+^e63192b (evals 2026-10-22 10:53:55 +0200  932) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200  933) 		c.emit(OpArray)
+^e63192b (evals 2026-10-22 10:53:55 +0200  934) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200  935) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  936) 	case "count":
+^e63192b (evals 2026-10-22 10:53:55 +0200  937) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  938) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  939) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200  940) 		var loopBreak int
+^e63192b (evals 2026-10-22 10:53:55 +0200  941) 		c.emitLoop(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  942) 			if len(node.Arguments) == 2 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  943) 				c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200  944) 			} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  945) 				c.emit(OpPointer)
+^e63192b (evals 2026-10-22 10:53:55 +0200  946) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200  947) 			c.emitCond(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  948) 				c.emit(OpIncrementCount)
+^e63192b (evals 2026-10-22 10:53:55 +0200  949) 				// Early termination if threshold is set
+^e63192b (evals 2026-10-22 10:53:55 +0200  950) 				if node.Threshold != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  951) 					c.emit(OpGetCount)
+^e63192b (evals 2026-10-22 10:53:55 +0200  952) 					c.emit(OpInt, *node.Threshold)
+^e63192b (evals 2026-10-22 10:53:55 +0200  953) 					c.emit(OpMoreOrEqual)
+^e63192b (evals 2026-10-22 10:53:55 +0200  954) 					loopBreak = c.emit(OpJumpIfTrue, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200  955) 					c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200  956) 				}
+^e63192b (evals 2026-10-22 10:53:55 +0200  957) 			})
+^e63192b (evals 2026-10-22 10:53:55 +0200  958) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200  959) 		c.emit(OpGetCount)
+^e63192b (evals 2026-10-22 10:53:55 +0200  960) 		if node.Threshold != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200  961) 			end := c.emit(OpJump, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200  962) 			c.patchJump(loopBreak)
+^e63192b (evals 2026-10-22 10:53:55 +0200  963) 			// Early exit path: pop the bool comparison result, push count
+^e63192b (evals 2026-10-22 10:53:55 +0200  964) 			c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200  965) 			c.emit(OpGetCount)
+^e63192b (evals 2026-10-22 10:53:55 +0200  966) 			c.patchJump(end)
+^e63192b (evals 2026-10-22 10:53:55 +0200  967) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200  968) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200  969) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200  970) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  971) 	case "sum":
+^e63192b (evals 2026-10-22 10:53:55 +0200  972) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  973) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  974) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200  975) 		c.emit(OpInt, 0)
+^e63192b (evals 2026-10-22 10:53:55 +0200  976) 		c.emit(OpSetAcc)
+^e63192b (evals 2026-10-22 10:53:55 +0200  977) 		c.emitLoop(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  978) 			if len(node.Arguments) == 2 {
+^e63192b (evals 2026-10-22 10:53:55 +0200  979) 				c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200  980) 			} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200  981) 				c.emit(OpPointer)
+^e63192b (evals 2026-10-22 10:53:55 +0200  982) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200  983) 			c.emit(OpGetAcc)
+^e63192b (evals 2026-10-22 10:53:55 +0200  984) 			c.emit(OpAdd)
+^e63192b (evals 2026-10-22 10:53:55 +0200  985) 			c.emit(OpSetAcc)
+^e63192b (evals 2026-10-22 10:53:55 +0200  986) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200  987) 		c.emit(OpGetAcc)
+^e63192b (evals 2026-10-22 10:53:55 +0200  988) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200  989) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200  990) 
+^e63192b (evals 2026-10-22 10:53:55 +0200  991) 	case "find":
+^e63192b (evals 2026-10-22 10:53:55 +0200  992) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  993) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200  994) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200  995) 		var loopBreak int
+^e63192b (evals 2026-10-22 10:53:55 +0200  996) 		c.emitLoop(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200  997) 			c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200  998) 			noop := c.emit(OpJumpIfFalse, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200  999) 			c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1000) 			if node.Map != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1001) 				c.compile(node.Map)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1002) 			} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1003) 				c.emit(OpPointer)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1004) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1005) 			loopBreak = c.emit(OpJump, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1006) 			c.patchJump(noop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1007) 			c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1008) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200 1009) 		if node.Throws {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1010) 			c.emit(OpPush, c.addConstant(fmt.Errorf("reflect: slice index out of range")))
+^e63192b (evals 2026-10-22 10:53:55 +0200 1011) 			c.emit(OpThrow)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1012) 		} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1013) 			c.emit(OpNil)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1014) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1015) 		c.patchJump(loopBreak)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1016) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1017) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200 1018) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1019) 	case "findIndex":
+^e63192b (evals 2026-10-22 10:53:55 +0200 1020) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1021) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1022) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1023) 		var loopBreak int
+^e63192b (evals 2026-10-22 10:53:55 +0200 1024) 		c.emitLoop(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1025) 			c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1026) 			noop := c.emit(OpJumpIfFalse, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1027) 			c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1028) 			c.emit(OpGetIndex)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1029) 			loopBreak = c.emit(OpJump, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1030) 			c.patchJump(noop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1031) 			c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1032) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200 1033) 		c.emit(OpNil)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1034) 		c.patchJump(loopBreak)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1035) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1036) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200 1037) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1038) 	case "findLast":
+^e63192b (evals 2026-10-22 10:53:55 +0200 1039) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1040) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1041) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1042) 		var loopBreak int
+^e63192b (evals 2026-10-22 10:53:55 +0200 1043) 		c.emitLoopBackwards(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1044) 			c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1045) 			noop := c.emit(OpJumpIfFalse, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1046) 			c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1047) 			if node.Map != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1048) 				c.compile(node.Map)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1049) 			} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1050) 				c.emit(OpPointer)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1051) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1052) 			loopBreak = c.emit(OpJump, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1053) 			c.patchJump(noop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1054) 			c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1055) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200 1056) 		if node.Throws {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1057) 			c.emit(OpPush, c.addConstant(fmt.Errorf("reflect: slice index out of range")))
+^e63192b (evals 2026-10-22 10:53:55 +0200 1058) 			c.emit(OpThrow)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1059) 		} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1060) 			c.emit(OpNil)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1061) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1062) 		c.patchJump(loopBreak)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1063) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1064) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200 1065) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1066) 	case "findLastIndex":
+^e63192b (evals 2026-10-22 10:53:55 +0200 1067) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1068) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1069) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1070) 		var loopBreak int
+^e63192b (evals 2026-10-22 10:53:55 +0200 1071) 		c.emitLoopBackwards(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1072) 			c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1073) 			noop := c.emit(OpJumpIfFalse, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1074) 			c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1075) 			c.emit(OpGetIndex)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1076) 			loopBreak = c.emit(OpJump, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1077) 			c.patchJump(noop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1078) 			c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1079) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200 1080) 		c.emit(OpNil)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1081) 		c.patchJump(loopBreak)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1082) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1083) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200 1084) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1085) 	case "groupBy":
+^e63192b (evals 2026-10-22 10:53:55 +0200 1086) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1087) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1088) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1089) 		c.emit(OpCreate, 1)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1090) 		c.emit(OpSetAcc)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1091) 		c.emitLoop(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1092) 			c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1093) 			c.emit(OpGroupBy)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1094) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200 1095) 		c.emit(OpGetAcc)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1096) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1097) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200 1098) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1099) 	case "sortBy":
+^e63192b (evals 2026-10-22 10:53:55 +0200 1100) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1101) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1102) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1103) 		if len(node.Arguments) == 3 {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1104) 			c.compile(node.Arguments[2])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1105) 		} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1106) 			c.emit(OpPush, c.addConstant("asc"))
+^e63192b (evals 2026-10-22 10:53:55 +0200 1107) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1108) 		c.emit(OpCreate, 2)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1109) 		c.emit(OpSetAcc)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1110) 		c.emitLoop(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1111) 			c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1112) 			c.emit(OpSortBy)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1113) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200 1114) 		c.emit(OpSort)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1115) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1116) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200 1117) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1118) 	case "reduce":
+^e63192b (evals 2026-10-22 10:53:55 +0200 1119) 		c.compile(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1120) 		c.derefInNeeded(node.Arguments[0])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1121) 		c.emit(OpBegin)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1122) 		if len(node.Arguments) == 3 {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1123) 			c.compile(node.Arguments[2])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1124) 			c.derefInNeeded(node.Arguments[2])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1125) 			c.emit(OpSetAcc)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1126) 		} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1127) 			// When no initial value is provided, we use the first element as the
+^e63192b (evals 2026-10-22 10:53:55 +0200 1128) 			// accumulator. But first we must check if the array is empty to avoid
+^e63192b (evals 2026-10-22 10:53:55 +0200 1129) 			// an index out of range panic.
+^e63192b (evals 2026-10-22 10:53:55 +0200 1130) 			empty := c.emit(OpJumpIfEnd, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1131) 			c.emit(OpPointer)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1132) 			c.emit(OpIncrementIndex)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1133) 			c.emit(OpSetAcc)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1134) 			jumpPastError := c.emit(OpJump, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1135) 			c.patchJump(empty)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1136) 			c.emit(OpPush, c.addConstant(fmt.Errorf("reduce of empty array with no initial value")))
+^e63192b (evals 2026-10-22 10:53:55 +0200 1137) 			c.emit(OpThrow)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1138) 			c.patchJump(jumpPastError)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1139) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1140) 		c.emitLoop(func() {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1141) 			c.compile(node.Arguments[1])
+^e63192b (evals 2026-10-22 10:53:55 +0200 1142) 			c.emit(OpSetAcc)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1143) 		})
+^e63192b (evals 2026-10-22 10:53:55 +0200 1144) 		c.emit(OpGetAcc)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1145) 		c.emit(OpEnd)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1146) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200 1147) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1148) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1149) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1150) 	if id, ok := builtin.Index[node.Name]; ok {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1151) 		f := builtin.Builtins[id]
+^e63192b (evals 2026-10-22 10:53:55 +0200 1152) 		for i, arg := range node.Arguments {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1153) 			c.compile(arg)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1154) 			argType := arg.Type()
+^e63192b (evals 2026-10-22 10:53:55 +0200 1155) 			if argType.Kind() == reflect.Ptr || arg.Nature().IsUnknown(c.ntCache) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1156) 				if f.Deref == nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1157) 					// By default, builtins expect arguments to be dereferenced.
+^e63192b (evals 2026-10-22 10:53:55 +0200 1158) 					c.emit(OpDeref)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1159) 				} else {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1160) 					if f.Deref(i, argType) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1161) 						c.emit(OpDeref)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1162) 					}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1163) 				}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1164) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1165) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1166) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1167) 		if f.Fast != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1168) 			c.emit(OpCallBuiltin1, id)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1169) 		} else if f.Safe != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1170) 			id := c.addConstant(f.Safe)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1171) 			c.emit(OpPush, id)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1172) 			c.debugInfo[fmt.Sprintf("const_%d", id)] = node.Name
+^e63192b (evals 2026-10-22 10:53:55 +0200 1173) 			c.emit(OpCallSafe, len(node.Arguments))
+^e63192b (evals 2026-10-22 10:53:55 +0200 1174) 		} else if f.Func != nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1175) 			c.emitFunction(f, len(node.Arguments))
+^e63192b (evals 2026-10-22 10:53:55 +0200 1176) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1177) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200 1178) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1179) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1180) 	panic(fmt.Sprintf("unknown builtin %v", node.Name))
+^e63192b (evals 2026-10-22 10:53:55 +0200 1181) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1182) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1183) func (c *compiler) emitCond(body func()) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1184) 	noop := c.emit(OpJumpIfFalse, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1185) 	c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1186) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1187) 	body()
+^e63192b (evals 2026-10-22 10:53:55 +0200 1188) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1189) 	jmp := c.emit(OpJump, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1190) 	c.patchJump(noop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1191) 	c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1192) 	c.patchJump(jmp)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1193) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1194) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1195) func (c *compiler) emitLoop(body func()) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1196) 	begin := len(c.bytecode)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1197) 	end := c.emit(OpJumpIfEnd, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1198) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1199) 	body()
+^e63192b (evals 2026-10-22 10:53:55 +0200 1200) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1201) 	c.emit(OpIncrementIndex)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1202) 	c.emit(OpJumpBackward, c.calcBackwardJump(begin))
+^e63192b (evals 2026-10-22 10:53:55 +0200 1203) 	c.patchJump(end)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1204) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1205) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1206) func (c *compiler) emitLoopBackwards(body func()) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1207) 	c.emit(OpGetLen)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1208) 	c.emit(OpInt, 1)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1209) 	c.emit(OpSubtract)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1210) 	c.emit(OpSetIndex)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1211) 	begin := len(c.bytecode)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1212) 	c.emit(OpGetIndex)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1213) 	c.emit(OpInt, 0)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1214) 	c.emit(OpMoreOrEqual)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1215) 	end := c.emit(OpJumpIfFalse, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1216) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1217) 	body()
+^e63192b (evals 2026-10-22 10:53:55 +0200 1218) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1219) 	c.emit(OpDecrementIndex)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1220) 	c.emit(OpJumpBackward, c.calcBackwardJump(begin))
+^e63192b (evals 2026-10-22 10:53:55 +0200 1221) 	c.patchJump(end)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1222) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1223) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1224) func (c *compiler) PredicateNode(node *ast.PredicateNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1225) 	c.compile(node.Node)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1226) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1227) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1228) func (c *compiler) PointerNode(node *ast.PointerNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1229) 	switch node.Name {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1230) 	case "index":
+^e63192b (evals 2026-10-22 10:53:55 +0200 1231) 		c.emit(OpGetIndex)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1232) 	case "acc":
+^e63192b (evals 2026-10-22 10:53:55 +0200 1233) 		c.emit(OpGetAcc)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1234) 	case "":
+^e63192b (evals 2026-10-22 10:53:55 +0200 1235) 		c.emit(OpPointer)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1236) 	default:
+^e63192b (evals 2026-10-22 10:53:55 +0200 1237) 		panic(fmt.Sprintf("unknown pointer %v", node.Name))
+^e63192b (evals 2026-10-22 10:53:55 +0200 1238) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1239) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1240) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1241) func (c *compiler) VariableDeclaratorNode(node *ast.VariableDeclaratorNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1242) 	c.compile(node.Value)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1243) 	index := c.addVariable(node.Name)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1244) 	c.emit(OpStore, index)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1245) 	c.beginScope(node.Name, index)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1246) 	c.compile(node.Expr)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1247) 	c.endScope()
+^e63192b (evals 2026-10-22 10:53:55 +0200 1248) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1249) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1250) func (c *compiler) SequenceNode(node *ast.SequenceNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1251) 	for i, n := range node.Nodes {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1252) 		c.compile(n)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1253) 		if i < len(node.Nodes)-1 {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1254) 			c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1255) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1256) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1257) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1258) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1259) func (c *compiler) beginScope(name string, index int) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1260) 	c.scopes = append(c.scopes, scope{name, index})
+^e63192b (evals 2026-10-22 10:53:55 +0200 1261) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1262) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1263) func (c *compiler) endScope() {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1264) 	c.scopes = c.scopes[:len(c.scopes)-1]
+^e63192b (evals 2026-10-22 10:53:55 +0200 1265) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1266) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1267) func (c *compiler) lookupVariable(name string) (int, bool) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1268) 	for i := len(c.scopes) - 1; i >= 0; i-- {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1269) 		if c.scopes[i].variableName == name {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1270) 			return c.scopes[i].index, true
+^e63192b (evals 2026-10-22 10:53:55 +0200 1271) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1272) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1273) 	return 0, false
+^e63192b (evals 2026-10-22 10:53:55 +0200 1274) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1275) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1276) func (c *compiler) ConditionalNode(node *ast.ConditionalNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1277) 	c.compile(node.Cond)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1278) 	c.derefInNeeded(node.Cond)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1279) 	otherwise := c.emit(OpJumpIfFalse, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1280) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1281) 	c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1282) 	c.compile(node.Exp1)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1283) 	end := c.emit(OpJump, placeholder)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1284) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1285) 	c.patchJump(otherwise)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1286) 	c.emit(OpPop)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1287) 	c.compile(node.Exp2)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1288) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1289) 	c.patchJump(end)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1290) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1291) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1292) func (c *compiler) ArrayNode(node *ast.ArrayNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1293) 	for _, node := range node.Nodes {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1294) 		c.compile(node)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1295) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1296) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1297) 	c.emitPush(len(node.Nodes))
+^e63192b (evals 2026-10-22 10:53:55 +0200 1298) 	c.emit(OpArray)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1299) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1300) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1301) func (c *compiler) MapNode(node *ast.MapNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1302) 	for _, pair := range node.Pairs {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1303) 		c.compile(pair)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1304) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1305) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1306) 	c.emitPush(len(node.Pairs))
+^e63192b (evals 2026-10-22 10:53:55 +0200 1307) 	c.emit(OpMap)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1308) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1309) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1310) func (c *compiler) PairNode(node *ast.PairNode) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1311) 	c.compile(node.Key)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1312) 	c.compile(node.Value)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1313) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1314) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1315) func (c *compiler) derefInNeeded(node ast.Node) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1316) 	if node.Nature().Nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1317) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200 1318) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1319) 	switch node.Type().Kind() {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1320) 	case reflect.Ptr, reflect.Interface:
+^e63192b (evals 2026-10-22 10:53:55 +0200 1321) 		c.emit(OpDeref)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1322) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1323) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1324) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1325) func (c *compiler) derefParam(in reflect.Type, param ast.Node) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1326) 	if param.Nature().Nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1327) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200 1328) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1329) 	if param.Type().AssignableTo(in) {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1330) 		return
+^e63192b (evals 2026-10-22 10:53:55 +0200 1331) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1332) 	if in.Kind() != reflect.Ptr && param.Type().Kind() == reflect.Ptr {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1333) 		c.emit(OpDeref)
+^e63192b (evals 2026-10-22 10:53:55 +0200 1334) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1335) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1336) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1337) func (c *compiler) optimize() {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1338) 	for i, op := range c.bytecode {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1339) 		switch op {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1340) 		case OpJumpIfTrue, OpJumpIfFalse, OpJumpIfNil, OpJumpIfNotNil:
+^e63192b (evals 2026-10-22 10:53:55 +0200 1341) 			target := i + c.arguments[i] + 1
+^e63192b (evals 2026-10-22 10:53:55 +0200 1342) 			for target < len(c.bytecode) && c.bytecode[target] == op {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1343) 				target += c.arguments[target] + 1
+^e63192b (evals 2026-10-22 10:53:55 +0200 1344) 			}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1345) 			c.arguments[i] = target - i - 1
+^e63192b (evals 2026-10-22 10:53:55 +0200 1346) 		}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1347) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1348) }
+^e63192b (evals 2026-10-22 10:53:55 +0200 1349) 
+^e63192b (evals 2026-10-22 10:53:55 +0200 1350) func kind(t reflect.Type) reflect.Kind {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1351) 	if t == nil {
+^e63192b (evals 2026-10-22 10:53:55 +0200 1352) 		return reflect.Invalid
+^e63192b (evals 2026-10-22 10:53:55 +0200 1353) 	}
+^e63192b (evals 2026-10-22 10:53:55 +0200 1354) 	return t.Kind()
+^e63192b (evals 2026-10-22 10:53:55 +0200 1355) }

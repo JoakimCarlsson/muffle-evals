@@ -1,0 +1,35 @@
+diff --git a/tests/test_api.py b/tests/test_api.py
+index b49c90a..5e56c54 100644
+--- a/tests/test_api.py
++++ b/tests/test_api.py
+@@ -587,3 +587,14 @@ def test_parse_accepts_nesting_at_the_depth_limit() -> None:
+     assert parse(array).as_string() == array
+     dotted = ".".join(["a"] * depth) + " = 1"
+     assert parse(dotted).as_string() == dotted
++
++
++def test_replace_dotted_key_with_aot_keeps_following_keys():
++    doc = parse("a.b = 1\nc.d = 2\n")
++    aot = tomlkit.aot()
++    t = tomlkit.table()
++    t["x"] = 9
++    aot.append(t)
++    doc["a"] = aot
++
++    assert parse(doc.as_string()) == {"c": {"d": 2}, "a": [{"x": 9}]}
+diff --git a/tomlkit/container.py b/tomlkit/container.py
+index e3ee4fd..b8747a4 100644
+--- a/tomlkit/container.py
++++ b/tomlkit/container.py
+@@ -863,8 +863,9 @@ class Container(_CustomDict):  # type: ignore[type-arg]
+         # its own ``[header]`` instead (a non-super table), keeping the dotted key
+         # duplicates the prefix onto the header (#524). Drop the dotted key so the
+         # replacement renders as a plain table.
+-        dotted_to_header = (
+-            k.is_dotted() and isinstance(value, Table) and not value.is_super_table()
++        dotted_to_header = k.is_dotted() and (
++            isinstance(value, AoT)
++            or (isinstance(value, Table) and not value.is_super_table())
+         )
+         # That new header also captures every sibling that renders inline -- plain
+         # values and dotted keys -- if any still follow it (#513), so it must be

@@ -1,0 +1,89 @@
+Requirements
+============
+
+.. currentmodule:: packaging.requirements
+
+Parse a given requirements line for specifying dependencies of a Python
+project, using the :ref:`specification of dependency specifiers
+<pypug:dependency-specifiers>`, which defines the scheme that has been
+implemented by this module.
+
+Usage
+-----
+
+.. doctest::
+
+    >>> from packaging.requirements import Requirement
+    >>> simple_req = Requirement("name")
+    >>> simple_req
+    <Requirement('name')>
+    >>> simple_req.name
+    'name'
+    >>> simple_req.url is None
+    True
+    >>> simple_req.extras
+    set()
+    >>> simple_req.specifier
+    <SpecifierSet('')>
+    >>> simple_req.marker is None
+    True
+    >>> # Requirements can be specified with extras, specifiers and markers
+    >>> req = Requirement('name[foo]>=2,<3; python_version>"2.0"')
+    >>> req.name
+    'name'
+    >>> req.extras
+    {'foo'}
+    >>> req.specifier
+    <SpecifierSet('<3,>=2')>
+    >>> req.marker
+    <Marker('python_version > "2.0"')>
+    >>> # Requirements can also be specified with a URL, but may not specify
+    >>> # a version.
+    >>> url_req = Requirement('name @ https://github.com/pypa ;os_name=="a"')
+    >>> url_req.name
+    'name'
+    >>> url_req.url
+    'https://github.com/pypa'
+    >>> url_req.extras
+    set()
+    >>> url_req.marker
+    <Marker('os_name == "a"')>
+    >>> # You can do simple comparisons between requirement objects:
+    >>> Requirement("packaging") == Requirement("packaging")
+    True
+    >>> Requirement("my_pkg[foo_bar] == 1.0") == Requirement("my-pkg[foo-bar] == 1.0.0")
+    True
+    >>> str(Requirement("my_pkg[foo_bar] == 1.0"))
+    'my_pkg[foo_bar]==1.0'
+    >>> # Create a copy with selected fields replaced:
+    >>> req.__replace__(name="other", extras={"test"})
+    <Requirement('other[test]<3,>=2; python_version > "2.0"')>
+    >>> # You can also perform simple comparisons between sets of requirements:
+    >>> requirements1 = {Requirement("packaging"), Requirement("pip")}
+    >>> requirements2 = {Requirement("pip"), Requirement("packaging")}
+    >>> requirements1 == requirements2
+    True
+
+.. versionchanged:: 23.2
+
+    When a requirement is specified with a URL, the :class:`Requirement` class
+    used to check the URL and reject values containing invalid scheme and
+    netloc combinations. This is no longer performed since the specification does
+    not have such rules, and the check incorrectly disallows valid requirement
+    strings from being parsed.
+
+Reference
+---------
+
+``Requirement.__replace__(**changes)`` returns a new requirement, accepting
+``name`` (``str``), ``url`` (``str`` or ``None``), ``extras`` (``set[str]``),
+``specifier`` (:class:`~packaging.specifiers.SpecifierSet`), and ``marker``
+(:class:`~packaging.markers.Marker` or ``None``). Omitted fields are retained.
+The result is validated and normalized by parsing; invalid values or values
+that change field boundaries raise :class:`InvalidRequirement`. Unknown fields
+raise :class:`TypeError`. Specifiers are copied independently, preserving their
+prerelease settings. On Python 3.13+, this also supports ``copy.replace()``.
+
+.. automodule:: packaging.requirements
+    :members:
+    :exclude-members: __init__, __new__

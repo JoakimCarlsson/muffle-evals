@@ -1,0 +1,3218 @@
+$ git show HEAD
+commit 22801cf822ba176bcd4cce83008506737d15208e
+Author: evals <evals@localhost>
+Date:   Thu Oct 22 12:37:34 2026 +0200
+
+    base
+
+diff --git a/.envrc b/.envrc
+new file mode 100644
+index 0000000..fb30e6c
+--- /dev/null
++++ b/.envrc
+@@ -0,0 +1,4 @@
++# shellcheck shell=bash
++set -eu
++
++use flake
+diff --git a/.github/dependabot.yml b/.github/dependabot.yml
+new file mode 100644
+index 0000000..df4d15b
+--- /dev/null
++++ b/.github/dependabot.yml
+@@ -0,0 +1,8 @@
++version: 2
++updates:
++
++  - package-ecosystem: "github-actions"
++    directory: "/"
++    schedule:
++      # Check for updates to GitHub Actions every week
++      interval: "weekly"
+diff --git a/.github/workflows/coverage.yml b/.github/workflows/coverage.yml
+new file mode 100644
+index 0000000..4271f01
+--- /dev/null
++++ b/.github/workflows/coverage.yml
+@@ -0,0 +1,49 @@
++# Generates an HTML test coverage report and publishes it to GitHub
++# Pages, served at https://dustin.github.io/go-humanize/
++
++name: Coverage
++
++on:
++  push:
++    branches: [ "master" ]
++
++permissions:
++  contents: read
++  pages: write
++  id-token: write
++
++concurrency:
++  group: "pages"
++  cancel-in-progress: false
++
++jobs:
++  coverage:
++    runs-on: ubuntu-latest
++    environment:
++      name: github-pages
++      url: ${{ steps.deployment.outputs.page_url }}
++    steps:
++    - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
++
++    - name: Set up Go
++      uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
++      with:
++        go-version: "1.27"
++
++    - name: Generate coverage report
++      run: |
++        go test -coverprofile=coverage.out ./...
++        mkdir -p public
++        go tool cover -html=coverage.out -o public/index.html
++
++    - name: Configure Pages
++      uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
++
++    - name: Upload coverage report
++      uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
++      with:
++        path: public
++
++    - name: Deploy to GitHub Pages
++      id: deployment
++      uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+diff --git a/.github/workflows/go.yml b/.github/workflows/go.yml
+new file mode 100644
+index 0000000..1fad167
+--- /dev/null
++++ b/.github/workflows/go.yml
+@@ -0,0 +1,34 @@
++# This workflow will build a golang project
++# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
++
++name: Go
++
++on:
++  push:
++    branches: [ "master" ]
++  pull_request:
++    branches: [ "master" ]
++
++permissions:
++  contents: read
++
++jobs:
++
++  build:
++    runs-on: ubuntu-latest
++    strategy:
++      matrix:
++        go-version: ["1.21", "1.27"]
++    steps:
++    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
++
++    - name: Set up Go
++      uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
++      with:
++        go-version: ${{ matrix.go-version }}
++
++    - name: Build
++      run: go build -v ./...
++
++    - name: Test
++      run: go test -v ./...
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..92b2793
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1 @@
++.direnv
+diff --git a/LICENSE b/LICENSE
+new file mode 100644
+index 0000000..8d9a94a
+--- /dev/null
++++ b/LICENSE
+@@ -0,0 +1,21 @@
++Copyright (c) 2005-2008  Dustin Sallings <dustin@spy.net>
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in
++all copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
++
++<http://www.opensource.org/licenses/mit-license.php>
+diff --git a/README.markdown b/README.markdown
+new file mode 100644
+index 0000000..c8beb00
+--- /dev/null
++++ b/README.markdown
+@@ -0,0 +1,127 @@
++# Humane Units [![Build Status](https://travis-ci.org/dustin/go-humanize.svg?branch=master)](https://travis-ci.org/dustin/go-humanize) [![GoDoc](https://godoc.org/github.com/dustin/go-humanize?status.svg)](https://godoc.org/github.com/dustin/go-humanize) [![Coverage](https://img.shields.io/badge/coverage-report-brightgreen)](https://dustin.github.io/go-humanize/)
++
++Just a few functions for helping humanize times and sizes.
++
++`go get` it as `github.com/dustin/go-humanize`, import it as
++`"github.com/dustin/go-humanize"`, use it as `humanize`.
++
++See [godoc](https://pkg.go.dev/github.com/dustin/go-humanize) for
++complete documentation.
++
++See the [test coverage report](https://dustin.github.io/go-humanize/) for
++coverage details.
++
++## Sizes
++
++This lets you take numbers like `82854982` and convert them to useful
++strings like, `83 MB` or `79 MiB` (whichever you prefer).
++
++Example:
++
++```go
++fmt.Printf("That file is %s.", humanize.Bytes(82854982)) // That file is 83 MB.
++```
++
++## Times
++
++This lets you take a `time.Time` and spit it out in relative terms.
++For example, `12 seconds ago` or `3 days from now`.
++
++Example:
++
++```go
++fmt.Printf("This was touched %s.", humanize.Time(someTimeInstance)) // This was touched 7 hours ago.
++```
++
++Thanks to Kyle Lemons for the time implementation from an IRC
++conversation one day. It's pretty neat.
++
++## Ordinals
++
++From a [mailing list discussion][odisc] where a user wanted to be able
++to label ordinals.
++
++    0 -> 0th
++    1 -> 1st
++    2 -> 2nd
++    3 -> 3rd
++    4 -> 4th
++    [...]
++
++Example:
++
++```go
++fmt.Printf("You're my %s best friend.", humanize.Ordinal(193)) // You are my 193rd best friend.
++```
++
++## Commas
++
++Want to shove commas into numbers? Be my guest.
++
++    0 -> 0
++    100 -> 100
++    1000 -> 1,000
++    1000000000 -> 1,000,000,000
++    -100000 -> -100,000
++
++Example:
++
++```go
++fmt.Printf("You owe $%s.\n", humanize.Comma(6582491)) // You owe $6,582,491.
++```
++
++## Ftoa
++
++Nicer float64 formatter that removes trailing zeros.
++
++```go
++fmt.Printf("%f", 2.24)                // 2.240000
++fmt.Printf("%s", humanize.Ftoa(2.24)) // 2.24
++fmt.Printf("%f", 2.0)                 // 2.000000
++fmt.Printf("%s", humanize.Ftoa(2.0))  // 2
++```
++
++## SI notation
++
++Format numbers with [SI notation][sinotation].
++
++Example:
++
++```go
++humanize.SI(0.00000000223, "M") // 2.23 nM
++```
++
++## English-specific functions
++
++The following functions are in the `humanize/english` subpackage.
++
++### Plurals
++
++Simple English pluralization
++
++```go
++english.PluralWord(1, "object", "") // object
++english.PluralWord(42, "object", "") // objects
++english.PluralWord(2, "bus", "") // buses
++english.PluralWord(99, "locus", "loci") // loci
++
++english.Plural(1, "object", "") // 1 object
++english.Plural(42, "object", "") // 42 objects
++english.Plural(2, "bus", "") // 2 buses
++english.Plural(99, "locus", "loci") // 99 loci
++```
++
++### Word series
++
++Format comma-separated words lists with conjuctions:
++
++```go
++english.WordSeries([]string{"foo"}, "and") // foo
++english.WordSeries([]string{"foo", "bar"}, "and") // foo and bar
++english.WordSeries([]string{"foo", "bar", "baz"}, "and") // foo, bar and baz
++
++english.OxfordWordSeries([]string{"foo", "bar", "baz"}, "and") // foo, bar, and baz
++```
++
++[odisc]: https://groups.google.com/d/topic/golang-nuts/l8NhI74jl-4/discussion
++[sinotation]: http://en.wikipedia.org/wiki/Metric_prefix
+diff --git a/SECURITY.md b/SECURITY.md
+new file mode 100644
+index 0000000..e074402
+--- /dev/null
++++ b/SECURITY.md
+@@ -0,0 +1,5 @@
++# Security Policy
++
++To report a security issue, please disclose it at [security advisory](https://github.com/dustin/go-humanize/security/advisories/new).
++
++We will respond within 7 working days of your submission. If the issue is confirmed as a vulnerability, we will open a Security Advisory and acknowledge your contributions as part of it. This project follows a 90 day disclosure timeline.
+diff --git a/big.go b/big.go
+new file mode 100644
+index 0000000..f49dc33
+--- /dev/null
++++ b/big.go
+@@ -0,0 +1,31 @@
++package humanize
++
++import (
++	"math/big"
++)
++
++// order of magnitude (to a max order)
++func oomm(n, b *big.Int, maxmag int) (float64, int) {
++	mag := 0
++	m := &big.Int{}
++	for n.Cmp(b) >= 0 {
++		n.DivMod(n, b, m)
++		mag++
++		if mag == maxmag && maxmag >= 0 {
++			break
++		}
++	}
++	return float64(n.Int64()) + (float64(m.Int64()) / float64(b.Int64())), mag
++}
++
++// total order of magnitude
++// (same as above, but with no upper limit)
++func oom(n, b *big.Int) (float64, int) {
++	mag := 0
++	m := &big.Int{}
++	for n.Cmp(b) >= 0 {
++		n.DivMod(n, b, m)
++		mag++
++	}
++	return float64(n.Int64()) + (float64(m.Int64()) / float64(b.Int64())), mag
++}
+diff --git a/bigbytes.go b/bigbytes.go
+new file mode 100644
+index 0000000..3b015fd
+--- /dev/null
++++ b/bigbytes.go
+@@ -0,0 +1,189 @@
++package humanize
++
++import (
++	"fmt"
++	"math/big"
++	"strings"
++	"unicode"
++)
++
++var (
++	bigIECExp = big.NewInt(1024)
++
++	// BigByte is one byte in bit.Ints
++	BigByte = big.NewInt(1)
++	// BigKiByte is 1,024 bytes in bit.Ints
++	BigKiByte = (&big.Int{}).Mul(BigByte, bigIECExp)
++	// BigMiByte is 1,024 k bytes in bit.Ints
++	BigMiByte = (&big.Int{}).Mul(BigKiByte, bigIECExp)
++	// BigGiByte is 1,024 m bytes in bit.Ints
++	BigGiByte = (&big.Int{}).Mul(BigMiByte, bigIECExp)
++	// BigTiByte is 1,024 g bytes in bit.Ints
++	BigTiByte = (&big.Int{}).Mul(BigGiByte, bigIECExp)
++	// BigPiByte is 1,024 t bytes in bit.Ints
++	BigPiByte = (&big.Int{}).Mul(BigTiByte, bigIECExp)
++	// BigEiByte is 1,024 p bytes in bit.Ints
++	BigEiByte = (&big.Int{}).Mul(BigPiByte, bigIECExp)
++	// BigZiByte is 1,024 e bytes in bit.Ints
++	BigZiByte = (&big.Int{}).Mul(BigEiByte, bigIECExp)
++	// BigYiByte is 1,024 z bytes in bit.Ints
++	BigYiByte = (&big.Int{}).Mul(BigZiByte, bigIECExp)
++	// BigRiByte is 1,024 y bytes in bit.Ints
++	BigRiByte = (&big.Int{}).Mul(BigYiByte, bigIECExp)
++	// BigQiByte is 1,024 r bytes in bit.Ints
++	BigQiByte = (&big.Int{}).Mul(BigRiByte, bigIECExp)
++)
++
++var (
++	bigSIExp = big.NewInt(1000)
++
++	// BigSIByte is one SI byte in big.Ints
++	BigSIByte = big.NewInt(1)
++	// BigKByte is 1,000 SI bytes in big.Ints
++	BigKByte = (&big.Int{}).Mul(BigSIByte, bigSIExp)
++	// BigMByte is 1,000 SI k bytes in big.Ints
++	BigMByte = (&big.Int{}).Mul(BigKByte, bigSIExp)
++	// BigGByte is 1,000 SI m bytes in big.Ints
++	BigGByte = (&big.Int{}).Mul(BigMByte, bigSIExp)
++	// BigTByte is 1,000 SI g bytes in big.Ints
++	BigTByte = (&big.Int{}).Mul(BigGByte, bigSIExp)
++	// BigPByte is 1,000 SI t bytes in big.Ints
++	BigPByte = (&big.Int{}).Mul(BigTByte, bigSIExp)
++	// BigEByte is 1,000 SI p bytes in big.Ints
++	BigEByte = (&big.Int{}).Mul(BigPByte, bigSIExp)
++	// BigZByte is 1,000 SI e bytes in big.Ints
++	BigZByte = (&big.Int{}).Mul(BigEByte, bigSIExp)
++	// BigYByte is 1,000 SI z bytes in big.Ints
++	BigYByte = (&big.Int{}).Mul(BigZByte, bigSIExp)
++	// BigRByte is 1,000 SI y bytes in big.Ints
++	BigRByte = (&big.Int{}).Mul(BigYByte, bigSIExp)
++	// BigQByte is 1,000 SI r bytes in big.Ints
++	BigQByte = (&big.Int{}).Mul(BigRByte, bigSIExp)
++)
++
++var bigBytesSizeTable = map[string]*big.Int{
++	"b":   BigByte,
++	"kib": BigKiByte,
++	"kb":  BigKByte,
++	"mib": BigMiByte,
++	"mb":  BigMByte,
++	"gib": BigGiByte,
++	"gb":  BigGByte,
++	"tib": BigTiByte,
++	"tb":  BigTByte,
++	"pib": BigPiByte,
++	"pb":  BigPByte,
++	"eib": BigEiByte,
++	"eb":  BigEByte,
++	"zib": BigZiByte,
++	"zb":  BigZByte,
++	"yib": BigYiByte,
++	"yb":  BigYByte,
++	"rib": BigRiByte,
++	"rb":  BigRByte,
++	"qib": BigQiByte,
++	"qb":  BigQByte,
++	// Without suffix
++	"":   BigByte,
++	"ki": BigKiByte,
++	"k":  BigKByte,
++	"mi": BigMiByte,
++	"m":  BigMByte,
++	"gi": BigGiByte,
++	"g":  BigGByte,
++	"ti": BigTiByte,
++	"t":  BigTByte,
++	"pi": BigPiByte,
++	"p":  BigPByte,
++	"ei": BigEiByte,
++	"e":  BigEByte,
++	"z":  BigZByte,
++	"zi": BigZiByte,
++	"y":  BigYByte,
++	"yi": BigYiByte,
++	"r":  BigRByte,
++	"ri": BigRiByte,
++	"q":  BigQByte,
++	"qi": BigQiByte,
++}
++
++var ten = big.NewInt(10)
++
++func humanateBigBytes(s, base *big.Int, sizes []string) string {
++	if s.Cmp(ten) < 0 {
++		return fmt.Sprintf("%d B", s)
++	}
++	c := (&big.Int{}).Set(s)
++	val, mag := oomm(c, base, len(sizes)-1)
++	suffix := sizes[mag]
++	f := "%.0f %s"
++	if val < 10 {
++		f = "%.1f %s"
++	}
++
++	return fmt.Sprintf(f, val, suffix)
++
++}
++
++// BigBytes produces a human readable representation of an SI size.
++//
++// See also: ParseBigBytes.
++//
++// BigBytes(82854982) -> 83 MB
++func BigBytes(s *big.Int) string {
++	sizes := []string{"B", "kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB", "RB", "QB"}
++	return humanateBigBytes(s, bigSIExp, sizes)
++}
++
++// BigIBytes produces a human readable representation of an IEC size.
++//
++// See also: ParseBigBytes.
++//
++// BigIBytes(82854982) -> 79 MiB
++func BigIBytes(s *big.Int) string {
++	sizes := []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB", "RiB", "QiB"}
++	return humanateBigBytes(s, bigIECExp, sizes)
++}
++
++// ParseBigBytes parses a string representation of bytes into the number
++// of bytes it represents.
++//
++// See also: BigBytes, BigIBytes.
++//
++// ParseBigBytes("42 MB") -> 42000000, nil
++// ParseBigBytes("42 mib") -> 44040192, nil
++func ParseBigBytes(s string) (*big.Int, error) {
++	lastDigit := 0
++	hasComma := false
++	for _, r := range s {
++		if !(unicode.IsDigit(r) || r == '.' || r == ',') {
++			break
++		}
++		if r == ',' {
++			hasComma = true
++		}
++		lastDigit++
++	}
++
++	num := s[:lastDigit]
++	if hasComma {
++		num = strings.Replace(num, ",", "", -1)
++	}
++
++	val := &big.Rat{}
++	_, err := fmt.Sscanf(num, "%f", val)
++	if err != nil {
++		return nil, err
++	}
++
++	extra := strings.ToLower(strings.TrimSpace(s[lastDigit:]))
++	if m, ok := bigBytesSizeTable[extra]; ok {
++		mv := (&big.Rat{}).SetInt(m)
++		val.Mul(val, mv)
++		rv := &big.Int{}
++		rv.Div(val.Num(), val.Denom())
++		return rv, nil
++	}
++
++	return nil, fmt.Errorf("unhandled size name: %v", extra)
++}
+diff --git a/bigbytes_test.go b/bigbytes_test.go
+new file mode 100644
+index 0000000..59445ea
+--- /dev/null
++++ b/bigbytes_test.go
+@@ -0,0 +1,240 @@
++package humanize
++
++import (
++	"math/big"
++	"testing"
++)
++
++func TestBigByteParsing(t *testing.T) {
++	tests := []struct {
++		in  string
++		exp uint64
++	}{
++		{"42", 42},
++		{"42MB", 42000000},
++		{"42MiB", 44040192},
++		{"42mb", 42000000},
++		{"42mib", 44040192},
++		{"42MIB", 44040192},
++		{"42 MB", 42000000},
++		{"42 MiB", 44040192},
++		{"42 mb", 42000000},
++		{"42 mib", 44040192},
++		{"42 MIB", 44040192},
++		{"42.5MB", 42500000},
++		{"42.5MiB", 44564480},
++		{"42.5 MB", 42500000},
++		{"42.5 MiB", 44564480},
++		// No need to say B
++		{"42M", 42000000},
++		{"42Mi", 44040192},
++		{"42m", 42000000},
++		{"42mi", 44040192},
++		{"42MI", 44040192},
++		{"42 M", 42000000},
++		{"42 Mi", 44040192},
++		{"42 m", 42000000},
++		{"42 mi", 44040192},
++		{"42 MI", 44040192},
++		{"42.5M", 42500000},
++		{"42.5Mi", 44564480},
++		{"42.5 M", 42500000},
++		{"42.5 Mi", 44564480},
++		{"1,005.03 MB", 1005030000},
++		// Large testing, breaks when too much larger than
++		// this.
++		{"12.5 EB", uint64(12.5 * float64(EByte))},
++		{"12.5 E", uint64(12.5 * float64(EByte))},
++		{"12.5 EiB", uint64(12.5 * float64(EiByte))},
++	}
++
++	for _, p := range tests {
++		got, err := ParseBigBytes(p.in)
++		if err != nil {
++			t.Errorf("Couldn't parse %v: %v", p.in, err)
++		} else {
++			if got.Uint64() != p.exp {
++				t.Errorf("Expected %v for %v, got %v",
++					p.exp, p.in, got)
++			}
++		}
++	}
++}
++
++func TestBigByteErrors(t *testing.T) {
++	got, err := ParseBigBytes("abc MB")
++	if err == nil {
++		t.Errorf("Expected error for non-numeric, got %v", got)
++	}
++	got, err = ParseBigBytes("42 JB")
++	if err == nil {
++		t.Errorf("Expected error for unhandled size, got %v", got)
++	}
++	got, err = ParseBigBytes("")
++	if err == nil {
++		t.Errorf("Expected error parsing nothing")
++	}
++}
++
++func TestOommLimit(t *testing.T) {
++	n := big.NewInt(1000000) // 1,000,000
++	b := big.NewInt(1000)    // Base 1000
++	// maxmag = 1.
++	// 1st iteration: 1,000,000 / 1000 = 1000, mag=1.
++	// Since mag == maxmag, it should break.
++	val, mag := oomm(n, b, 1)
++	if mag != 1 {
++		t.Errorf("Expected mag 1, got %d", mag)
++	}
++	// Expected val: 1000 + (0/1000) = 1000
++	if val != 1000 {
++		t.Errorf("Expected val 1000, got %f", val)
++	}
++}
++
++func bbyte(in uint64) string {
++	return BigBytes((&big.Int{}).SetUint64(in))
++}
++
++func bibyte(in uint64) string {
++	return BigIBytes((&big.Int{}).SetUint64(in))
++}
++
++func TestBigBytes(t *testing.T) {
++	testList{
++		{"bytes(0)", bbyte(0), "0 B"},
++		{"bytes(1)", bbyte(1), "1 B"},
++		{"bytes(803)", bbyte(803), "803 B"},
++		{"bytes(999)", bbyte(999), "999 B"},
++
++		{"bytes(1024)", bbyte(1024), "1.0 kB"},
++		{"bytes(1MB - 1)", bbyte(MByte - Byte), "1000 kB"},
++
++		{"bytes(1MB)", bbyte(1024 * 1024), "1.0 MB"},
++		{"bytes(1GB - 1K)", bbyte(GByte - KByte), "1000 MB"},
++
++		{"bytes(1GB)", bbyte(GByte), "1.0 GB"},
++		{"bytes(1TB - 1M)", bbyte(TByte - MByte), "1000 GB"},
++
++		{"bytes(1TB)", bbyte(TByte), "1.0 TB"},
++		{"bytes(1PB - 1T)", bbyte(PByte - TByte), "999 TB"},
++
++		{"bytes(1PB)", bbyte(PByte), "1.0 PB"},
++		{"bytes(1PB - 1T)", bbyte(EByte - PByte), "999 PB"},
++
++		{"bytes(1EB)", bbyte(EByte), "1.0 EB"},
++		// Overflows.
++		// {"bytes(1EB - 1P)", Bytes((KByte*EByte)-PByte), "1023EB"},
++
++		{"bytes(0)", bibyte(0), "0 B"},
++		{"bytes(1)", bibyte(1), "1 B"},
++		{"bytes(803)", bibyte(803), "803 B"},
++		{"bytes(1023)", bibyte(1023), "1023 B"},
++
++		{"bytes(1024)", bibyte(1024), "1.0 KiB"},
++		{"bytes(1MB - 1)", bibyte(MiByte - IByte), "1024 KiB"},
++
++		{"bytes(1MB)", bibyte(1024 * 1024), "1.0 MiB"},
++		{"bytes(1GB - 1K)", bibyte(GiByte - KiByte), "1024 MiB"},
++
++		{"bytes(1GB)", bibyte(GiByte), "1.0 GiB"},
++		{"bytes(1TB - 1M)", bibyte(TiByte - MiByte), "1024 GiB"},
++
++		{"bytes(1TB)", bibyte(TiByte), "1.0 TiB"},
++		{"bytes(1PB - 1T)", bibyte(PiByte - TiByte), "1023 TiB"},
++
++		{"bytes(1PB)", bibyte(PiByte), "1.0 PiB"},
++		{"bytes(1PB - 1T)", bibyte(EiByte - PiByte), "1023 PiB"},
++
++		{"bytes(1EiB)", bibyte(EiByte), "1.0 EiB"},
++		// Overflows.
++		// {"bytes(1EB - 1P)", bibyte((KIByte*EIByte)-PiByte), "1023EB"},
++
++		{"bytes(5.5GiB)", bibyte(5.5 * GiByte), "5.5 GiB"},
++
++		{"bytes(5.5GB)", bbyte(5.5 * GByte), "5.5 GB"},
++	}.validate(t)
++}
++
++func TestVeryBigBytes(t *testing.T) {
++	b, _ := (&big.Int{}).SetString("15347691069326346944512", 10)
++	s := BigBytes(b)
++	if s != "15 ZB" {
++		t.Errorf("Expected 15 ZB, got %v", s)
++	}
++	s = BigIBytes(b)
++	if s != "13 ZiB" {
++		t.Errorf("Expected 13 ZiB, got %v", s)
++	}
++
++	b, _ = (&big.Int{}).SetString("15716035654990179271180288", 10)
++	s = BigBytes(b)
++	if s != "16 YB" {
++		t.Errorf("Expected 16 YB, got %v", s)
++	}
++	s = BigIBytes(b)
++	if s != "13 YiB" {
++		t.Errorf("Expected 13 YiB, got %v", s)
++	}
++}
++
++func TestVeryVeryBigBytes(t *testing.T) {
++	b, _ := (&big.Int{}).SetString("16093220510709943573688614912", 10)
++	s := BigBytes(b)
++	if s != "16 RB" {
++		t.Errorf("Expected 16 RB, got %v", s)
++	}
++	s = BigIBytes(b)
++	if s != "13 RiB" {
++		t.Errorf("Expected 13 RiB, got %v", s)
++	}
++}
++
++func TestParseVeryBig(t *testing.T) {
++	tests := []struct {
++		in  string
++		out string
++	}{
++		{"16 ZB", "16000000000000000000000"},
++		{"16 ZiB", "18889465931478580854784"},
++		{"16.5 ZB", "16500000000000000000000"},
++		{"16.5 ZiB", "19479761741837286506496"},
++		{"16 Z", "16000000000000000000000"},
++		{"16 Zi", "18889465931478580854784"},
++		{"16.5 Z", "16500000000000000000000"},
++		{"16.5 Zi", "19479761741837286506496"},
++
++		{"16 YB", "16000000000000000000000000"},
++		{"16 YiB", "19342813113834066795298816"},
++		{"16.5 YB", "16500000000000000000000000"},
++		{"16.5 YiB", "19947276023641381382651904"},
++		{"16 Y", "16000000000000000000000000"},
++		{"16 Yi", "19342813113834066795298816"},
++		{"16.5 Y", "16500000000000000000000000"},
++		{"16.5 Yi", "19947276023641381382651904"},
++	}
++
++	for _, test := range tests {
++		x, err := ParseBigBytes(test.in)
++		if err != nil {
++			t.Errorf("Error parsing %q: %v", test.in, err)
++			continue
++		}
++
++		if x.String() != test.out {
++			t.Errorf("Expected %q for %q, got %v", test.out, test.in, x)
++		}
++	}
++}
++
++func BenchmarkParseBigBytes(b *testing.B) {
++	for i := 0; i < b.N; i++ {
++		ParseBigBytes("16.5 Z")
++	}
++}
++
++func BenchmarkBigBytes(b *testing.B) {
++	for i := 0; i < b.N; i++ {
++		bibyte(16.5 * GByte)
++	}
++}
+diff --git a/bytes.go b/bytes.go
+new file mode 100644
+index 0000000..3c235c6
+--- /dev/null
++++ b/bytes.go
+@@ -0,0 +1,194 @@
++package humanize
++
++import (
++	"fmt"
++	"math"
++	"math/bits"
++	"strconv"
++	"strings"
++	"unicode"
++)
++
++// IEC Sizes.
++// kibis of bits
++const (
++	Byte = 1 << (iota * 10)
++	KiByte
++	MiByte
++	GiByte
++	TiByte
++	PiByte
++	EiByte
++)
++
++// SI Sizes.
++const (
++	IByte = 1
++	KByte = IByte * 1000
++	MByte = KByte * 1000
++	GByte = MByte * 1000
++	TByte = GByte * 1000
++	PByte = TByte * 1000
++	EByte = PByte * 1000
++)
++
++var bytesSizeTable = map[string]uint64{
++	"b":   Byte,
++	"kib": KiByte,
++	"kb":  KByte,
++	"mib": MiByte,
++	"mb":  MByte,
++	"gib": GiByte,
++	"gb":  GByte,
++	"tib": TiByte,
++	"tb":  TByte,
++	"pib": PiByte,
++	"pb":  PByte,
++	"eib": EiByte,
++	"eb":  EByte,
++	// Without suffix
++	"":   Byte,
++	"ki": KiByte,
++	"k":  KByte,
++	"mi": MiByte,
++	"m":  MByte,
++	"gi": GiByte,
++	"g":  GByte,
++	"ti": TiByte,
++	"t":  TByte,
++	"pi": PiByte,
++	"p":  PByte,
++	"ei": EiByte,
++	"e":  EByte,
++}
++
++func logn(n, b float64) float64 {
++	return math.Log(n) / math.Log(b)
++}
++
++func countDigits(n int64) int {
++	digits := 0
++	for n != 0 {
++		n /= 10
++		digits += 1
++	}
++	return digits
++}
++
++func humanateBytes(s uint64, base float64, minDigits int, sizes []string) string {
++	if s < 10 {
++		return fmt.Sprintf("%d B", s)
++	}
++	e := math.Floor(logn(float64(s), base))
++	suffix := sizes[int(e)]
++	rounding := math.Pow10(minDigits - 1)
++	val := math.Floor(float64(s)/math.Pow(base, e)*rounding+0.5) / rounding
++	ff := "%%.%df %%s"
++	digits := minDigits - countDigits(int64(val))
++	if digits < 0 {
++		digits = 0
++	}
++	f := fmt.Sprintf(ff, digits)
++	return fmt.Sprintf(f, val, suffix)
++}
++
++// Bytes produces a human-readable representation of an SI size.
++//
++// See also: ParseBytes.
++//
++// Bytes(82854982) -> 83 MB
++func Bytes(s uint64) string {
++	sizes := []string{"B", "kB", "MB", "GB", "TB", "PB", "EB"}
++	return humanateBytes(s, 1000, 2, sizes)
++}
++
++// BytesN produces a human-readable representation of an SI size.
++// n specifies the total number of digits to output, including the decimal part.
++// If n is less than or equal to the number of digits in the integer part, the decimal part will be omitted.
++//
++// See also: ParseBytes.
++//
++// BytesN(82854982, 3) -> 82.9 MB
++// BytesN(82854982, 4) -> 82.85 MB
++func BytesN(s uint64, n int) string {
++	sizes := []string{"B", "kB", "MB", "GB", "TB", "PB", "EB"}
++	return humanateBytes(s, 1000, n, sizes)
++}
++
++// IBytes produces a human-readable representation of an IEC size.
++//
++// See also: ParseBytes.
++//
++// IBytes(82854982) -> 79 MiB
++func IBytes(s uint64) string {
++	sizes := []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
++	return humanateBytes(s, 1024, 2, sizes)
++}
++
++// IBytesN produces a human-readable representation of an IEC size.
++// n specifies the total number of digits to output, including the decimal part.
++// If n is less than or equal to the number of digits in the integer part, the decimal part will be omitted.
++//
++// See also: ParseBytes.
++//
++// IBytesN(82854982, 4)  -> 79.02 MiB
++// IBytesN(123456789, 3) -> 118 MiB
++// IBytesN(123456789, 6) -> 117.738 MiB
++func IBytesN(s uint64, n int) string {
++	sizes := []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
++	return humanateBytes(s, 1024, n, sizes)
++}
++
++// ParseBytes parses a string representation of bytes into the number
++// of bytes it represents.
++//
++// See Also: Bytes, IBytes.
++//
++// ParseBytes("42 MB") -> 42000000, nil
++// ParseBytes("42 mib") -> 44040192, nil
++func ParseBytes(s string) (uint64, error) {
++	lastDigit := 0
++	hasComma := false
++	for _, r := range s {
++		if !(unicode.IsDigit(r) || r == '.' || r == ',') {
++			break
++		}
++		if r == ',' {
++			hasComma = true
++		}
++		lastDigit++
++	}
++
++	num := s[:lastDigit]
++	if hasComma {
++		num = strings.Replace(num, ",", "", -1)
++	}
++
++	f, err := strconv.ParseFloat(num, 64)
++	if err != nil {
++		return 0, err
++	}
++
++	extra := strings.ToLower(strings.TrimSpace(s[lastDigit:]))
++	if m, ok := bytesSizeTable[extra]; ok {
++		// Parse whole-number inputs exactly. A float64 cannot represent
++		// integers above 2^53, and the multiplication below would also reject
++		// otherwise-valid values near math.MaxUint64, so route integers through
++		// uint64 arithmetic with an overflow check.
++		if !strings.ContainsRune(num, '.') {
++			if v, perr := strconv.ParseUint(num, 10, 64); perr == nil {
++				if hi, lo := bits.Mul64(v, m); hi == 0 {
++					return lo, nil
++				}
++				return 0, fmt.Errorf("too large: %v", s)
++			}
++		}
++		f *= float64(m)
++		if f >= math.MaxUint64 {
++			return 0, fmt.Errorf("too large: %v", s)
++		}
++		return uint64(f), nil
++	}
++
++	return 0, fmt.Errorf("unhandled size name: %v", extra)
++}
+diff --git a/bytes_test.go b/bytes_test.go
+new file mode 100644
+index 0000000..be61c2a
+--- /dev/null
++++ b/bytes_test.go
+@@ -0,0 +1,183 @@
++package humanize
++
++import (
++	"testing"
++)
++
++func TestByteParsing(t *testing.T) {
++	tests := []struct {
++		in  string
++		exp uint64
++	}{
++		{"42", 42},
++		{"42MB", 42000000},
++		{"42MiB", 44040192},
++		{"42mb", 42000000},
++		{"42mib", 44040192},
++		{"42MIB", 44040192},
++		{"42 MB", 42000000},
++		{"42 MiB", 44040192},
++		{"42 mb", 42000000},
++		{"42 mib", 44040192},
++		{"42 MIB", 44040192},
++		{"42.5MB", 42500000},
++		{"42.5MiB", 44564480},
++		{"42.5 MB", 42500000},
++		{"42.5 MiB", 44564480},
++		// No need to say B
++		{"42M", 42000000},
++		{"42Mi", 44040192},
++		{"42m", 42000000},
++		{"42mi", 44040192},
++		{"42MI", 44040192},
++		{"42 M", 42000000},
++		{"42 Mi", 44040192},
++		{"42 m", 42000000},
++		{"42 mi", 44040192},
++		{"42 MI", 44040192},
++		{"42.5M", 42500000},
++		{"42.5Mi", 44564480},
++		{"42.5 M", 42500000},
++		{"42.5 Mi", 44564480},
++		// Bug #42
++		{"1,005.03 MB", 1005030000},
++		// Large testing, breaks when too much larger than
++		// this.
++		{"12.5 EB", uint64(12.5 * float64(EByte))},
++		{"12.5 E", uint64(12.5 * float64(EByte))},
++		{"12.5 EiB", uint64(12.5 * float64(EiByte))},
++	}
++
++	for _, p := range tests {
++		got, err := ParseBytes(p.in)
++		if err != nil {
++			t.Errorf("Couldn't parse %v: %v", p.in, err)
++		}
++		if got != p.exp {
++			t.Errorf("Expected %v for %v, got %v",
++				p.exp, p.in, got)
++		}
++	}
++}
++
++func TestByteErrors(t *testing.T) {
++	got, err := ParseBytes("84 JB")
++	if err == nil {
++		t.Errorf("Expected error, got %v", got)
++	}
++	_, err = ParseBytes("")
++	if err == nil {
++		t.Errorf("Expected error parsing nothing")
++	}
++	got, err = ParseBytes("16 EiB")
++	if err == nil {
++		t.Errorf("Expected error, got %v", got)
++	}
++	got, err = ParseBytes("18446744073709551616 EB")
++	if err == nil {
++		t.Errorf("Expected error, got %v", got)
++	}
++	got, err = ParseBytes("184467440737095516150 EB")
++	if err == nil {
++		t.Errorf("Expected error, got %v", got)
++	}
++}
++
++func TestParseBytesExactIntegers(t *testing.T) {
++	// Whole-number byte counts must be parsed exactly, including values a
++	// float64 cannot represent and the full uint64 range.
++	tests := []struct {
++		in  string
++		exp uint64
++	}{
++		{"9007199254740993", 9007199254740993},         // 2^53 + 1
++		{"9007199254740993B", 9007199254740993},        // same, with suffix
++		{"18446744073709551615", 18446744073709551615}, // math.MaxUint64
++		{"18446744073709551615 B", 18446744073709551615},
++	}
++	for _, p := range tests {
++		got, err := ParseBytes(p.in)
++		if err != nil {
++			t.Errorf("Couldn't parse %v: %v", p.in, err)
++			continue
++		}
++		if got != p.exp {
++			t.Errorf("Expected %d for %q, got %d", p.exp, p.in, got)
++		}
++	}
++}
++
++func TestBytes(t *testing.T) {
++	testList{
++		{"bytes(0)", Bytes(0), "0 B"},
++		{"bytes(1)", Bytes(1), "1 B"},
++		{"bytes(803)", Bytes(803), "803 B"},
++		{"bytes(999)", Bytes(999), "999 B"},
++
++		{"bytes(1024)", Bytes(1024), "1.0 kB"},
++		{"bytes(9999)", Bytes(9999), "10 kB"},
++		{"bytes(1MB - 1)", Bytes(MByte - Byte), "1000 kB"},
++
++		{"bytes(1MB)", Bytes(1024 * 1024), "1.0 MB"},
++		{"bytes(1GB - 1K)", Bytes(GByte - KByte), "1000 MB"},
++
++		{"bytes(1GB)", Bytes(GByte), "1.0 GB"},
++		{"bytes(1TB - 1M)", Bytes(TByte - MByte), "1000 GB"},
++		{"bytes(10MB)", Bytes(9999 * 1000), "10 MB"},
++
++		{"bytes(1TB)", Bytes(TByte), "1.0 TB"},
++		{"bytes(1PB - 1T)", Bytes(PByte - TByte), "999 TB"},
++
++		{"bytes(1PB)", Bytes(PByte), "1.0 PB"},
++		{"bytes(1PB - 1T)", Bytes(EByte - PByte), "999 PB"},
++
++		{"bytes(1EB)", Bytes(EByte), "1.0 EB"},
++		// Overflows.
++		// {"bytes(1EB - 1P)", Bytes((KByte*EByte)-PByte), "1023EB"},
++
++		{"bytesN(1234, 3)", BytesN(1234, 3), "1.23 kB"},
++
++		{"bytes(0)", IBytes(0), "0 B"},
++		{"bytes(1)", IBytes(1), "1 B"},
++		{"bytes(803)", IBytes(803), "803 B"},
++		{"bytes(1023)", IBytes(1023), "1023 B"},
++
++		{"bytes(1024)", IBytes(1024), "1.0 KiB"},
++		{"bytes(1MB - 1)", IBytes(MiByte - IByte), "1024 KiB"},
++
++		{"bytes(1MB)", IBytes(1024 * 1024), "1.0 MiB"},
++		{"bytes(1GB - 1K)", IBytes(GiByte - KiByte), "1024 MiB"},
++
++		{"bytes(1GB)", IBytes(GiByte), "1.0 GiB"},
++		{"bytes(1TB - 1M)", IBytes(TiByte - MiByte), "1024 GiB"},
++
++		{"bytes(1TB)", IBytes(TiByte), "1.0 TiB"},
++		{"bytes(1PB - 1T)", IBytes(PiByte - TiByte), "1023 TiB"},
++
++		{"bytes(1PB)", IBytes(PiByte), "1.0 PiB"},
++		{"bytes(1PB - 1T)", IBytes(EiByte - PiByte), "1023 PiB"},
++
++		{"bytes(1EiB)", IBytes(EiByte), "1.0 EiB"},
++		// Overflows.
++		// {"bytes(1EB - 1P)", IBytes((KIByte*EIByte)-PiByte), "1023EB"},
++
++		{"bytes(5.5GiB)", IBytes(5.5 * GiByte), "5.5 GiB"},
++
++		{"bytes(5.5GB)", Bytes(5.5 * GByte), "5.5 GB"},
++
++		{"bytes(123456789, 3)", IBytesN(123456789, 3), "118 MiB"},
++		{"bytes(123456789, 6)", IBytesN(123456789, 6), "117.738 MiB"},
++	}.validate(t)
++}
++
++func BenchmarkParseBytes(b *testing.B) {
++	for i := 0; i < b.N; i++ {
++		ParseBytes("16.5 GB")
++	}
++}
++
++func BenchmarkBytes(b *testing.B) {
++	for i := 0; i < b.N; i++ {
++		Bytes(16.5 * GByte)
++	}
++}
+diff --git a/comma.go b/comma.go
+new file mode 100644
+index 0000000..64ce8c9
+--- /dev/null
++++ b/comma.go
+@@ -0,0 +1,141 @@
++package humanize
++
++import (
++	"bytes"
++	"math"
++	"math/big"
++	"strconv"
++	"strings"
++)
++
++// Comma produces a string form of the given number in base 10 with
++// commas after every three orders of magnitude.
++//
++// e.g. Comma(834142) -> 834,142
++func Comma(v int64) string {
++	// Shortcut for [0, 7]
++	if v&^0b111 == 0 {
++		return string([]byte{byte(v) + 48})
++	}
++
++	// Min int64 can't be negated to a usable value, so it has to be special cased.
++	if v == math.MinInt64 {
++		return "-9,223,372,036,854,775,808"
++	}
++	// Counting the number of digits.
++	var count byte = 0
++	for n := v; n != 0; n = n / 10 {
++		count++
++	}
++
++	count += (count - 1) / 3
++	if v < 0 {
++		v = 0 - v
++		count++
++	}
++	output := make([]byte, count)
++	j := len(output) - 1
++
++	var counter byte = 0
++	for v > 9 {
++		output[j] = byte(v%10) + 48
++		v = v / 10
++		j--
++		if counter == 2 {
++			counter = 0
++			output[j] = ','
++			j--
++		} else {
++			counter++
++		}
++	}
++
++	output[j] = byte(v) + 48
++	if j == 1 {
++		output[0] = '-'
++	}
++	return string(output)
++}
++
++// Commaf produces a string form of the given number in base 10 with
++// commas after every three orders of magnitude.
++//
++// e.g. Commaf(834142.32) -> 834,142.32
++func Commaf(v float64) string {
++	if math.IsNaN(v) {
++		return "NaN"
++	}
++	if math.IsInf(v, 1) {
++		return "+Inf"
++	}
++	if math.IsInf(v, -1) {
++		return "-Inf"
++	}
++
++	buf := &bytes.Buffer{}
++	if v < 0 {
++		buf.Write([]byte{'-'})
++		v = 0 - v
++	}
++
++	comma := []byte{','}
++
++	parts := strings.Split(strconv.FormatFloat(v, 'f', -1, 64), ".")
++	pos := 0
++	if len(parts[0])%3 != 0 {
++		pos += len(parts[0]) % 3
++		buf.WriteString(parts[0][:pos])
++		buf.Write(comma)
++	}
++	for ; pos < len(parts[0]); pos += 3 {
++		buf.WriteString(parts[0][pos : pos+3])
++		buf.Write(comma)
++	}
++	buf.Truncate(buf.Len() - 1)
++
++	if len(parts) > 1 {
++		buf.Write([]byte{'.'})
++		buf.WriteString(parts[1])
++	}
++	return buf.String()
++}
++
++// CommafWithDigits works like the Commaf but limits the resulting
++// string to the given number of decimal places.
++//
++// e.g. CommafWithDigits(834142.32, 1) -> 834,142.3
++func CommafWithDigits(f float64, decimals int) string {
++	return stripTrailingDigits(Commaf(f), decimals)
++}
++
++// BigComma produces a string form of the given big.Int in base 10
++// with commas after every three orders of magnitude.
++func BigComma(bin *big.Int) string {
++	b := new(big.Int).Set(bin)
++	sign := ""
++	if b.Sign() < 0 {
++		sign = "-"
++		b.Abs(b)
++	}
++
++	athousand := big.NewInt(1000)
++	c := (&big.Int{}).Set(b)
++	_, m := oom(c, athousand)
++	parts := make([]string, m+1)
++	j := len(parts) - 1
++
++	mod := &big.Int{}
++	for b.Cmp(athousand) >= 0 {
++		b.DivMod(b, athousand, mod)
++		parts[j] = strconv.FormatInt(mod.Int64(), 10)
++		switch len(parts[j]) {
++		case 2:
++			parts[j] = "0" + parts[j]
++		case 1:
++			parts[j] = "00" + parts[j]
++		}
++		j--
++	}
++	parts[j] = strconv.Itoa(int(b.Int64()))
++	return sign + strings.Join(parts[j:], ",")
++}
+diff --git a/comma_fuzz_test.go b/comma_fuzz_test.go
+new file mode 100644
+index 0000000..7db69dc
+--- /dev/null
++++ b/comma_fuzz_test.go
+@@ -0,0 +1,58 @@
++//go:build go1.18
++// +build go1.18
++
++package humanize_test
++
++import (
++	"math"
++	"strconv"
++	"strings"
++	"testing"
++
++	"github.com/dustin/go-humanize"
++)
++
++func FuzzComma(f *testing.F) {
++	f.Add(int64(0))
++	f.Add(int64(-1))
++	f.Add(int64(10))
++	f.Add(int64(100))
++	f.Add(int64(1000))
++	f.Add(int64(-1000))
++	f.Add(int64(math.MaxInt64))
++	f.Add(int64(math.MaxInt64) - 1)
++	f.Add(int64(math.MinInt64))
++	f.Add(int64(math.MinInt64) + 1)
++
++	f.Fuzz(func(t *testing.T, v int64) {
++		got := humanize.Comma(v)
++		gotNoCommas := strings.ReplaceAll(got, ",", "")
++		expected := strconv.FormatInt(v, 10)
++		if gotNoCommas != expected {
++			t.Fatalf("%d: got %q, expected %q", v, got, expected)
++		}
++
++		if v < 0 {
++			if got[0] != '-' {
++				t.Fatalf("%d: got: %q", v, got)
++			}
++			// Remove sign
++			got = got[1:]
++		}
++		// Check that commas are located every 3 digits
++		l := len(got)
++		for i := l - 1; i >= 0; i-- {
++			var ok bool
++			if (l-1-i)%4 == 3 {
++				ok = got[i] == ','
++			} else {
++				ok = got[i] >= '0' && got[i] <= '9'
++			}
++			if !ok {
++				t.Log(l - 1 - i)
++				t.Log((l - 1 - i) % 4)
++				t.Fatalf("%d: got: %q", v, got)
++			}
++		}
++	})
++}
+diff --git a/comma_test.go b/comma_test.go
+new file mode 100644
+index 0000000..7c629eb
+--- /dev/null
++++ b/comma_test.go
+@@ -0,0 +1,159 @@
++package humanize
++
++import (
++	"math"
++	"math/big"
++	"testing"
++)
++
++func TestCommas(t *testing.T) {
++	testList{
++		{"0", Comma(0), "0"},
++		{"10", Comma(10), "10"},
++		{"100", Comma(100), "100"},
++		{"1,000", Comma(1000), "1,000"},
++		{"10,000", Comma(10000), "10,000"},
++		{"100,000", Comma(100000), "100,000"},
++		{"10,000,000", Comma(10000000), "10,000,000"},
++		{"10,100,000", Comma(10100000), "10,100,000"},
++		{"10,010,000", Comma(10010000), "10,010,000"},
++		{"10,001,000", Comma(10001000), "10,001,000"},
++		{"123,456,789", Comma(123456789), "123,456,789"},
++		{"maxint", Comma(9.223372e+18), "9,223,372,000,000,000,000"},
++		{"math.maxint", Comma(math.MaxInt64), "9,223,372,036,854,775,807"},
++		{"math.minint", Comma(math.MinInt64), "-9,223,372,036,854,775,808"},
++		{"minint", Comma(-9.223372e+18), "-9,223,372,000,000,000,000"},
++		{"-123,456,789", Comma(-123456789), "-123,456,789"},
++		{"-10,100,000", Comma(-10100000), "-10,100,000"},
++		{"-10,010,000", Comma(-10010000), "-10,010,000"},
++		{"-10,001,000", Comma(-10001000), "-10,001,000"},
++		{"-10,000,000", Comma(-10000000), "-10,000,000"},
++		{"-100,000", Comma(-100000), "-100,000"},
++		{"-10,000", Comma(-10000), "-10,000"},
++		{"-1,000", Comma(-1000), "-1,000"},
++		{"-100", Comma(-100), "-100"},
++		{"-10", Comma(-10), "-10"},
++	}.validate(t)
++}
++
++func TestCommafWithDigits(t *testing.T) {
++	testList{
++		{"1.23, 0", CommafWithDigits(1.23, 0), "1"},
++		{"1.23, 1", CommafWithDigits(1.23, 1), "1.2"},
++		{"1.23, 2", CommafWithDigits(1.23, 2), "1.23"},
++		{"1.23, 3", CommafWithDigits(1.23, 3), "1.23"},
++	}.validate(t)
++}
++
++func TestCommafs(t *testing.T) {
++	testList{
++		{"0", Commaf(0), "0"},
++		{"10.11", Commaf(10.11), "10.11"},
++		{"100", Commaf(100), "100"},
++		{"1,000", Commaf(1000), "1,000"},
++		{"10,000", Commaf(10000), "10,000"},
++		{"100,000", Commaf(100000), "100,000"},
++		{"834,142.32", Commaf(834142.32), "834,142.32"},
++		{"10,000,000", Commaf(10000000), "10,000,000"},
++		{"10,100,000", Commaf(10100000), "10,100,000"},
++		{"10,010,000", Commaf(10010000), "10,010,000"},
++		{"10,001,000", Commaf(10001000), "10,001,000"},
++		{"123,456,789", Commaf(123456789), "123,456,789"},
++		{"maxf64", Commaf(math.MaxFloat64), "179,769,313,486,231,570,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000"},
++		{"minf64", Commaf(math.SmallestNonzeroFloat64), "0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005"},
++		{"-123,456,789", Commaf(-123456789), "-123,456,789"},
++		{"-10,100,000", Commaf(-10100000), "-10,100,000"},
++		{"-10,010,000", Commaf(-10010000), "-10,010,000"},
++		{"-10,001,000", Commaf(-10001000), "-10,001,000"},
++		{"-10,000,000", Commaf(-10000000), "-10,000,000"},
++		{"-100,000", Commaf(-100000), "-100,000"},
++		{"-10,000", Commaf(-10000), "-10,000"},
++		{"-1,000", Commaf(-1000), "-1,000"},
++		{"-100.11", Commaf(-100.11), "-100.11"},
++		{"-10", Commaf(-10), "-10"},
++		{"+Inf", Commaf(math.Inf(1)), "+Inf"},
++		{"-Inf", Commaf(math.Inf(-1)), "-Inf"},
++		{"NaN", Commaf(math.NaN()), "NaN"},
++	}.validate(t)
++}
++
++func BenchmarkCommas(b *testing.B) {
++	for i := 0; i < b.N; i++ {
++		Comma(1234567890)
++	}
++}
++
++func BenchmarkCommaf(b *testing.B) {
++	for i := 0; i < b.N; i++ {
++		Commaf(1234567890.83584)
++	}
++}
++
++func BenchmarkBigCommas(b *testing.B) {
++	for i := 0; i < b.N; i++ {
++		BigComma(big.NewInt(1234567890))
++	}
++}
++
++func bigComma(i int64) string {
++	return BigComma(big.NewInt(i))
++}
++
++func TestBigCommas(t *testing.T) {
++	testList{
++		{"0", bigComma(0), "0"},
++		{"10", bigComma(10), "10"},
++		{"100", bigComma(100), "100"},
++		{"1,000", bigComma(1000), "1,000"},
++		{"10,000", bigComma(10000), "10,000"},
++		{"100,000", bigComma(100000), "100,000"},
++		{"10,000,000", bigComma(10000000), "10,000,000"},
++		{"10,100,000", bigComma(10100000), "10,100,000"},
++		{"10,010,000", bigComma(10010000), "10,010,000"},
++		{"10,001,000", bigComma(10001000), "10,001,000"},
++		{"123,456,789", bigComma(123456789), "123,456,789"},
++		{"maxint", bigComma(9.223372e+18), "9,223,372,000,000,000,000"},
++		{"minint", bigComma(-9.223372e+18), "-9,223,372,000,000,000,000"},
++		{"-123,456,789", bigComma(-123456789), "-123,456,789"},
++		{"-10,100,000", bigComma(-10100000), "-10,100,000"},
++		{"-10,010,000", bigComma(-10010000), "-10,010,000"},
++		{"-10,001,000", bigComma(-10001000), "-10,001,000"},
++		{"-10,000,000", bigComma(-10000000), "-10,000,000"},
++		{"-100,000", bigComma(-100000), "-100,000"},
++		{"-10,000", bigComma(-10000), "-10,000"},
++		{"-1,000", bigComma(-1000), "-1,000"},
++		{"-100", bigComma(-100), "-100"},
++		{"-10", bigComma(-10), "-10"},
++	}.validate(t)
++}
++
++func TestVeryBigCommas(t *testing.T) {
++	tests := []struct{ in, exp string }{
++		{
++			"84889279597249724975972597249849757294578485",
++			"84,889,279,597,249,724,975,972,597,249,849,757,294,578,485",
++		},
++		{
++			"-84889279597249724975972597249849757294578485",
++			"-84,889,279,597,249,724,975,972,597,249,849,757,294,578,485",
++		},
++	}
++	for _, test := range tests {
++		n, _ := (&big.Int{}).SetString(test.in, 10)
++		got := BigComma(n)
++		if test.exp != got {
++			t.Errorf("Expected %q, got %q", test.exp, got)
++		}
++	}
++}
++
++func TestHumanizeBigIntMutation(t *testing.T) {
++	value := big.NewInt(1000000)
++	value = value.Mul(value, value)
++	expected := BigComma(value)
++	actual := BigComma(value)
++	if expected != actual {
++		t.Log(expected, " != ", actual)
++		t.Fail()
++	}
++}
+diff --git a/commaf.go b/commaf.go
+new file mode 100644
+index 0000000..12726e9
+--- /dev/null
++++ b/commaf.go
+@@ -0,0 +1,48 @@
++//go:build go1.6
++// +build go1.6
++
++package humanize
++
++import (
++	"bytes"
++	"math/big"
++	"strings"
++)
++
++// BigCommaf produces a string form of the given big.Float in base 10
++// with commas after every three orders of magnitude.
++func BigCommaf(v *big.Float) string {
++	if v.IsInf() {
++		if v.Sign() < 0 {
++			return "-Inf"
++		}
++		return "+Inf"
++	}
++
++	buf := &bytes.Buffer{}
++	if v.Sign() < 0 {
++		buf.Write([]byte{'-'})
++		v.Abs(v)
++	}
++
++	comma := []byte{','}
++
++	parts := strings.Split(v.Text('f', -1), ".")
++	pos := 0
++	if len(parts[0])%3 != 0 {
++		pos += len(parts[0]) % 3
++		buf.WriteString(parts[0][:pos])
++		buf.Write(comma)
++	}
++	for ; pos < len(parts[0]); pos += 3 {
++		buf.WriteString(parts[0][pos : pos+3])
++		buf.Write(comma)
++	}
++	buf.Truncate(buf.Len() - 1)
++
++	if len(parts) > 1 {
++		buf.Write([]byte{'.'})
++		buf.WriteString(parts[1])
++	}
++	return buf.String()
++}
+diff --git a/commaf_test.go b/commaf_test.go
+new file mode 100644
+index 0000000..931faae
+--- /dev/null
++++ b/commaf_test.go
+@@ -0,0 +1,47 @@
++//go:build go1.6
++// +build go1.6
++
++package humanize
++
++import (
++	"math"
++	"math/big"
++	"testing"
++)
++
++func BenchmarkBigCommaf(b *testing.B) {
++	for i := 0; i < b.N; i++ {
++		Commaf(1234567890.83584)
++	}
++}
++
++func TestBigCommafs(t *testing.T) {
++	testList{
++		{"0", BigCommaf(big.NewFloat(0)), "0"},
++		{"10.11", BigCommaf(big.NewFloat(10.11)), "10.11"},
++		{"100", BigCommaf(big.NewFloat(100)), "100"},
++		{"1,000", BigCommaf(big.NewFloat(1000)), "1,000"},
++		{"10,000", BigCommaf(big.NewFloat(10000)), "10,000"},
++		{"100,000", BigCommaf(big.NewFloat(100000)), "100,000"},
++		{"834,142.32", BigCommaf(big.NewFloat(834142.32)), "834,142.32"},
++		{"10,000,000", BigCommaf(big.NewFloat(10000000)), "10,000,000"},
++		{"10,100,000", BigCommaf(big.NewFloat(10100000)), "10,100,000"},
++		{"10,010,000", BigCommaf(big.NewFloat(10010000)), "10,010,000"},
++		{"10,001,000", BigCommaf(big.NewFloat(10001000)), "10,001,000"},
++		{"123,456,789", BigCommaf(big.NewFloat(123456789)), "123,456,789"},
++		{"maxf64", BigCommaf(big.NewFloat(math.MaxFloat64)), "179,769,313,486,231,570,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000"},
++		{"minf64", BigCommaf(big.NewFloat(math.SmallestNonzeroFloat64)), "0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004940656458412465"},
++		{"-123,456,789", BigCommaf(big.NewFloat(-123456789)), "-123,456,789"},
++		{"-10,100,000", BigCommaf(big.NewFloat(-10100000)), "-10,100,000"},
++		{"-10,010,000", BigCommaf(big.NewFloat(-10010000)), "-10,010,000"},
++		{"-10,001,000", BigCommaf(big.NewFloat(-10001000)), "-10,001,000"},
++		{"-10,000,000", BigCommaf(big.NewFloat(-10000000)), "-10,000,000"},
++		{"-100,000", BigCommaf(big.NewFloat(-100000)), "-100,000"},
++		{"-10,000", BigCommaf(big.NewFloat(-10000)), "-10,000"},
++		{"-1,000", BigCommaf(big.NewFloat(-1000)), "-1,000"},
++		{"-100.11", BigCommaf(big.NewFloat(-100.11)), "-100.11"},
++		{"-10", BigCommaf(big.NewFloat(-10)), "-10"},
++		{"+Inf", BigCommaf(big.NewFloat(math.Inf(1))), "+Inf"},
++		{"-Inf", BigCommaf(big.NewFloat(math.Inf(-1))), "-Inf"},
++	}.validate(t)
++}
+diff --git a/common_test.go b/common_test.go
+new file mode 100644
+index 0000000..fc7db15
+--- /dev/null
++++ b/common_test.go
+@@ -0,0 +1,18 @@
++package humanize
++
++import (
++	"testing"
++)
++
++type testList []struct {
++	name, got, exp string
++}
++
++func (tl testList) validate(t *testing.T) {
++	for _, test := range tl {
++		if test.got != test.exp {
++			t.Errorf("On %v, expected '%v', but got '%v'",
++				test.name, test.exp, test.got)
++		}
++	}
++}
+diff --git a/english/words.go b/english/words.go
+new file mode 100644
+index 0000000..68c4948
+--- /dev/null
++++ b/english/words.go
+@@ -0,0 +1,98 @@
++// Package english provides utilities to generate more user-friendly English output.
++package english
++
++import (
++	"fmt"
++	"strings"
++
++	humanize "github.com/dustin/go-humanize"
++)
++
++// These are included because they are common technical terms.
++var specialPlurals = map[string]string{
++	"index":  "indices",
++	"matrix": "matrices",
++	"vertex": "vertices",
++}
++
++var sibilantEndings = []string{"s", "sh", "tch", "x"}
++
++var isVowel = map[byte]bool{
++	'A': true, 'E': true, 'I': true, 'O': true, 'U': true,
++	'a': true, 'e': true, 'i': true, 'o': true, 'u': true,
++}
++
++// PluralWord builds the plural form of an English word.
++// The simple English rules of regular pluralization will be used
++// if the plural form is an empty string (i.e. not explicitly given).
++// The special cases are not guaranteed to work for strings outside ASCII.
++func PluralWord(quantity int, singular, plural string) string {
++	if quantity == 1 {
++		return singular
++	}
++	if plural != "" {
++		return plural
++	}
++	if plural = specialPlurals[singular]; plural != "" {
++		return plural
++	}
++
++	// We need to guess what the English plural might be.  Keep this
++	// function simple!  It doesn't need to know about every possiblity;
++	// only regular rules and the most common special cases.
++	//
++	// Reference: http://en.wikipedia.org/wiki/English_plural
++
++	for _, ending := range sibilantEndings {
++		if strings.HasSuffix(singular, ending) {
++			return singular + "es"
++		}
++	}
++	l := len(singular)
++	if l >= 2 && singular[l-1] == 'o' && !isVowel[singular[l-2]] {
++		return singular + "es"
++	}
++	if l >= 2 && singular[l-1] == 'y' && !isVowel[singular[l-2]] {
++		return singular[:l-1] + "ies"
++	}
++
++	return singular + "s"
++}
++
++// Plural formats an integer and a string into a single pluralized string.
++// The simple English rules of regular pluralization will be used
++// if the plural form is an empty string (i.e. not explicitly given).
++func Plural(quantity int, singular, plural string) string {
++	return fmt.Sprintf("%s %s", humanize.Comma(int64(quantity)), PluralWord(quantity, singular, plural))
++}
++
++// WordSeries converts a list of words into a word series in English.
++// It returns a string containing all the given words separated by commas,
++// the coordinating conjunction, and a serial comma, as appropriate.
++func WordSeries(words []string, conjunction string) string {
++	switch len(words) {
++	case 0:
++		return ""
++	case 1:
++		return words[0]
++	default:
++		return fmt.Sprintf("%s %s %s", strings.Join(words[:len(words)-1], ", "), conjunction, words[len(words)-1])
++	}
++}
++
++// OxfordWordSeries converts a list of words into a word series in English,
++// using an Oxford comma (https://en.wikipedia.org/wiki/Serial_comma). It
++// returns a string containing all the given words separated by commas, the
++// coordinating conjunction, and a serial comma, as appropriate.
++func OxfordWordSeries(words []string, conjunction string) string {
++	switch len(words) {
++	case 0:
++		return ""
++	case 1:
++		return words[0]
++	case 2:
++		return strings.Join(words, fmt.Sprintf(" %s ", conjunction))
++	default:
++		return fmt.Sprintf("%s, %s %s", strings.Join(words[:len(words)-1], ", "), conjunction, words[len(words)-1])
++	}
++}
+diff --git a/english/words_test.go b/english/words_test.go
+new file mode 100644
+index 0000000..61db7b3
+--- /dev/null
++++ b/english/words_test.go
+@@ -0,0 +1,95 @@
++package english
++
++import (
++	"testing"
++)
++
++func TestPluralWord(t *testing.T) {
++	tests := []struct {
++		n                int
++		singular, plural string
++		want             string
++	}{
++		{0, "object", "", "objects"},
++		{1, "object", "", "object"},
++		{-1, "object", "", "objects"},
++		{42, "object", "", "objects"},
++		{2, "vax", "vaxen", "vaxen"},
++
++		// special cases
++		{2, "index", "", "indices"},
++
++		// ending in a sibilant sound
++		{2, "bus", "", "buses"},
++		{2, "bush", "", "bushes"},
++		{2, "watch", "", "watches"},
++		{2, "box", "", "boxes"},
++
++		// ending with 'o' preceded by a consonant
++		{2, "hero", "", "heroes"},
++
++		// ending with 'y' preceded by a consonant
++		{2, "lady", "", "ladies"},
++		{2, "day", "", "days"},
++	}
++	for _, tt := range tests {
++		if got := PluralWord(tt.n, tt.singular, tt.plural); got != tt.want {
++			t.Errorf("PluralWord(%d, %q, %q)=%q; want: %q", tt.n, tt.singular, tt.plural, got, tt.want)
++		}
++	}
++}
++
++func TestPlural(t *testing.T) {
++	tests := []struct {
++		n                int
++		singular, plural string
++		want             string
++	}{
++		{1, "object", "", "1 object"},
++		{42, "object", "", "42 objects"},
++		{1234567, "object", "", "1,234,567 objects"},
++	}
++	for _, tt := range tests {
++		if got := Plural(tt.n, tt.singular, tt.plural); got != tt.want {
++			t.Errorf("Plural(%d, %q, %q)=%q; want: %q", tt.n, tt.singular, tt.plural, got, tt.want)
++		}
++	}
++}
++
++func TestWordSeries(t *testing.T) {
++	tests := []struct {
++		words       []string
++		conjunction string
++		want        string
++	}{
++		{[]string{}, "and", ""},
++		{[]string{"foo"}, "and", "foo"},
++		{[]string{"foo", "bar"}, "and", "foo and bar"},
++		{[]string{"foo", "bar", "baz"}, "and", "foo, bar and baz"},
++		{[]string{"foo", "bar", "baz"}, "or", "foo, bar or baz"},
++	}
++	for _, tt := range tests {
++		if got := WordSeries(tt.words, tt.conjunction); got != tt.want {
++			t.Errorf("WordSeries(%q, %q)=%q; want: %q", tt.words, tt.conjunction, got, tt.want)
++		}
++	}
++}
++
++func TestOxfordWordSeries(t *testing.T) {
++	tests := []struct {
++		words       []string
++		conjunction string
++		want        string
++	}{
++		{[]string{}, "and", ""},
++		{[]string{"foo"}, "and", "foo"},
++		{[]string{"foo", "bar"}, "and", "foo and bar"},
++		{[]string{"foo", "bar", "baz"}, "and", "foo, bar, and baz"},
++		{[]string{"foo", "bar", "baz"}, "or", "foo, bar, or baz"},
++	}
++	for _, tt := range tests {
++		if got := OxfordWordSeries(tt.words, tt.conjunction); got != tt.want {
++			t.Errorf("OxfordWordSeries(%q, %q)=%q; want: %q", tt.words, tt.conjunction, got, tt.want)
++		}
++	}
++}
+diff --git a/flake.lock b/flake.lock
+new file mode 100644
+index 0000000..a739382
+--- /dev/null
++++ b/flake.lock
+@@ -0,0 +1,58 @@
++{
++  "nodes": {
++    "flake-utils": {
++      "inputs": {
++        "systems": "systems"
++      },
++      "locked": {
++        "lastModified": 1731533236,
++        "narHash": "sha256-l0KFg5HjrsfsO/JpG+r7fRrqm12kzFHyUHqHCVpMMbI=",
++        "owner": "numtide",
++        "repo": "flake-utils",
++        "rev": "11707dc2f618dd54ca8739b309ec4fc024de578b",
++        "type": "github"
++      },
++      "original": {
++        "owner": "numtide",
++        "repo": "flake-utils",
++        "type": "github"
++      }
++    },
++    "nixpkgs": {
++      "locked": {
++        "lastModified": 1789370336,
++        "narHash": "sha256-obwZbWHP7htCIoq2Z0g/uTMcEgN6yqcMNIcOMe6P2qI=",
++        "rev": "c7def046b9a883d46974757852106483d741586f",
++        "type": "tarball",
++        "url": "https://releases.nixos.org/nixpkgs/nixpkgs-26.11pre1073483.c7def046b9a8/nixexprs.tar.zst"
++      },
++      "original": {
++        "id": "nixpkgs",
++        "type": "indirect"
++      }
++    },
++    "root": {
++      "inputs": {
++        "flake-utils": "flake-utils",
++        "nixpkgs": "nixpkgs"
++      }
++    },
++    "systems": {
++      "locked": {
++        "lastModified": 1681028828,
++        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
++        "owner": "nix-systems",
++        "repo": "default",
++        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
++        "type": "github"
++      },
++      "original": {
++        "owner": "nix-systems",
++        "repo": "default",
++        "type": "github"
++      }
++    }
++  },
++  "root": "root",
++  "version": 7
++}
+diff --git a/flake.nix b/flake.nix
+new file mode 100644
+index 0000000..82186f2
+--- /dev/null
++++ b/flake.nix
+@@ -0,0 +1,15 @@
++{
++  description = "go-humanize";
++  nixConfig.bash-prompt = "\[go-humanize\]$ ";
++
++  inputs.flake-utils.url = "github:numtide/flake-utils";
++
++  outputs = { self, nixpkgs, flake-utils }:
++    flake-utils.lib.eachDefaultSystem
++      (system:
++        let pkgs = nixpkgs.legacyPackages.${system}; in
++        {
++          devShells.default = import ./shell.nix { inherit pkgs; };
++        }
++      );
++}
+diff --git a/ftoa.go b/ftoa.go
+new file mode 100644
+index 0000000..a4433af
+--- /dev/null
++++ b/ftoa.go
+@@ -0,0 +1,49 @@
++package humanize
++
++import (
++	"strconv"
++	"strings"
++)
++
++func stripTrailingZeros(s string) string {
++	if !strings.ContainsRune(s, '.') {
++		return s
++	}
++	offset := len(s) - 1
++	for offset > 0 {
++		if s[offset] == '.' {
++			offset--
++			break
++		}
++		if s[offset] != '0' {
++			break
++		}
++		offset--
++	}
++	return s[:offset+1]
++}
++
++func stripTrailingDigits(s string, digits int) string {
++	if i := strings.Index(s, "."); i >= 0 {
++		if digits <= 0 {
++			return s[:i]
++		}
++		i++
++		if digits >= len(s)-i {
++			return s
++		}
++		return s[:i+digits]
++	}
++	return s
++}
++
++// Ftoa converts a float to a string with no trailing zeros.
++func Ftoa(num float64) string {
++	return stripTrailingZeros(strconv.FormatFloat(num, 'f', 6, 64))
++}
++
++// FtoaWithDigits converts a float to a string but limits the resulting string
++// to the given number of decimal places, and no trailing zeros.
++func FtoaWithDigits(num float64, digits int) string {
++	return stripTrailingZeros(stripTrailingDigits(strconv.FormatFloat(num, 'f', 6, 64), digits))
++}
+diff --git a/ftoa_precision_test.go b/ftoa_precision_test.go
+new file mode 100644
+index 0000000..8a4f3e2
+--- /dev/null
++++ b/ftoa_precision_test.go
+@@ -0,0 +1,14 @@
++package humanize
++
++import "testing"
++
++func TestFtoaWithDigitsLargeLimit(t *testing.T) {
++	maxInt := int(^uint(0) >> 1)
++	for _, digits := range []int{6, 7, maxInt - 1, maxInt} {
++		for _, num := range []float64{1.25, -1.25, 1234.25} {
++			if got, want := FtoaWithDigits(num, digits), Ftoa(num); got != want {
++				t.Errorf("FtoaWithDigits(%v, %d) = %q, want %q", num, digits, got, want)
++			}
++		}
++	}
++}
+diff --git a/ftoa_test.go b/ftoa_test.go
+new file mode 100644
+index 0000000..43c74d5
+--- /dev/null
++++ b/ftoa_test.go
+@@ -0,0 +1,125 @@
++package humanize
++
++import (
++	"fmt"
++	"math/rand"
++	"reflect"
++	"regexp"
++	"strconv"
++	"strings"
++	"testing"
++	"testing/quick"
++)
++
++func TestFtoa(t *testing.T) {
++	testList{
++		{"200", Ftoa(200), "200"},
++		{"20", Ftoa(20.0), "20"},
++		{"2", Ftoa(2), "2"},
++		{"2.2", Ftoa(2.2), "2.2"},
++		{"2.02", Ftoa(2.02), "2.02"},
++		{"200.02", Ftoa(200.02), "200.02"},
++	}.validate(t)
++}
++
++func TestFtoaWithDigits(t *testing.T) {
++	testList{
++		{"1.23, 0", FtoaWithDigits(1.23, 0), "1"},
++		{"20, 0", FtoaWithDigits(20.0, 0), "20"},
++		{"1.23, 1", FtoaWithDigits(1.23, 1), "1.2"},
++		{"1.23, 2", FtoaWithDigits(1.23, 2), "1.23"},
++		{"1.23, 3", FtoaWithDigits(1.23, 3), "1.23"},
++	}.validate(t)
++}
++
++func TestStripTrailingDigits(t *testing.T) {
++	err := quick.Check(func(s string, digits int) bool {
++		stripped := stripTrailingDigits(s, digits)
++
++		// A stripped string will always be a prefix of its original string
++		if !strings.HasPrefix(s, stripped) {
++			return false
++		}
++
++		if strings.ContainsRune(s, '.') {
++			// If there is a dot, the part on the left of the dot will never change
++			a := strings.Split(s, ".")
++			b := strings.Split(stripped, ".")
++			if a[0] != b[0] {
++				return false
++			}
++		} else {
++			// If there's no dot in the input, the output will always be the same as the input.
++			if stripped != s {
++				return false
++			}
++		}
++
++		return true
++	}, &quick.Config{
++		MaxCount: 10000,
++		Values: func(v []reflect.Value, r *rand.Rand) {
++			rdigs := func(n int) string {
++				digs := []rune{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'}
++				var rv []rune
++				for i := 0; i < n; i++ {
++					rv = append(rv, digs[r.Intn(len(digs))])
++				}
++				return string(rv)
++			}
++
++			ls := r.Intn(20)
++			rs := r.Intn(20)
++			jc := "."
++			if rs == 0 {
++				jc = ""
++			}
++			s := rdigs(ls) + jc + rdigs(rs)
++			digits := r.Intn(len(s) + 1)
++
++			v[0] = reflect.ValueOf(s)
++			v[1] = reflect.ValueOf(digits)
++		},
++	})
++
++	if err != nil {
++		t.Error(err)
++	}
++}
++
++func BenchmarkFtoaRegexTrailing(b *testing.B) {
++	trailingZerosRegex := regexp.MustCompile(`\.?0+$`)
++
++	b.ResetTimer()
++	for i := 0; i < b.N; i++ {
++		trailingZerosRegex.ReplaceAllString("2.00000", "")
++		trailingZerosRegex.ReplaceAllString("2.0000", "")
++		trailingZerosRegex.ReplaceAllString("2.000", "")
++		trailingZerosRegex.ReplaceAllString("2.00", "")
++		trailingZerosRegex.ReplaceAllString("2.0", "")
++		trailingZerosRegex.ReplaceAllString("2", "")
++	}
++}
++
++func BenchmarkFtoaFunc(b *testing.B) {
++	for i := 0; i < b.N; i++ {
++		stripTrailingZeros("2.00000")
++		stripTrailingZeros("2.0000")
++		stripTrailingZeros("2.000")
++		stripTrailingZeros("2.00")
++		stripTrailingZeros("2.0")
++		stripTrailingZeros("2")
++	}
++}
++
++func BenchmarkFmtF(b *testing.B) {
++	for i := 0; i < b.N; i++ {
++		_ = fmt.Sprintf("%f", 2.03584)
++	}
++}
++
++func BenchmarkStrconvF(b *testing.B) {
++	for i := 0; i < b.N; i++ {
++		strconv.FormatFloat(2.03584, 'f', 6, 64)
++	}
++}
+diff --git a/go.mod b/go.mod
+new file mode 100644
+index 0000000..611d24f
+--- /dev/null
++++ b/go.mod
+@@ -0,0 +1,3 @@
++module github.com/dustin/go-humanize
++
++go 1.21
+diff --git a/humanize.go b/humanize.go
+new file mode 100644
+index 0000000..a2c2da3
+--- /dev/null
++++ b/humanize.go
+@@ -0,0 +1,8 @@
++/*
++Package humanize converts boring ugly numbers to human-friendly strings and back.
++
++Durations can be turned into strings such as "3 days ago", numbers
++representing sizes like 82854982 into useful strings like, "83 MB" or
++"79 MiB" (whichever you prefer).
++*/
++package humanize
+diff --git a/number.go b/number.go
+new file mode 100644
+index 0000000..e9e20bc
+--- /dev/null
++++ b/number.go
+@@ -0,0 +1,193 @@
++package humanize
++
++/*
++Slightly adapted from the source to fit go-humanize.
++
++Author: https://github.com/gorhill
++Source: https://gist.github.com/gorhill/5285193
++
++*/
++
++import (
++	"math"
++	"strconv"
++)
++
++var (
++	renderFloatPrecisionMultipliers = [...]float64{
++		1,
++		10,
++		100,
++		1000,
++		10000,
++		100000,
++		1000000,
++		10000000,
++		100000000,
++		1000000000,
++	}
++
++	renderFloatPrecisionRounders = [...]float64{
++		0.5,
++		0.05,
++		0.005,
++		0.0005,
++		0.00005,
++		0.000005,
++		0.0000005,
++		0.00000005,
++		0.000000005,
++		0.0000000005,
++	}
++)
++
++// FormatFloat produces a formatted number as string based on the following user-specified criteria:
++//
++// * thousands separator
++// * decimal separator
++// * decimal precision
++//
++// Usage: s := FormatFloat(format, n)
++// The format parameter tells how to render the number n.
++//
++// See examples: http://play.golang.org/p/LXc1Ddm1lJ
++//
++// Examples of format strings, given n = 12345.6789:
++// "#,###.##" => "12,345.67"
++// "#,###." => "12,345"
++// "#,###" => "12345,678"
++// "#\u202F###,##" => "12 345,68"
++// "#.###,###### => 12.345,678900
++// "" (aka default format) => 12,345.67
++//
++// The highest precision allowed is 9 digits after the decimal symbol.
++// There is also a version for integer number, FormatInteger(),
++// which is convenient for calls within template.
++func FormatFloat(format string, n float64) string {
++	// Special cases:
++	//   NaN = "NaN"
++	//   +Inf = "+Infinity"
++	//   -Inf = "-Infinity"
++	if math.IsNaN(n) {
++		return "NaN"
++	}
++	if n > math.MaxFloat64 {
++		return "Infinity"
++	}
++	if n < (0.0 - math.MaxFloat64) {
++		return "-Infinity"
++	}
++
++	// default format
++	precision := 2
++	decimalStr := "."
++	thousandStr := ","
++	positiveStr := ""
++	negativeStr := "-"
++
++	if len(format) > 0 {
++		format := []rune(format)
++
++		// If there is an explicit format directive,
++		// then default values are these:
++		precision = 9
++		thousandStr = ""
++
++		// collect indices of meaningful formatting directives
++		formatIndx := []int{}
++		for i, char := range format {
++			if char != '#' && char != '0' {
++				formatIndx = append(formatIndx, i)
++			}
++		}
++
++		if len(formatIndx) > 0 {
++			// Directive at index 0:
++			//   Must be a '+'
++			//   Raise an error if not the case
++			// index: 0123456789
++			//        +0.000,000
++			//        +000,000.0
++			//        +0000.00
++			//        +0000
++			if formatIndx[0] == 0 {
++				if format[formatIndx[0]] != '+' {
++					panic("FormatFloat(): invalid positive sign directive")
++				}
++				positiveStr = "+"
++				formatIndx = formatIndx[1:]
++			}
++
++			// Two directives:
++			//   First is thousands separator
++			//   Raise an error if not followed by 3-digit
++			// 0123456789
++			// 0.000,000
++			// 000,000.00
++			if len(formatIndx) == 2 {
++				if (formatIndx[1] - formatIndx[0]) != 4 {
++					panic("FormatFloat(): thousands separator directive must be followed by 3 digit-specifiers")
++				}
++				thousandStr = string(format[formatIndx[0]])
++				formatIndx = formatIndx[1:]
++			}
++
++			// One directive:
++			//   Directive is decimal separator
++			//   The number of digit-specifier following the separator indicates wanted precision
++			// 0123456789
++			// 0.00
++			// 000,0000
++			if len(formatIndx) == 1 {
++				decimalStr = string(format[formatIndx[0]])
++				precision = len(format) - formatIndx[0] - 1
++			}
++		}
++	}
++
++	// generate sign part
++	var signStr string
++	if n >= 0.000000001 {
++		signStr = positiveStr
++	} else if n <= -0.000000001 {
++		signStr = negativeStr
++		n = -n
++	} else {
++		signStr = ""
++		n = 0.0
++	}
++
++	// split number into integer and fractional parts
++	intf, fracf := math.Modf(n + renderFloatPrecisionRounders[precision])
++
++	// generate integer part string
++	intStr := strconv.FormatFloat(intf, 'f', 0, 64)
++
++	// add thousand separator if required
++	if len(thousandStr) > 0 {
++		for i := len(intStr); i > 3; {
++			i -= 3
++			intStr = intStr[:i] + thousandStr + intStr[i:]
++		}
++	}
++
++	// no fractional part, we can leave now
++	if precision == 0 {
++		return signStr + intStr
++	}
++
++	// generate fractional part
++	fracStr := strconv.Itoa(int(fracf * renderFloatPrecisionMultipliers[precision]))
++	// may need padding
++	if len(fracStr) < precision {
++		fracStr = "000000000000000"[:precision-len(fracStr)] + fracStr
++	}
++
++	return signStr + intStr + decimalStr + fracStr
++}
++
++// FormatInteger produces a formatted number as string.
++// See FormatFloat.
++func FormatInteger(format string, n int) string {
++	return FormatFloat(format, float64(n))
++}
+diff --git a/number_test.go b/number_test.go
+new file mode 100644
+index 0000000..7111744
+--- /dev/null
++++ b/number_test.go
+@@ -0,0 +1,83 @@
++package humanize
++
++import (
++	"math"
++	"testing"
++)
++
++type TestStruct struct {
++	name      string
++	format    string
++	num       float64
++	formatted string
++}
++
++func TestFormatFloat(t *testing.T) {
++	tests := []TestStruct{
++		{"default", "", 12345.6789, "12,345.68"},
++		{"#", "#", 12345.6789, "12345.678900000"},
++		{"#.", "#.", 12345.6789, "12346"},
++		{"#,#", "#,#", 12345.6789, "12345,7"},
++		{"#,##", "#,##", 12345.6789, "12345,68"},
++		{"#,###", "#,###", 12345.6789, "12345,679"},
++		{"#,###.", "#,###.", 12345.6789, "12,346"},
++		{"#,###.##", "#,###.##", 12345.6789, "12,345.68"},
++		{"#,###.###", "#,###.###", 12345.6789, "12,345.679"},
++		{"#,###.####", "#,###.####", 12345.6789, "12,345.6789"},
++		{"#.###,######", "#.###,######", 12345.6789, "12.345,678900"},
++		{"bug46", "#,###.##", 52746220055.92342, "52,746,220,055.92"},
++		{"int64 boundary", "#,###.##", 9223372036854775808, "9,223,372,036,854,775,808.00"},
++		{"negative int64 boundary", "#,###.##", -9223372036854775808, "-9,223,372,036,854,775,808.00"},
++		{"large integer", "#.", 1e20, "100000000000000000000"},
++		{"large integer with sign", "+#.###,##", 1e20, "+100.000.000.000.000.000.000,00"},
++		{"#\u202f###,##", "#\u202f###,##", 12345.6789, "12 345,68"},
++
++		// special cases
++		{"NaN", "#", math.NaN(), "NaN"},
++		{"+Inf", "#", math.Inf(1), "Infinity"},
++		{"-Inf", "#", math.Inf(-1), "-Infinity"},
++		{"signStr <= -0.000000001", "", -0.000000002, "-0.00"},
++		{"signStr = 0", "", 0, "0.00"},
++		{"Format directive must start with +", "+000", 12345.6789, "+12345.678900000"},
++	}
++
++	for _, test := range tests {
++		got := FormatFloat(test.format, test.num)
++		if got != test.formatted {
++			t.Errorf("On %v (%v, %v), got %v, wanted %v",
++				test.name, test.format, test.num, got, test.formatted)
++		}
++	}
++	// Test a single integer
++	got := FormatInteger("#", 12345)
++	if got != "12345.000000000" {
++		t.Errorf("On %v (%v, %v), got %v, wanted %v",
++			"integerTest", "#", 12345, got, "12345.000000000")
++	}
++	// Test the things that could panic
++	panictests := []TestStruct{
++		{"FormatFloat(): invalid positive sign directive", "-", 12345.6789, "12,345.68"},
++		{"FormatFloat(): thousands separator directive must be followed by 3 digit-specifiers", "0.01", 12345.6789, "12,345.68"},
++	}
++	for _, test := range panictests {
++		didPanic := false
++		var message interface{}
++		func() {
++
++			defer func() {
++				if message = recover(); message != nil {
++					didPanic = true
++				}
++			}()
++
++			// call the target function
++			_ = FormatFloat(test.format, test.num)
++
++		}()
++		if didPanic != true {
++			t.Errorf("On %v, should have panic and did not.",
++				test.name)
++		}
++	}
++
++}
+diff --git a/ordinals.go b/ordinals.go
+new file mode 100644
+index 0000000..43d88a8
+--- /dev/null
++++ b/ordinals.go
+@@ -0,0 +1,25 @@
++package humanize
++
++import "strconv"
++
++// Ordinal gives you the input number in a rank/ordinal format.
++//
++// Ordinal(3) -> 3rd
++func Ordinal(x int) string {
++	suffix := "th"
++	switch x % 10 {
++	case 1:
++		if x%100 != 11 {
++			suffix = "st"
++		}
++	case 2:
++		if x%100 != 12 {
++			suffix = "nd"
++		}
++	case 3:
++		if x%100 != 13 {
++			suffix = "rd"
++		}
++	}
++	return strconv.Itoa(x) + suffix
++}
+diff --git a/ordinals_test.go b/ordinals_test.go
+new file mode 100644
+index 0000000..c478d5c
+--- /dev/null
++++ b/ordinals_test.go
+@@ -0,0 +1,28 @@
++package humanize
++
++import (
++	"testing"
++)
++
++func TestOrdinals(t *testing.T) {
++	testList{
++		{"0", Ordinal(0), "0th"},
++		{"1", Ordinal(1), "1st"},
++		{"2", Ordinal(2), "2nd"},
++		{"3", Ordinal(3), "3rd"},
++		{"4", Ordinal(4), "4th"},
++		{"10", Ordinal(10), "10th"},
++		{"11", Ordinal(11), "11th"},
++		{"12", Ordinal(12), "12th"},
++		{"13", Ordinal(13), "13th"},
++		{"21", Ordinal(21), "21st"},
++		{"32", Ordinal(32), "32nd"},
++		{"43", Ordinal(43), "43rd"},
++		{"101", Ordinal(101), "101st"},
++		{"102", Ordinal(102), "102nd"},
++		{"103", Ordinal(103), "103rd"},
++		{"211", Ordinal(211), "211th"},
++		{"212", Ordinal(212), "212th"},
++		{"213", Ordinal(213), "213th"},
++	}.validate(t)
++}
+diff --git a/shell.nix b/shell.nix
+new file mode 100644
+index 0000000..8c3ed9b
+--- /dev/null
++++ b/shell.nix
+@@ -0,0 +1,11 @@
++{ pkgs ? import <nixpkgs> { } }:
++with pkgs;
++mkShell {
++  buildInputs = [
++    go
++    gotools
++  ];
++
++  shellHook = ''
++  '';
++}
+diff --git a/si.go b/si.go
+new file mode 100644
+index 0000000..7c9abae
+--- /dev/null
++++ b/si.go
+@@ -0,0 +1,169 @@
++package humanize
++
++import (
++	"errors"
++	"math"
++	"regexp"
++	"strconv"
++)
++
++var siPrefixTable = map[float64]string{
++	-30: "q", // quecto
++	-27: "r", // ronto
++	-24: "y", // yocto
++	-21: "z", // zepto
++	-18: "a", // atto
++	-15: "f", // femto
++	-12: "p", // pico
++	-9:  "n", // nano
++	-6:  "µ", // micro
++	-3:  "m", // milli
++	0:   "",
++	3:   "k", // kilo
++	6:   "M", // mega
++	9:   "G", // giga
++	12:  "T", // tera
++	15:  "P", // peta
++	18:  "E", // exa
++	21:  "Z", // zetta
++	24:  "Y", // yotta
++	27:  "R", // ronna
++	30:  "Q", // quetta
++}
++
++var revSIPrefixTable = revfmap(siPrefixTable)
++
++// minSIExponent and maxSIExponent are the smallest and largest exponents
++// siPrefixTable can name. They are derived from the table rather than written
++// down so that adding a prefix (as ronto/quecto/ronna/quetta were added) keeps
++// them correct.
++var minSIExponent, maxSIExponent = func() (float64, float64) {
++	min, max := math.Inf(1), math.Inf(-1)
++	for k := range siPrefixTable {
++		if k < min {
++			min = k
++		}
++		if k > max {
++			max = k
++		}
++	}
++	return min, max
++}()
++
++// siParseAliases lets ParseSI accept extra spellings of prefixes that look
++// identical to the canonical ones in siPrefixTable. Output still uses the
++// canonical character; this is input-side only.
++var siParseAliases = map[string]float64{
++	"μ": 1e-6, // GREEK SMALL LETTER MU, often typed instead of µ (U+00B5)
++}
++
++// revfmap reverses the map and precomputes the power multiplier
++func revfmap(in map[float64]string) map[string]float64 {
++	rv := map[string]float64{}
++	for k, v := range in {
++		rv[v] = math.Pow(10, k)
++	}
++	for a, v := range siParseAliases {
++		rv[a] = v
++	}
++	return rv
++}
++
++var riParseRegex *regexp.Regexp
++
++func init() {
++	ri := `^([\-0-9.]+)\s?([`
++	for _, v := range siPrefixTable {
++		ri += v
++	}
++	for a := range siParseAliases {
++		ri += a
++	}
++	ri += `]?)(.*)`
++
++	riParseRegex = regexp.MustCompile(ri)
++}
++
++// ComputeSI finds the most appropriate SI prefix for the given number
++// and returns the prefix along with the value adjusted to be within
++// that prefix.
++//
++// See also: SI, ParseSI.
++//
++// e.g. ComputeSI(2.2345e-12) -> (2.2345, "p")
++func ComputeSI(input float64) (float64, string) {
++	if input == 0 {
++		return 0, ""
++	}
++	mag := math.Abs(input)
++	exponent := math.Floor(logn(mag, 10))
++	exponent = math.Floor(exponent/3) * 3
++
++	// Outside the table there is no prefix that can name the magnitude, so
++	// clamp to the nearest one there is and let the returned value carry the
++	// remaining orders of magnitude. Without this the lookup below misses,
++	// the prefix comes back as the empty string, and the value is left scaled
++	// for a prefix that was never returned - so the caller silently gets a
++	// number off by as much as 10^300 with no error.
++	if exponent < minSIExponent {
++		exponent = minSIExponent
++	} else if exponent > maxSIExponent {
++		exponent = maxSIExponent
++	}
++
++	value := mag / math.Pow(10, exponent)
++
++	// Handle special case where value is exactly 1000.0
++	// Should return 1 M instead of 1000 k
++	if value == 1000.0 && exponent+3 <= maxSIExponent {
++		exponent += 3
++		value = mag / math.Pow(10, exponent)
++	}
++
++	value = math.Copysign(value, input)
++
++	prefix := siPrefixTable[exponent]
++	return value, prefix
++}
++
++// SI returns a string with default formatting.
++//
++// SI uses Ftoa to format float value, removing trailing zeros.
++//
++// See also: ComputeSI, ParseSI.
++//
++// e.g. SI(1000000, "B") -> 1 MB
++// e.g. SI(2.2345e-12, "F") -> 2.2345 pF
++func SI(input float64, unit string) string {
++	value, prefix := ComputeSI(input)
++	return Ftoa(value) + " " + prefix + unit
++}
++
++// SIWithDigits works like SI but limits the resulting string to the
++// given number of decimal places.
++//
++// e.g. SIWithDigits(1000000, 0, "B") -> 1 MB
++// e.g. SIWithDigits(2.2345e-12, 2, "F") -> 2.23 pF
++func SIWithDigits(input float64, decimals int, unit string) string {
++	value, prefix := ComputeSI(input)
++	return FtoaWithDigits(value, decimals) + " " + prefix + unit
++}
++
++var errInvalid = errors.New("invalid input")
++
++// ParseSI parses an SI string back into the number and unit.
++//
++// See also: SI, ComputeSI.
++//
++// e.g. ParseSI("2.2345 pF") -> (2.2345e-12, "F", nil)
++func ParseSI(input string) (float64, string, error) {
++	found := riParseRegex.FindStringSubmatch(input)
++	if len(found) != 4 {
++		return 0, "", errInvalid
++	}
++	mag := revSIPrefixTable[found[2]]
++	unit := found[3]
++
++	base, err := strconv.ParseFloat(found[1], 64)
++	return base * mag, unit, err
++}
+diff --git a/si_test.go b/si_test.go
+new file mode 100644
+index 0000000..99f5e4c
+--- /dev/null
++++ b/si_test.go
+@@ -0,0 +1,217 @@
++package humanize
++
++import (
++	"math"
++	"testing"
++)
++
++func TestSI(t *testing.T) {
++	tests := []struct {
++		name      string
++		num       float64
++		formatted string
++	}{
++		{"e-30", 1e-30, "1 qF"},
++		{"e-27", 1e-27, "1 rF"},
++		{"e-24", 1e-24, "1 yF"},
++		{"e-21", 1e-21, "1 zF"},
++		{"e-18", 1e-18, "1 aF"},
++		{"e-15", 1e-15, "1 fF"},
++		{"e-12", 1e-12, "1 pF"},
++		{"e-12", 2.2345e-12, "2.2345 pF"},
++		{"e-12", 2.23e-12, "2.23 pF"},
++		{"e-11", 2.23e-11, "22.3 pF"},
++		{"e-10", 2.2e-10, "220 pF"},
++		{"e-9", 2.2e-9, "2.2 nF"},
++		{"e-8", 2.2e-8, "22 nF"},
++		{"e-7", 2.2e-7, "220 nF"},
++		{"e-6", 2.2e-6, "2.2 µF"},
++		{"e-6", 1e-6, "1 µF"},
++		{"e-5", 2.2e-5, "22 µF"},
++		{"e-4", 2.2e-4, "220 µF"},
++		{"e-3", 2.2e-3, "2.2 mF"},
++		{"e-2", 2.2e-2, "22 mF"},
++		{"e-1", 2.2e-1, "220 mF"},
++		{"e+0", 2.2e-0, "2.2 F"},
++		{"e+0", 2.2, "2.2 F"},
++		{"e+1", 2.2e+1, "22 F"},
++		{"0", 0, "0 F"},
++		{"e+1", 22, "22 F"},
++		{"e+2", 2.2e+2, "220 F"},
++		{"e+2", 220, "220 F"},
++		{"e+3", 2.2e+3, "2.2 kF"},
++		{"e+3", 2200, "2.2 kF"},
++		{"e+4", 2.2e+4, "22 kF"},
++		{"e+4", 22000, "22 kF"},
++		{"e+5", 2.2e+5, "220 kF"},
++		{"e+6", 2.2e+6, "2.2 MF"},
++		{"e+6", 1e+6, "1 MF"},
++		{"e+7", 2.2e+7, "22 MF"},
++		{"e+8", 2.2e+8, "220 MF"},
++		{"e+9", 2.2e+9, "2.2 GF"},
++		{"e+10", 2.2e+10, "22 GF"},
++		{"e+11", 2.2e+11, "220 GF"},
++		{"e+12", 2.2e+12, "2.2 TF"},
++		{"e+15", 2.2e+15, "2.2 PF"},
++		{"e+18", 2.2e+18, "2.2 EF"},
++		{"e+21", 2.2e+21, "2.2 ZF"},
++		{"e+24", 2.2e+24, "2.2 YF"},
++		{"e+27", 2.2e+27, "2.2 RF"},
++		{"e+30", 2.2e+30, "2.2 QF"},
++
++		// special case
++		{"1F", 1000 * 1000, "1 MF"},
++		{"1F", 1e6, "1 MF"},
++
++		// negative number
++		{"-100 F", -100, "-100 F"},
++	}
++
++	for _, test := range tests {
++		got := SI(test.num, "F")
++		if got != test.formatted {
++			t.Errorf("On %v (%v), got %v, wanted %v",
++				test.name, test.num, got, test.formatted)
++		}
++
++		gotf, gotu, err := ParseSI(test.formatted)
++		if err != nil {
++			t.Errorf("Error parsing %v (%v): %v", test.name, test.formatted, err)
++			continue
++		}
++
++		if math.Abs(1-(gotf/test.num)) > 0.01 {
++			t.Errorf("On %v (%v), got %v, wanted %v (±%v)",
++				test.name, test.formatted, gotf, test.num,
++				math.Abs(1-(gotf/test.num)))
++		}
++		if gotu != "F" {
++			t.Errorf("On %v (%v), expected unit F, got %v",
++				test.name, test.formatted, gotu)
++		}
++	}
++
++	// Parse error
++	gotf, gotu, err := ParseSI("x1.21JW") // 1.21 jigga whats
++	if err == nil {
++		t.Errorf("Expected error on x1.21JW, got %v %v", gotf, gotu)
++	}
++}
++
++func TestSIWithDigits(t *testing.T) {
++	tests := []struct {
++		name      string
++		num       float64
++		digits    int
++		formatted string
++	}{
++		{"e-12", 2.234e-12, 0, "2 pF"},
++		{"e-12", 2.234e-12, 1, "2.2 pF"},
++		{"e-12", 2.234e-12, 2, "2.23 pF"},
++		{"e-12", 2.234e-12, 3, "2.234 pF"},
++		{"e-12", 2.234e-12, 4, "2.234 pF"},
++	}
++
++	for _, test := range tests {
++		got := SIWithDigits(test.num, test.digits, "F")
++		if got != test.formatted {
++			t.Errorf("On %v (%v), got %v, wanted %v",
++				test.name, test.num, got, test.formatted)
++		}
++	}
++}
++
++func BenchmarkParseSI(b *testing.B) {
++	for i := 0; i < b.N; i++ {
++		ParseSI("2.2346ZB")
++	}
++}
++
++// The Greek letter mu (U+03BC) looks identical to the SI micro sign
++// (U+00B5) and is often typed instead. ParseSI should accept it.
++func TestParseSIGreekMu(t *testing.T) {
++	got, unit, err := ParseSI("2.2 μF")
++	if err != nil {
++		t.Fatalf("ParseSI(Greek mu) returned err: %v", err)
++	}
++	if unit != "F" {
++		t.Errorf("unit = %q, want %q", unit, "F")
++	}
++	if math.Abs(1-(got/2.2e-6)) > 0.01 {
++		t.Errorf("got %v, want ~2.2e-6", got)
++	}
++}
++
++// There was a report that zeroes were being truncated incorrectly
++func TestBug106(t *testing.T) {
++	tests := []struct {
++		in   float64
++		want string
++	}{
++		{20.0, "20 U"},
++		{200.0, "200 U"},
++	}
++
++	for _, test := range tests {
++		if got := SIWithDigits(test.in, 0, "U"); got != test.want {
++			t.Errorf("on %f got %v, want %v", test.in, got, test.want)
++		}
++	}
++}
++
++// A magnitude with no prefix to name it must not lose the magnitude.
++//
++// siPrefixTable spans 10^-30 to 10^30. Beyond it the exponent lookup missed,
++// so the prefix came back as the empty string while the value stayed scaled
++// for the prefix that was never returned. Nothing errored: ComputeSI just
++// answered a number that was wrong by up to 10^300, and SI printed it.
++// The electron mass, 9.109e-31 kg, formatted as "910.938 kg".
++func TestComputeSIOutsidePrefixTable(t *testing.T) {
++	tests := []struct {
++		name string
++		in   float64
++		want float64
++		pfx  string
++	}{
++		{"electron mass", 9.1093837015e-31, 0.91093837015, "q"},
++		{"planck constant", 6.62607015e-34, 0.000662607015, "q"},
++		{"below the table", 1e-33, 0.001, "q"},
++		{"far below the table", 1e-45, 1e-15, "q"},
++		{"above the table", 1e34, 10000, "Q"},
++		{"far above the table", 1e60, 1e30, "Q"},
++		{"largest float64", math.MaxFloat64, math.MaxFloat64 / 1e30, "Q"},
++		{"negative below the table", -9.1093837015e-31, -0.91093837015, "q"},
++		{"last exponent in the table", 1e-30, 1, "q"},
++	}
++
++	for _, test := range tests {
++		got, pfx := ComputeSI(test.in)
++		if pfx != test.pfx {
++			t.Errorf("%s: ComputeSI(%g) prefix = %q, want %q", test.name, test.in, pfx, test.pfx)
++		}
++		if rel := math.Abs(got/test.want - 1); rel > 1e-9 {
++			t.Errorf("%s: ComputeSI(%g) value = %g, want %g", test.name, test.in, got, test.want)
++		}
++	}
++}
++
++// The property the bug broke: whatever prefix comes back, multiplying the
++// value by that prefix's power of ten has to give the input again. This is
++// what callers rely on and what makes SI/ParseSI a round trip.
++func TestComputeSIPreservesMagnitude(t *testing.T) {
++	for exp := -320; exp <= 308; exp++ {
++		in := math.Pow(10, float64(exp))
++		if in == 0 || math.IsInf(in, 0) {
++			continue
++		}
++		value, prefix := ComputeSI(in)
++		mult, ok := revSIPrefixTable[prefix]
++		if !ok {
++			t.Fatalf("1e%d: ComputeSI returned prefix %q, which is not in the table", exp, prefix)
++		}
++		if rel := math.Abs(value*mult/in - 1); rel > 1e-9 {
++			t.Errorf("1e%d: ComputeSI = (%g, %q); %g * %g = %g, want %g",
++				exp, value, prefix, value, mult, value*mult, in)
++		}
++	}
++}
+diff --git a/times.go b/times.go
+new file mode 100644
+index 0000000..dd3fbf5
+--- /dev/null
++++ b/times.go
+@@ -0,0 +1,117 @@
++package humanize
++
++import (
++	"fmt"
++	"math"
++	"sort"
++	"time"
++)
++
++// Seconds-based time units
++const (
++	Day      = 24 * time.Hour
++	Week     = 7 * Day
++	Month    = 30 * Day
++	Year     = 12 * Month
++	LongTime = 37 * Year
++)
++
++// Time formats a time into a relative string.
++//
++// Time(someT) -> "3 weeks ago"
++func Time(then time.Time) string {
++	return RelTime(then, time.Now(), "ago", "from now")
++}
++
++// A RelTimeMagnitude struct contains a relative time point at which
++// the relative format of time will switch to a new format string.  A
++// slice of these in ascending order by their "D" field is passed to
++// CustomRelTime to format durations.
++//
++// The Format field is a string that may contain a "%s" which will be
++// replaced with the appropriate signed label (e.g. "ago" or "from
++// now") and a "%d" that will be replaced by the quantity.
++//
++// The DivBy field is the amount of time the time difference must be
++// divided by in order to display correctly.
++//
++// e.g. if D is 2*time.Minute and you want to display "%d minutes %s"
++// DivBy should be time.Minute so whatever the duration is will be
++// expressed in minutes.
++type RelTimeMagnitude struct {
++	D      time.Duration
++	Format string
++	DivBy  time.Duration
++}
++
++var defaultMagnitudes = []RelTimeMagnitude{
++	{time.Second, "now", time.Second},
++	{2 * time.Second, "1 second %s", 1},
++	{time.Minute, "%d seconds %s", time.Second},
++	{2 * time.Minute, "1 minute %s", 1},
++	{time.Hour, "%d minutes %s", time.Minute},
++	{2 * time.Hour, "1 hour %s", 1},
++	{Day, "%d hours %s", time.Hour},
++	{2 * Day, "1 day %s", 1},
++	{Week, "%d days %s", Day},
++	{2 * Week, "1 week %s", 1},
++	{Month, "%d weeks %s", Week},
++	{2 * Month, "1 month %s", 1},
++	{Year, "%d months %s", Month},
++	{18 * Month, "1 year %s", 1},
++	{2 * Year, "2 years %s", 1},
++	{LongTime, "%d years %s", Year},
++	{math.MaxInt64, "a long while %s", 1},
++}
++
++// RelTime formats a time into a relative string.
++//
++// It takes two times and two labels.  In addition to the generic time
++// delta string (e.g. 5 minutes), the labels are used applied so that
++// the label corresponding to the smaller time is applied.
++//
++// RelTime(timeInPast, timeInFuture, "earlier", "later") -> "3 weeks earlier"
++func RelTime(a, b time.Time, albl, blbl string) string {
++	return CustomRelTime(a, b, albl, blbl, defaultMagnitudes)
++}
++
++// CustomRelTime formats a time into a relative string.
++//
++// It takes two times two labels and a table of relative time formats.
++// In addition to the generic time delta string (e.g. 5 minutes), the
++// labels are used applied so that the label corresponding to the
++// smaller time is applied.
++func CustomRelTime(a, b time.Time, albl, blbl string, magnitudes []RelTimeMagnitude) string {
++	lbl := albl
++	diff := b.Sub(a)
++
++	if a.After(b) {
++		lbl = blbl
++		diff = a.Sub(b)
++	}
++
++	n := sort.Search(len(magnitudes), func(i int) bool {
++		return magnitudes[i].D > diff
++	})
++
++	if n >= len(magnitudes) {
++		n = len(magnitudes) - 1
++	}
++	mag := magnitudes[n]
++	args := []interface{}{}
++	escaped := false
++	for _, ch := range mag.Format {
++		if escaped {
++			switch ch {
++			case 's':
++				args = append(args, lbl)
++			case 'd':
++				args = append(args, diff/mag.DivBy)
++			}
++			escaped = false
++		} else {
++			escaped = ch == '%'
++		}
++	}
++	return fmt.Sprintf(mag.Format, args...)
++}
+diff --git a/times_test.go b/times_test.go
+new file mode 100644
+index 0000000..b1ab8bf
+--- /dev/null
++++ b/times_test.go
+@@ -0,0 +1,124 @@
++package humanize
++
++import (
++	"math"
++	"testing"
++	"time"
++)
++
++func TestPast(t *testing.T) {
++	now := time.Now()
++	testList{
++		{"now", Time(now), "now"},
++		{"1 second ago", Time(now.Add(-1 * time.Second)), "1 second ago"},
++		{"12 seconds ago", Time(now.Add(-12 * time.Second)), "12 seconds ago"},
++		{"30 seconds ago", Time(now.Add(-30 * time.Second)), "30 seconds ago"},
++		{"45 seconds ago", Time(now.Add(-45 * time.Second)), "45 seconds ago"},
++		{"1 minute ago", Time(now.Add(-63 * time.Second)), "1 minute ago"},
++		{"15 minutes ago", Time(now.Add(-15 * time.Minute)), "15 minutes ago"},
++		{"1 hour ago", Time(now.Add(-63 * time.Minute)), "1 hour ago"},
++		{"2 hours ago", Time(now.Add(-2 * time.Hour)), "2 hours ago"},
++		{"21 hours ago", Time(now.Add(-21 * time.Hour)), "21 hours ago"},
++		{"1 day ago", Time(now.Add(-26 * time.Hour)), "1 day ago"},
++		{"2 days ago", Time(now.Add(-49 * time.Hour)), "2 days ago"},
++		{"3 days ago", Time(now.Add(-3 * Day)), "3 days ago"},
++		{"1 week ago (1)", Time(now.Add(-7 * Day)), "1 week ago"},
++		{"1 week ago (2)", Time(now.Add(-12 * Day)), "1 week ago"},
++		{"2 weeks ago", Time(now.Add(-15 * Day)), "2 weeks ago"},
++		{"1 month ago", Time(now.Add(-39 * Day)), "1 month ago"},
++		{"3 months ago", Time(now.Add(-99 * Day)), "3 months ago"},
++		{"1 year ago (1)", Time(now.Add(-365 * Day)), "1 year ago"},
++		{"1 year ago (1)", Time(now.Add(-400 * Day)), "1 year ago"},
++		{"2 years ago (1)", Time(now.Add(-548 * Day)), "2 years ago"},
++		{"2 years ago (2)", Time(now.Add(-725 * Day)), "2 years ago"},
++		{"2 years ago (3)", Time(now.Add(-800 * Day)), "2 years ago"},
++		{"3 years ago", Time(now.Add(-3 * Year)), "3 years ago"},
++		{"long ago", Time(now.Add(-LongTime)), "a long while ago"},
++	}.validate(t)
++}
++
++func TestReltimeOffbyone(t *testing.T) {
++	testList{
++		{"1w-1", RelTime(time.Unix(0, 0), time.Unix(7*24*60*60, -1), "ago", ""), "6 days ago"},
++		{"1w±0", RelTime(time.Unix(0, 0), time.Unix(7*24*60*60, 0), "ago", ""), "1 week ago"},
++		{"1w+1", RelTime(time.Unix(0, 0), time.Unix(7*24*60*60, 1), "ago", ""), "1 week ago"},
++		{"2w-1", RelTime(time.Unix(0, 0), time.Unix(14*24*60*60, -1), "ago", ""), "1 week ago"},
++		{"2w±0", RelTime(time.Unix(0, 0), time.Unix(14*24*60*60, 0), "ago", ""), "2 weeks ago"},
++		{"2w+1", RelTime(time.Unix(0, 0), time.Unix(14*24*60*60, 1), "ago", ""), "2 weeks ago"},
++	}.validate(t)
++}
++
++func TestFuture(t *testing.T) {
++	// Add a little time so that these things properly line up in
++	// the future.
++	now := time.Now().Add(time.Millisecond * 250)
++	testList{
++		{"now", Time(now), "now"},
++		{"1 second from now", Time(now.Add(+1 * time.Second)), "1 second from now"},
++		{"12 seconds from now", Time(now.Add(+12 * time.Second)), "12 seconds from now"},
++		{"30 seconds from now", Time(now.Add(+30 * time.Second)), "30 seconds from now"},
++		{"45 seconds from now", Time(now.Add(+45 * time.Second)), "45 seconds from now"},
++		{"15 minutes from now", Time(now.Add(+15 * time.Minute)), "15 minutes from now"},
++		{"2 hours from now", Time(now.Add(+2 * time.Hour)), "2 hours from now"},
++		{"21 hours from now", Time(now.Add(+21 * time.Hour)), "21 hours from now"},
++		{"1 day from now", Time(now.Add(+26 * time.Hour)), "1 day from now"},
++		{"2 days from now", Time(now.Add(+49 * time.Hour)), "2 days from now"},
++		{"3 days from now", Time(now.Add(+3 * Day)), "3 days from now"},
++		{"1 week from now (1)", Time(now.Add(+7 * Day)), "1 week from now"},
++		{"1 week from now (2)", Time(now.Add(+12 * Day)), "1 week from now"},
++		{"2 weeks from now", Time(now.Add(+15 * Day)), "2 weeks from now"},
++		{"1 month from now", Time(now.Add(+30 * Day)), "1 month from now"},
++		{"1 year from now", Time(now.Add(+365 * Day)), "1 year from now"},
++		{"2 years from now", Time(now.Add(+2 * Year)), "2 years from now"},
++		{"a while from now", Time(now.Add(+LongTime)), "a long while from now"},
++	}.validate(t)
++}
++
++func TestRange(t *testing.T) {
++	start := time.Time{}
++	end := time.Unix(math.MaxInt64, math.MaxInt64)
++	x := RelTime(start, end, "ago", "from now")
++	if x != "a long while from now" {
++		t.Errorf("Expected a long while from now, got %q", x)
++	}
++}
++
++func TestCustomRelTime(t *testing.T) {
++	now := time.Now().Add(time.Millisecond * 250)
++	magnitudes := []RelTimeMagnitude{
++		{time.Second, "now", time.Second},
++		{2 * time.Second, "1 second %s", 1},
++		{time.Minute, "%d seconds %s", time.Second},
++		{Day - time.Second, "%d minutes %s", time.Minute},
++		{Day, "%d hours %s", time.Hour},
++		{2 * Day, "1 day %s", 1},
++		{Week, "%d days %s", Day},
++		{2 * Week, "1 week %s", 1},
++		{6 * Month, "%d weeks %s", Week},
++		{Year, "%d months %s", Month},
++	}
++	customRelTime := func(then time.Time) string {
++		return CustomRelTime(then, time.Now(), "ago", "from now", magnitudes)
++	}
++	testList{
++		{"now", customRelTime(now), "now"},
++		{"1 second from now", customRelTime(now.Add(+1 * time.Second)), "1 second from now"},
++		{"12 seconds from now", customRelTime(now.Add(+12 * time.Second)), "12 seconds from now"},
++		{"30 seconds from now", customRelTime(now.Add(+30 * time.Second)), "30 seconds from now"},
++		{"45 seconds from now", customRelTime(now.Add(+45 * time.Second)), "45 seconds from now"},
++		{"15 minutes from now", customRelTime(now.Add(+15 * time.Minute)), "15 minutes from now"},
++		{"2 hours from now", customRelTime(now.Add(+2 * time.Hour)), "120 minutes from now"},
++		{"21 hours from now", customRelTime(now.Add(+21 * time.Hour)), "1260 minutes from now"},
++		{"1 day from now", customRelTime(now.Add(+26 * time.Hour)), "1 day from now"},
++		{"2 days from now", customRelTime(now.Add(+49 * time.Hour)), "2 days from now"},
++		{"3 days from now", customRelTime(now.Add(+3 * Day)), "3 days from now"},
++		{"1 week from now (1)", customRelTime(now.Add(+7 * Day)), "1 week from now"},
++		{"1 week from now (2)", customRelTime(now.Add(+12 * Day)), "1 week from now"},
++		{"2 weeks from now", customRelTime(now.Add(+15 * Day)), "2 weeks from now"},
++		{"1 month from now", customRelTime(now.Add(+30 * Day)), "4 weeks from now"},
++		{"6 months from now", customRelTime(now.Add(+6*Month - time.Second)), "25 weeks from now"},
++		{"1 year from now", customRelTime(now.Add(+365 * Day)), "12 months from now"},
++		{"2 years from now", customRelTime(now.Add(+2 * Year)), "24 months from now"},
++		{"a while from now", customRelTime(now.Add(+LongTime)), "444 months from now"},
++	}.validate(t)
++}

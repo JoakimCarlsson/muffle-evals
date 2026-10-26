@@ -1,0 +1,922 @@
+$ git blame tree.go
+^7b17e9c (evals 2026-10-22 10:53:52 +0200   1) package chi
+^7b17e9c (evals 2026-10-22 10:53:52 +0200   2) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200   3) // Radix tree implementation below is a based on the original work by
+^7b17e9c (evals 2026-10-22 10:53:52 +0200   4) // Armon Dadgar in https://github.com/armon/go-radix/blob/master/radix.go
+^7b17e9c (evals 2026-10-22 10:53:52 +0200   5) // (MIT licensed). It's been heavily modified for use as a HTTP routing tree.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200   6) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200   7) import (
+^7b17e9c (evals 2026-10-22 10:53:52 +0200   8) 	"fmt"
+^7b17e9c (evals 2026-10-22 10:53:52 +0200   9) 	"net/http"
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  10) 	"reflect"
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  11) 	"regexp"
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  12) 	"slices"
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  13) 	"sort"
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  14) 	"strconv"
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  15) 	"strings"
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  16) )
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  17) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  18) type methodTyp uint
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  19) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  20) const (
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  21) 	mSTUB methodTyp = 1 << iota
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  22) 	mCONNECT
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  23) 	mDELETE
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  24) 	mGET
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  25) 	mHEAD
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  26) 	mOPTIONS
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  27) 	mPATCH
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  28) 	mPOST
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  29) 	mPUT
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  30) 	mQUERY
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  31) 	mTRACE
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  32) )
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  33) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  34) var mALL = mCONNECT | mDELETE | mGET | mHEAD |
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  35) 	mOPTIONS | mPATCH | mPOST | mPUT | mQUERY | mTRACE
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  36) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  37) // methodQuery is the HTTP QUERY method (RFC 10008), a safe, idempotent
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  38) // method that conveys a request body. It is defined here until net/http
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  39) // provides an equivalent constant, at which point this is a 1-1 swap.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  40) const methodQuery = "QUERY"
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  41) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  42) var methodMap = map[string]methodTyp{
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  43) 	http.MethodConnect: mCONNECT,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  44) 	http.MethodDelete:  mDELETE,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  45) 	http.MethodGet:     mGET,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  46) 	http.MethodHead:    mHEAD,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  47) 	http.MethodOptions: mOPTIONS,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  48) 	http.MethodPatch:   mPATCH,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  49) 	http.MethodPost:    mPOST,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  50) 	http.MethodPut:     mPUT,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  51) 	methodQuery:        mQUERY,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  52) 	http.MethodTrace:   mTRACE,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  53) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  54) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  55) var reverseMethodMap = map[methodTyp]string{
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  56) 	mCONNECT: http.MethodConnect,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  57) 	mDELETE:  http.MethodDelete,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  58) 	mGET:     http.MethodGet,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  59) 	mHEAD:    http.MethodHead,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  60) 	mOPTIONS: http.MethodOptions,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  61) 	mPATCH:   http.MethodPatch,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  62) 	mPOST:    http.MethodPost,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  63) 	mPUT:     http.MethodPut,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  64) 	mQUERY:   methodQuery,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  65) 	mTRACE:   http.MethodTrace,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  66) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  67) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  68) // RegisterMethod adds support for custom HTTP method handlers, available
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  69) // via Router#Method and Router#MethodFunc
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  70) func RegisterMethod(method string) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  71) 	if method == "" {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  72) 		return
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  73) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  74) 	method = strings.ToUpper(method)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  75) 	if _, ok := methodMap[method]; ok {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  76) 		return
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  77) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  78) 	n := len(methodMap)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  79) 	if n > strconv.IntSize-2 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  80) 		panic(fmt.Sprintf("chi: max number of methods reached (%d)", strconv.IntSize))
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  81) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  82) 	mt := methodTyp(2 << n)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  83) 	methodMap[method] = mt
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  84) 	reverseMethodMap[mt] = method
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  85) 	mALL |= mt
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  86) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  87) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  88) type nodeTyp uint8
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  89) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  90) const (
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  91) 	ntStatic   nodeTyp = iota // /home
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  92) 	ntRegexp                  // /{id:[0-9]+}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  93) 	ntParam                   // /{user}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  94) 	ntCatchAll                // /api/v1/*
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  95) )
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  96) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  97) type node struct {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  98) 	// subroutes on the leaf node
+^7b17e9c (evals 2026-10-22 10:53:52 +0200  99) 	subroutes Routes
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 100) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 101) 	// regexp matcher for regexp nodes
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 102) 	rex *regexp.Regexp
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 103) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 104) 	// HTTP handler endpoints on the leaf node
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 105) 	endpoints endpoints
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 106) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 107) 	// prefix is the common prefix we ignore
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 108) 	prefix string
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 109) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 110) 	// child nodes should be stored in-order for iteration,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 111) 	// in groups of the node type.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 112) 	children [ntCatchAll + 1]nodes
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 113) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 114) 	// first byte of the child prefix
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 115) 	tail byte
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 116) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 117) 	// node type: static, regexp, param, catchAll
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 118) 	typ nodeTyp
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 119) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 120) 	// first byte of the prefix
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 121) 	label byte
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 122) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 123) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 124) // endpoints is a mapping of http method constants to handlers
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 125) // for a given route.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 126) type endpoints map[methodTyp]*endpoint
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 127) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 128) type endpoint struct {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 129) 	// endpoint handler
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 130) 	handler http.Handler
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 131) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 132) 	// pattern is the routing pattern for handler nodes
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 133) 	pattern string
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 134) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 135) 	// parameter keys recorded on handler nodes
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 136) 	paramKeys []string
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 137) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 138) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 139) func (s endpoints) Value(method methodTyp) *endpoint {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 140) 	mh, ok := s[method]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 141) 	if !ok {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 142) 		mh = &endpoint{}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 143) 		s[method] = mh
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 144) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 145) 	return mh
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 146) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 147) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 148) func (n *node) InsertRoute(method methodTyp, pattern string, handler http.Handler) *node {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 149) 	var parent *node
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 150) 	search := pattern
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 151) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 152) 	for {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 153) 		// Handle key exhaustion
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 154) 		if len(search) == 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 155) 			// Insert or update the node's leaf handler
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 156) 			n.setEndpoint(method, handler, pattern)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 157) 			return n
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 158) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 159) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 160) 		// We're going to be searching for a wild node next,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 161) 		// in this case, we need to get the tail
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 162) 		var label = search[0]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 163) 		var segTail byte
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 164) 		var segEndIdx int
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 165) 		var segTyp nodeTyp
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 166) 		var segRexpat string
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 167) 		if label == '{' || label == '*' {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 168) 			segTyp, _, segRexpat, segTail, _, segEndIdx = patNextSegment(search)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 169) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 170) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 171) 		var prefix string
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 172) 		if segTyp == ntRegexp {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 173) 			prefix = segRexpat
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 174) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 175) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 176) 		// Look for the edge to attach to
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 177) 		parent = n
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 178) 		n = n.getEdge(segTyp, label, segTail, prefix)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 179) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 180) 		// No edge, create one
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 181) 		if n == nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 182) 			child := &node{label: label, tail: segTail, prefix: search}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 183) 			hn := parent.addChild(child, search)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 184) 			hn.setEndpoint(method, handler, pattern)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 185) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 186) 			return hn
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 187) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 188) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 189) 		// Found an edge to match the pattern
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 190) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 191) 		if n.typ > ntStatic {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 192) 			// We found a param node, trim the param from the search path and continue.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 193) 			// This param/wild pattern segment would already be on the tree from a previous
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 194) 			// call to addChild when creating a new node.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 195) 			search = search[segEndIdx:]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 196) 			continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 197) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 198) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 199) 		// Static nodes fall below here.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 200) 		// Determine longest prefix of the search key on match.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 201) 		commonPrefix := longestPrefix(search, n.prefix)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 202) 		if commonPrefix == len(n.prefix) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 203) 			// the common prefix is as long as the current node's prefix we're attempting to insert.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 204) 			// keep the search going.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 205) 			search = search[commonPrefix:]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 206) 			continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 207) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 208) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 209) 		// Split the node
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 210) 		child := &node{
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 211) 			typ:    ntStatic,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 212) 			prefix: search[:commonPrefix],
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 213) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 214) 		parent.replaceChild(search[0], segTail, child)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 215) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 216) 		// Restore the existing node
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 217) 		n.label = n.prefix[commonPrefix]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 218) 		n.prefix = n.prefix[commonPrefix:]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 219) 		child.addChild(n, n.prefix)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 220) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 221) 		// If the new key is a subset, set the method/handler on this node and finish.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 222) 		search = search[commonPrefix:]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 223) 		if len(search) == 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 224) 			child.setEndpoint(method, handler, pattern)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 225) 			return child
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 226) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 227) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 228) 		// Create a new edge for the node
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 229) 		subchild := &node{
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 230) 			typ:    ntStatic,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 231) 			label:  search[0],
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 232) 			prefix: search,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 233) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 234) 		hn := child.addChild(subchild, search)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 235) 		hn.setEndpoint(method, handler, pattern)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 236) 		return hn
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 237) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 238) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 239) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 240) // addChild appends the new `child` node to the tree using the `pattern` as the trie key.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 241) // For a URL router like chi's, we split the static, param, regexp and wildcard segments
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 242) // into different nodes. In addition, addChild will recursively call itself until every
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 243) // pattern segment is added to the url pattern tree as individual nodes, depending on type.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 244) func (n *node) addChild(child *node, prefix string) *node {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 245) 	search := prefix
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 246) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 247) 	// handler leaf node added to the tree is the child.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 248) 	// this may be overridden later down the flow
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 249) 	hn := child
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 250) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 251) 	// Parse next segment
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 252) 	segTyp, _, segRexpat, segTail, segStartIdx, segEndIdx := patNextSegment(search)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 253) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 254) 	// Add child depending on next up segment
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 255) 	switch segTyp {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 256) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 257) 	case ntStatic:
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 258) 		// Search prefix is all static (that is, has no params in path)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 259) 		// noop
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 260) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 261) 	default:
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 262) 		// Search prefix contains a param, regexp or wildcard
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 263) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 264) 		if segTyp == ntRegexp {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 265) 			rex, err := regexp.Compile(segRexpat)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 266) 			if err != nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 267) 				panic(fmt.Sprintf("chi: invalid regexp pattern '%s' in route param", segRexpat))
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 268) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 269) 			child.prefix = segRexpat
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 270) 			child.rex = rex
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 271) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 272) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 273) 		if segStartIdx == 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 274) 			// Route starts with a param
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 275) 			child.typ = segTyp
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 276) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 277) 			if segTyp == ntCatchAll {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 278) 				segStartIdx = -1
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 279) 			} else {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 280) 				segStartIdx = segEndIdx
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 281) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 282) 			if segStartIdx < 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 283) 				segStartIdx = len(search)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 284) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 285) 			child.tail = segTail // for params, we set the tail
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 286) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 287) 			if segStartIdx != len(search) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 288) 				// add static edge for the remaining part, split the end.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 289) 				// its not possible to have adjacent param nodes, so its certainly
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 290) 				// going to be a static node next.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 291) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 292) 				search = search[segStartIdx:] // advance search position
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 293) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 294) 				nn := &node{
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 295) 					typ:    ntStatic,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 296) 					label:  search[0],
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 297) 					prefix: search,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 298) 				}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 299) 				hn = child.addChild(nn, search)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 300) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 301) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 302) 		} else if segStartIdx > 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 303) 			// Route has some param
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 304) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 305) 			// starts with a static segment
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 306) 			child.typ = ntStatic
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 307) 			child.prefix = search[:segStartIdx]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 308) 			child.rex = nil
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 309) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 310) 			// add the param edge node
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 311) 			search = search[segStartIdx:]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 312) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 313) 			nn := &node{
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 314) 				typ:   segTyp,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 315) 				label: search[0],
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 316) 				tail:  segTail,
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 317) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 318) 			hn = child.addChild(nn, search)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 319) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 320) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 321) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 322) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 323) 	n.children[child.typ] = append(n.children[child.typ], child)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 324) 	n.children[child.typ].Sort()
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 325) 	return hn
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 326) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 327) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 328) func (n *node) replaceChild(label, tail byte, child *node) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 329) 	for i := 0; i < len(n.children[child.typ]); i++ {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 330) 		if n.children[child.typ][i].label == label && n.children[child.typ][i].tail == tail {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 331) 			n.children[child.typ][i] = child
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 332) 			n.children[child.typ][i].label = label
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 333) 			n.children[child.typ][i].tail = tail
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 334) 			return
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 335) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 336) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 337) 	panic("chi: replacing missing child")
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 338) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 339) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 340) func (n *node) getEdge(ntyp nodeTyp, label, tail byte, prefix string) *node {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 341) 	nds := n.children[ntyp]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 342) 	for i := range nds {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 343) 		if nds[i].label == label && nds[i].tail == tail {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 344) 			if ntyp == ntRegexp && nds[i].prefix != prefix {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 345) 				continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 346) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 347) 			return nds[i]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 348) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 349) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 350) 	return nil
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 351) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 352) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 353) func (n *node) setEndpoint(method methodTyp, handler http.Handler, pattern string) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 354) 	// Set the handler for the method type on the node
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 355) 	if n.endpoints == nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 356) 		n.endpoints = make(endpoints)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 357) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 358) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 359) 	paramKeys := patParamKeys(pattern)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 360) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 361) 	if method&mSTUB == mSTUB {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 362) 		n.endpoints.Value(mSTUB).handler = handler
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 363) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 364) 	if method&mALL == mALL {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 365) 		h := n.endpoints.Value(mALL)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 366) 		h.handler = handler
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 367) 		h.pattern = pattern
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 368) 		h.paramKeys = paramKeys
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 369) 		for _, m := range methodMap {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 370) 			h := n.endpoints.Value(m)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 371) 			h.handler = handler
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 372) 			h.pattern = pattern
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 373) 			h.paramKeys = paramKeys
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 374) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 375) 	} else {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 376) 		h := n.endpoints.Value(method)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 377) 		h.handler = handler
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 378) 		h.pattern = pattern
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 379) 		h.paramKeys = paramKeys
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 380) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 381) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 382) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 383) func (n *node) FindRoute(rctx *Context, method methodTyp, path string) (*node, endpoints, http.Handler) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 384) 	// Reset the context routing pattern and params
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 385) 	rctx.routePattern = ""
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 386) 	rctx.routeParams.Keys = rctx.routeParams.Keys[:0]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 387) 	rctx.routeParams.Values = rctx.routeParams.Values[:0]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 388) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 389) 	// Find the routing handlers for the path
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 390) 	rn := n.findRoute(rctx, method, path)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 391) 	if rn == nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 392) 		return nil, nil, nil
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 393) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 394) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 395) 	// Record the routing params in the request lifecycle
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 396) 	rctx.URLParams.Keys = append(rctx.URLParams.Keys, rctx.routeParams.Keys...)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 397) 	rctx.URLParams.Values = append(rctx.URLParams.Values, rctx.routeParams.Values...)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 398) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 399) 	// Record the routing pattern in the request lifecycle
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 400) 	if rn.endpoints[method].pattern != "" {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 401) 		rctx.routePattern = rn.endpoints[method].pattern
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 402) 		rctx.RoutePatterns = append(rctx.RoutePatterns, rctx.routePattern)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 403) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 404) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 405) 	return rn, rn.endpoints, rn.endpoints[method].handler
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 406) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 407) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 408) // Recursive edge traversal by checking all nodeTyp groups along the way.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 409) // It's like searching through a multi-dimensional radix trie.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 410) func (n *node) findRoute(rctx *Context, method methodTyp, path string) *node {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 411) 	nn := n
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 412) 	search := path
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 413) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 414) 	for t, nds := range nn.children {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 415) 		ntyp := nodeTyp(t)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 416) 		if len(nds) == 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 417) 			continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 418) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 419) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 420) 		var xn *node
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 421) 		xsearch := search
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 422) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 423) 		var label byte
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 424) 		if search != "" {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 425) 			label = search[0]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 426) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 427) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 428) 		switch ntyp {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 429) 		case ntStatic:
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 430) 			xn = nds.findEdge(label)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 431) 			if xn == nil || !strings.HasPrefix(xsearch, xn.prefix) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 432) 				continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 433) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 434) 			xsearch = xsearch[len(xn.prefix):]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 435) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 436) 		case ntParam, ntRegexp:
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 437) 			// short-circuit and return no matching route for empty param values
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 438) 			if xsearch == "" {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 439) 				continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 440) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 441) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 442) 			// serially loop through each node grouped by the tail delimiter
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 443) 			for _, xn = range nds {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 444) 				// label for param nodes is the delimiter byte
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 445) 				p := strings.IndexByte(xsearch, xn.tail)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 446) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 447) 				if p < 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 448) 					if xn.tail == '/' {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 449) 						p = len(xsearch)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 450) 					} else {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 451) 						continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 452) 					}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 453) 				} else if ntyp == ntRegexp && p == 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 454) 					continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 455) 				}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 456) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 457) 				if ntyp == ntRegexp && xn.rex != nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 458) 					if !xn.rex.MatchString(xsearch[:p]) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 459) 						continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 460) 					}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 461) 				} else if strings.IndexByte(xsearch[:p], '/') != -1 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 462) 					// avoid a match across path segments
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 463) 					continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 464) 				}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 465) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 466) 				prevlen := len(rctx.routeParams.Values)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 467) 				rctx.routeParams.Values = append(rctx.routeParams.Values, xsearch[:p])
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 468) 				xsearch = xsearch[p:]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 469) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 470) 				if len(xsearch) == 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 471) 					if xn.isLeaf() {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 472) 						h := xn.endpoints[method]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 473) 						if h != nil && h.handler != nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 474) 							rctx.routeParams.Keys = append(rctx.routeParams.Keys, h.paramKeys...)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 475) 							return xn
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 476) 						}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 477) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 478) 						for endpoints := range xn.endpoints {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 479) 							if endpoints == mALL || endpoints == mSTUB {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 480) 								continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 481) 							}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 482) 							rctx.methodsAllowed = append(rctx.methodsAllowed, endpoints)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 483) 						}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 484) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 485) 						// flag that the routing context found a route, but not a corresponding
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 486) 						// supported method
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 487) 						rctx.methodNotAllowed = true
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 488) 					}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 489) 				}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 490) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 491) 				// recursively find the next node on this branch
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 492) 				fin := xn.findRoute(rctx, method, xsearch)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 493) 				if fin != nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 494) 					return fin
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 495) 				}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 496) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 497) 				// not found on this branch, reset vars
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 498) 				rctx.routeParams.Values = rctx.routeParams.Values[:prevlen]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 499) 				xsearch = search
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 500) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 501) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 502) 			rctx.routeParams.Values = append(rctx.routeParams.Values, "")
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 503) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 504) 		default:
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 505) 			// catch-all nodes
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 506) 			rctx.routeParams.Values = append(rctx.routeParams.Values, search)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 507) 			xn = nds[0]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 508) 			xsearch = ""
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 509) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 510) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 511) 		if xn == nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 512) 			continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 513) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 514) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 515) 		// did we find it yet?
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 516) 		if len(xsearch) == 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 517) 			if xn.isLeaf() {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 518) 				h := xn.endpoints[method]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 519) 				if h != nil && h.handler != nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 520) 					rctx.routeParams.Keys = append(rctx.routeParams.Keys, h.paramKeys...)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 521) 					return xn
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 522) 				}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 523) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 524) 				for endpoints := range xn.endpoints {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 525) 					if endpoints == mALL || endpoints == mSTUB {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 526) 						continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 527) 					}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 528) 					rctx.methodsAllowed = append(rctx.methodsAllowed, endpoints)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 529) 				}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 530) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 531) 				// flag that the routing context found a route, but not a corresponding
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 532) 				// supported method
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 533) 				rctx.methodNotAllowed = true
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 534) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 535) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 536) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 537) 		// recursively find the next node..
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 538) 		fin := xn.findRoute(rctx, method, xsearch)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 539) 		if fin != nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 540) 			return fin
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 541) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 542) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 543) 		// Did not find final handler, let's remove the param here if it was set
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 544) 		if xn.typ > ntStatic {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 545) 			if len(rctx.routeParams.Values) > 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 546) 				rctx.routeParams.Values = rctx.routeParams.Values[:len(rctx.routeParams.Values)-1]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 547) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 548) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 549) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 550) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 551) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 552) 	return nil
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 553) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 554) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 555) func (n *node) findEdge(ntyp nodeTyp, label byte) *node {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 556) 	nds := n.children[ntyp]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 557) 	num := len(nds)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 558) 	idx := 0
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 559) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 560) 	switch ntyp {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 561) 	case ntStatic, ntParam, ntRegexp:
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 562) 		i, j := 0, num-1
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 563) 		for i <= j {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 564) 			idx = i + (j-i)/2
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 565) 			if label > nds[idx].label {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 566) 				i = idx + 1
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 567) 			} else if label < nds[idx].label {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 568) 				j = idx - 1
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 569) 			} else {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 570) 				i = num // breaks cond
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 571) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 572) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 573) 		if nds[idx].label != label {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 574) 			return nil
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 575) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 576) 		return nds[idx]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 577) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 578) 	default: // catch all
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 579) 		return nds[idx]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 580) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 581) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 582) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 583) func (n *node) isLeaf() bool {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 584) 	return n.endpoints != nil
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 585) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 586) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 587) func (n *node) findPattern(pattern string) bool {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 588) 	nn := n
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 589) 	for _, nds := range nn.children {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 590) 		if len(nds) == 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 591) 			continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 592) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 593) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 594) 		n = nn.findEdge(nds[0].typ, pattern[0])
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 595) 		if n == nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 596) 			continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 597) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 598) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 599) 		var idx int
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 600) 		var xpattern string
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 601) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 602) 		switch n.typ {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 603) 		case ntStatic:
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 604) 			idx = longestPrefix(pattern, n.prefix)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 605) 			if idx < len(n.prefix) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 606) 				continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 607) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 608) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 609) 		case ntParam, ntRegexp:
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 610) 			idx = strings.IndexByte(pattern, '}') + 1
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 611) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 612) 		case ntCatchAll:
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 613) 			idx = longestPrefix(pattern, "*")
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 614) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 615) 		default:
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 616) 			panic("chi: unknown node type")
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 617) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 618) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 619) 		xpattern = pattern[idx:]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 620) 		if len(xpattern) == 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 621) 			return true
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 622) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 623) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 624) 		return n.findPattern(xpattern)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 625) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 626) 	return false
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 627) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 628) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 629) func (n *node) routes() []Route {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 630) 	rts := []Route{}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 631) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 632) 	n.walk(func(eps endpoints, subroutes Routes) bool {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 633) 		// Hide Mount()'s stub handler, but not a real handler sharing its pattern.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 634) 		var stubHandler http.Handler
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 635) 		if eps[mSTUB] != nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 636) 			stubHandler = eps[mSTUB].handler
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 637) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 638) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 639) 		// Group methodHandlers by unique patterns
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 640) 		pats := make(map[string]endpoints)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 641) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 642) 		for mt, h := range eps {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 643) 			if h.pattern == "" {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 644) 				continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 645) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 646) 			p, ok := pats[h.pattern]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 647) 			if !ok {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 648) 				p = endpoints{}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 649) 				pats[h.pattern] = p
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 650) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 651) 			p[mt] = h
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 652) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 653) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 654) 		for p, mh := range pats {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 655) 			hs := make(map[string]http.Handler)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 656) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 657) 			// Walk() reads Handlers["*"] for With() middleware when recursing
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 658) 			// into a subroute, so keep it there even if it's also the stub.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 659) 			if mh[mALL] != nil && mh[mALL].handler != nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 660) 				if subroutes != nil || !equalHandlers(mh[mALL].handler, stubHandler) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 661) 					hs["*"] = mh[mALL].handler
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 662) 				}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 663) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 664) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 665) 			for mt, h := range mh {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 666) 				if h.handler == nil || equalHandlers(h.handler, stubHandler) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 667) 					continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 668) 				}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 669) 				if m, ok := reverseMethodMap[mt]; ok {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 670) 					hs[m] = h.handler
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 671) 				}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 672) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 673) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 674) 			// Keep subroute nodes so Walk() can recurse; a stub-only leaf has nothing to report.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 675) 			if len(hs) == 0 && subroutes == nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 676) 				continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 677) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 678) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 679) 			rt := Route{subroutes, hs, p}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 680) 			rts = append(rts, rt)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 681) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 682) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 683) 		return false
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 684) 	})
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 685) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 686) 	return rts
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 687) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 688) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 689) // equalHandlers reports whether a and b are the same handler value. Handlers
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 690) // are commonly funcs (e.g. http.HandlerFunc), and a direct == on those
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 691) // panics at runtime, so funcs are compared by pointer instead.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 692) func equalHandlers(a, b http.Handler) bool {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 693) 	if a == nil || b == nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 694) 		return a == b
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 695) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 696) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 697) 	av := reflect.ValueOf(a)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 698) 	bv := reflect.ValueOf(b)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 699) 	if av.Type() != bv.Type() {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 700) 		return false
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 701) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 702) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 703) 	if av.Kind() == reflect.Func {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 704) 		return av.Pointer() == bv.Pointer()
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 705) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 706) 	if av.Type().Comparable() {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 707) 		return a == b
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 708) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 709) 	return false
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 710) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 711) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 712) func (n *node) walk(fn func(eps endpoints, subroutes Routes) bool) bool {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 713) 	// Visit the leaf values if any
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 714) 	if (n.endpoints != nil || n.subroutes != nil) && fn(n.endpoints, n.subroutes) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 715) 		return true
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 716) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 717) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 718) 	// Recurse on the children
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 719) 	for _, ns := range n.children {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 720) 		for _, cn := range ns {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 721) 			if cn.walk(fn) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 722) 				return true
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 723) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 724) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 725) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 726) 	return false
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 727) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 728) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 729) // patNextSegment returns the next segment details from a pattern:
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 730) // node type, param key, regexp string, param tail byte, param starting index, param ending index
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 731) func patNextSegment(pattern string) (nodeTyp, string, string, byte, int, int) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 732) 	ps := strings.Index(pattern, "{")
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 733) 	ws := strings.Index(pattern, "*")
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 734) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 735) 	if ps < 0 && ws < 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 736) 		return ntStatic, "", "", 0, 0, len(pattern) // we return the entire thing
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 737) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 738) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 739) 	// Sanity check
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 740) 	if ps >= 0 && ws >= 0 && ws < ps {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 741) 		panic("chi: wildcard '*' must be the last pattern in a route, otherwise use a '{param}'")
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 742) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 743) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 744) 	var tail byte = '/' // Default endpoint tail to / byte
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 745) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 746) 	if ps >= 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 747) 		// Param/Regexp pattern is next
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 748) 		nt := ntParam
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 749) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 750) 		// Read to closing } taking into account opens and closes in curl count (cc)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 751) 		cc := 0
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 752) 		pe := ps
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 753) 		for i, c := range pattern[ps:] {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 754) 			if c == '{' {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 755) 				cc++
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 756) 			} else if c == '}' {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 757) 				cc--
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 758) 				if cc == 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 759) 					pe = ps + i
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 760) 					break
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 761) 				}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 762) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 763) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 764) 		if pe == ps {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 765) 			panic("chi: route param closing delimiter '}' is missing")
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 766) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 767) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 768) 		key := pattern[ps+1 : pe]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 769) 		pe++ // set end to next position
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 770) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 771) 		if pe < len(pattern) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 772) 			tail = pattern[pe]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 773) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 774) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 775) 		key, rexpat, isRegexp := strings.Cut(key, ":")
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 776) 		if isRegexp {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 777) 			nt = ntRegexp
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 778) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 779) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 780) 		if len(rexpat) > 0 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 781) 			if rexpat[0] != '^' {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 782) 				rexpat = "^" + rexpat
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 783) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 784) 			if rexpat[len(rexpat)-1] != '$' {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 785) 				rexpat += "$"
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 786) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 787) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 788) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 789) 		return nt, key, rexpat, tail, ps, pe
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 790) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 791) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 792) 	// Wildcard pattern as finale
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 793) 	if ws < len(pattern)-1 {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 794) 		panic("chi: wildcard '*' must be the last value in a route. trim trailing text or use a '{param}' instead")
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 795) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 796) 	return ntCatchAll, "*", "", 0, ws, len(pattern)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 797) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 798) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 799) func patParamKeys(pattern string) []string {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 800) 	pat := pattern
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 801) 	paramKeys := []string{}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 802) 	for {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 803) 		ptyp, paramKey, _, _, _, e := patNextSegment(pat)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 804) 		if ptyp == ntStatic {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 805) 			return paramKeys
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 806) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 807) 		for i := 0; i < len(paramKeys); i++ {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 808) 			if paramKeys[i] == paramKey {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 809) 				panic(fmt.Sprintf("chi: routing pattern '%s' contains duplicate param key, '%s'", pattern, paramKey))
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 810) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 811) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 812) 		paramKeys = append(paramKeys, paramKey)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 813) 		pat = pat[e:]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 814) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 815) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 816) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 817) // longestPrefix finds the length of the shared prefix of two strings
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 818) func longestPrefix(k1, k2 string) (i int) {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 819) 	for i = 0; i < min(len(k1), len(k2)); i++ {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 820) 		if k1[i] != k2[i] {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 821) 			break
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 822) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 823) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 824) 	return
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 825) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 826) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 827) type nodes []*node
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 828) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 829) // Sort the list of nodes by label
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 830) func (ns nodes) Sort()              { sort.Sort(ns); ns.tailSort() }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 831) func (ns nodes) Len() int           { return len(ns) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 832) func (ns nodes) Swap(i, j int)      { ns[i], ns[j] = ns[j], ns[i] }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 833) func (ns nodes) Less(i, j int) bool { return ns[i].label < ns[j].label }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 834) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 835) // tailSort pushes nodes with '/' as the tail to the end of the list for param nodes.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 836) // The list order determines the traversal order.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 837) func (ns nodes) tailSort() {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 838) 	for i := len(ns) - 1; i >= 0; i-- {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 839) 		if ns[i].typ > ntStatic && ns[i].tail == '/' {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 840) 			ns.Swap(i, len(ns)-1)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 841) 			return
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 842) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 843) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 844) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 845) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 846) func (ns nodes) findEdge(label byte) *node {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 847) 	num := len(ns)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 848) 	idx := 0
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 849) 	i, j := 0, num-1
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 850) 	for i <= j {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 851) 		idx = i + (j-i)/2
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 852) 		if label > ns[idx].label {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 853) 			i = idx + 1
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 854) 		} else if label < ns[idx].label {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 855) 			j = idx - 1
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 856) 		} else {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 857) 			i = num // breaks cond
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 858) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 859) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 860) 	if ns[idx].label != label {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 861) 		return nil
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 862) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 863) 	return ns[idx]
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 864) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 865) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 866) // Route describes the details of a routing handler.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 867) // Handlers map key is an HTTP method
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 868) type Route struct {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 869) 	SubRoutes Routes
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 870) 	Handlers  map[string]http.Handler
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 871) 	Pattern   string
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 872) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 873) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 874) // WalkFunc is the type of the function called for each method and route visited by Walk.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 875) type WalkFunc func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 876) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 877) // Walk walks any router tree that implements Routes interface.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 878) func Walk(r Routes, walkFn WalkFunc) error {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 879) 	return walk(r, walkFn, "")
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 880) }
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 881) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 882) func walk(r Routes, walkFn WalkFunc, parentRoute string, parentMw ...func(http.Handler) http.Handler) error {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 883) 	for _, route := range r.Routes() {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 884) 		mws := slices.Concat(parentMw, r.Middlewares())
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 885) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 886) 		if route.SubRoutes != nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 887) 			if handler, ok := route.Handlers["*"]; ok {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 888) 				if chain, ok := handler.(*ChainHandler); ok {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 889) 					mws = append(mws, chain.Middlewares...)
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 890) 				}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 891) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 892) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 893) 			if err := walk(route.SubRoutes, walkFn, parentRoute+route.Pattern, mws...); err != nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 894) 				return err
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 895) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 896) 			continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 897) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 898) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 899) 		for method, handler := range route.Handlers {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 900) 			if method == "*" {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 901) 				// Ignore a "catchAll" method, since we pass down all the specific methods for each route.
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 902) 				continue
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 903) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 904) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 905) 			fullRoute := parentRoute + route.Pattern
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 906) 			fullRoute = strings.ReplaceAll(fullRoute, "/*/", "/")
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 907) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 908) 			if chain, ok := handler.(*ChainHandler); ok {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 909) 				if err := walkFn(method, fullRoute, chain.Endpoint, append(mws, chain.Middlewares...)...); err != nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 910) 					return err
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 911) 				}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 912) 			} else {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 913) 				if err := walkFn(method, fullRoute, handler, mws...); err != nil {
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 914) 					return err
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 915) 				}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 916) 			}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 917) 		}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 918) 	}
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 919) 
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 920) 	return nil
+^7b17e9c (evals 2026-10-22 10:53:52 +0200 921) }

@@ -1,0 +1,1209 @@
+$ git blame crates/toml/src/value.rs
+^a844dd5 (evals 2026-10-22 10:55:12 +0200    1) //! Definition of a TOML [value][Value]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200    2) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200    3) use alloc::collections::BTreeMap;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200    4) use alloc::vec;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200    5) use core::fmt;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200    6) use core::hash::Hash;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200    7) use core::mem::discriminant;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200    8) use core::ops;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200    9) #[cfg(feature = "std")]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   10) use std::collections::HashMap;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   11) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   12) use serde_core::de;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   13) use serde_core::de::IntoDeserializer;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   14) use serde_core::ser;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   15) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   16) use crate::alloc_prelude::*;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   17) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   18) pub use toml_datetime::{Date, Datetime, DatetimeParseError, Offset, Time};
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   19) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   20) /// Type representing a TOML array, payload of the `Value::Array` variant
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   21) pub type Array = Vec<Value>;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   22) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   23) #[doc(no_inline)]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   24) pub use crate::Table;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   25) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   26) /// Representation of a TOML value.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   27) #[derive(PartialEq, Clone, Debug)]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   28) pub enum Value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   29)     /// Represents a TOML string
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   30)     String(String),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   31)     /// Represents a TOML integer
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   32)     Integer(i64),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   33)     /// Represents a TOML float
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   34)     Float(f64),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   35)     /// Represents a TOML boolean
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   36)     Boolean(bool),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   37)     /// Represents a TOML datetime
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   38)     Datetime(Datetime),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   39)     /// Represents a TOML array
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   40)     Array(Array),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   41)     /// Represents a TOML table
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   42)     Table(Table),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   43) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   44) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   45) impl Value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   46)     /// Convert a `T` into `toml::Value` which is an enum that can represent
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   47)     /// any valid TOML data.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   48)     ///
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   49)     /// This conversion can fail if `T`'s implementation of `Serialize` decides to
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   50)     /// fail, or if `T` contains a map with non-string keys.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   51)     pub fn try_from<T>(value: T) -> Result<Self, crate::ser::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   52)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   53)         T: ser::Serialize,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   54)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   55)         value.serialize(ValueSerializer)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   56)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   57) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   58)     /// Interpret a `toml::Value` as an instance of type `T`.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   59)     ///
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   60)     /// This conversion can fail if the structure of the `Value` does not match the
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   61)     /// structure expected by `T`, for example if `T` is a struct type but the
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   62)     /// `Value` contains something other than a TOML table. It can also fail if the
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   63)     /// structure is correct but `T`'s implementation of `Deserialize` decides that
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   64)     /// something is wrong with the data, for example required struct fields are
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   65)     /// missing from the TOML map or some number is too big to fit in the expected
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   66)     /// primitive type.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   67)     pub fn try_into<'de, T>(self) -> Result<T, crate::de::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   68)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   69)         T: de::Deserialize<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   70)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   71)         de::Deserialize::deserialize(self)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   72)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   73) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   74)     /// Index into a TOML array or map. A string index can be used to access a
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   75)     /// value in a map, and a usize index can be used to access an element of an
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   76)     /// array.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   77)     ///
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   78)     /// Returns `None` if the type of `self` does not match the type of the
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   79)     /// index, for example if the index is a string and `self` is an array or a
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   80)     /// number. Also returns `None` if the given key does not exist in the map
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   81)     /// or the given index is not within the bounds of the array.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   82)     pub fn get<I: Index>(&self, index: I) -> Option<&Self> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   83)         index.index(self)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   84)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   85) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   86)     /// Mutably index into a TOML array or map. A string index can be used to
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   87)     /// access a value in a map, and a usize index can be used to access an
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   88)     /// element of an array.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   89)     ///
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   90)     /// Returns `None` if the type of `self` does not match the type of the
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   91)     /// index, for example if the index is a string and `self` is an array or a
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   92)     /// number. Also returns `None` if the given key does not exist in the map
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   93)     /// or the given index is not within the bounds of the array.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   94)     pub fn get_mut<I: Index>(&mut self, index: I) -> Option<&mut Self> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   95)         index.index_mut(self)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   96)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   97) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   98)     /// Extracts the integer value if it is an integer.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200   99)     pub fn as_integer(&self) -> Option<i64> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  100)         match *self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  101)             Self::Integer(i) => Some(i),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  102)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  103)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  104)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  105) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  106)     /// Tests whether this value is an integer.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  107)     pub fn is_integer(&self) -> bool {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  108)         self.as_integer().is_some()
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  109)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  110) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  111)     /// Extracts the float value if it is a float.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  112)     pub fn as_float(&self) -> Option<f64> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  113)         match *self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  114)             Self::Float(f) => Some(f),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  115)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  116)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  117)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  118) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  119)     /// Tests whether this value is a float.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  120)     pub fn is_float(&self) -> bool {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  121)         self.as_float().is_some()
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  122)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  123) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  124)     /// Extracts the boolean value if it is a boolean.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  125)     pub fn as_bool(&self) -> Option<bool> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  126)         match *self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  127)             Self::Boolean(b) => Some(b),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  128)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  129)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  130)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  131) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  132)     /// Tests whether this value is a boolean.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  133)     pub fn is_bool(&self) -> bool {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  134)         self.as_bool().is_some()
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  135)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  136) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  137)     /// Extracts the string of this value if it is a string.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  138)     pub fn as_str(&self) -> Option<&str> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  139)         match *self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  140)             Self::String(ref s) => Some(&**s),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  141)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  142)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  143)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  144) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  145)     /// Tests if this value is a string.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  146)     pub fn is_str(&self) -> bool {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  147)         self.as_str().is_some()
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  148)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  149) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  150)     /// Extracts the datetime value if it is a datetime.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  151)     ///
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  152)     /// Note that a parsed TOML value will only contain ISO 8601 dates. An
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  153)     /// example date is:
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  154)     ///
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  155)     /// ```notrust
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  156)     /// 1979-05-27T07:32:00Z
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  157)     /// ```
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  158)     pub fn as_datetime(&self) -> Option<&Datetime> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  159)         match *self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  160)             Self::Datetime(ref s) => Some(s),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  161)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  162)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  163)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  164) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  165)     /// Tests whether this value is a datetime.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  166)     pub fn is_datetime(&self) -> bool {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  167)         self.as_datetime().is_some()
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  168)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  169) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  170)     /// Extracts the array value if it is an array.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  171)     pub fn as_array(&self) -> Option<&Vec<Self>> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  172)         match *self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  173)             Self::Array(ref s) => Some(s),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  174)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  175)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  176)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  177) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  178)     /// Extracts the array value if it is an array.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  179)     pub fn as_array_mut(&mut self) -> Option<&mut Vec<Self>> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  180)         match *self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  181)             Self::Array(ref mut s) => Some(s),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  182)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  183)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  184)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  185) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  186)     /// Tests whether this value is an array.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  187)     pub fn is_array(&self) -> bool {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  188)         self.as_array().is_some()
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  189)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  190) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  191)     /// Extracts the table value if it is a table.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  192)     pub fn as_table(&self) -> Option<&Table> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  193)         match *self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  194)             Self::Table(ref s) => Some(s),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  195)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  196)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  197)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  198) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  199)     /// Extracts the table value if it is a table.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  200)     pub fn as_table_mut(&mut self) -> Option<&mut Table> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  201)         match *self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  202)             Self::Table(ref mut s) => Some(s),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  203)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  204)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  205)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  206) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  207)     /// Tests whether this value is a table.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  208)     pub fn is_table(&self) -> bool {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  209)         self.as_table().is_some()
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  210)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  211) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  212)     /// Tests whether this and another value have the same type.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  213)     pub fn same_type(&self, other: &Self) -> bool {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  214)         discriminant(self) == discriminant(other)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  215)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  216) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  217)     /// Returns a human-readable representation of the type of this value.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  218)     pub fn type_str(&self) -> &'static str {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  219)         match *self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  220)             Self::String(..) => "string",
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  221)             Self::Integer(..) => "integer",
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  222)             Self::Float(..) => "float",
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  223)             Self::Boolean(..) => "boolean",
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  224)             Self::Datetime(..) => "datetime",
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  225)             Self::Array(..) => "array",
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  226)             Self::Table(..) => "table",
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  227)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  228)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  229) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  230) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  231) impl<I> ops::Index<I> for Value
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  232) where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  233)     I: Index,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  234) {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  235)     type Output = Self;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  236) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  237)     fn index(&self, index: I) -> &Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  238)         self.get(index).expect("index not found")
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  239)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  240) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  241) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  242) impl<I> ops::IndexMut<I> for Value
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  243) where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  244)     I: Index,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  245) {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  246)     fn index_mut(&mut self, index: I) -> &mut Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  247)         self.get_mut(index).expect("index not found")
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  248)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  249) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  250) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  251) impl<'a> From<&'a str> for Value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  252)     #[inline]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  253)     fn from(val: &'a str) -> Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  254)         Self::String(val.to_owned())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  255)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  256) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  257) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  258) impl<V: Into<Self>> From<Vec<V>> for Value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  259)     fn from(val: Vec<V>) -> Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  260)         Self::Array(val.into_iter().map(|v| v.into()).collect())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  261)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  262) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  263) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  264) impl<S: Into<String>, V: Into<Self>> From<BTreeMap<S, V>> for Value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  265)     fn from(val: BTreeMap<S, V>) -> Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  266)         let table = val.into_iter().map(|(s, v)| (s.into(), v.into())).collect();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  267) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  268)         Self::Table(table)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  269)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  270) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  271) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  272) #[cfg(feature = "std")]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  273) impl<S: Into<String> + Hash + Eq, V: Into<Self>> From<HashMap<S, V>> for Value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  274)     fn from(val: HashMap<S, V>) -> Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  275)         let table = val.into_iter().map(|(s, v)| (s.into(), v.into())).collect();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  276) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  277)         Self::Table(table)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  278)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  279) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  280) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  281) macro_rules! impl_into_value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  282)     ($variant:ident : $T:ty) => {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  283)         impl From<$T> for Value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  284)             #[inline]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  285)             fn from(val: $T) -> Value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  286)                 Value::$variant(val.into())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  287)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  288)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  289)     };
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  290) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  291) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  292) impl_into_value!(String: String);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  293) impl_into_value!(Integer: i64);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  294) impl_into_value!(Integer: i32);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  295) impl_into_value!(Integer: i8);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  296) impl_into_value!(Integer: u8);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  297) impl_into_value!(Integer: u32);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  298) impl_into_value!(Float: f64);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  299) impl_into_value!(Float: f32);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  300) impl_into_value!(Boolean: bool);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  301) impl_into_value!(Datetime: Datetime);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  302) impl_into_value!(Table: Table);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  303) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  304) /// Types that can be used to index a `toml::Value`
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  305) ///
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  306) /// Currently this is implemented for `usize` to index arrays and `str` to index
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  307) /// tables.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  308) ///
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  309) /// This trait is sealed and not intended for implementation outside of the
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  310) /// `toml` crate.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  311) pub trait Index: Sealed {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  312)     #[doc(hidden)]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  313)     fn index<'a>(&self, val: &'a Value) -> Option<&'a Value>;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  314)     #[doc(hidden)]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  315)     fn index_mut<'a>(&self, val: &'a mut Value) -> Option<&'a mut Value>;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  316) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  317) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  318) /// An implementation detail that should not be implemented, this will change in
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  319) /// the future and break code otherwise.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  320) #[doc(hidden)]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  321) pub trait Sealed {}
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  322) impl Sealed for usize {}
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  323) impl Sealed for str {}
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  324) impl Sealed for String {}
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  325) impl<T: Sealed + ?Sized> Sealed for &T {}
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  326) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  327) impl Index for usize {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  328)     fn index<'a>(&self, val: &'a Value) -> Option<&'a Value> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  329)         match *val {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  330)             Value::Array(ref a) => a.get(*self),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  331)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  332)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  333)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  334) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  335)     fn index_mut<'a>(&self, val: &'a mut Value) -> Option<&'a mut Value> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  336)         match *val {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  337)             Value::Array(ref mut a) => a.get_mut(*self),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  338)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  339)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  340)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  341) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  342) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  343) impl Index for str {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  344)     fn index<'a>(&self, val: &'a Value) -> Option<&'a Value> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  345)         match *val {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  346)             Value::Table(ref a) => a.get(self),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  347)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  348)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  349)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  350) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  351)     fn index_mut<'a>(&self, val: &'a mut Value) -> Option<&'a mut Value> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  352)         match *val {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  353)             Value::Table(ref mut a) => a.get_mut(self),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  354)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  355)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  356)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  357) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  358) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  359) impl Index for String {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  360)     fn index<'a>(&self, val: &'a Value) -> Option<&'a Value> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  361)         self[..].index(val)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  362)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  363) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  364)     fn index_mut<'a>(&self, val: &'a mut Value) -> Option<&'a mut Value> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  365)         self[..].index_mut(val)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  366)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  367) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  368) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  369) impl<T> Index for &T
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  370) where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  371)     T: Index + ?Sized,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  372) {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  373)     fn index<'a>(&self, val: &'a Value) -> Option<&'a Value> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  374)         (**self).index(val)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  375)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  376) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  377)     fn index_mut<'a>(&self, val: &'a mut Value) -> Option<&'a mut Value> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  378)         (**self).index_mut(val)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  379)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  380) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  381) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  382) #[cfg(feature = "display")]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  383) impl fmt::Display for Value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  384)     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  385)         use serde_core::Serialize as _;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  386) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  387)         let mut output = String::new();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  388)         let serializer = crate::ser::ValueSerializer::new(&mut output);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  389)         self.serialize(serializer).unwrap();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  390)         output.fmt(f)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  391)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  392) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  393) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  394) #[cfg(feature = "parse")]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  395) impl core::str::FromStr for Value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  396)     type Err = crate::de::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  397)     fn from_str(s: &str) -> Result<Self, Self::Err> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  398)         use serde_core::Deserialize as _;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  399)         Self::deserialize(crate::de::ValueDeserializer::parse(s)?)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  400)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  401) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  402) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  403) impl ser::Serialize for Value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  404)     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  405)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  406)         S: ser::Serializer,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  407)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  408)         match *self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  409)             Self::String(ref s) => serializer.serialize_str(s),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  410)             Self::Integer(i) => serializer.serialize_i64(i),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  411)             Self::Float(f) => serializer.serialize_f64(f),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  412)             Self::Boolean(b) => serializer.serialize_bool(b),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  413)             Self::Datetime(ref s) => s.serialize(serializer),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  414)             Self::Array(ref a) => a.serialize(serializer),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  415)             Self::Table(ref t) => t.serialize(serializer),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  416)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  417)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  418) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  419) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  420) impl<'de> de::Deserialize<'de> for Value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  421)     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  422)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  423)         D: de::Deserializer<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  424)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  425)         struct ValueVisitor;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  426) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  427)         impl<'de> de::Visitor<'de> for ValueVisitor {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  428)             type Value = Value;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  429) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  430)             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  431)                 formatter.write_str("any valid TOML value")
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  432)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  433) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  434)             fn visit_bool<E>(self, value: bool) -> Result<Value, E> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  435)                 Ok(Value::Boolean(value))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  436)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  437) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  438)             fn visit_i64<E>(self, value: i64) -> Result<Value, E> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  439)                 Ok(Value::Integer(value))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  440)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  441) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  442)             fn visit_u64<E: de::Error>(self, value: u64) -> Result<Value, E> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  443)                 if i64::try_from(value).is_ok() {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  444)                     Ok(Value::Integer(value as i64))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  445)                 } else {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  446)                     Err(de::Error::custom("u64 value was too large"))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  447)                 }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  448)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  449) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  450)             fn visit_u32<E>(self, value: u32) -> Result<Value, E> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  451)                 Ok(Value::Integer(value.into()))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  452)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  453) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  454)             fn visit_i32<E>(self, value: i32) -> Result<Value, E> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  455)                 Ok(Value::Integer(value.into()))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  456)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  457) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  458)             fn visit_f64<E>(self, value: f64) -> Result<Value, E> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  459)                 Ok(Value::Float(value))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  460)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  461) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  462)             fn visit_str<E>(self, value: &str) -> Result<Value, E> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  463)                 Ok(Value::String(value.into()))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  464)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  465) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  466)             fn visit_string<E>(self, value: String) -> Result<Value, E> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  467)                 Ok(Value::String(value))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  468)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  469) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  470)             fn visit_some<D>(self, deserializer: D) -> Result<Value, D::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  471)             where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  472)                 D: de::Deserializer<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  473)             {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  474)                 de::Deserialize::deserialize(deserializer)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  475)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  476) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  477)             fn visit_seq<V>(self, mut visitor: V) -> Result<Value, V::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  478)             where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  479)                 V: de::SeqAccess<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  480)             {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  481)                 let mut vec = Vec::new();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  482)                 while let Some(elem) = visitor.next_element()? {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  483)                     vec.push(elem);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  484)                 }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  485)                 Ok(Value::Array(vec))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  486)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  487) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  488)             fn visit_map<V>(self, mut visitor: V) -> Result<Value, V::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  489)             where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  490)                 V: de::MapAccess<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  491)             {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  492)                 let key = match toml_datetime::de::VisitMap::next_key_seed(&mut visitor)? {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  493)                     Some(toml_datetime::de::VisitMap::Datetime(datetime)) => {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  494)                         return Ok(Value::Datetime(datetime));
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  495)                     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  496)                     None => return Ok(Value::Table(Table::new())),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  497)                     Some(toml_datetime::de::VisitMap::Key(key)) => key,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  498)                 };
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  499)                 let mut map = Table::new();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  500)                 map.insert(key.into_owned(), visitor.next_value()?);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  501)                 while let Some(key) = visitor.next_key::<String>()? {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  502)                     if let crate::map::Entry::Vacant(vacant) = map.entry(&key) {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  503)                         vacant.insert(visitor.next_value()?);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  504)                     } else {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  505)                         let msg = format!("duplicate key: `{key}`");
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  506)                         return Err(de::Error::custom(msg));
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  507)                     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  508)                 }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  509)                 Ok(Value::Table(map))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  510)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  511)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  512) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  513)         deserializer.deserialize_any(ValueVisitor)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  514)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  515) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  516) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  517) // This is wrapped by `Table` and any trait methods implemented here need to be wrapped there.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  518) impl<'de> de::Deserializer<'de> for Value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  519)     type Error = crate::de::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  520) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  521)     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, crate::de::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  522)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  523)         V: de::Visitor<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  524)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  525)         match self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  526)             Self::Boolean(v) => visitor.visit_bool(v),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  527)             Self::Integer(n) => visitor.visit_i64(n),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  528)             Self::Float(n) => visitor.visit_f64(n),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  529)             Self::String(v) => visitor.visit_string(v),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  530)             Self::Datetime(v) => visitor.visit_string(v.to_string()),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  531)             Self::Array(v) => {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  532)                 let len = v.len();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  533)                 let mut deserializer = SeqDeserializer::new(v);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  534)                 let seq = visitor.visit_seq(&mut deserializer)?;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  535)                 let remaining = deserializer.iter.len();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  536)                 if remaining == 0 {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  537)                     Ok(seq)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  538)                 } else {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  539)                     Err(de::Error::invalid_length(len, &"fewer elements in array"))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  540)                 }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  541)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  542)             Self::Table(v) => {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  543)                 let len = v.len();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  544)                 let mut deserializer = MapDeserializer::new(v);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  545)                 let map = visitor.visit_map(&mut deserializer)?;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  546)                 let remaining = deserializer.iter.len();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  547)                 if remaining == 0 {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  548)                     Ok(map)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  549)                 } else {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  550)                     Err(de::Error::invalid_length(len, &"fewer elements in map"))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  551)                 }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  552)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  553)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  554)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  555) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  556)     #[inline]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  557)     fn deserialize_enum<V>(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  558)         self,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  559)         _name: &'static str,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  560)         _variants: &'static [&'static str],
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  561)         visitor: V,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  562)     ) -> Result<V::Value, crate::de::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  563)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  564)         V: de::Visitor<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  565)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  566)         match self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  567)             Self::String(variant) => visitor.visit_enum(variant.into_deserializer()),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  568)             Self::Table(variant) => {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  569)                 if variant.is_empty() {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  570)                     Err(crate::de::Error::custom(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  571)                         "wanted exactly 1 element, found 0 elements",
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  572)                         None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  573)                     ))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  574)                 } else if variant.len() != 1 {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  575)                     Err(crate::de::Error::custom(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  576)                         "wanted exactly 1 element, more than 1 element",
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  577)                         None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  578)                     ))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  579)                 } else {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  580)                     let deserializer = MapDeserializer::new(variant);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  581)                     visitor.visit_enum(deserializer)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  582)                 }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  583)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  584)             _ => Err(de::Error::invalid_type(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  585)                 de::Unexpected::UnitVariant,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  586)                 &"string only",
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  587)             )),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  588)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  589)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  590) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  591)     // `None` is interpreted as a missing field so be sure to implement `Some`
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  592)     // as a present field.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  593)     fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, crate::de::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  594)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  595)         V: de::Visitor<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  596)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  597)         visitor.visit_some(self)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  598)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  599) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  600)     fn deserialize_newtype_struct<V>(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  601)         self,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  602)         _name: &'static str,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  603)         visitor: V,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  604)     ) -> Result<V::Value, crate::de::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  605)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  606)         V: de::Visitor<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  607)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  608)         visitor.visit_newtype_struct(self)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  609)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  610) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  611)     serde_core::forward_to_deserialize_any! {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  612)         bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit seq
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  613)         bytes byte_buf map unit_struct tuple_struct struct
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  614)         tuple ignored_any identifier
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  615)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  616) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  617) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  618) pub(crate) struct SeqDeserializer {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  619)     iter: vec::IntoIter<Value>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  620) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  621) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  622) impl SeqDeserializer {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  623)     fn new(vec: Vec<Value>) -> Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  624)         Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  625)             iter: vec.into_iter(),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  626)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  627)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  628) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  629) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  630) impl<'de> de::SeqAccess<'de> for SeqDeserializer {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  631)     type Error = crate::de::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  632) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  633)     fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, crate::de::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  634)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  635)         T: de::DeserializeSeed<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  636)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  637)         match self.iter.next() {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  638)             Some(value) => seed.deserialize(value).map(Some),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  639)             None => Ok(None),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  640)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  641)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  642) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  643)     fn size_hint(&self) -> Option<usize> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  644)         match self.iter.size_hint() {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  645)             (lower, Some(upper)) if lower == upper => Some(upper),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  646)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  647)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  648)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  649) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  650) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  651) pub(crate) struct MapDeserializer {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  652)     iter: <Table as IntoIterator>::IntoIter,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  653)     value: Option<(String, Value)>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  654) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  655) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  656) impl MapDeserializer {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  657)     fn new(map: Table) -> Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  658)         Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  659)             iter: map.into_iter(),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  660)             value: None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  661)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  662)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  663) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  664) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  665) impl<'de> de::MapAccess<'de> for MapDeserializer {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  666)     type Error = crate::de::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  667) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  668)     fn next_key_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, crate::de::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  669)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  670)         T: de::DeserializeSeed<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  671)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  672)         match self.iter.next() {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  673)             Some((key, value)) => {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  674)                 self.value = Some((key.clone(), value));
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  675)                 seed.deserialize(Value::String(key)).map(Some)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  676)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  677)             None => Ok(None),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  678)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  679)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  680) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  681)     fn next_value_seed<T>(&mut self, seed: T) -> Result<T::Value, crate::de::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  682)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  683)         T: de::DeserializeSeed<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  684)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  685)         let (key, res) = match self.value.take() {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  686)             Some((key, value)) => (key, seed.deserialize(value)),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  687)             None => return Err(de::Error::custom("value is missing")),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  688)         };
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  689)         res.map_err(|mut error| {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  690)             error.add_key(key);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  691)             error
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  692)         })
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  693)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  694) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  695)     fn size_hint(&self) -> Option<usize> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  696)         match self.iter.size_hint() {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  697)             (lower, Some(upper)) if lower == upper => Some(upper),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  698)             _ => None,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  699)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  700)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  701) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  702) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  703) impl<'de> de::EnumAccess<'de> for MapDeserializer {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  704)     type Error = crate::de::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  705)     type Variant = MapEnumDeserializer;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  706) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  707)     fn variant_seed<V>(mut self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  708)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  709)         V: de::DeserializeSeed<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  710)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  711)         use de::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  712)         let (key, value) = match self.iter.next() {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  713)             Some(pair) => pair,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  714)             None => {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  715)                 return Err(Error::custom(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  716)                     "expected table with exactly 1 entry, found empty table",
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  717)                 ));
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  718)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  719)         };
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  720) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  721)         let val = seed.deserialize(key.into_deserializer())?;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  722) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  723)         let variant = MapEnumDeserializer::new(value);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  724) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  725)         Ok((val, variant))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  726)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  727) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  728) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  729) /// Deserializes table values into enum variants.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  730) pub(crate) struct MapEnumDeserializer {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  731)     value: Value,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  732) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  733) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  734) impl MapEnumDeserializer {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  735)     pub(crate) fn new(value: Value) -> Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  736)         Self { value }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  737)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  738) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  739) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  740) impl<'de> de::VariantAccess<'de> for MapEnumDeserializer {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  741)     type Error = crate::de::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  742) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  743)     fn unit_variant(self) -> Result<(), Self::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  744)         use de::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  745)         match self.value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  746)             Value::Array(values) => {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  747)                 if values.is_empty() {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  748)                     Ok(())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  749)                 } else {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  750)                     Err(Error::custom("expected empty array"))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  751)                 }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  752)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  753)             Value::Table(values) => {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  754)                 if values.is_empty() {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  755)                     Ok(())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  756)                 } else {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  757)                     Err(Error::custom("expected empty table"))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  758)                 }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  759)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  760)             e => Err(Error::custom(format!(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  761)                 "expected table, found {}",
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  762)                 e.type_str()
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  763)             ))),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  764)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  765)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  766) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  767)     fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value, Self::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  768)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  769)         T: de::DeserializeSeed<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  770)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  771)         seed.deserialize(self.value.into_deserializer())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  772)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  773) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  774)     fn tuple_variant<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  775)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  776)         V: de::Visitor<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  777)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  778)         use de::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  779)         match self.value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  780)             Value::Array(values) => {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  781)                 if values.len() == len {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  782)                     de::Deserializer::deserialize_seq(values.into_deserializer(), visitor)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  783)                 } else {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  784)                     Err(Error::custom(format!("expected tuple with length {len}")))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  785)                 }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  786)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  787)             Value::Table(values) => {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  788)                 let tuple_values: Result<Vec<_>, _> = values
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  789)                     .into_iter()
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  790)                     .enumerate()
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  791)                     .map(|(index, (key, value))| match key.parse::<usize>() {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  792)                         Ok(key_index) if key_index == index => Ok(value),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  793)                         Ok(_) | Err(_) => Err(Error::custom(format!(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  794)                             "expected table key `{index}`, but was `{key}`"
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  795)                         ))),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  796)                     })
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  797)                     .collect();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  798)                 let tuple_values = tuple_values?;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  799) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  800)                 if tuple_values.len() == len {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  801)                     de::Deserializer::deserialize_seq(tuple_values.into_deserializer(), visitor)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  802)                 } else {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  803)                     Err(Error::custom(format!("expected tuple with length {len}")))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  804)                 }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  805)             }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  806)             e => Err(Error::custom(format!(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  807)                 "expected table, found {}",
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  808)                 e.type_str()
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  809)             ))),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  810)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  811)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  812) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  813)     fn struct_variant<V>(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  814)         self,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  815)         fields: &'static [&'static str],
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  816)         visitor: V,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  817)     ) -> Result<V::Value, Self::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  818)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  819)         V: de::Visitor<'de>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  820)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  821)         de::Deserializer::deserialize_struct(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  822)             self.value.into_deserializer(),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  823)             "", // TODO: this should be the variant name
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  824)             fields,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  825)             visitor,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  826)         )
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  827)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  828) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  829) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  830) impl IntoDeserializer<'_, crate::de::Error> for Value {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  831)     type Deserializer = Self;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  832) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  833)     fn into_deserializer(self) -> Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  834)         self
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  835)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  836) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  837) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  838) pub(crate) struct ValueSerializer;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  839) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  840) impl ser::Serializer for ValueSerializer {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  841)     type Ok = Value;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  842)     type Error = crate::ser::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  843) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  844)     type SerializeSeq = ValueSerializeVec;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  845)     type SerializeTuple = ValueSerializeVec;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  846)     type SerializeTupleStruct = ValueSerializeVec;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  847)     type SerializeTupleVariant = ValueSerializeTupleVariant;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  848)     type SerializeMap = ValueSerializeMap;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  849)     type SerializeStruct = ValueSerializeMap;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  850)     type SerializeStructVariant = ValueSerializeStructVariant;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  851) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  852)     fn serialize_bool(self, value: bool) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  853)         Ok(Value::Boolean(value))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  854)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  855) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  856)     fn serialize_i8(self, value: i8) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  857)         self.serialize_i64(value.into())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  858)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  859) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  860)     fn serialize_i16(self, value: i16) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  861)         self.serialize_i64(value.into())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  862)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  863) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  864)     fn serialize_i32(self, value: i32) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  865)         self.serialize_i64(value.into())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  866)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  867) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  868)     fn serialize_i64(self, value: i64) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  869)         Ok(Value::Integer(value))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  870)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  871) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  872)     fn serialize_u8(self, value: u8) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  873)         self.serialize_i64(value.into())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  874)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  875) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  876)     fn serialize_u16(self, value: u16) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  877)         self.serialize_i64(value.into())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  878)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  879) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  880)     fn serialize_u32(self, value: u32) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  881)         self.serialize_i64(value.into())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  882)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  883) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  884)     fn serialize_u64(self, value: u64) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  885)         if i64::try_from(value).is_ok() {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  886)             self.serialize_i64(value as i64)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  887)         } else {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  888)             Err(ser::Error::custom("u64 value was too large"))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  889)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  890)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  891) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  892)     fn serialize_f32(self, value: f32) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  893)         self.serialize_f64(value as f64)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  894)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  895) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  896)     fn serialize_f64(self, mut value: f64) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  897)         // Discard sign of NaN. See ValueSerializer::serialize_f64.
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  898)         if value.is_nan() {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  899)             value = value.copysign(1.0);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  900)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  901)         Ok(Value::Float(value))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  902)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  903) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  904)     fn serialize_char(self, value: char) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  905)         let mut s = String::new();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  906)         s.push(value);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  907)         self.serialize_str(&s)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  908)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  909) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  910)     fn serialize_str(self, value: &str) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  911)         Ok(Value::String(value.to_owned()))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  912)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  913) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  914)     fn serialize_bytes(self, value: &[u8]) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  915)         let vec = value.iter().map(|&b| Value::Integer(b.into())).collect();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  916)         Ok(Value::Array(vec))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  917)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  918) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  919)     fn serialize_unit(self) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  920)         Err(crate::ser::Error::unsupported_type(Some("unit")))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  921)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  922) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  923)     fn serialize_unit_struct(self, name: &'static str) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  924)         Err(crate::ser::Error::unsupported_type(Some(name)))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  925)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  926) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  927)     fn serialize_unit_variant(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  928)         self,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  929)         _name: &'static str,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  930)         _variant_index: u32,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  931)         _variant: &'static str,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  932)     ) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  933)         self.serialize_str(_variant)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  934)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  935) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  936)     fn serialize_newtype_struct<T>(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  937)         self,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  938)         _name: &'static str,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  939)         value: &T,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  940)     ) -> Result<Value, crate::ser::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  941)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  942)         T: ser::Serialize + ?Sized,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  943)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  944)         value.serialize(self)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  945)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  946) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  947)     fn serialize_newtype_variant<T>(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  948)         self,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  949)         _name: &'static str,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  950)         _variant_index: u32,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  951)         variant: &'static str,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  952)         value: &T,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  953)     ) -> Result<Value, crate::ser::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  954)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  955)         T: ser::Serialize + ?Sized,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  956)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  957)         let value = value.serialize(Self)?;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  958)         let mut table = Table::new();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  959)         table.insert(variant.to_owned(), value);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  960)         Ok(table.into())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  961)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  962) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  963)     fn serialize_none(self) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  964)         Err(crate::ser::Error::unsupported_none())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  965)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  966) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  967)     fn serialize_some<T>(self, value: &T) -> Result<Value, crate::ser::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  968)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  969)         T: ser::Serialize + ?Sized,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  970)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  971)         value.serialize(self)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  972)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  973) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  974)     fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  975)         Ok(ValueSerializeVec {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  976)             vec: Vec::with_capacity(len.unwrap_or(0)),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  977)         })
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  978)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  979) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  980)     fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  981)         self.serialize_seq(Some(len))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  982)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  983) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  984)     fn serialize_tuple_struct(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  985)         self,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  986)         _name: &'static str,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  987)         len: usize,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  988)     ) -> Result<Self::SerializeTupleStruct, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  989)         self.serialize_seq(Some(len))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  990)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  991) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  992)     fn serialize_tuple_variant(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  993)         self,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  994)         _name: &'static str,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  995)         _variant_index: u32,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  996)         variant: &'static str,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  997)         len: usize,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  998)     ) -> Result<Self::SerializeTupleVariant, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200  999)         Ok(ValueSerializeTupleVariant::tuple(variant, len))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1000)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1001) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1002)     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1003)         Ok(ValueSerializeMap {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1004)             ser: crate::table::SerializeMap::new(),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1005)         })
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1006)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1007) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1008)     fn serialize_struct(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1009)         self,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1010)         _name: &'static str,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1011)         len: usize,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1012)     ) -> Result<Self::SerializeStruct, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1013)         self.serialize_map(Some(len))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1014)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1015) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1016)     fn serialize_struct_variant(
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1017)         self,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1018)         _name: &'static str,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1019)         _variant_index: u32,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1020)         variant: &'static str,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1021)         len: usize,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1022)     ) -> Result<Self::SerializeStructVariant, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1023)         Ok(ValueSerializeStructVariant::struct_(variant, len))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1024)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1025) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1026) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1027) pub(crate) struct ValueSerializeVec {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1028)     vec: Vec<Value>,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1029) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1030) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1031) impl ser::SerializeSeq for ValueSerializeVec {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1032)     type Ok = Value;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1033)     type Error = crate::ser::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1034) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1035)     fn serialize_element<T>(&mut self, value: &T) -> Result<(), crate::ser::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1036)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1037)         T: ser::Serialize + ?Sized,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1038)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1039)         self.vec.push(Value::try_from(value)?);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1040)         Ok(())
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1041)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1042) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1043)     fn end(self) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1044)         Ok(Value::Array(self.vec))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1045)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1046) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1047) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1048) impl ser::SerializeTuple for ValueSerializeVec {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1049)     type Ok = Value;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1050)     type Error = crate::ser::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1051) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1052)     fn serialize_element<T>(&mut self, value: &T) -> Result<(), crate::ser::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1053)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1054)         T: ser::Serialize + ?Sized,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1055)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1056)         ser::SerializeSeq::serialize_element(self, value)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1057)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1058) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1059)     fn end(self) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1060)         ser::SerializeSeq::end(self)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1061)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1062) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1063) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1064) impl ser::SerializeTupleStruct for ValueSerializeVec {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1065)     type Ok = Value;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1066)     type Error = crate::ser::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1067) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1068)     fn serialize_field<T>(&mut self, value: &T) -> Result<(), crate::ser::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1069)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1070)         T: ser::Serialize + ?Sized,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1071)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1072)         ser::SerializeSeq::serialize_element(self, value)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1073)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1074) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1075)     fn end(self) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1076)         ser::SerializeSeq::end(self)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1077)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1078) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1079) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1080) impl ser::SerializeTupleVariant for ValueSerializeVec {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1081)     type Ok = Value;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1082)     type Error = crate::ser::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1083) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1084)     fn serialize_field<T>(&mut self, value: &T) -> Result<(), crate::ser::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1085)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1086)         T: ser::Serialize + ?Sized,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1087)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1088)         ser::SerializeSeq::serialize_element(self, value)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1089)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1090) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1091)     fn end(self) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1092)         ser::SerializeSeq::end(self)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1093)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1094) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1095) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1096) pub(crate) struct ValueSerializeMap {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1097)     ser: crate::table::SerializeMap,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1098) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1099) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1100) impl ser::SerializeMap for ValueSerializeMap {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1101)     type Ok = Value;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1102)     type Error = crate::ser::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1103) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1104)     fn serialize_key<T>(&mut self, key: &T) -> Result<(), crate::ser::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1105)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1106)         T: ser::Serialize + ?Sized,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1107)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1108)         self.ser.serialize_key(key)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1109)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1110) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1111)     fn serialize_value<T>(&mut self, value: &T) -> Result<(), crate::ser::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1112)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1113)         T: ser::Serialize + ?Sized,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1114)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1115)         self.ser.serialize_value(value)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1116)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1117) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1118)     fn end(self) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1119)         self.ser.end().map(Value::Table)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1120)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1121) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1122) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1123) impl ser::SerializeStruct for ValueSerializeMap {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1124)     type Ok = Value;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1125)     type Error = crate::ser::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1126) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1127)     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), crate::ser::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1128)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1129)         T: ser::Serialize + ?Sized,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1130)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1131)         ser::SerializeMap::serialize_key(self, key)?;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1132)         ser::SerializeMap::serialize_value(self, value)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1133)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1134) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1135)     fn end(self) -> Result<Value, crate::ser::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1136)         ser::SerializeMap::end(self)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1137)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1138) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1139) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1140) type ValueSerializeTupleVariant = ValueSerializeVariant<ValueSerializeVec>;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1141) type ValueSerializeStructVariant = ValueSerializeVariant<ValueSerializeMap>;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1142) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1143) pub(crate) struct ValueSerializeVariant<T> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1144)     variant: &'static str,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1145)     inner: T,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1146) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1147) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1148) impl ValueSerializeVariant<ValueSerializeVec> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1149)     pub(crate) fn tuple(variant: &'static str, len: usize) -> Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1150)         Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1151)             variant,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1152)             inner: ValueSerializeVec {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1153)                 vec: Vec::with_capacity(len),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1154)             },
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1155)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1156)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1157) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1158) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1159) impl ValueSerializeVariant<ValueSerializeMap> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1160)     pub(crate) fn struct_(variant: &'static str, len: usize) -> Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1161)         Self {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1162)             variant,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1163)             inner: ValueSerializeMap {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1164)                 ser: crate::table::SerializeMap::with_capacity(len),
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1165)             },
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1166)         }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1167)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1168) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1169) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1170) impl ser::SerializeTupleVariant for ValueSerializeVariant<ValueSerializeVec> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1171)     type Ok = Value;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1172)     type Error = crate::ser::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1173) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1174)     fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1175)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1176)         T: ser::Serialize + ?Sized,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1177)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1178)         ser::SerializeSeq::serialize_element(&mut self.inner, value)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1179)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1180) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1181)     fn end(self) -> Result<Self::Ok, Self::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1182)         let inner = ser::SerializeSeq::end(self.inner)?;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1183)         let mut table = Table::new();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1184)         table.insert(self.variant.to_owned(), inner);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1185)         Ok(Value::Table(table))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1186)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1187) }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1188) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1189) impl ser::SerializeStructVariant for ValueSerializeVariant<ValueSerializeMap> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1190)     type Ok = Value;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1191)     type Error = crate::ser::Error;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1192) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1193)     #[inline]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1194)     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1195)     where
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1196)         T: ser::Serialize + ?Sized,
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1197)     {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1198)         ser::SerializeStruct::serialize_field(&mut self.inner, key, value)
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1199)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1200) 
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1201)     #[inline]
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1202)     fn end(self) -> Result<Self::Ok, Self::Error> {
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1203)         let inner = ser::SerializeStruct::end(self.inner)?;
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1204)         let mut table = Table::new();
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1205)         table.insert(self.variant.to_owned(), inner);
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1206)         Ok(Value::Table(table))
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1207)     }
+^a844dd5 (evals 2026-10-22 10:55:12 +0200 1208) }

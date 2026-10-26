@@ -1,0 +1,73 @@
+diff --git a/decimal.go b/decimal.go
+index 880d569..3a7e7e2 100644
+--- a/decimal.go
++++ b/decimal.go
+@@ -1254,15 +1254,25 @@ func (d Decimal) Ln(precision int32) (Decimal, error) {
+ // NumDigits returns the number of digits of the decimal coefficient (d.Value)
+ func (d Decimal) NumDigits() int {
+ 	v := d.getValue()
++	if v.IsUint64() {
++		// math.Log10 is not exact near powers of ten, so count with integer comparisons
++		u := v.Uint64()
++		n := 1
++		for u >= 10 {
++			u /= 10
++			n++
++		}
++		return n
++	}
+ 	if v.IsInt64() {
+-		i64 := v.Int64()
+-		// restrict fast path to integers with exact conversion to float64
+-		if i64 <= (1<<53) && i64 >= -(1<<53) {
+-			if i64 == 0 {
+-				return 1
+-			}
+-			return int(math.Log10(math.Abs(float64(i64)))) + 1
++		// negative values that fit in int64
++		u := uint64(-v.Int64())
++		n := 1
++		for u >= 10 {
++			u /= 10
++			n++
+ 		}
++		return n
+ 	}
+ 
+ 	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
+diff --git a/decimal_test.go b/decimal_test.go
+index 25d95bc..60f9030 100644
+--- a/decimal_test.go
++++ b/decimal_test.go
+@@ -3962,3 +3962,31 @@ func ExampleNewFromFloat() {
+ 	//0.123123123123123
+ 	//-10000000000000
+ }
++
++func TestDecimal_NumDigitsExact(t *testing.T) {
++	for _, s := range []string{
++		"100000000000000E20", "1000000000000000E20", "10000000000000000E20",
++		"-1000000000000000E20", "9999999999999999", "-9223372036854775808",
++		"18446744073709551616", "0", "-1",
++	} {
++		d, err := NewFromString(s)
++		if err != nil {
++			t.Fatal(err)
++		}
++		want := len(new(big.Int).Abs(d.Coefficient()).Text(10))
++		if got := d.NumDigits(); got != want {
++			t.Errorf("%s: NumDigits() = %d, want %d", s, got, want)
++		}
++	}
++	for e := 0; e < 40; e++ {
++		for _, delta := range []int64{-1, 0, 1} {
++			v := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(e)), nil)
++			v.Add(v, big.NewInt(delta))
++			d := NewFromBigInt(v, 0)
++			want := len(v.Text(10))
++			if got := d.NumDigits(); got != want {
++				t.Errorf("%s: NumDigits() = %d, want %d", v, got, want)
++			}
++		}
++	}
++}

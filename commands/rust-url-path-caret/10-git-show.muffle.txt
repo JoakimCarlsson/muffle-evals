@@ -1,0 +1,562 @@
+$ git show HEAD
+88d5626f 2026-10-22 evals: base
+=== .github/FUNDING.yml
+new file mode 100644
+@@ -0,0 +1,2 @@
++github: servo
++open_collective: servo
+=== .github/ISSUE_TEMPLATE/bug_report.md
+new file mode 100644
+@@ -0,0 +1,13 @@
++---
++name: Bug report
++about: Create a report to help us improve
++title: ''
++labels: ''
++assignees: ''
++
++---
++
++- [ ] Note that this crate implements the [URL Standard](https://url.spec.whatwg.org/) not RFC 1738 or RFC 3986
++
++**Describe the bug**
++A clear and concise description of what the bug is. Include code snippets if possible.
+=== .github/dependabot.yml
+new file mode 100644
+@@ -0,0 +1,15 @@
++version: 2
++updates:
++  - package-ecosystem: "cargo"
++    directory: "/"
++    schedule:
++      interval: "monthly"
++    open-pull-requests-limit: 10
++  - package-ecosystem: "docker"
++    directory: "/"
++    schedule:
++      interval: "monthly"
++  - package-ecosystem: "github-actions"
++    directory: "/"
++    schedule:
++      interval: "monthly"
+=== .github/workflows/codecov.yml
+new file mode 100644
+@@ -0,0 +1,24 @@
++name: Coverage
++
++on:
++  push:
++    branches: ["main"]
++  pull_request:
++
++jobs:
++  coverage:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: dtolnay/rust-toolchain@stable
++      - uses: taiki-e/install-action@v2
++        with:
++          tool: cargo-tarpaulin
++      - run: cargo tarpaulin --out Xml
++      - uses: codecov/codecov-action@v4
++        # A codecov token is not needed for public repos if the repo is linked
++        # on codecov.io. See https://docs.codecov.com/docs/frequently-asked-questions#where-is-the-repository-upload-token-found
++      - uses: actions/upload-artifact@v4
++        with:
++          name: code-coverage-report
++          path: cobertura.xml
+=== .github/workflows/main.yml
+new file mode 100644
+@@ -0,0 +1,174 @@
++name: CI
++
++on:
++  push:
++    branches: ["main"]
++  pull_request:
++  merge_group:
++    types: [checks_requested]
++
++env:
++  CARGO_NET_GIT_FETCH_WITH_CLI: true
++
++jobs:
++  Test:
++    strategy:
++      matrix:
++        os: [ubuntu-latest, macos-latest, windows-latest]
++        rust: [1.63.0, 1.82.0, stable, beta, nightly]
++        exclude:
++          - os: macos-latest
++            rust: 1.82.0
++          - os: windows-latest
++            rust: 1.82.0
++          - os: macos-latest
++            rust: beta
++          - os: windows-latest
++            rust: beta
++
++    runs-on: ${{ matrix.os }}
++
++    steps:
++      - uses: actions/checkout@v4
++      - uses: dtolnay/rust-toolchain@master
++        with:
++          toolchain: ${{ matrix.rust }}
++          components: ${{ matrix.rust == 'nightly' && 'rust-src' || '' }}
++      # Add toolchain for no_std tests
++      - run: rustup toolchain install nightly
++      - name: Downgrade deps on Rust 1.63.0
++        if: |
++          matrix.rust == '1.63.0'
++        run: |
++          # cargo update -p idna_adapter --precise 1.1.0
++          # cargo update -p getopts --precise 0.2.22
++          # cargo update -p unicode-width --precise 0.1.12
++          # cargo update syn@2 --precise 2.0.100
++          # Unfortunately `syn@2` syntax doesn't work on 1.63, and we don't know the precise
++          # version beforehand. So we copy the lockfile we have already prepared.
++          cp ci-lockfiles/1.63.Cargo.lock Cargo.lock
++          # Older Unicode versions have a different test file
++          cp idna/tests/IdnaTestV2-Unicode16.txt idna/tests/IdnaTestV2.txt
++      - name: Downgrade deps on Rust 1.82.0
++        if: |
++          matrix.rust == '1.82.0'
++        run: |
++          # idna_adapter 1.2.2 requires icu 2.2 (rustc 1.86); 1.2.1 is the last to support 1.82
++          cargo update -p idna_adapter --precise 1.2.1
++          cargo update -p icu_normalizer --precise 2.0.1
++          cargo update -p icu_provider --precise 2.0.0
++          cargo update -p icu_locale_core --precise 2.0.1
++          # potential_utf 0.1.5, zerotrie 0.2.4 and tinystr 0.8.3 all require zerovec 0.11.6;
++          # 0.1.4 / 0.2.3 / 0.8.2 are the last releases that allow 0.11.5
++          cargo update -p potential_utf --precise 0.1.4
++          cargo update -p zerotrie --precise 0.2.3
++          cargo update -p tinystr --precise 0.8.2
++          # zerovec 0.11.6 bumped its MSRV to 1.83; 0.11.5 is the last to support 1.82
++          cargo update -p zerovec --precise 0.11.5
++          # Older Unicode versions have a different test file
++          cp idna/tests/IdnaTestV2-Unicode16.txt idna/tests/IdnaTestV2.txt
++      - name: Add `aarch64-unknown-none` toolchain for `no_std` tests
++        if: |
++          matrix.os == 'ubuntu-latest' &&
++          matrix.rust == 'nightly'
++        run: rustup target add aarch64-unknown-none && rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
++      - run: cargo build --all-targets
++        # Run tests
++      - name: Run tests
++        run: cargo test
++        # Run tests enabling the serde feature
++      - name: Run tests with the serde feature
++        run: cargo test --features "url/serde,url/expose_internals"
++      # The #[debugger_visualizer] attribute is currently gated behind a feature flag until #[debugger_visualizer]
++      # is available in all rustc versions past our MSRV. As such, we only run the tests on newer rustc versions.
++      - name: Run debugger_visualizer tests
++        if: |
++          matrix.os == 'windows-latest' &&
++          matrix.rust != '1.63.0' &&
++          matrix.rust != '1.82.0'
++        run: cargo test --test debugger_visualizer --features "url/debugger_visualizer,url_debug_tests/debugger_visualizer" -- --test-threads=1 || echo "debugger test failed"
++        continue-on-error: true # Fails on GH actions, but not locally.
++      - name: Test `no_std` support
++        run: cargo test --no-default-features --features=alloc
++      - name: Build `url` crate for `aarch64-unknown-none` with `no_std`
++        if: |
++          matrix.os == 'ubuntu-latest' &&
++          matrix.rust == 'nightly'
++        run: >
++          cd url
++          && cargo check --target aarch64-unknown-none -v --no-default-features
++      - name: Run tests with sanitizers
++        if: (matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest') && matrix.rust == 'nightly'
++        env:
++          ASAN_OPTIONS: detect_leaks=1:detect_stack_use_after_return=1
++        run: |
++          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
++            sudo apt-get install -y --no-install-recommends llvm
++            TARGET="x86_64-unknown-linux-gnu"
++            SANITIZERS="address thread leak memory"
++          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
++            TARGET="aarch64-apple-darwin"
++            # no memory and leak sanitizer support yet
++            SANITIZERS="address thread"
++            # Suppress non-crate leaks on macOS. TODO: Check occasionally if these are still needed.
++            {
++              echo "leak:dyld4::RuntimeState"
++              echo "leak:fetchInitializingClassList"
++              echo "leak:std::sys::pal::unix::stack_overflow::imp::init"
++              echo "leak:dyld::ThreadLocalVariables::instantiateVariable"
++              echo "leak:_tlv_get_addr"
++            } > suppressions.txt
++            export LSAN_OPTIONS="suppressions=$(pwd)/suppressions.txt"
++          fi
++          for sanitizer in $SANITIZERS; do
++            echo "Running tests with $sanitizer sanitizer..."
++            export RUSTFLAGS="-Z sanitizer=$sanitizer"
++            export RUSTDOCFLAGS="$RUSTFLAGS"
++            cargo +nightly test -Z build-std --target "$TARGET" --lib --tests
++          done
++
++  WASM:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: dtolnay/rust-toolchain@stable
++        with:
++          targets: wasm32-unknown-unknown
++      - name: Install wasm-pack
++        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
++      - run: cargo build --target wasm32-unknown-unknown
++      - run: cd url && wasm-pack test --headless --chrome
++      - run: cd url && wasm-pack test --headless --firefox
++
++  Lint:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: dtolnay/rust-toolchain@stable
++        with:
++          components: rustfmt, clippy
++      - run: cargo fmt --all --check
++      - run: cargo clippy --workspace --all-targets -- -D warnings
++        if: always()
++
++  Audit:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: EmbarkStudios/cargo-deny-action@v2
++
++  Result:
++    name: Result
++    runs-on: ubuntu-latest
++    needs:
++      - "Test"
++      - "WASM"
++      - "Lint"
++      - "Audit"
++    steps:
++      - name: Mark the job as successful
++        run: exit 0
++        if: success()
++      - name: Mark the job as unsuccessful
++        run: exit 1
++        if: "!success()"
+=== .gitignore
+new file mode 100644
+@@ -0,0 +1,3 @@
++target
++Cargo.lock
++/.cargo/config
+=== Cargo.toml
+new file mode 100644
+@@ -0,0 +1,9 @@
++[workspace]
++members = [
++  "url",
++  "form_urlencoded",
++  "idna",
++  "percent_encoding",
++  "data-url",
++  "url_debug_tests",
++]
+=== LICENSE-APACHE
+new file mode 100644
+@@ -0,0 +1,201 @@
++                              Apache License
++                        Version 2.0, January 2004
++                     http://www.apache.org/licenses/
++
++TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++1. Definitions.
++
++   "License" shall mean the terms and conditions for use, reproduction,
++   and distribution as defined by Sections 1 through 9 of this document.
++
++   "Licensor" shall mean the copyright owner or entity authorized by
++   the copyright owner that is granting the License.
++
++   "Legal Entity" shall mean the union of the acting entity and all
++   other entities that control, are controlled by, or are under common
++   control with that entity. For the purposes of this definition,
++   "control" means (i) the power, direct or indirect, to cause the
++   direction or management of such entity, whether by contract or
++   otherwise, or (ii) ownership of fifty percent (50%) or more of the
++   outstanding shares, or (iii) beneficial ownership of such entity.
++
++   "You" (or "Your") shall mean an individual or Legal Entity
++   exercising permissions granted by this License.
++
++   "Source" form shall mean the preferred form for making modifications,
++   including but not limited to software source code, documentation
++   source, and configuration files.
++
++   "Object" form shall mean any form resulting from mechanical
++   transformation or translation of a Source form, including but
++   not limited to compiled object code, generated documentation,
++   and conversions to other media types.
++
++   "Work" shall mean the work of authorship, whether in Source or
++   Object form, made available under the License, as indicated by a
++   copyright notice that is included in or attached to the work
++   (an example is provided in the Appendix below).
++
++   "Derivative Works" shall mean any work, whether in Source or Object
++   form, that is based on (or derived from) the Work and for which the
++   editorial revisions, annotations, elaborations, or other modifications
++   represent, as a whole, an original work of authorship. For the purposes
++   of this License, Derivative Works shall not include works that remain
++   separable from, or merely link (or bind by name) to the interfaces of,
++   the Work and Derivative Works thereof.
++
++   "Contribution" shall mean any work of authorship, including
++   the original version of the Work and any modifications or additions
++   to that Work or Derivative Works thereof, that is intentionally
++   submitted to Licensor for inclusion in the Work by the copyright owner
++   or by an individual or Legal Entity authorized to submit on behalf of
++   the copyright owner. For the purposes of this definition, "submitted"
++   means any form of electronic, verbal, or written communication sent
++   to the Licensor or its representatives, including but not limited to
++   communication on electronic mailing lists, source code control systems,
++   and issue tracking systems that are managed by, or on behalf of, the
++   Licensor for the purpose of discussing and improving the Work, but
++   excluding communication that is conspicuously marked or otherwise
++   designated in writing by the copyright owner as "Not a Contribution."
++
++   "Contributor" shall mean Licensor and any individual or Legal Entity
++   on behalf of whom a Contribution has been received by Licensor and
++   subsequently incorporated within the Work.
++
++2. Grant of Copyright License. Subject to the terms and conditions of
++   this License, each Contributor hereby grants to You a perpetual,
++   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++   copyright license to reproduce, prepare Derivative Works of,
++   publicly display, publicly perform, sublicense, and distribute the
++   Work and such Derivative Works in Source or Object form.
++
++3. Grant of Patent License. Subject to the terms and conditions of
++   this License, each Contributor hereby grants to You a perpetual,
++   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++   (except as stated in this section) patent license to make, have made,
++   use, offer to sell, sell, import, and otherwise transfer the Work,
++   where such license applies only to those patent claims licensable
++   by such Contributor that are necessarily infringed by their
++   Contribution(s) alone or by combination of their Contribution(s)
++   with the Work to which such Contribution(s) was submitted. If You
++   institute patent litigation against any entity (including a
++   cross-claim or counterclaim in a lawsuit) alleging that the Work
++   or a Contribution incorporated within the Work constitutes direct
++   or contributory patent infringement, then any patent licenses
++   granted to You under this License for that Work shall terminate
++   as of the date such litigation is filed.
++
++4. Redistribution. You may reproduce and distribute copies of the
++   Work or Derivative Works thereof in any medium, with or without
++   modifications, and in Source or Object form, provided that You
++   meet the following conditions:
++
++   (a) You must give any other recipients of the Work or
++       Derivative Works a copy of this License; and
++
++   (b) You must cause any modified files to carry prominent notices
++       stating that You changed the files; and
++
++   (c) You must retain, in the Source form of any Derivative Works
++       that You distribute, all copyright, patent, trademark, and
++       attribution notices from the Source form of the Work,
++       excluding those notices that do not pertain to any part of
++       the Derivative Works; and
++
++   (d) If the Work includes a "NOTICE" text file as part of its
++       distribution, then any Derivative Works that You distribute must
++       include a readable copy of the attribution notices contained
++       within such NOTICE file, excluding those notices that do not
++       pertain to any part of the Derivative Works, in at least one
++       of the following places: within a NOTICE text file distributed
++       as part of the Derivative Works; within the Source form or
++       documentation, if provided along with the Derivative Works; or,
++       within a display generated by the Derivative Works, if and
++       wherever such third-party notices normally appear. The contents
++       of the NOTICE file are for informational purposes only and
++       do not modify the License. You may add Your own attribution
++       notices within Derivative Works that You distribute, alongside
++       or as an addendum to the NOTICE text from the Work, provided
++       that such additional attribution notices cannot be construed
++       as modifying the License.
++
++   You may add Your own copyright statement to Your modifications and
++   may provide additional or different license terms and conditions
++   for use, reproduction, or distribution of Your modifications, or
++   for any such Derivative Works as a whole, provided Your use,
++   reproduction, and distribution of the Work otherwise complies with
++   the conditions stated in this License.
++
++5. Submission of Contributions. Unless You explicitly state otherwise,
++   any Contribution intentionally submitted for inclusion in the Work
++   by You to the Licensor shall be under the terms and conditions of
++   this License, without any additional terms or conditions.
++   Notwithstanding the above, nothing herein shall supersede or modify
++   the terms of any separate license agreement you may have executed
++   with Licensor regarding such Contributions.
++
++6. Trademarks. This License does not grant permission to use the trade
++   names, trademarks, service marks, or product names of the Licensor,
++   except as required for reasonable and customary use in describing the
++   origin of the Work and reproducing the content of the NOTICE file.
++
++7. Disclaimer of Warranty. Unless required by applicable law or
++   agreed to in writing, Licensor provides the Work (and each
++   Contributor provides its Contributions) on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++   implied, including, without limitation, any warranties or conditions
++   of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++   PARTICULAR PURPOSE. You are solely responsible for determining the
++   appropriateness of using or redistributing the Work and assume any
++   risks associated with Your exercise of permissions under this License.
++
+[+49 more diff lines]
+=== LICENSE-MIT +25 -0
+new file mode 100644
+=== README.md +18 -0
+new file mode 100644
+=== SECURITY.md +13 -0
+new file mode 100644
+=== UPGRADING.md +367 -0
+new file mode 100644
+=== ci-lockfiles/1.63.Cargo.lock +687 -0
+new file mode 100644
+=== data-url/Cargo.toml +33 -0
+new file mode 100644
+=== data-url/LICENSE-APACHE +1 -0
+new file mode 120000
+=== data-url/LICENSE-MIT +1 -0
+new file mode 120000
+=== data-url/README.md +20 -0
+new file mode 100644
+=== data-url/src/forgiving_base64.rs +201 -0
+new file mode 100644
+=== data-url/src/lib.rs +347 -0
+new file mode 100644
+=== data-url/src/make_base64_decode_table.py +19 -0
+new file mode 100644
+=== data-url/src/mime.rs +239 -0
+new file mode 100644
+=== data-url/tests/base64.json +82 -0
+new file mode 100644
+=== data-url/tests/data-urls.json +232 -0
+new file mode 100644
+=== data-url/tests/generated-mime-types.json +3526 -0
+new file mode 100644
+=== data-url/tests/mime-types.json +397 -0
+new file mode 100644
+=== data-url/tests/wpt.rs +167 -0
+new file mode 100644
+=== debug_metadata/README.md +111 -0
+new file mode 100644
+=== debug_metadata/url.natvis +34 -0
+new file mode 100644
+=== deny.toml +7 -0
+new file mode 100644
+=== form_urlencoded/Cargo.toml +24 -0
+new file mode 100644
+=== form_urlencoded/LICENSE-APACHE +201 -0
+new file mode 100644
+=== form_urlencoded/LICENSE-MIT +25 -0
+new file mode 100644
+=== form_urlencoded/src/lib.rs +430 -0
+new file mode 100644
+=== idna/Cargo.toml +48 -0
+new file mode 100644
+=== idna/LICENSE-APACHE +1 -0
+new file mode 120000
+=== idna/LICENSE-MIT +1 -0
+new file mode 120000
+=== idna/README.md +46 -0
+new file mode 100644
+=== idna/benches/all.rs +116 -0
+new file mode 100644
+=== idna/src/deprecated.rs +248 -0
+new file mode 100644
+=== idna/src/lib.rs +198 -0
+new file mode 100644
+=== idna/src/punycode.rs +477 -0
+new file mode 100644
+=== idna/src/uts46.rs +1721 -0
+new file mode 100644
+=== idna/tests/IdnaTestV2-Unicode16.txt +6506 -0
+new file mode 100644
+=== idna/tests/IdnaTestV2.txt +6508 -0
+new file mode 100644
+=== idna/tests/bad_punycode_tests.json +6 -0
+new file mode 100644
+=== idna/tests/deprecated.rs +197 -0
+new file mode 100644
+=== idna/tests/punycode.rs +125 -0
+new file mode 100644
+=== idna/tests/punycode_tests.json +120 -0
+new file mode 100644
+=== idna/tests/tests.rs +27 -0
+new file mode 100644
+=== idna/tests/unit.rs +140 -0
+new file mode 100644
+=== idna/tests/unitbis.rs +374 -0
+new file mode 100644
+=== idna/tests/uts46.rs +239 -0
+new file mode 100644
+=== percent_encoding/Cargo.toml +18 -0
+new file mode 100644
+=== percent_encoding/LICENSE-APACHE +1 -0
+new file mode 120000
+=== percent_encoding/LICENSE-MIT +1 -0
+new file mode 120000
+=== percent_encoding/src/ascii_set.rs +213 -0
+new file mode 100644
+=== percent_encoding/src/lib.rs +481 -0
+new file mode 100644
+=== url/Cargo.toml +61 -0
+new file mode 100644
+=== url/LICENSE-APACHE +1 -0
+new file mode 120000
+=== url/LICENSE-MIT +1 -0
+new file mode 120000
+=== url/benches/parse_url.rs +129 -0
+new file mode 100644
+=== url/fuzz/.gitignore +4 -0
+new file mode 100644
+=== url/fuzz/Cargo.toml +26 -0
+new file mode 100644
+=== url/fuzz/fuzz_targets/fuzz-url.rs +129 -0
+new file mode 100644
+=== url/fuzz/fuzz_targets/parse.rs +13 -0
+new file mode 100644
+=== url/src/host.rs +512 -0
+new file mode 100644
+=== url/src/lib.rs +3230 -0
+new file mode 100644
+=== url/src/origin.rs +115 -0
+new file mode 100644
+=== url/src/parser.rs +1836 -0
+new file mode 100644
+=== url/src/path_segments.rs +267 -0
+new file mode 100644
+=== url/src/quirks.rs +336 -0
+new file mode 100644
+=== url/src/slicing.rs +218 -0
+new file mode 100644
+=== url/tests/expected_failures.txt +73 -0
+new file mode 100644
+=== url/tests/setters_tests.json +2564 -0
+new file mode 100644
+=== url/tests/unit.rs +1394 -0
+new file mode 100644
+=== url/tests/urltestdata.json +10242 -0
+new file mode 100644
+=== url/tests/wpt.rs +504 -0
+new file mode 100644
+=== url_debug_tests/Cargo.toml +22 -0
+new file mode 100644
+=== url_debug_tests/tests/debugger_visualizer.rs +105 -0
+new file mode 100644
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-omh2k5fa.log]

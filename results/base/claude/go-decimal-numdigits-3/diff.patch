@@ -1,0 +1,80 @@
+diff --git a/decimal.go b/decimal.go
+index 880d569..9ec4f1a 100644
+--- a/decimal.go
++++ b/decimal.go
+@@ -1255,27 +1255,30 @@ func (d Decimal) Ln(precision int32) (Decimal, error) {
+ func (d Decimal) NumDigits() int {
+ 	v := d.getValue()
+ 	if v.IsInt64() {
+-		i64 := v.Int64()
+-		// restrict fast path to integers with exact conversion to float64
+-		if i64 <= (1<<53) && i64 >= -(1<<53) {
+-			if i64 == 0 {
+-				return 1
+-			}
+-			return int(math.Log10(math.Abs(float64(i64)))) + 1
++		u := uint64(v.Int64())
++		if v.Sign() < 0 {
++			u = -u
++		}
++		n := 1
++		for u >= 10 {
++			u /= 10
++			n++
+ 		}
++		return n
+ 	}
+ 
+-	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
++	// v >= 2**(BitLen-1), so lowerBound is the digit count of 2**(BitLen-1).
++	// The actual digit count is either lowerBound or lowerBound+1, need to verify
++	lowerBound := int(float64(v.BitLen()-1)*math.Log10(2)) + 1
+ 
+-	// estimatedNumDigits (lg10) may be off by 1, need to verify
+-	digitsBigInt := big.NewInt(int64(estimatedNumDigits))
+-	errorCorrectionUnit := digitsBigInt.Exp(tenInt, digitsBigInt, nil)
++	// 10**lowerBound is the smallest number with lowerBound+1 digits
++	threshold := new(big.Int).Exp(tenInt, big.NewInt(int64(lowerBound)), nil)
+ 
+-	if v.CmpAbs(errorCorrectionUnit) >= 0 {
+-		return estimatedNumDigits + 1
++	if v.CmpAbs(threshold) >= 0 {
++		return lowerBound + 1
+ 	}
+ 
+-	return estimatedNumDigits
++	return lowerBound
+ }
+ 
+ // IsInteger returns true when decimal can be represented as an integer value, otherwise, it returns false.
+diff --git a/decimal_test.go b/decimal_test.go
+index 25d95bc..614918f 100644
+--- a/decimal_test.go
++++ b/decimal_test.go
+@@ -3962,3 +3962,26 @@ func ExampleNewFromFloat() {
+ 	//0.123123123123123
+ 	//-10000000000000
+ }
++
++func TestNumDigitsExact(t *testing.T) {
++	for _, s := range []string{"100000000000000E20", "1000000000000000E20", "10000000000000000E20"} {
++		d, err := NewFromString(s)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if want, got := len(d.Coefficient().Text(10)), d.NumDigits(); want != got {
++			t.Errorf("%s: want %d, got %d", s, want, got)
++		}
++	}
++	p := big.NewInt(1)
++	for i := 0; i < 2000; i++ {
++		for _, delta := range []int64{-1, 0, 1} {
++			v := new(big.Int).Add(p, big.NewInt(delta))
++			d := NewFromBigInt(v, 0)
++			if want, got := len(v.Text(10)), d.NumDigits(); want != got {
++				t.Fatalf("10^%d%+d: want %d, got %d", i, delta, want, got)
++			}
++		}
++		p.Mul(p, big.NewInt(10))
++	}
++}

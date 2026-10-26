@@ -15,10 +15,10 @@ the bug report, the upstream change and every agent's diff next to it.
 | Setup | `muffle init` flags |
 |---|---|
 | base | none: the agent without muffle |
-| muffle | `--lean` |
-| hush | `--lean --hush` |
-| sloth | `--lean --sloth` |
-| all | `--lean --hush --sloth` |
+| muffle | none |
+| hush | `--hush` |
+| sloth | `--sloth` |
+| all | `--hush --sloth` |
 
 ## Command output
 

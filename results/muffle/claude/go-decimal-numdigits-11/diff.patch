@@ -1,0 +1,64 @@
+diff --git a/decimal.go b/decimal.go
+index 880d569..ebb5cf0 100644
+--- a/decimal.go
++++ b/decimal.go
+@@ -1255,14 +1255,17 @@ func (d Decimal) Ln(precision int32) (Decimal, error) {
+ func (d Decimal) NumDigits() int {
+ 	v := d.getValue()
+ 	if v.IsInt64() {
+-		i64 := v.Int64()
+-		// restrict fast path to integers with exact conversion to float64
+-		if i64 <= (1<<53) && i64 >= -(1<<53) {
+-			if i64 == 0 {
+-				return 1
+-			}
+-			return int(math.Log10(math.Abs(float64(i64)))) + 1
++		// exact integer comparison; math.Log10 can round just below an exact power of ten
++		u := uint64(v.Int64())
++		if v.Sign() < 0 {
++			u = -u
++		}
++		n := 1
++		for u >= 10 {
++			u /= 10
++			n++
+ 		}
++		return n
+ 	}
+ 
+ 	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
+diff --git a/decimal_test.go b/decimal_test.go
+index 25d95bc..02403c9 100644
+--- a/decimal_test.go
++++ b/decimal_test.go
+@@ -3962,3 +3962,30 @@ func ExampleNewFromFloat() {
+ 	//0.123123123123123
+ 	//-10000000000000
+ }
++
++func TestNumDigitsMatchesCoefficientText(t *testing.T) {
++	for _, s := range []string{
++		"0", "9", "10", "-10", "-9223372036854775808", "9223372036854775807",
++		"100000000000000E20", "1000000000000000E20", "10000000000000000E20",
++		"99999999999999999999", "100000000000000000000", "-100000000000000000000",
++	} {
++		d, err := NewFromString(s)
++		if err != nil {
++			t.Fatal(err)
++		}
++		want := len(new(big.Int).Abs(d.Coefficient()).Text(10))
++		if got := d.NumDigits(); got != want {
++			t.Errorf("%s: NumDigits() = %d, want %d", s, got, want)
++		}
++	}
++	for e := 0; e < 60; e++ {
++		v := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(e)), nil)
++		for _, x := range []*big.Int{v, new(big.Int).Sub(v, big.NewInt(1))} {
++			d := NewFromBigInt(x, 0)
++			want := len(x.Text(10))
++			if got := d.NumDigits(); got != want {
++				t.Errorf("%s: NumDigits() = %d, want %d", x, got, want)
++			}
++		}
++	}
++}

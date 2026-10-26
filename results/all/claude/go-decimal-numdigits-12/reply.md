@@ -1,0 +1,1 @@
+Done. `NumDigits` in `decimal.go` now counts digits of int64-sized coefficients with integer division. The old `math.Log10` fast path was inexact at powers of ten. The `big.Int` path is unchanged. I added your three cases plus two negative/boundary cases to `TestDecimal_NumDigits`, and `go test ./...` passes. The benchmark wasn't run, so the speed change is unmeasured.

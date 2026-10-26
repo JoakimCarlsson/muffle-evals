@@ -1,0 +1,924 @@
+$ git blame tree.go
+7b17e9c evals 2026-10-22
+1	package chi
+2	
+3	// Radix tree implementation below is a based on the original work by
+4	// Armon Dadgar in https://github.com/armon/go-radix/blob/master/radix.go
+5	// (MIT licensed). It's been heavily modified for use as a HTTP routing tree.
+6	
+7	import (
+8		"fmt"
+9		"net/http"
+10		"reflect"
+11		"regexp"
+12		"slices"
+13		"sort"
+14		"strconv"
+15		"strings"
+16	)
+17	
+18	type methodTyp uint
+19	
+20	const (
+21		mSTUB methodTyp = 1 << iota
+22		mCONNECT
+23		mDELETE
+24		mGET
+25		mHEAD
+26		mOPTIONS
+27		mPATCH
+28		mPOST
+29		mPUT
+30		mQUERY
+31		mTRACE
+32	)
+33	
+34	var mALL = mCONNECT | mDELETE | mGET | mHEAD |
+35		mOPTIONS | mPATCH | mPOST | mPUT | mQUERY | mTRACE
+36	
+37	// methodQuery is the HTTP QUERY method (RFC 10008), a safe, idempotent
+38	// method that conveys a request body. It is defined here until net/http
+39	// provides an equivalent constant, at which point this is a 1-1 swap.
+40	const methodQuery = "QUERY"
+41	
+42	var methodMap = map[string]methodTyp{
+43		http.MethodConnect: mCONNECT,
+44		http.MethodDelete:  mDELETE,
+45		http.MethodGet:     mGET,
+46		http.MethodHead:    mHEAD,
+47		http.MethodOptions: mOPTIONS,
+48		http.MethodPatch:   mPATCH,
+49		http.MethodPost:    mPOST,
+50		http.MethodPut:     mPUT,
+51		methodQuery:        mQUERY,
+52		http.MethodTrace:   mTRACE,
+53	}
+54	
+55	var reverseMethodMap = map[methodTyp]string{
+56		mCONNECT: http.MethodConnect,
+57		mDELETE:  http.MethodDelete,
+58		mGET:     http.MethodGet,
+59		mHEAD:    http.MethodHead,
+60		mOPTIONS: http.MethodOptions,
+61		mPATCH:   http.MethodPatch,
+62		mPOST:    http.MethodPost,
+63		mPUT:     http.MethodPut,
+64		mQUERY:   methodQuery,
+65		mTRACE:   http.MethodTrace,
+66	}
+67	
+68	// RegisterMethod adds support for custom HTTP method handlers, available
+69	// via Router#Method and Router#MethodFunc
+70	func RegisterMethod(method string) {
+71		if method == "" {
+72			return
+73		}
+74		method = strings.ToUpper(method)
+75		if _, ok := methodMap[method]; ok {
+76			return
+77		}
+78		n := len(methodMap)
+79		if n > strconv.IntSize-2 {
+80			panic(fmt.Sprintf("chi: max number of methods reached (%d)", strconv.IntSize))
+81		}
+82		mt := methodTyp(2 << n)
+83		methodMap[method] = mt
+84		reverseMethodMap[mt] = method
+85		mALL |= mt
+86	}
+87	
+88	type nodeTyp uint8
+89	
+90	const (
+91		ntStatic   nodeTyp = iota // /home
+92		ntRegexp                  // /{id:[0-9]+}
+93		ntParam                   // /{user}
+94		ntCatchAll                // /api/v1/*
+95	)
+96	
+97	type node struct {
+98		// subroutes on the leaf node
+99		subroutes Routes
+100	
+101		// regexp matcher for regexp nodes
+102		rex *regexp.Regexp
+103	
+104		// HTTP handler endpoints on the leaf node
+105		endpoints endpoints
+106	
+107		// prefix is the common prefix we ignore
+108		prefix string
+109	
+110		// child nodes should be stored in-order for iteration,
+111		// in groups of the node type.
+112		children [ntCatchAll + 1]nodes
+113	
+114		// first byte of the child prefix
+115		tail byte
+116	
+117		// node type: static, regexp, param, catchAll
+118		typ nodeTyp
+119	
+120		// first byte of the prefix
+121		label byte
+122	}
+123	
+124	// endpoints is a mapping of http method constants to handlers
+125	// for a given route.
+126	type endpoints map[methodTyp]*endpoint
+127	
+128	type endpoint struct {
+129		// endpoint handler
+130		handler http.Handler
+131	
+132		// pattern is the routing pattern for handler nodes
+133		pattern string
+134	
+135		// parameter keys recorded on handler nodes
+136		paramKeys []string
+137	}
+138	
+139	func (s endpoints) Value(method methodTyp) *endpoint {
+140		mh, ok := s[method]
+141		if !ok {
+142			mh = &endpoint{}
+143			s[method] = mh
+144		}
+145		return mh
+146	}
+147	
+148	func (n *node) InsertRoute(method methodTyp, pattern string, handler http.Handler) *node {
+149		var parent *node
+150		search := pattern
+151	
+152		for {
+153			// Handle key exhaustion
+154			if len(search) == 0 {
+155				// Insert or update the node's leaf handler
+156				n.setEndpoint(method, handler, pattern)
+157				return n
+158			}
+159	
+160			// We're going to be searching for a wild node next,
+161			// in this case, we need to get the tail
+162			var label = search[0]
+163			var segTail byte
+164			var segEndIdx int
+165			var segTyp nodeTyp
+166			var segRexpat string
+167			if label == '{' || label == '*' {
+168				segTyp, _, segRexpat, segTail, _, segEndIdx = patNextSegment(search)
+169			}
+170	
+171			var prefix string
+172			if segTyp == ntRegexp {
+173				prefix = segRexpat
+174			}
+175	
+176			// Look for the edge to attach to
+177			parent = n
+178			n = n.getEdge(segTyp, label, segTail, prefix)
+179	
+180			// No edge, create one
+181			if n == nil {
+182				child := &node{label: label, tail: segTail, prefix: search}
+183				hn := parent.addChild(child, search)
+184				hn.setEndpoint(method, handler, pattern)
+185	
+186				return hn
+187			}
+188	
+189			// Found an edge to match the pattern
+190	
+191			if n.typ > ntStatic {
+192				// We found a param node, trim the param from the search path and continue.
+193				// This param/wild pattern segment would already be on the tree from a previous
+194				// call to addChild when creating a new node.
+195				search = search[segEndIdx:]
+196				continue
+197			}
+198	
+199			// Static nodes fall below here.
+200			// Determine longest prefix of the search key on match.
+201			commonPrefix := longestPrefix(search, n.prefix)
+202			if commonPrefix == len(n.prefix) {
+203				// the common prefix is as long as the current node's prefix we're attempting to insert.
+204				// keep the search going.
+205				search = search[commonPrefix:]
+206				continue
+207			}
+208	
+209			// Split the node
+210			child := &node{
+211				typ:    ntStatic,
+212				prefix: search[:commonPrefix],
+213			}
+214			parent.replaceChild(search[0], segTail, child)
+215	
+216			// Restore the existing node
+217			n.label = n.prefix[commonPrefix]
+218			n.prefix = n.prefix[commonPrefix:]
+219			child.addChild(n, n.prefix)
+220	
+221			// If the new key is a subset, set the method/handler on this node and finish.
+222			search = search[commonPrefix:]
+223			if len(search) == 0 {
+224				child.setEndpoint(method, handler, pattern)
+225				return child
+226			}
+227	
+228			// Create a new edge for the node
+229			subchild := &node{
+230				typ:    ntStatic,
+231				label:  search[0],
+232				prefix: search,
+233			}
+234			hn := child.addChild(subchild, search)
+235			hn.setEndpoint(method, handler, pattern)
+236			return hn
+237		}
+238	}
+239	
+240	// addChild appends the new `child` node to the tree using the `pattern` as the trie key.
+241	// For a URL router like chi's, we split the static, param, regexp and wildcard segments
+242	// into different nodes. In addition, addChild will recursively call itself until every
+243	// pattern segment is added to the url pattern tree as individual nodes, depending on type.
+244	func (n *node) addChild(child *node, prefix string) *node {
+245		search := prefix
+246	
+247		// handler leaf node added to the tree is the child.
+248		// this may be overridden later down the flow
+249		hn := child
+250	
+251		// Parse next segment
+252		segTyp, _, segRexpat, segTail, segStartIdx, segEndIdx := patNextSegment(search)
+253	
+254		// Add child depending on next up segment
+255		switch segTyp {
+256	
+257		case ntStatic:
+258			// Search prefix is all static (that is, has no params in path)
+259			// noop
+260	
+261		default:
+262			// Search prefix contains a param, regexp or wildcard
+263	
+264			if segTyp == ntRegexp {
+265				rex, err := regexp.Compile(segRexpat)
+266				if err != nil {
+267					panic(fmt.Sprintf("chi: invalid regexp pattern '%s' in route param", segRexpat))
+268				}
+269				child.prefix = segRexpat
+270				child.rex = rex
+271			}
+272	
+273			if segStartIdx == 0 {
+274				// Route starts with a param
+275				child.typ = segTyp
+276	
+277				if segTyp == ntCatchAll {
+278					segStartIdx = -1
+279				} else {
+280					segStartIdx = segEndIdx
+281				}
+282				if segStartIdx < 0 {
+283					segStartIdx = len(search)
+284				}
+285				child.tail = segTail // for params, we set the tail
+286	
+287				if segStartIdx != len(search) {
+288					// add static edge for the remaining part, split the end.
+289					// its not possible to have adjacent param nodes, so its certainly
+290					// going to be a static node next.
+291	
+292					search = search[segStartIdx:] // advance search position
+293	
+294					nn := &node{
+295						typ:    ntStatic,
+296						label:  search[0],
+297						prefix: search,
+298					}
+299					hn = child.addChild(nn, search)
+300				}
+301	
+302			} else if segStartIdx > 0 {
+303				// Route has some param
+304	
+305				// starts with a static segment
+306				child.typ = ntStatic
+307				child.prefix = search[:segStartIdx]
+308				child.rex = nil
+309	
+310				// add the param edge node
+311				search = search[segStartIdx:]
+312	
+313				nn := &node{
+314					typ:   segTyp,
+315					label: search[0],
+316					tail:  segTail,
+317				}
+318				hn = child.addChild(nn, search)
+319	
+320			}
+321		}
+322	
+323		n.children[child.typ] = append(n.children[child.typ], child)
+324		n.children[child.typ].Sort()
+325		return hn
+326	}
+327	
+328	func (n *node) replaceChild(label, tail byte, child *node) {
+329		for i := 0; i < len(n.children[child.typ]); i++ {
+330			if n.children[child.typ][i].label == label && n.children[child.typ][i].tail == tail {
+331				n.children[child.typ][i] = child
+332				n.children[child.typ][i].label = label
+333				n.children[child.typ][i].tail = tail
+334				return
+335			}
+336		}
+337		panic("chi: replacing missing child")
+338	}
+339	
+340	func (n *node) getEdge(ntyp nodeTyp, label, tail byte, prefix string) *node {
+341		nds := n.children[ntyp]
+342		for i := range nds {
+343			if nds[i].label == label && nds[i].tail == tail {
+344				if ntyp == ntRegexp && nds[i].prefix != prefix {
+345					continue
+346				}
+347				return nds[i]
+348			}
+349		}
+350		return nil
+351	}
+352	
+353	func (n *node) setEndpoint(method methodTyp, handler http.Handler, pattern string) {
+354		// Set the handler for the method type on the node
+355		if n.endpoints == nil {
+356			n.endpoints = make(endpoints)
+357		}
+358	
+359		paramKeys := patParamKeys(pattern)
+360	
+361		if method&mSTUB == mSTUB {
+362			n.endpoints.Value(mSTUB).handler = handler
+363		}
+364		if method&mALL == mALL {
+365			h := n.endpoints.Value(mALL)
+366			h.handler = handler
+367			h.pattern = pattern
+368			h.paramKeys = paramKeys
+369			for _, m := range methodMap {
+370				h := n.endpoints.Value(m)
+371				h.handler = handler
+372				h.pattern = pattern
+373				h.paramKeys = paramKeys
+374			}
+375		} else {
+376			h := n.endpoints.Value(method)
+377			h.handler = handler
+378			h.pattern = pattern
+379			h.paramKeys = paramKeys
+380		}
+381	}
+382	
+383	func (n *node) FindRoute(rctx *Context, method methodTyp, path string) (*node, endpoints, http.Handler) {
+384		// Reset the context routing pattern and params
+385		rctx.routePattern = ""
+386		rctx.routeParams.Keys = rctx.routeParams.Keys[:0]
+387		rctx.routeParams.Values = rctx.routeParams.Values[:0]
+388	
+389		// Find the routing handlers for the path
+390		rn := n.findRoute(rctx, method, path)
+391		if rn == nil {
+392			return nil, nil, nil
+393		}
+394	
+395		// Record the routing params in the request lifecycle
+396		rctx.URLParams.Keys = append(rctx.URLParams.Keys, rctx.routeParams.Keys...)
+397		rctx.URLParams.Values = append(rctx.URLParams.Values, rctx.routeParams.Values...)
+398	
+399		// Record the routing pattern in the request lifecycle
+400		if rn.endpoints[method].pattern != "" {
+401			rctx.routePattern = rn.endpoints[method].pattern
+402			rctx.RoutePatterns = append(rctx.RoutePatterns, rctx.routePattern)
+403		}
+404	
+405		return rn, rn.endpoints, rn.endpoints[method].handler
+406	}
+407	
+408	// Recursive edge traversal by checking all nodeTyp groups along the way.
+409	// It's like searching through a multi-dimensional radix trie.
+410	func (n *node) findRoute(rctx *Context, method methodTyp, path string) *node {
+411		nn := n
+412		search := path
+413	
+414		for t, nds := range nn.children {
+415			ntyp := nodeTyp(t)
+416			if len(nds) == 0 {
+417				continue
+418			}
+419	
+420			var xn *node
+421			xsearch := search
+422	
+423			var label byte
+424			if search != "" {
+425				label = search[0]
+426			}
+427	
+428			switch ntyp {
+429			case ntStatic:
+430				xn = nds.findEdge(label)
+431				if xn == nil || !strings.HasPrefix(xsearch, xn.prefix) {
+432					continue
+433				}
+434				xsearch = xsearch[len(xn.prefix):]
+435	
+436			case ntParam, ntRegexp:
+437				// short-circuit and return no matching route for empty param values
+438				if xsearch == "" {
+439					continue
+440				}
+441	
+442				// serially loop through each node grouped by the tail delimiter
+443				for _, xn = range nds {
+444					// label for param nodes is the delimiter byte
+445					p := strings.IndexByte(xsearch, xn.tail)
+446	
+447					if p < 0 {
+448						if xn.tail == '/' {
+449							p = len(xsearch)
+450						} else {
+451							continue
+452						}
+453					} else if ntyp == ntRegexp && p == 0 {
+454						continue
+455					}
+456	
+457					if ntyp == ntRegexp && xn.rex != nil {
+458						if !xn.rex.MatchString(xsearch[:p]) {
+459							continue
+460						}
+461					} else if strings.IndexByte(xsearch[:p], '/') != -1 {
+462						// avoid a match across path segments
+463						continue
+464					}
+465	
+466					prevlen := len(rctx.routeParams.Values)
+467					rctx.routeParams.Values = append(rctx.routeParams.Values, xsearch[:p])
+468					xsearch = xsearch[p:]
+469	
+470					if len(xsearch) == 0 {
+471						if xn.isLeaf() {
+472							h := xn.endpoints[method]
+473							if h != nil && h.handler != nil {
+474								rctx.routeParams.Keys = append(rctx.routeParams.Keys, h.paramKeys...)
+475								return xn
+476							}
+477	
+478							for endpoints := range xn.endpoints {
+479								if endpoints == mALL || endpoints == mSTUB {
+480									continue
+481								}
+482								rctx.methodsAllowed = append(rctx.methodsAllowed, endpoints)
+483							}
+484	
+485							// flag that the routing context found a route, but not a corresponding
+486							// supported method
+487							rctx.methodNotAllowed = true
+488						}
+489					}
+490	
+491					// recursively find the next node on this branch
+492					fin := xn.findRoute(rctx, method, xsearch)
+493					if fin != nil {
+494						return fin
+495					}
+496	
+497					// not found on this branch, reset vars
+498					rctx.routeParams.Values = rctx.routeParams.Values[:prevlen]
+499					xsearch = search
+500				}
+501	
+502				rctx.routeParams.Values = append(rctx.routeParams.Values, "")
+503	
+504			default:
+505				// catch-all nodes
+506				rctx.routeParams.Values = append(rctx.routeParams.Values, search)
+507				xn = nds[0]
+508				xsearch = ""
+509			}
+510	
+511			if xn == nil {
+512				continue
+513			}
+514	
+515			// did we find it yet?
+516			if len(xsearch) == 0 {
+517				if xn.isLeaf() {
+518					h := xn.endpoints[method]
+519					if h != nil && h.handler != nil {
+520						rctx.routeParams.Keys = append(rctx.routeParams.Keys, h.paramKeys...)
+521						return xn
+522					}
+523	
+524					for endpoints := range xn.endpoints {
+525						if endpoints == mALL || endpoints == mSTUB {
+526							continue
+527						}
+528						rctx.methodsAllowed = append(rctx.methodsAllowed, endpoints)
+529					}
+530	
+531					// flag that the routing context found a route, but not a corresponding
+532					// supported method
+533					rctx.methodNotAllowed = true
+534				}
+535			}
+536	
+537			// recursively find the next node..
+538			fin := xn.findRoute(rctx, method, xsearch)
+539			if fin != nil {
+540				return fin
+541			}
+542	
+543			// Did not find final handler, let's remove the param here if it was set
+544			if xn.typ > ntStatic {
+545				if len(rctx.routeParams.Values) > 0 {
+546					rctx.routeParams.Values = rctx.routeParams.Values[:len(rctx.routeParams.Values)-1]
+547				}
+548			}
+549	
+550		}
+551	
+552		return nil
+553	}
+554	
+555	func (n *node) findEdge(ntyp nodeTyp, label byte) *node {
+556		nds := n.children[ntyp]
+557		num := len(nds)
+558		idx := 0
+559	
+560		switch ntyp {
+561		case ntStatic, ntParam, ntRegexp:
+562			i, j := 0, num-1
+563			for i <= j {
+564				idx = i + (j-i)/2
+565				if label > nds[idx].label {
+566					i = idx + 1
+567				} else if label < nds[idx].label {
+568					j = idx - 1
+569				} else {
+570					i = num // breaks cond
+571				}
+572			}
+573			if nds[idx].label != label {
+574				return nil
+575			}
+576			return nds[idx]
+577	
+578		default: // catch all
+579			return nds[idx]
+580		}
+581	}
+582	
+583	func (n *node) isLeaf() bool {
+584		return n.endpoints != nil
+585	}
+586	
+587	func (n *node) findPattern(pattern string) bool {
+588		nn := n
+589		for _, nds := range nn.children {
+590			if len(nds) == 0 {
+591				continue
+592			}
+593	
+594			n = nn.findEdge(nds[0].typ, pattern[0])
+595			if n == nil {
+596				continue
+597			}
+598	
+599			var idx int
+600			var xpattern string
+601	
+602			switch n.typ {
+603			case ntStatic:
+604				idx = longestPrefix(pattern, n.prefix)
+605				if idx < len(n.prefix) {
+606					continue
+607				}
+608	
+609			case ntParam, ntRegexp:
+610				idx = strings.IndexByte(pattern, '}') + 1
+611	
+612			case ntCatchAll:
+613				idx = longestPrefix(pattern, "*")
+614	
+615			default:
+616				panic("chi: unknown node type")
+617			}
+618	
+619			xpattern = pattern[idx:]
+620			if len(xpattern) == 0 {
+621				return true
+622			}
+623	
+624			return n.findPattern(xpattern)
+625		}
+626		return false
+627	}
+628	
+629	func (n *node) routes() []Route {
+630		rts := []Route{}
+631	
+632		n.walk(func(eps endpoints, subroutes Routes) bool {
+633			// Hide Mount()'s stub handler, but not a real handler sharing its pattern.
+634			var stubHandler http.Handler
+635			if eps[mSTUB] != nil {
+636				stubHandler = eps[mSTUB].handler
+637			}
+638	
+639			// Group methodHandlers by unique patterns
+640			pats := make(map[string]endpoints)
+641	
+642			for mt, h := range eps {
+643				if h.pattern == "" {
+644					continue
+645				}
+646				p, ok := pats[h.pattern]
+647				if !ok {
+648					p = endpoints{}
+649					pats[h.pattern] = p
+650				}
+651				p[mt] = h
+652			}
+653	
+654			for p, mh := range pats {
+655				hs := make(map[string]http.Handler)
+656	
+657				// Walk() reads Handlers["*"] for With() middleware when recursing
+658				// into a subroute, so keep it there even if it's also the stub.
+659				if mh[mALL] != nil && mh[mALL].handler != nil {
+660					if subroutes != nil || !equalHandlers(mh[mALL].handler, stubHandler) {
+661						hs["*"] = mh[mALL].handler
+662					}
+663				}
+664	
+665				for mt, h := range mh {
+666					if h.handler == nil || equalHandlers(h.handler, stubHandler) {
+667						continue
+668					}
+669					if m, ok := reverseMethodMap[mt]; ok {
+670						hs[m] = h.handler
+671					}
+672				}
+673	
+674				// Keep subroute nodes so Walk() can recurse; a stub-only leaf has nothing to report.
+675				if len(hs) == 0 && subroutes == nil {
+676					continue
+677				}
+678	
+679				rt := Route{subroutes, hs, p}
+680				rts = append(rts, rt)
+681			}
+682	
+683			return false
+684		})
+685	
+686		return rts
+687	}
+688	
+689	// equalHandlers reports whether a and b are the same handler value. Handlers
+690	// are commonly funcs (e.g. http.HandlerFunc), and a direct == on those
+691	// panics at runtime, so funcs are compared by pointer instead.
+692	func equalHandlers(a, b http.Handler) bool {
+693		if a == nil || b == nil {
+694			return a == b
+695		}
+696	
+697		av := reflect.ValueOf(a)
+698		bv := reflect.ValueOf(b)
+699		if av.Type() != bv.Type() {
+700			return false
+701		}
+702	
+703		if av.Kind() == reflect.Func {
+704			return av.Pointer() == bv.Pointer()
+705		}
+706		if av.Type().Comparable() {
+707			return a == b
+708		}
+709		return false
+710	}
+711	
+712	func (n *node) walk(fn func(eps endpoints, subroutes Routes) bool) bool {
+713		// Visit the leaf values if any
+714		if (n.endpoints != nil || n.subroutes != nil) && fn(n.endpoints, n.subroutes) {
+715			return true
+716		}
+717	
+718		// Recurse on the children
+719		for _, ns := range n.children {
+720			for _, cn := range ns {
+721				if cn.walk(fn) {
+722					return true
+723				}
+724			}
+725		}
+726		return false
+727	}
+728	
+729	// patNextSegment returns the next segment details from a pattern:
+730	// node type, param key, regexp string, param tail byte, param starting index, param ending index
+731	func patNextSegment(pattern string) (nodeTyp, string, string, byte, int, int) {
+732		ps := strings.Index(pattern, "{")
+733		ws := strings.Index(pattern, "*")
+734	
+735		if ps < 0 && ws < 0 {
+736			return ntStatic, "", "", 0, 0, len(pattern) // we return the entire thing
+737		}
+738	
+739		// Sanity check
+740		if ps >= 0 && ws >= 0 && ws < ps {
+741			panic("chi: wildcard '*' must be the last pattern in a route, otherwise use a '{param}'")
+742		}
+743	
+744		var tail byte = '/' // Default endpoint tail to / byte
+745	
+746		if ps >= 0 {
+747			// Param/Regexp pattern is next
+748			nt := ntParam
+749	
+750			// Read to closing } taking into account opens and closes in curl count (cc)
+751			cc := 0
+752			pe := ps
+753			for i, c := range pattern[ps:] {
+754				if c == '{' {
+755					cc++
+756				} else if c == '}' {
+757					cc--
+758					if cc == 0 {
+759						pe = ps + i
+760						break
+761					}
+762				}
+763			}
+764			if pe == ps {
+765				panic("chi: route param closing delimiter '}' is missing")
+766			}
+767	
+768			key := pattern[ps+1 : pe]
+769			pe++ // set end to next position
+770	
+771			if pe < len(pattern) {
+772				tail = pattern[pe]
+773			}
+774	
+775			key, rexpat, isRegexp := strings.Cut(key, ":")
+776			if isRegexp {
+777				nt = ntRegexp
+778			}
+779	
+780			if len(rexpat) > 0 {
+781				if rexpat[0] != '^' {
+782					rexpat = "^" + rexpat
+783				}
+784				if rexpat[len(rexpat)-1] != '$' {
+785					rexpat += "$"
+786				}
+787			}
+788	
+789			return nt, key, rexpat, tail, ps, pe
+790		}
+791	
+792		// Wildcard pattern as finale
+793		if ws < len(pattern)-1 {
+794			panic("chi: wildcard '*' must be the last value in a route. trim trailing text or use a '{param}' instead")
+795		}
+796		return ntCatchAll, "*", "", 0, ws, len(pattern)
+797	}
+798	
+799	func patParamKeys(pattern string) []string {
+800		pat := pattern
+801		paramKeys := []string{}
+802		for {
+803			ptyp, paramKey, _, _, _, e := patNextSegment(pat)
+804			if ptyp == ntStatic {
+805				return paramKeys
+806			}
+807			for i := 0; i < len(paramKeys); i++ {
+808				if paramKeys[i] == paramKey {
+809					panic(fmt.Sprintf("chi: routing pattern '%s' contains duplicate param key, '%s'", pattern, paramKey))
+810				}
+811			}
+812			paramKeys = append(paramKeys, paramKey)
+813			pat = pat[e:]
+814		}
+815	}
+816	
+817	// longestPrefix finds the length of the shared prefix of two strings
+818	func longestPrefix(k1, k2 string) (i int) {
+819		for i = 0; i < min(len(k1), len(k2)); i++ {
+820			if k1[i] != k2[i] {
+821				break
+822			}
+823		}
+824		return
+825	}
+826	
+827	type nodes []*node
+828	
+829	// Sort the list of nodes by label
+830	func (ns nodes) Sort()              { sort.Sort(ns); ns.tailSort() }
+831	func (ns nodes) Len() int           { return len(ns) }
+832	func (ns nodes) Swap(i, j int)      { ns[i], ns[j] = ns[j], ns[i] }
+833	func (ns nodes) Less(i, j int) bool { return ns[i].label < ns[j].label }
+834	
+835	// tailSort pushes nodes with '/' as the tail to the end of the list for param nodes.
+836	// The list order determines the traversal order.
+837	func (ns nodes) tailSort() {
+838		for i := len(ns) - 1; i >= 0; i-- {
+839			if ns[i].typ > ntStatic && ns[i].tail == '/' {
+840				ns.Swap(i, len(ns)-1)
+841				return
+842			}
+843		}
+844	}
+845	
+846	func (ns nodes) findEdge(label byte) *node {
+847		num := len(ns)
+848		idx := 0
+849		i, j := 0, num-1
+850		for i <= j {
+851			idx = i + (j-i)/2
+852			if label > ns[idx].label {
+853				i = idx + 1
+854			} else if label < ns[idx].label {
+855				j = idx - 1
+856			} else {
+857				i = num // breaks cond
+858			}
+859		}
+860		if ns[idx].label != label {
+861			return nil
+862		}
+863		return ns[idx]
+864	}
+865	
+866	// Route describes the details of a routing handler.
+867	// Handlers map key is an HTTP method
+868	type Route struct {
+869		SubRoutes Routes
+870		Handlers  map[string]http.Handler
+871		Pattern   string
+872	}
+873	
+874	// WalkFunc is the type of the function called for each method and route visited by Walk.
+875	type WalkFunc func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error
+876	
+877	// Walk walks any router tree that implements Routes interface.
+878	func Walk(r Routes, walkFn WalkFunc) error {
+879		return walk(r, walkFn, "")
+880	}
+881	
+882	func walk(r Routes, walkFn WalkFunc, parentRoute string, parentMw ...func(http.Handler) http.Handler) error {
+883		for _, route := range r.Routes() {
+884			mws := slices.Concat(parentMw, r.Middlewares())
+885	
+886			if route.SubRoutes != nil {
+887				if handler, ok := route.Handlers["*"]; ok {
+888					if chain, ok := handler.(*ChainHandler); ok {
+889						mws = append(mws, chain.Middlewares...)
+890					}
+891				}
+892	
+893				if err := walk(route.SubRoutes, walkFn, parentRoute+route.Pattern, mws...); err != nil {
+894					return err
+895				}
+896				continue
+897			}
+898	
+899			for method, handler := range route.Handlers {
+900				if method == "*" {
+901					// Ignore a "catchAll" method, since we pass down all the specific methods for each route.
+902					continue
+903				}
+904	
+905				fullRoute := parentRoute + route.Pattern
+906				fullRoute = strings.ReplaceAll(fullRoute, "/*/", "/")
+907	
+908				if chain, ok := handler.(*ChainHandler); ok {
+909					if err := walkFn(method, fullRoute, chain.Endpoint, append(mws, chain.Middlewares...)...); err != nil {
+910						return err
+911					}
+912				} else {
+913					if err := walkFn(method, fullRoute, handler, mws...); err != nil {
+914						return err
+915					}
+916				}
+917			}
+918		}
+919	
+920		return nil
+921	}
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-msnp7aoj.log]

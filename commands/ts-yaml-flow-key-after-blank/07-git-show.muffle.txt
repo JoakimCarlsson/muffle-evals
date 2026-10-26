@@ -1,0 +1,676 @@
+$ git show HEAD
+b0e2824b 2026-10-22 evals: base
+=== LICENSE
+new file mode 100644
+@@ -0,0 +1,13 @@
++Copyright Eemeli Aro <eemeli@gmail.com>
++
++Permission to use, copy, modify, and/or distribute this software for any purpose
++with or without fee is hereby granted, provided that the above copyright notice
++and this permission notice appear in all copies.
++
++THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
++REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
++FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
++INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
++OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
++TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
++THIS SOFTWARE.
+=== README.md
+new file mode 100644
+@@ -0,0 +1,152 @@
++# YAML <a href="https://www.npmjs.com/package/yaml"><img align="right" src="https://badge.fury.io/js/yaml.svg" title="npm package" /></a>
++
++`yaml` is a definitive library for [YAML](https://yaml.org/), the human friendly data serialization standard.
++This library:
++
++- Supports both YAML 1.1 and YAML 1.2 and all common data schemas,
++- Passes all of the [yaml-test-suite](https://github.com/yaml/yaml-test-suite) tests,
++- Can accept any string as input without throwing, parsing as much YAML out of it as it can, and
++- Supports parsing, modifying, and writing YAML comments and blank lines.
++
++The library is released under the ISC open source license, and the code is [available on GitHub](https://github.com/eemeli/yaml/).
++It has no external dependencies and runs on Node.js as well as modern browsers.
++
++For the purposes of versioning, any changes that break any of the documented endpoints or APIs will be considered semver-major breaking changes.
++Undocumented library internals may change between minor versions, and previous APIs may be deprecated (but not removed).
++
++The minimum supported TypeScript version of the included typings is 5.9;
++for use in earlier versions you may need to set `skipLibCheck: true` in your config.
++This requirement may be updated between minor versions of the library.
++
++For more information, see the project's documentation site: [**eemeli.org/yaml**](https://eemeli.org/yaml/)
++
++For build instructions and contribution guidelines, see [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
++
++To install:
++
++```sh
++npm install --save-exact yaml@next
++# or
++deno add jsr:@eemeli/yaml
++```
++
++## API Overview
++
++The API provided by `yaml` has three layers, depending on how deep you need to go: [Parse & Stringify](https://eemeli.org/yaml/#parse-amp-stringify), [Documents](https://eemeli.org/yaml/#documents), and the underlying [Lexer/Parser/Composer](https://eemeli.org/yaml/#parsing-yaml).
++The first has the simplest API and "just works", the second gets you all the bells and whistles supported by the library along with a decent [AST](https://eemeli.org/yaml/#content-nodes), and the third lets you get progressively closer to YAML source, if that's your thing.
++
++A [command-line tool](https://eemeli.org/yaml/#command-line-tool) is also included.
++
++### Parse & Stringify
++
++As far as possible, these functions work the same as `JSON.parse` and `JSON.stringify`.
++
++- [`parse(str, reviver?, options?): value`](https://eemeli.org/yaml/#yaml-parse)
++- [`stringify(value, replacer?, options?): string`](https://eemeli.org/yaml/#yaml-stringify)
++
++```js
++import { parse, stringify } from 'yaml'
++
++parse('[ true, false, maybe, null, 3.14159 ]')
++// [ true, false, 'maybe', null, 3.14159 ]
++
++stringify([true, false, 'maybe', null, 3.14159])
++// `- true
++// - false
++// - maybe
++// - null
++// - 3.14159
++// `
++
++stringify({ number: 3, plain: 'string', block: 'two\nlines\n' })
++// `number: 3
++// plain: string
++// block: |
++//   two
++//   lines
++// `
++```
++
++```yaml
++# file.yml
++YAML:
++  - A human-readable data serialization language
++  - https://en.wikipedia.org/wiki/YAML
++yaml:
++  - A complete JavaScript implementation
++  - https://www.npmjs.com/package/yaml
++```
++
++```js
++import fs from 'node:fs'
++import { parse } from 'yaml'
++
++const file = fs.readFileSync('./file.yml', 'utf8')
++parse(file)
++// { YAML:
++//   [ 'A human-readable data serialization language',
++//     'https://en.wikipedia.org/wiki/YAML' ],
++//   yaml:
++//   [ 'A complete JavaScript implementation',
++//     'https://www.npmjs.com/package/yaml' ] }
++```
++
++### Documents
++
++- [`Document`](https://eemeli.org/yaml/#documents)
++  - [`constructor(value, replacer?, options?)`](https://eemeli.org/yaml/#creating-documents)
++  - [`#value`](https://eemeli.org/yaml/#content-nodes)
++  - [`#directives`](https://eemeli.org/yaml/#stream-directives)
++  - [`#errors`](https://eemeli.org/yaml/#errors)
++  - [`#warnings`](https://eemeli.org/yaml/#errors)
++- [`parseAllDocuments(str, options?): Document[]`](https://eemeli.org/yaml/#parsing-documents)
++- [`parseDocument(str, options?): Document`](https://eemeli.org/yaml/#parsing-documents)
++
++<!-- prettier-ignore -->
++```js
++import {
++  Document,
++  parseAllDocuments,
++  parseDocument
++} from 'yaml'
++```
++
++### Content Nodes
++
++- [`new Scalar(value)`](https://eemeli.org/yaml/#scalar-values)
++- [`new YAMLMap()`](https://eemeli.org/yaml/#collections)
++- [`new YAMLSeq()`](https://eemeli.org/yaml/#collections)
++- [`doc.createAlias(node, name?): Alias`](https://eemeli.org/yaml/#creating-nodes)
++- [`doc.createNode(value, options?): Node`](https://eemeli.org/yaml/#creating-nodes)
++- [`doc.createPair(key, value): Pair`](https://eemeli.org/yaml/#creating-nodes)
++- [`visit(node, visitor)`](https://eemeli.org/yaml/#finding-and-modifying-nodes)
++- [`visitAsync(node, visitor)`](https://eemeli.org/yaml/#finding-and-modifying-nodes)
++
++<!-- prettier-ignore -->
++```js
++import {
++  Scalar,
++  visit,
++  visitAsync,
++  YAMLMap,
++  YAMLSeq
++} from 'yaml'
++```
++
++### Lexer, Concrete Syntax Tree, and AST Composer
++
++- [`new Lexer().lex(src)`](https://eemeli.org/yaml/#lexer)
++- [`new Parser(onNewLine?).parse(src)`](https://eemeli.org/yaml/#parser)
++- [`new Composer(options?).compose(tokens)`](https://eemeli.org/yaml/#composer)
++
++```js
++import { Composer, Lexer, Parser } from 'yaml'
++```
++
++---
++
++Browser testing provided by:
++
++<a href="https://www.browserstack.com/open-source">
++<img width=200 src="https://eemeli.org/yaml/images/browserstack.svg" alt="BrowserStack" />
++</a>
+=== bin.js
+new file mode 100755
+@@ -0,0 +1,11 @@
++#!/usr/bin/env node
++
++import { UserError, cli, help } from './dist/cli.js'
++
++cli(process.stdin, error => {
++  if (error instanceof UserError) {
++    if (error.code === UserError.ARGS) console.error(`${help}\n`)
++    console.error(error.message)
++    process.exitCode = error.code
++  } else if (error) throw error
++})
+=== docs/01_intro.md
+new file mode 100644
+@@ -0,0 +1,110 @@
++# YAML
++
++> To install:
++
++```sh
++npm install --save-exact yaml@next
++# or
++deno add jsr:@eemeli/yaml
++```
++
++> To use:
++
++```js
++import { parse, stringify } from 'yaml'
++// or
++import * as YAML from 'yaml'
++// or
++const YAML = require('yaml')
++```
++
++`yaml` is a definitive library for [YAML](http://yaml.org/), the human friendly data serialization standard.
++This library:
++
++- Supports both YAML 1.1 and YAML 1.2 and all common data schemas,
++- Passes all of the [yaml-test-suite](https://github.com/yaml/yaml-test-suite) tests,
++- Can accept any string as input without throwing, parsing as much YAML out of it as it can, and
++- Supports parsing, modifying, and writing YAML comments and blank lines.
++
++The library is released under the ISC open source license, and the code is [available on GitHub](https://github.com/eemeli/yaml/).
++It has no external dependencies and runs on Node.js as well as modern browsers.
++
++For the purposes of versioning, any changes that break any of the endpoints or APIs documented here will be considered semver-major breaking changes.
++Undocumented library internals may change between minor versions, and previous APIs may be deprecated (but not removed).
++
++The minimum supported TypeScript version of the included typings is 5.9;
++for use in earlier versions you may need to set `skipLibCheck: true` in your config.
++This requirement may be updated between minor versions of the library.
++
++For build instructions and contribution guidelines, see [docs/CONTRIBUTING.md](https://github.com/eemeli/yaml/blob/main/docs/CONTRIBUTING.md) in the repo.
++
++**Note:** These docs are for `yaml` **v3**.
++Documentation is available separately for [**v2**](https://eemeli.org/yaml/v2/) and [**v1**](https://eemeli.org/yaml/v1/).
++
++## API Overview
++
++The API provided by `yaml` has three layers, depending on how deep you need to go: [Parse & Stringify](#parse-amp-stringify), [Documents](#documents), and the underlying [Lexer/Parser/Composer](#parsing-yaml).
++The first has the simplest API and "just works", the second gets you all the bells and whistles supported by the library along with a decent [AST](#content-nodes), and the third lets you get progressively closer to YAML source, if that's your thing.
++
++A [command-line tool](#command-line-tool) is also included.
++
++<h3>Parse & Stringify</h3>
++
++```js
++import { parse, stringify } from 'yaml'
++```
++
++- [`parse(str, reviver?, options?): value`](#yaml-parse)
++- [`stringify(value, replacer?, options?): string`](#yaml-stringify)
++
++<h3>Documents</h3>
++
++<!-- prettier-ignore -->
++```js
++import {
++  Document,
++  parseAllDocuments,
++  parseDocument
++} from 'yaml'
++```
++
++- [`Document`](#documents)
++  - [`constructor(value, replacer?, options?)`](#creating-documents)
++  - [`#value`](#content-nodes)
++  - [`#directives`](#stream-directives)
++  - [`#errors`](#errors)
++  - [`#warnings`](#errors)
++- [`parseAllDocuments(str, options?): Document[]`](#parsing-documents)
++- [`parseDocument(str, options?): Document`](#parsing-documents)
++
++<h3>Content Nodes</h3>
++
++<!-- prettier-ignore -->
++```js
++import {
++  Scalar,
++  visit,
++  visitAsync,
++  YAMLMap,
++  YAMLSeq
++} from 'yaml'
++```
++
++- [`new Scalar(value)`](#scalar-values)
++- [`new YAMLMap()`](#collections)
++- [`new YAMLSeq()`](#collections)
++- [`doc.createAlias(node, name?): Alias`](#creating-nodes)
++- [`doc.createNode(value, options?): Node`](#creating-nodes)
++- [`doc.createPair(key, value): Pair`](#creating-nodes)
++- [`visit(node, visitor)`](#finding-and-modifying-nodes)
++- [`visitAsync(node, visitor)`](#finding-and-modifying-nodes)
++
++<h3>Parsing YAML</h3>
++
++```js
++import { Composer, Lexer, Parser } from 'yaml'
++```
++
++- [`new Lexer().lex(src)`](#lexer)
++- [`new Parser(onNewLine?).parse(src)`](#parser)
++- [`new Composer(options?).compose(tokens)`](#composer)
+=== docs/02_parse_stringify.md
+new file mode 100644
+@@ -0,0 +1,74 @@
++# Parse & Stringify
++
++```yaml
++# file.yml
++YAML:
++  - A human-readable data serialization language
++  - https://en.wikipedia.org/wiki/YAML
++yaml:
++  - A complete JavaScript implementation
++  - https://www.npmjs.com/package/yaml
++```
++
++At its simplest, you can use `YAML.parse(str)` and `YAML.stringify(value)` just as you'd use `JSON.parse(str)` and `JSON.stringify(value)`. If that's enough for you, everything else in these docs is really just implementation details.
++
++## YAML.parse
++
++```js
++import fs from 'fs'
++import YAML from 'yaml'
++
++YAML.parse('3.14159')
++// 3.14159
++
++YAML.parse('[ true, false, maybe, null ]\n')
++// [ true, false, 'maybe', null ]
++
++const file = fs.readFileSync('./file.yml', 'utf8')
++YAML.parse(file)
++// { YAML:
++//   [ 'A human-readable data serialization language',
++//     'https://en.wikipedia.org/wiki/YAML' ],
++//   yaml:
++//   [ 'A complete JavaScript implementation',
++//     'https://www.npmjs.com/package/yaml' ] }
++```
++
++#### `YAML.parse(str, reviver?, options = {}): any`
++
++`str` should be a string with YAML formatting. If defined, the `reviver` function follows the [JSON implementation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/parse#Using_the_reviver_parameter). See [Options](#options) for more information on the last argument, an optional configuration object.
++
++The returned value will match the type of the root value of the parsed YAML document, so Maps become objects, Sequences arrays, and scalars result in nulls, booleans, numbers and strings.
++
++`YAML.parse` may throw on error, and it may log warnings using `console.warn`. It only supports input consisting of a single YAML document; for multi-document support you should use [`YAML.parseAllDocuments`](#parsing-documents).
++
++## YAML.stringify
++
++```js
++YAML.stringify(3.14159)
++// '3.14159\n'
++
++YAML.stringify([true, false, 'maybe', null])
++// `- true
++// - false
++// - maybe
++// - null
++// `
++
++YAML.stringify({ number: 3, plain: 'string', block: 'two\nlines\n' })
++// `number: 3
++// plain: string
++// block: >
++//   two
++//
++//   lines
++// `
++```
++
++#### `YAML.stringify(value, replacer?, options = {}): string`
++
++`value` can be of any type. The returned string will always include `\n` as the last character, as is expected of YAML documents. If defined, the `replacer` array or function follows the [JSON implementation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/stringify#The_replacer_parameter). See [Options](#options) for more information on the last argument, an optional configuration object. For JSON compatibility, using a number or a string as the `options` value will set the `indent` option accordingly.
++
++As strings in particular may be represented in a number of different styles, the simplest option for the value in question will always be chosen, depending mostly on the presence of escaped or control characters and leading & trailing whitespace.
++
++To create a stream of documents, you may call `YAML.stringify` separately for each document's `value`, and concatenate the documents with the string `...\n` as a separator.
+=== docs/03_options.md
+new file mode 100644
+@@ -0,0 +1,170 @@
++# Options
++
++```js
++import { parse, stringify } from 'yaml'
++
++parse('number: 999')
++// { number: 999 }
++
++parse('number: 999', { intAsBigInt: true })
++// { number: 999n }
++
++parse('number: 999', { schema: 'failsafe' })
++// { number: '999' }
++```
++
++The options supported by various `yaml` features are split into various categories, depending on how and where they are used.
++Options in various categories do not overlap, so it's fine to use a single "bag" of options and pass it to each function or method.
++
++## Parse Options
++
++Parse options affect the parsing and composition of a YAML Document from it source.
++
++Used by: `parse()`, `parseDocument()`, `parseAllDocuments()`, `new Composer()`, and `new Document()`
++
++| Name             | Type          | Default | Description                                                                                                                              |
++| ---------------- | ------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
++| intAsBigInt      | `boolean`     | `false` | Whether integers should be parsed into [BigInt] rather than `number` values.                                                             |
++| keepSourceTokens | `boolean`     | `false` | Include a `srcToken` value on each parsed `Node`, containing the [CST token](#working-with-cst-tokens) that was composed into this node. |
++| lineCounter      | `LineCounter` |         | If set, newlines will be tracked, to allow for `lineCounter.linePos(offset)` to provide the `{ line, col }` positions within the input.  |
++| prettyErrors     | `boolean`     | `true`  | Include line/col position in errors, along with an extract of the source string.                                                         |
++| strict           | `boolean`     | `true`  | When parsing, do not ignore errors [required](#silencing-errors-and-warnings) by the YAML 1.2 spec, but caused by unambiguous content.   |
++| stringKeys       | `boolean`     | `false` | Parse all mapping keys as strings. Treat all non-scalar keys as errors.                                                                  |
++
++[bigint]: https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/BigInt
+[+136 more diff lines]
+=== docs/04_documents.md +177 -0
+new file mode 100644
+=== docs/05_content_nodes.md +379 -0
+new file mode 100644
+=== docs/06_custom_tags.md +252 -0
+new file mode 100644
+=== docs/07_parsing_yaml.md +417 -0
+new file mode 100644
+=== docs/08_errors.md +60 -0
+new file mode 100644
+=== docs/09_cli.md +32 -0
+new file mode 100644
+=== docs/10_yaml_syntax.md +121 -0
+new file mode 100644
+=== docs/CONTRIBUTING.md +66 -0
+new file mode 100644
+=== docs/README.md +18 -0
+new file mode 100644
+=== docs/SECURITY.md +16 -0
+new file mode 100644
+=== docs/index.html.md +22 -0
+new file mode 100644
+=== docs/prepare-docs.js +50 -0
+new file mode 100755
+=== eslint.config.js +91 -0
+new file mode 100644
+=== jsr.jsonc +15 -0
+new file mode 100644
+=== package-lock.json +3321 -0
+new file mode 100644
+=== package.json +73 -0
+new file mode 100644
+=== rolldown.config.js +14 -0
+new file mode 100644
+=== src/cli.ts +190 -0
+new file mode 100644
+=== src/compose/compose-collection.ts +148 -0
+new file mode 100644
+=== src/compose/compose-doc.ts +66 -0
+new file mode 100644
+=== src/compose/compose-node.ts +156 -0
+new file mode 100644
+=== src/compose/compose-scalar.ts +117 -0
+new file mode 100644
+=== src/compose/composer.ts +287 -0
+new file mode 100644
+=== src/compose/resolve-block-map.ts +159 -0
+new file mode 100644
+=== src/compose/resolve-block-scalar.ts +213 -0
+new file mode 100644
+=== src/compose/resolve-block-seq.ts +57 -0
+new file mode 100644
+=== src/compose/resolve-end.ts +44 -0
+new file mode 100644
+=== src/compose/resolve-flow-collection.ts +238 -0
+new file mode 100644
+=== src/compose/resolve-flow-scalar.ts +245 -0
+new file mode 100644
+=== src/compose/resolve-props.ts +209 -0
+new file mode 100644
+=== src/compose/util-contains-newline.ts +25 -0
+new file mode 100644
+=== src/compose/util-empty-scalar-position.ts +31 -0
+new file mode 100644
+=== src/compose/util-flow-indent-check.ts +21 -0
+new file mode 100644
+=== src/doc/Document.ts +347 -0
+new file mode 100644
+=== src/doc/NodeCreator.ts +159 -0
+new file mode 100644
+=== src/doc/anchors.ts +37 -0
+new file mode 100644
+=== src/doc/applyReviver.ts +62 -0
+new file mode 100644
+=== src/doc/directives.ts +197 -0
+new file mode 100644
+=== src/errors.ts +103 -0
+new file mode 100644
+=== src/index.ts +59 -0
+new file mode 100644
+=== src/log.ts +18 -0
+new file mode 100644
+=== src/nodes/Alias.ts +169 -0
+new file mode 100644
+=== src/nodes/Pair.ts +52 -0
+new file mode 100644
+=== src/nodes/Scalar.ts +107 -0
+new file mode 100644
+=== src/nodes/YAMLMap.ts +382 -0
+new file mode 100644
+=== src/nodes/YAMLSeq.ts +365 -0
+new file mode 100644
+=== src/nodes/YAMLSet.ts +280 -0
+new file mode 100644
+=== src/nodes/addPairToJSMap.ts +65 -0
+new file mode 100644
+=== src/nodes/identity.ts +20 -0
+new file mode 100644
+=== src/nodes/toJS.ts +30 -0
+new file mode 100644
+=== src/nodes/types.ts +96 -0
+new file mode 100644
+=== src/nodes/util-clone-map-or-set.ts +20 -0
+new file mode 100644
+=== src/options.ts +392 -0
+new file mode 100644
+=== src/parse/cst-scalar.ts +295 -0
+new file mode 100644
+=== src/parse/cst-stringify.ts +52 -0
+new file mode 100644
+=== src/parse/cst-visit.ts +133 -0
+new file mode 100644
+=== src/parse/cst.ts +251 -0
+new file mode 100644
+=== src/parse/lexer.ts +537 -0
+new file mode 100644
+=== src/parse/line-counter.ts +33 -0
+new file mode 100644
+=== src/parse/parser.ts +968 -0
+new file mode 100644
+=== src/public-api.ts +217 -0
+new file mode 100644
+=== src/schema/Schema.ts +65 -0
+new file mode 100644
+=== src/schema/common/map.ts +30 -0
+new file mode 100644
+=== src/schema/common/null.ts +15 -0
+new file mode 100644
+=== src/schema/common/seq.ts +27 -0
+new file mode 100644
+=== src/schema/common/string.ts +13 -0
+new file mode 100644
+=== src/schema/core/bool.ts +17 -0
+new file mode 100644
+=== src/schema/core/float.ts +45 -0
+new file mode 100644
+=== src/schema/core/int.ts +49 -0
+new file mode 100644
+=== src/schema/core/schema.ts +22 -0
+new file mode 100644
+=== src/schema/json-schema.ts +98 -0
+new file mode 100644
+=== src/schema/json/schema.ts +72 -0
+new file mode 100644
+=== src/schema/tags.ts +138 -0
+new file mode 100644
+=== src/schema/types.ts +114 -0
+new file mode 100644
+=== src/schema/util-primitive-key.ts +17 -0
+new file mode 100644
+=== src/schema/yaml-1.1/binary.ts +90 -0
+new file mode 100644
+=== src/schema/yaml-1.1/bool.ts +27 -0
+new file mode 100644
+=== src/schema/yaml-1.1/float.ts +47 -0
+new file mode 100644
+=== src/schema/yaml-1.1/int.ts +87 -0
+new file mode 100644
+=== src/schema/yaml-1.1/merge.ts +84 -0
+new file mode 100644
+=== src/schema/yaml-1.1/omap.ts +109 -0
+new file mode 100644
+=== src/schema/yaml-1.1/pairs.ts +80 -0
+new file mode 100644
+=== src/schema/yaml-1.1/schema.ts +38 -0
+new file mode 100644
+=== src/schema/yaml-1.1/set.ts +30 -0
+new file mode 100644
+=== src/schema/yaml-1.1/timestamp.ts +120 -0
+new file mode 100644
+=== src/stringify/foldFlowLines.ts +173 -0
+new file mode 100644
+=== src/stringify/stringify.ts +181 -0
+new file mode 100644
+=== src/stringify/stringifyComment.ts +25 -0
+new file mode 100644
+=== src/stringify/stringifyDocument.ts +83 -0
+new file mode 100644
+=== src/stringify/stringifyNumber.ts +29 -0
+new file mode 100644
+=== src/stringify/stringifyPair.ts +164 -0
+new file mode 100644
+=== src/stringify/stringifyString.ts +388 -0
+new file mode 100644
+=== src/test-events.ts +144 -0
+new file mode 100644
+=== src/util.ts +21 -0
+new file mode 100644
+=== src/visit.ts +365 -0
+new file mode 100644
+=== tests/_setup.ts +12 -0
+new file mode 100644
+=== tests/_utils.ts +66 -0
+new file mode 100644
+=== tests/artifacts/cli-singlequote.js +6 -0
+new file mode 100644
+=== tests/artifacts/cli-unstyle.cjs +10 -0
+new file mode 100644
+=== tests/artifacts/pr104/billion-laughs.yml +9 -0
+new file mode 100644
+=== tests/artifacts/pr104/case1.yml +119 -0
+new file mode 100644
+=== tests/artifacts/pr104/case2.yml +114 -0
+new file mode 100644
+=== tests/artifacts/pr104/quadratic.yml +11 -0
+new file mode 100644
+=== tests/artifacts/prettier-circleci-config.yml +96 -0
+new file mode 100644
+=== tests/cli.ts +309 -0
+new file mode 100644
+=== tests/clone.ts +75 -0
+new file mode 100644
+=== tests/collection-access.ts +314 -0
+new file mode 100644
+=== tests/compat.ts +87 -0
+new file mode 100644
+=== tests/cst.ts +203 -0
+new file mode 100644
+=== tests/directives.ts +85 -0
+new file mode 100644
+=== tests/doc/YAML-1.1.spec.ts +56 -0
+new file mode 100644
+=== tests/doc/YAML-1.2.spec.ts +1866 -0
+new file mode 100644
+=== tests/doc/anchors.ts +493 -0
+new file mode 100644
+=== tests/doc/comments.ts +1303 -0
+new file mode 100644
+=== tests/doc/createNode.ts +361 -0
+new file mode 100644
+=== tests/doc/errors.ts +486 -0
+new file mode 100644
+=== tests/doc/foldFlowLines.ts +383 -0
+new file mode 100644
+=== tests/doc/parse.ts +953 -0
+new file mode 100644
+=== tests/doc/stringify.ts +1637 -0
+new file mode 100644
+=== tests/doc/types.ts +1319 -0
+new file mode 100644
+=== tests/json-test-suite.ts +68 -0
+new file mode 100644
+=== tests/lexer.ts +78 -0
+new file mode 100644
+=== tests/line-counter.ts +49 -0
+new file mode 100644
+=== tests/node-to-js.ts +64 -0
+new file mode 100644
+=== tests/properties.ts +32 -0
+new file mode 100644
+=== tests/tsconfig.json +14 -0
+new file mode 100644
+=== tests/visit.ts +256 -0
+new file mode 100644
+=== tests/yaml-test-suite.ts +133 -0
+new file mode 100644
+=== tsconfig.json +22 -0
+new file mode 100644
+=== vitest.config.js +26 -0
+new file mode 100644
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-p55snh2q.log]

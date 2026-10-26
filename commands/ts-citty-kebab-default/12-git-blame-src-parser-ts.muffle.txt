@@ -1,0 +1,179 @@
+$ git blame src/_parser.ts
+7360983 evals 2026-10-22
+1	import { parseArgs } from "node:util";
+2	
+3	export interface ParseOptions {
+4	  boolean?: string[];
+5	  string?: string[];
+6	  alias?: Record<string, string[]>;
+7	  default?: Record<string, any>;
+8	}
+9	
+10	export type Argv<T = Record<string, any>> = T & {
+11	  _: string[];
+12	};
+13	
+14	export function parseRawArgs<T = Record<string, any>>(
+15	  args: string[] = [],
+16	  opts: ParseOptions = {},
+17	): Argv<T> {
+18	  const booleans = new Set(opts.boolean || []);
+19	  const strings = new Set(opts.string || []);
+20	  const aliasMap = opts.alias || {};
+21	  const defaults = opts.default || {};
+22	
+23	  // Build a normalized alias map where we track primary -> aliases relationships
+24	  // The input format is { alias: primary } or { alias: [primary1, primary2] }
+25	  // We also need to handle { primary: alias } format used by args.ts
+26	  const aliasToMain: Map<string, string> = new Map();
+27	  const mainToAliases: Map<string, string[]> = new Map();
+28	
+29	  for (const [key, value] of Object.entries(aliasMap)) {
+30	    const targets = value;
+31	    for (const target of targets) {
+32	      // key is an alias for target
+33	      aliasToMain.set(key, target);
+34	      if (!mainToAliases.has(target)) {
+35	        mainToAliases.set(target, []);
+36	      }
+37	      mainToAliases.get(target)!.push(key);
+38	
+39	      // Also set up reverse: target is an alias for key
+40	      aliasToMain.set(target, key);
+41	      if (!mainToAliases.has(key)) {
+42	        mainToAliases.set(key, []);
+43	      }
+44	      mainToAliases.get(key)!.push(target);
+45	    }
+46	  }
+47	
+48	  // Build options for node:util parseArgs
+49	  const options: Record<
+50	    string,
+51	    {
+52	      type: "boolean" | "string";
+53	      short?: string;
+54	      default?: any;
+55	      multiple?: boolean;
+56	    }
+57	  > = {};
+58	
+59	  // Helper to get option type
+60	  function getType(name: string): "boolean" | "string" {
+61	    if (booleans.has(name)) return "boolean";
+62	    // Check aliases
+63	    const aliases = mainToAliases.get(name) || [];
+64	    for (const alias of aliases) {
+65	      if (booleans.has(alias)) return "boolean";
+66	    }
+67	    return "string";
+68	  }
+69	
+70	  // Collect all option names
+71	  const allOptions = new Set<string>([
+72	    ...booleans,
+73	    ...strings,
+74	    ...Object.keys(aliasMap),
+75	    ...Object.values(aliasMap).flat(),
+76	    ...Object.keys(defaults),
+77	  ]);
+78	
+79	  // Register all options
+80	  for (const name of allOptions) {
+81	    if (!options[name]) {
+82	      const type = getType(name);
+83	      options[name] = {
+84	        type,
+85	        default: defaults[name],
+86	      };
+87	    }
+88	  }
+89	
+90	  // Add short aliases (single char)
+91	  for (const [alias, main] of aliasToMain.entries()) {
+92	    if (alias.length === 1 && options[main] && !options[main].short) {
+93	      options[main].short = alias;
+94	    }
+95	  }
+96	
+97	  // Handle --no- prefixed arguments by preprocessing
+98	  const processedArgs: string[] = [];
+99	  const negatedFlags: Record<string, boolean> = {};
+100	
+101	  for (let i = 0; i < args.length; i++) {
+102	    const arg = args[i]!;
+103	
+104	    if (arg === "--") {
+105	      // Pass through -- and everything after
+106	      processedArgs.push(...args.slice(i));
+107	      break;
+108	    }
+109	
+110	    // Handle --no-flag syntax
+111	    if (arg.startsWith("--no-")) {
+112	      const flagName = arg.slice(5);
+113	      negatedFlags[flagName] = true;
+114	      continue;
+115	    }
+116	
+117	    processedArgs.push(arg);
+118	  }
+119	
+120	  let parsed: { values: Record<string, any>; positionals: string[] };
+121	
+122	  try {
+123	    parsed = parseArgs({
+124	      args: processedArgs,
+125	      options: Object.keys(options).length > 0 ? options : undefined,
+126	      allowPositionals: true,
+127	      strict: false,
+128	    });
+129	  } catch {
+130	    // Fallback for parsing errors
+131	    parsed = { values: {}, positionals: processedArgs };
+132	  }
+133	
+134	  // Build result
+135	  const out: Argv<T> = { _: [] as string[] } as Argv<T>;
+136	
+137	  // Add positionals
+138	  out._ = parsed.positionals;
+139	
+140	  // Add parsed values
+141	  for (const [key, value] of Object.entries(parsed.values)) {
+142	    (out as any)[key] = value;
+143	  }
+144	
+145	  // Apply negated flags (with alias resolution)
+146	  for (const [name] of Object.entries(negatedFlags)) {
+147	    // Set the flag itself
+148	    (out as any)[name] = false;
+149	
+150	    // Resolve to main option and apply there too (handles --no-alias)
+151	    const mainName = aliasToMain.get(name);
+152	    if (mainName) {
+153	      (out as any)[mainName] = false;
+154	    }
+155	
+156	    // Also apply to all aliases of this name (handles --no-main for aliases)
+157	    const aliases = mainToAliases.get(name);
+158	    if (aliases) {
+159	      for (const alias of aliases) {
+160	        (out as any)[alias] = false;
+161	      }
+162	    }
+163	  }
+164	
+165	  // Propagate values between aliases
+166	  for (const [alias, main] of aliasToMain.entries()) {
+167	    if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
+168	      (out as any)[main] = (out as any)[alias];
+169	    }
+170	    if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
+171	      (out as any)[alias] = (out as any)[main];
+172	    }
+173	  }
+174	
+175	  return out;
+176	}
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-oov0zwbd.log]

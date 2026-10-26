@@ -1,0 +1,765 @@
+$ git blame src/utils.ts
+^b07681b (evals 2026-10-22 10:55:30 +0200   1) import { parseURL, stringifyParsedURL } from "./parse";
+^b07681b (evals 2026-10-22 10:55:30 +0200   2) import { QueryObject, parseQuery, stringifyQuery, ParsedQuery } from "./query";
+^b07681b (evals 2026-10-22 10:55:30 +0200   3) import {
+^b07681b (evals 2026-10-22 10:55:30 +0200   4)   decode,
+^b07681b (evals 2026-10-22 10:55:30 +0200   5)   decodePath,
+^b07681b (evals 2026-10-22 10:55:30 +0200   6)   encodeHash,
+^b07681b (evals 2026-10-22 10:55:30 +0200   7)   encodeHost,
+^b07681b (evals 2026-10-22 10:55:30 +0200   8)   encodePath,
+^b07681b (evals 2026-10-22 10:55:30 +0200   9) } from "./encoding";
+^b07681b (evals 2026-10-22 10:55:30 +0200  10) 
+^b07681b (evals 2026-10-22 10:55:30 +0200  11) const PROTOCOL_STRICT_REGEX = /^[\s\w\0+.-]{2,}:([/\\]{1,2})/;
+^b07681b (evals 2026-10-22 10:55:30 +0200  12) const PROTOCOL_REGEX = /^[\s\w\0+.-]{2,}:([/\\]{2})?/;
+^b07681b (evals 2026-10-22 10:55:30 +0200  13) const PROTOCOL_RELATIVE_REGEX = /^([/\\]\s*){2,}[^/\\]/;
+^b07681b (evals 2026-10-22 10:55:30 +0200  14) const PROTOCOL_SCRIPT_RE = /^[\s\0]*(blob|data|javascript|vbscript):$/i;
+^b07681b (evals 2026-10-22 10:55:30 +0200  15) const TRAILING_SLASH_RE = /\/$|\/\?|\/#/;
+^b07681b (evals 2026-10-22 10:55:30 +0200  16) const JOIN_LEADING_SLASH_RE = /^\.?\//;
+^b07681b (evals 2026-10-22 10:55:30 +0200  17) 
+^b07681b (evals 2026-10-22 10:55:30 +0200  18) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200  19)  * Check if a path starts with `./` or `../`.
+^b07681b (evals 2026-10-22 10:55:30 +0200  20)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  21)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200  22)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200  23)  * isRelative("./foo"); // true
+^b07681b (evals 2026-10-22 10:55:30 +0200  24)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200  25)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  26)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200  27)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200  28) export function isRelative(inputString: string) {
+^b07681b (evals 2026-10-22 10:55:30 +0200  29)   return ["./", "../"].some((string_) => inputString.startsWith(string_));
+^b07681b (evals 2026-10-22 10:55:30 +0200  30) }
+^b07681b (evals 2026-10-22 10:55:30 +0200  31) 
+^b07681b (evals 2026-10-22 10:55:30 +0200  32) export interface HasProtocolOptions {
+^b07681b (evals 2026-10-22 10:55:30 +0200  33)   acceptRelative?: boolean;
+^b07681b (evals 2026-10-22 10:55:30 +0200  34)   strict?: boolean;
+^b07681b (evals 2026-10-22 10:55:30 +0200  35) }
+^b07681b (evals 2026-10-22 10:55:30 +0200  36) 
+^b07681b (evals 2026-10-22 10:55:30 +0200  37) export function hasProtocol(
+^b07681b (evals 2026-10-22 10:55:30 +0200  38)   inputString: string,
+^b07681b (evals 2026-10-22 10:55:30 +0200  39)   opts?: HasProtocolOptions,
+^b07681b (evals 2026-10-22 10:55:30 +0200  40) ): boolean;
+^b07681b (evals 2026-10-22 10:55:30 +0200  41) 
+^b07681b (evals 2026-10-22 10:55:30 +0200  42) /** @deprecated Same as { hasProtocol(inputString, { acceptRelative: true }) */
+^b07681b (evals 2026-10-22 10:55:30 +0200  43) export function hasProtocol(
+^b07681b (evals 2026-10-22 10:55:30 +0200  44)   inputString: string,
+^b07681b (evals 2026-10-22 10:55:30 +0200  45)   acceptRelative: boolean,
+^b07681b (evals 2026-10-22 10:55:30 +0200  46) ): boolean;
+^b07681b (evals 2026-10-22 10:55:30 +0200  47) 
+^b07681b (evals 2026-10-22 10:55:30 +0200  48) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200  49)  * Checks if the input has a protocol.
+^b07681b (evals 2026-10-22 10:55:30 +0200  50)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  51)  * You can use `{ acceptRelative: true }` to accept relative URLs as valid protocol.
+^b07681b (evals 2026-10-22 10:55:30 +0200  52)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  53)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200  54)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  55)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200  56)  * hasProtocol('https://example.com'); // true
+^b07681b (evals 2026-10-22 10:55:30 +0200  57)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  58)  * hasProtocol("//example.com"); // false
+^b07681b (evals 2026-10-22 10:55:30 +0200  59)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  60)  * hasProtocol('//example.com', { acceptRelative: true });  // true
+^b07681b (evals 2026-10-22 10:55:30 +0200  61)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  62)  * hasProtocol("ftp://example.com"); // true
+^b07681b (evals 2026-10-22 10:55:30 +0200  63)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  64)  * hasProtocol('data:text/plain'); // true
+^b07681b (evals 2026-10-22 10:55:30 +0200  65)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  66)  * hasProtocol('data:text/plain', { strict: true }); // false
+^b07681b (evals 2026-10-22 10:55:30 +0200  67)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200  68)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  69)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200  70)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200  71) export function hasProtocol(
+^b07681b (evals 2026-10-22 10:55:30 +0200  72)   inputString: string,
+^b07681b (evals 2026-10-22 10:55:30 +0200  73)   opts: boolean | HasProtocolOptions = {},
+^b07681b (evals 2026-10-22 10:55:30 +0200  74) ): boolean {
+^b07681b (evals 2026-10-22 10:55:30 +0200  75)   if (typeof opts === "boolean") {
+^b07681b (evals 2026-10-22 10:55:30 +0200  76)     opts = { acceptRelative: opts };
+^b07681b (evals 2026-10-22 10:55:30 +0200  77)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200  78)   if (opts.strict) {
+^b07681b (evals 2026-10-22 10:55:30 +0200  79)     return PROTOCOL_STRICT_REGEX.test(inputString);
+^b07681b (evals 2026-10-22 10:55:30 +0200  80)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200  81)   return (
+^b07681b (evals 2026-10-22 10:55:30 +0200  82)     PROTOCOL_REGEX.test(inputString) ||
+^b07681b (evals 2026-10-22 10:55:30 +0200  83)     (opts.acceptRelative ? PROTOCOL_RELATIVE_REGEX.test(inputString) : false)
+^b07681b (evals 2026-10-22 10:55:30 +0200  84)   );
+^b07681b (evals 2026-10-22 10:55:30 +0200  85) }
+^b07681b (evals 2026-10-22 10:55:30 +0200  86) 
+^b07681b (evals 2026-10-22 10:55:30 +0200  87) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200  88)  * Checks if the input protocol is any of the dangerous `blob:`, `data:`, `javascript`: or `vbscript:` protocols.
+^b07681b (evals 2026-10-22 10:55:30 +0200  89)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  90)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200  91)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  92)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200  93)  * isScriptProtocol("javascript:alert(1)"); // true
+^b07681b (evals 2026-10-22 10:55:30 +0200  94)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  95)  * isScriptProtocol("data:text/html,hello"); // true
+^b07681b (evals 2026-10-22 10:55:30 +0200  96)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  97)  * isScriptProtocol("blob:hello"); // true
+^b07681b (evals 2026-10-22 10:55:30 +0200  98)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200  99)  * isScriptProtocol("vbscript:alert(1)"); // true
+^b07681b (evals 2026-10-22 10:55:30 +0200 100)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 101)  * isScriptProtocol("https://example.com"); // false
+^b07681b (evals 2026-10-22 10:55:30 +0200 102)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 103)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 104)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 105)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 106) export function isScriptProtocol(protocol?: string) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 107)   return !!protocol && PROTOCOL_SCRIPT_RE.test(protocol);
+^b07681b (evals 2026-10-22 10:55:30 +0200 108) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 109) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 110) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 111)  * Checks if the input has a trailing slash.
+^b07681b (evals 2026-10-22 10:55:30 +0200 112)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 113)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 114)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 115)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 116)  * hasTrailingSlash("/foo/"); // true
+^b07681b (evals 2026-10-22 10:55:30 +0200 117)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 118)  * hasTrailingSlash("/foo"); // false
+^b07681b (evals 2026-10-22 10:55:30 +0200 119)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 120)  * hasTrailingSlash("/foo?query=true", true); // false
+^b07681b (evals 2026-10-22 10:55:30 +0200 121)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 122)  * hasTrailingSlash("/foo/?query=true", true); // true
+^b07681b (evals 2026-10-22 10:55:30 +0200 123)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 124)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 125)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 126)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 127) export function hasTrailingSlash(
+^b07681b (evals 2026-10-22 10:55:30 +0200 128)   input = "",
+^b07681b (evals 2026-10-22 10:55:30 +0200 129)   respectQueryAndFragment?: boolean,
+^b07681b (evals 2026-10-22 10:55:30 +0200 130) ): boolean {
+^b07681b (evals 2026-10-22 10:55:30 +0200 131)   if (!respectQueryAndFragment) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 132)     return input.endsWith("/");
+^b07681b (evals 2026-10-22 10:55:30 +0200 133)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 134)   return TRAILING_SLASH_RE.test(input);
+^b07681b (evals 2026-10-22 10:55:30 +0200 135) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 136) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 137) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 138)  * Removes the trailing slash from the URL or pathname.
+^b07681b (evals 2026-10-22 10:55:30 +0200 139)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 140)  * If second argument is `true`, it will only remove the trailing slash if it's not part of the query or fragment with cost of more expensive operations.
+^b07681b (evals 2026-10-22 10:55:30 +0200 141)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 142)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 143)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 144)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 145)  * withoutTrailingSlash("/foo/"); // "/foo"
+^b07681b (evals 2026-10-22 10:55:30 +0200 146)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 147)  * withoutTrailingSlash("/path/?query=true", true); // "/path?query=true"
+^b07681b (evals 2026-10-22 10:55:30 +0200 148)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 149)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 150)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 151)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 152) export function withoutTrailingSlash(
+^b07681b (evals 2026-10-22 10:55:30 +0200 153)   input = "",
+^b07681b (evals 2026-10-22 10:55:30 +0200 154)   respectQueryAndFragment?: boolean,
+^b07681b (evals 2026-10-22 10:55:30 +0200 155) ): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 156)   if (!respectQueryAndFragment) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 157)     return (hasTrailingSlash(input) ? input.slice(0, -1) : input) || "/";
+^b07681b (evals 2026-10-22 10:55:30 +0200 158)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 159)   if (!hasTrailingSlash(input, true)) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 160)     return input || "/";
+^b07681b (evals 2026-10-22 10:55:30 +0200 161)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 162)   let path = input;
+^b07681b (evals 2026-10-22 10:55:30 +0200 163)   let fragment = "";
+^b07681b (evals 2026-10-22 10:55:30 +0200 164)   const fragmentIndex = input.indexOf("#");
+^b07681b (evals 2026-10-22 10:55:30 +0200 165)   if (fragmentIndex !== -1) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 166)     path = input.slice(0, fragmentIndex);
+^b07681b (evals 2026-10-22 10:55:30 +0200 167)     fragment = input.slice(fragmentIndex);
+^b07681b (evals 2026-10-22 10:55:30 +0200 168)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 169)   const [s0, ...s] = path.split("?");
+^b07681b (evals 2026-10-22 10:55:30 +0200 170)   const cleanPath = s0.endsWith("/") ? s0.slice(0, -1) : s0;
+^b07681b (evals 2026-10-22 10:55:30 +0200 171)   return (
+^b07681b (evals 2026-10-22 10:55:30 +0200 172)     (cleanPath || "/") + (s.length > 0 ? `?${s.join("?")}` : "") + fragment
+^b07681b (evals 2026-10-22 10:55:30 +0200 173)   );
+^b07681b (evals 2026-10-22 10:55:30 +0200 174) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 175) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 176) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 177)  * Ensures the URL ends with a trailing slash.
+^b07681b (evals 2026-10-22 10:55:30 +0200 178)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 179)  * If second argument is `true`, it will only add the trailing slash if it's not part of the query or fragment with cost of more expensive operation.
+^b07681b (evals 2026-10-22 10:55:30 +0200 180)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 181)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 182)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 183)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 184)  * withTrailingSlash("/foo"); // "/foo/"
+^b07681b (evals 2026-10-22 10:55:30 +0200 185)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 186)  * withTrailingSlash("/path?query=true", true); // "/path/?query=true"
+^b07681b (evals 2026-10-22 10:55:30 +0200 187)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 188)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 189)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 190)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 191) export function withTrailingSlash(
+^b07681b (evals 2026-10-22 10:55:30 +0200 192)   input = "",
+^b07681b (evals 2026-10-22 10:55:30 +0200 193)   respectQueryAndFragment?: boolean,
+^b07681b (evals 2026-10-22 10:55:30 +0200 194) ): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 195)   if (!respectQueryAndFragment) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 196)     return input.endsWith("/") ? input : input + "/";
+^b07681b (evals 2026-10-22 10:55:30 +0200 197)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 198)   if (hasTrailingSlash(input, true)) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 199)     return input || "/";
+^b07681b (evals 2026-10-22 10:55:30 +0200 200)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 201)   let path = input;
+^b07681b (evals 2026-10-22 10:55:30 +0200 202)   let fragment = "";
+^b07681b (evals 2026-10-22 10:55:30 +0200 203)   const fragmentIndex = input.indexOf("#");
+^b07681b (evals 2026-10-22 10:55:30 +0200 204)   if (fragmentIndex !== -1) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 205)     path = input.slice(0, fragmentIndex);
+^b07681b (evals 2026-10-22 10:55:30 +0200 206)     fragment = input.slice(fragmentIndex);
+^b07681b (evals 2026-10-22 10:55:30 +0200 207)     if (!path) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 208)       return fragment;
+^b07681b (evals 2026-10-22 10:55:30 +0200 209)     }
+^b07681b (evals 2026-10-22 10:55:30 +0200 210)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 211)   const [s0, ...s] = path.split("?");
+^b07681b (evals 2026-10-22 10:55:30 +0200 212)   return s0 + "/" + (s.length > 0 ? `?${s.join("?")}` : "") + fragment;
+^b07681b (evals 2026-10-22 10:55:30 +0200 213) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 214) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 215) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 216)  * Checks if the input has a leading slash (e.g. `/foo`).
+^b07681b (evals 2026-10-22 10:55:30 +0200 217)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 218)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 219)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 220) export function hasLeadingSlash(input = ""): boolean {
+^b07681b (evals 2026-10-22 10:55:30 +0200 221)   return input.startsWith("/");
+^b07681b (evals 2026-10-22 10:55:30 +0200 222) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 223) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 224) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 225)  * Removes leading slash from the URL or pathname.
+^b07681b (evals 2026-10-22 10:55:30 +0200 226)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 227)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 228)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 229)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 230)  * withoutLeadingSlash("/foo"); // "foo"
+^b07681b (evals 2026-10-22 10:55:30 +0200 231)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 232)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 233)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 234)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 235) export function withoutLeadingSlash(input = ""): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 236)   return (hasLeadingSlash(input) ? input.slice(1) : input) || "/";
+^b07681b (evals 2026-10-22 10:55:30 +0200 237) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 238) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 239) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 240)  * Ensures the URL or pathname has a leading slash.
+^b07681b (evals 2026-10-22 10:55:30 +0200 241)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 242)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 243)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 244)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 245)  * withLeadingSlash("foo"); // "/foo"
+^b07681b (evals 2026-10-22 10:55:30 +0200 246)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 247)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 248)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 249)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 250) export function withLeadingSlash(input = ""): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 251)   return hasLeadingSlash(input) ? input : "/" + input;
+^b07681b (evals 2026-10-22 10:55:30 +0200 252) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 253) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 254) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 255)  * Removes double slashes from the URL.
+^b07681b (evals 2026-10-22 10:55:30 +0200 256)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 257)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 258)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 259)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 260)  * cleanDoubleSlashes("//foo//bar//"); // "/foo/bar/"
+^b07681b (evals 2026-10-22 10:55:30 +0200 261)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 262)  * cleanDoubleSlashes("http://example.com/analyze//http://localhost:3000//");
+^b07681b (evals 2026-10-22 10:55:30 +0200 263)  * // Returns "http://example.com/analyze/http://localhost:3000/"
+^b07681b (evals 2026-10-22 10:55:30 +0200 264)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 265)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 266)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 267)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 268) export function cleanDoubleSlashes(input = ""): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 269)   return input
+^b07681b (evals 2026-10-22 10:55:30 +0200 270)     .split("://")
+^b07681b (evals 2026-10-22 10:55:30 +0200 271)     .map((string_) => string_.replace(/\/{2,}/g, "/"))
+^b07681b (evals 2026-10-22 10:55:30 +0200 272)     .join("://");
+^b07681b (evals 2026-10-22 10:55:30 +0200 273) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 274) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 275) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 276)  * Ensures the URL or pathname starts with base.
+^b07681b (evals 2026-10-22 10:55:30 +0200 277)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 278)  * If input already starts with base, it will not be added again.
+^b07681b (evals 2026-10-22 10:55:30 +0200 279)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 280)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 281)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 282)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 283)  * withBase("/foo/bar", "/foo"); // "/foo/bar"
+^b07681b (evals 2026-10-22 10:55:30 +0200 284)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 285)  * withBase("/foo/bar", "/baz"); // "/baz/foo/bar"
+^b07681b (evals 2026-10-22 10:55:30 +0200 286)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 287)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 288)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 289)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 290) export function withBase(input: string, base: string) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 291)   if (isEmptyURL(base) || hasProtocol(input)) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 292)     return input;
+^b07681b (evals 2026-10-22 10:55:30 +0200 293)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 294)   const _base = withoutTrailingSlash(base);
+^b07681b (evals 2026-10-22 10:55:30 +0200 295)   if (input.startsWith(_base)) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 296)     return input;
+^b07681b (evals 2026-10-22 10:55:30 +0200 297)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 298)   return joinURL(_base, input);
+^b07681b (evals 2026-10-22 10:55:30 +0200 299) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 300) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 301) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 302)  * Removes the base from the URL or pathname.
+^b07681b (evals 2026-10-22 10:55:30 +0200 303)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 304)  * If input does not start with base, it will not be removed.
+^b07681b (evals 2026-10-22 10:55:30 +0200 305)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 306)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 307)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 308)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 309)  * withoutBase("/foo/bar", "/foo"); // "/bar"
+^b07681b (evals 2026-10-22 10:55:30 +0200 310)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 311)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 312)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 313)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 314) export function withoutBase(input: string, base: string) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 315)   if (isEmptyURL(base)) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 316)     return input;
+^b07681b (evals 2026-10-22 10:55:30 +0200 317)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 318)   const _base = withoutTrailingSlash(base);
+^b07681b (evals 2026-10-22 10:55:30 +0200 319)   if (!input.startsWith(_base)) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 320)     return input;
+^b07681b (evals 2026-10-22 10:55:30 +0200 321)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 322)   const trimmed = input.slice(_base.length);
+^b07681b (evals 2026-10-22 10:55:30 +0200 323)   return trimmed[0] === "/" ? trimmed : "/" + trimmed;
+^b07681b (evals 2026-10-22 10:55:30 +0200 324) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 325) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 326) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 327)  * Add/Replace the query section of the URL.
+^b07681b (evals 2026-10-22 10:55:30 +0200 328)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 329)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 330)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 331)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 332)  * withQuery("/foo?page=a", { token: "secret" }); // "/foo?page=a&token=secret"
+^b07681b (evals 2026-10-22 10:55:30 +0200 333)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 334)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 335)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 336)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 337) export function withQuery(input: string, query: QueryObject): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 338)   const parsed = parseURL(input);
+^b07681b (evals 2026-10-22 10:55:30 +0200 339)   const mergedQuery = { ...parseQuery(parsed.search), ...query };
+^b07681b (evals 2026-10-22 10:55:30 +0200 340)   parsed.search = stringifyQuery(mergedQuery);
+^b07681b (evals 2026-10-22 10:55:30 +0200 341)   return stringifyParsedURL(parsed);
+^b07681b (evals 2026-10-22 10:55:30 +0200 342) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 343) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 344) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 345)  * Removes the query section of the URL.
+^b07681b (evals 2026-10-22 10:55:30 +0200 346)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 347)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 348)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 349)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 350)  * filterQuery("/foo?bar=1&baz=2", (key) => key !== "bar"); // "/foo?baz=2"
+^b07681b (evals 2026-10-22 10:55:30 +0200 351)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 352)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 353)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 354)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 355) export function filterQuery(
+^b07681b (evals 2026-10-22 10:55:30 +0200 356)   input: string,
+^b07681b (evals 2026-10-22 10:55:30 +0200 357)   predicate: (key: string, value: string | string[]) => boolean,
+^b07681b (evals 2026-10-22 10:55:30 +0200 358) ): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 359)   if (!input.includes("?")) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 360)     return input;
+^b07681b (evals 2026-10-22 10:55:30 +0200 361)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 362) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 363)   const parsed = parseURL(input);
+^b07681b (evals 2026-10-22 10:55:30 +0200 364)   const query = parseQuery(parsed.search);
+^b07681b (evals 2026-10-22 10:55:30 +0200 365)   const filteredQuery = Object.fromEntries(
+^b07681b (evals 2026-10-22 10:55:30 +0200 366)     Object.entries(query).filter(([key, value]) => predicate(key, value)),
+^b07681b (evals 2026-10-22 10:55:30 +0200 367)   );
+^b07681b (evals 2026-10-22 10:55:30 +0200 368)   parsed.search = stringifyQuery(filteredQuery);
+^b07681b (evals 2026-10-22 10:55:30 +0200 369)   return stringifyParsedURL(parsed);
+^b07681b (evals 2026-10-22 10:55:30 +0200 370) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 371) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 372) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 373)  * Parses and decodes the query object of an input URL into an object.
+^b07681b (evals 2026-10-22 10:55:30 +0200 374)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 375)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 376)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 377)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 378)  * getQuery("http://foo.com/foo?test=123&unicode=%E5%A5%BD");
+^b07681b (evals 2026-10-22 10:55:30 +0200 379)  * // { test: "123", unicode: "好" }
+^b07681b (evals 2026-10-22 10:55:30 +0200 380)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 381)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 382)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 383) export function getQuery<T extends ParsedQuery = ParsedQuery>(
+^b07681b (evals 2026-10-22 10:55:30 +0200 384)   input: string,
+^b07681b (evals 2026-10-22 10:55:30 +0200 385) ): T {
+^b07681b (evals 2026-10-22 10:55:30 +0200 386)   return parseQuery<T>(parseURL(input).search);
+^b07681b (evals 2026-10-22 10:55:30 +0200 387) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 388) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 389) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 390)  * Checks if the input URL is empty or `/`.
+^b07681b (evals 2026-10-22 10:55:30 +0200 391)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 392)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 393)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 394) export function isEmptyURL(url: string) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 395)   return !url || url === "/";
+^b07681b (evals 2026-10-22 10:55:30 +0200 396) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 397) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 398) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 399)  * Checks if the input URL is neither empty nor `/`.
+^b07681b (evals 2026-10-22 10:55:30 +0200 400)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 401)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 402)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 403) export function isNonEmptyURL(url: string) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 404)   return url && url !== "/";
+^b07681b (evals 2026-10-22 10:55:30 +0200 405) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 406) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 407) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 408)  * Joins multiple URL segments into a single URL.
+^b07681b (evals 2026-10-22 10:55:30 +0200 409)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 410)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 411)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 412)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 413)  * joinURL("a", "/b", "/c"); // "a/b/c"
+^b07681b (evals 2026-10-22 10:55:30 +0200 414)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 415)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 416)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 417)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 418) export function joinURL(base: string, ...input: string[]): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 419)   let url = base || "";
+^b07681b (evals 2026-10-22 10:55:30 +0200 420) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 421)   for (const segment of input.filter((url) => isNonEmptyURL(url))) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 422)     if (url) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 423)       // TODO: Handle .. when joining
+^b07681b (evals 2026-10-22 10:55:30 +0200 424)       const _segment = segment.replace(JOIN_LEADING_SLASH_RE, "");
+^b07681b (evals 2026-10-22 10:55:30 +0200 425)       url = withTrailingSlash(url) + _segment;
+^b07681b (evals 2026-10-22 10:55:30 +0200 426)     } else {
+^b07681b (evals 2026-10-22 10:55:30 +0200 427)       url = segment;
+^b07681b (evals 2026-10-22 10:55:30 +0200 428)     }
+^b07681b (evals 2026-10-22 10:55:30 +0200 429)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 430) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 431)   return url;
+^b07681b (evals 2026-10-22 10:55:30 +0200 432) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 433) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 434) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 435)  * Joins multiple URL segments into a single URL and also handles relative paths with `./` and `../`.
+^b07681b (evals 2026-10-22 10:55:30 +0200 436)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 437)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 438)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 439)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 440)  * joinRelativeURL("/a", "../b", "./c"); // "/b/c"
+^b07681b (evals 2026-10-22 10:55:30 +0200 441)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 442)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 443)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 444)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 445) export function joinRelativeURL(..._input: string[]): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 446)   // Inlined regex to increase browser compatibility
+^b07681b (evals 2026-10-22 10:55:30 +0200 447)   const JOIN_SEGMENT_SPLIT_RE = /\/(?!\/)/;
+^b07681b (evals 2026-10-22 10:55:30 +0200 448) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 449)   const input = _input.filter(Boolean);
+^b07681b (evals 2026-10-22 10:55:30 +0200 450) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 451)   const segments: string[] = [];
+^b07681b (evals 2026-10-22 10:55:30 +0200 452) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 453)   let segmentsDepth = 0;
+^b07681b (evals 2026-10-22 10:55:30 +0200 454) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 455)   for (const i of input) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 456)     if (!i || i === "/") {
+^b07681b (evals 2026-10-22 10:55:30 +0200 457)       continue;
+^b07681b (evals 2026-10-22 10:55:30 +0200 458)     }
+^b07681b (evals 2026-10-22 10:55:30 +0200 459)     for (const [sindex, s] of i.split(JOIN_SEGMENT_SPLIT_RE).entries()) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 460)       if (!s || s === ".") {
+^b07681b (evals 2026-10-22 10:55:30 +0200 461)         continue;
+^b07681b (evals 2026-10-22 10:55:30 +0200 462)       }
+^b07681b (evals 2026-10-22 10:55:30 +0200 463)       if (s === "..") {
+^b07681b (evals 2026-10-22 10:55:30 +0200 464)         if (segments.length === 1 && hasProtocol(segments[0])) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 465)           continue;
+^b07681b (evals 2026-10-22 10:55:30 +0200 466)         }
+^b07681b (evals 2026-10-22 10:55:30 +0200 467)         segments.pop();
+^b07681b (evals 2026-10-22 10:55:30 +0200 468)         segmentsDepth--;
+^b07681b (evals 2026-10-22 10:55:30 +0200 469)         continue;
+^b07681b (evals 2026-10-22 10:55:30 +0200 470)       }
+^b07681b (evals 2026-10-22 10:55:30 +0200 471)       // eslint-disable-next-line unicorn/prefer-at
+^b07681b (evals 2026-10-22 10:55:30 +0200 472)       if (sindex === 1 && segments[segments.length - 1]?.endsWith(":/")) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 473)         segments[segments.length - 1] += "/" + s;
+^b07681b (evals 2026-10-22 10:55:30 +0200 474)         continue;
+^b07681b (evals 2026-10-22 10:55:30 +0200 475)       }
+^b07681b (evals 2026-10-22 10:55:30 +0200 476)       segments.push(s);
+^b07681b (evals 2026-10-22 10:55:30 +0200 477)       segmentsDepth++;
+^b07681b (evals 2026-10-22 10:55:30 +0200 478)     }
+^b07681b (evals 2026-10-22 10:55:30 +0200 479)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 480) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 481)   let url = segments.join("/");
+^b07681b (evals 2026-10-22 10:55:30 +0200 482) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 483)   if (segmentsDepth >= 0) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 484)     // Preserve leading slash
+^b07681b (evals 2026-10-22 10:55:30 +0200 485)     if (input[0]?.startsWith("/") && !url.startsWith("/")) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 486)       url = "/" + url;
+^b07681b (evals 2026-10-22 10:55:30 +0200 487)     } else if (input[0]?.startsWith("./") && !url.startsWith("./")) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 488)       url = "./" + url;
+^b07681b (evals 2026-10-22 10:55:30 +0200 489)     }
+^b07681b (evals 2026-10-22 10:55:30 +0200 490)   } else {
+^b07681b (evals 2026-10-22 10:55:30 +0200 491)     // Add relative prefix
+^b07681b (evals 2026-10-22 10:55:30 +0200 492)     url = "../".repeat(-1 * segmentsDepth) + url;
+^b07681b (evals 2026-10-22 10:55:30 +0200 493)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 494) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 495)   // Preserve trailing slash
+^b07681b (evals 2026-10-22 10:55:30 +0200 496)   // eslint-disable-next-line unicorn/prefer-at
+^b07681b (evals 2026-10-22 10:55:30 +0200 497)   if (input[input.length - 1]?.endsWith("/") && !url.endsWith("/")) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 498)     url += "/";
+^b07681b (evals 2026-10-22 10:55:30 +0200 499)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 500) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 501)   return url;
+^b07681b (evals 2026-10-22 10:55:30 +0200 502) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 503) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 504) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 505)  * Adds or replaces the URL protocol to `http://`.
+^b07681b (evals 2026-10-22 10:55:30 +0200 506)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 507)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 508)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 509)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 510)  * withHttp("https://example.com"); // http://example.com
+^b07681b (evals 2026-10-22 10:55:30 +0200 511)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 512)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 513)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 514)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 515) export function withHttp(input: string): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 516)   return withProtocol(input, "http://");
+^b07681b (evals 2026-10-22 10:55:30 +0200 517) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 518) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 519) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 520)  * Adds or replaces the URL protocol to `https://`.
+^b07681b (evals 2026-10-22 10:55:30 +0200 521)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 522)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 523)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 524)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 525)  * withHttps("http://example.com"); // https://example.com
+^b07681b (evals 2026-10-22 10:55:30 +0200 526)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 527)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 528)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 529)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 530) export function withHttps(input: string): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 531)   return withProtocol(input, "https://");
+^b07681b (evals 2026-10-22 10:55:30 +0200 532) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 533) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 534) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 535)  * Removes the protocol from the input.
+^b07681b (evals 2026-10-22 10:55:30 +0200 536)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 537)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 538)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 539)  * withoutProtocol("http://example.com"); // "example.com"
+^b07681b (evals 2026-10-22 10:55:30 +0200 540)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 541)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 542) export function withoutProtocol(input: string): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 543)   return withProtocol(input, "");
+^b07681b (evals 2026-10-22 10:55:30 +0200 544) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 545) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 546) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 547)  * Adds or replaces protocol of the input URL.
+^b07681b (evals 2026-10-22 10:55:30 +0200 548)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 549)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 550)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 551)  * withProtocol("http://example.com", "ftp://"); // "ftp://example.com"
+^b07681b (evals 2026-10-22 10:55:30 +0200 552)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 553)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 554)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 555)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 556) export function withProtocol(input: string, protocol: string): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 557)   let match = input.match(PROTOCOL_REGEX);
+^b07681b (evals 2026-10-22 10:55:30 +0200 558)   if (!match) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 559)     match = input.match(/^\/{2,}/);
+^b07681b (evals 2026-10-22 10:55:30 +0200 560)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 561)   if (!match) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 562)     return protocol + input;
+^b07681b (evals 2026-10-22 10:55:30 +0200 563)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 564)   return protocol + input.slice(match[0].length);
+^b07681b (evals 2026-10-22 10:55:30 +0200 565) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 566) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 567) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 568)  * Normalizes the input URL:
+^b07681b (evals 2026-10-22 10:55:30 +0200 569)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 570)  * - Ensures the URL is properly encoded
+^b07681b (evals 2026-10-22 10:55:30 +0200 571)  * - Ensures pathname starts with a slash
+^b07681b (evals 2026-10-22 10:55:30 +0200 572)  * - Preserves protocol/host if provided
+^b07681b (evals 2026-10-22 10:55:30 +0200 573)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 574)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 575)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 576)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 577)  * normalizeURL("test?query=123 123#hash, test");
+^b07681b (evals 2026-10-22 10:55:30 +0200 578)  * // Returns "test?query=123%20123#hash,%20test"
+^b07681b (evals 2026-10-22 10:55:30 +0200 579)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 580)  * normalizeURL("http://localhost:3000");
+^b07681b (evals 2026-10-22 10:55:30 +0200 581)  * // Returns "http://localhost:3000"
+^b07681b (evals 2026-10-22 10:55:30 +0200 582)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 583)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 584)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 585)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 586) export function normalizeURL(input: string): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 587)   const parsed = parseURL(input);
+^b07681b (evals 2026-10-22 10:55:30 +0200 588)   parsed.pathname = encodePath(decodePath(parsed.pathname));
+^b07681b (evals 2026-10-22 10:55:30 +0200 589)   parsed.hash = encodeHash(decode(parsed.hash));
+^b07681b (evals 2026-10-22 10:55:30 +0200 590)   parsed.host = encodeHost(decode(parsed.host));
+^b07681b (evals 2026-10-22 10:55:30 +0200 591)   parsed.search = stringifyQuery(parseQuery(parsed.search));
+^b07681b (evals 2026-10-22 10:55:30 +0200 592)   return stringifyParsedURL(parsed);
+^b07681b (evals 2026-10-22 10:55:30 +0200 593) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 594) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 595) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 596)  * Resolves multiple URL segments into a single URL.
+^b07681b (evals 2026-10-22 10:55:30 +0200 597)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 598)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 599)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 600)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 601)  * resolveURL("http://foo.com/foo?test=123#token", "bar", "baz");
+^b07681b (evals 2026-10-22 10:55:30 +0200 602)  * // Returns "http://foo.com/foo/bar/baz?test=123#token"
+^b07681b (evals 2026-10-22 10:55:30 +0200 603)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 604)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 605)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 606)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 607) export function resolveURL(base = "", ...inputs: string[]): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 608)   if (typeof base !== "string") {
+^b07681b (evals 2026-10-22 10:55:30 +0200 609)     throw new TypeError(
+^b07681b (evals 2026-10-22 10:55:30 +0200 610)       `URL input should be string received ${typeof base} (${base})`,
+^b07681b (evals 2026-10-22 10:55:30 +0200 611)     );
+^b07681b (evals 2026-10-22 10:55:30 +0200 612)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 613) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 614)   const filteredInputs = inputs.filter((input) => isNonEmptyURL(input));
+^b07681b (evals 2026-10-22 10:55:30 +0200 615) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 616)   if (filteredInputs.length === 0) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 617)     return base;
+^b07681b (evals 2026-10-22 10:55:30 +0200 618)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 619) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 620)   const url = parseURL(base);
+^b07681b (evals 2026-10-22 10:55:30 +0200 621) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 622)   for (const inputSegment of filteredInputs) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 623)     const urlSegment = parseURL(inputSegment);
+^b07681b (evals 2026-10-22 10:55:30 +0200 624) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 625)     // Append path
+^b07681b (evals 2026-10-22 10:55:30 +0200 626)     if (urlSegment.pathname) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 627)       url.pathname =
+^b07681b (evals 2026-10-22 10:55:30 +0200 628)         withTrailingSlash(url.pathname) +
+^b07681b (evals 2026-10-22 10:55:30 +0200 629)         withoutLeadingSlash(urlSegment.pathname);
+^b07681b (evals 2026-10-22 10:55:30 +0200 630)     }
+^b07681b (evals 2026-10-22 10:55:30 +0200 631) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 632)     // Override hash
+^b07681b (evals 2026-10-22 10:55:30 +0200 633)     if (urlSegment.hash && urlSegment.hash !== "#") {
+^b07681b (evals 2026-10-22 10:55:30 +0200 634)       url.hash = urlSegment.hash;
+^b07681b (evals 2026-10-22 10:55:30 +0200 635)     }
+^b07681b (evals 2026-10-22 10:55:30 +0200 636) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 637)     // Append search
+^b07681b (evals 2026-10-22 10:55:30 +0200 638)     if (urlSegment.search && urlSegment.search !== "?") {
+^b07681b (evals 2026-10-22 10:55:30 +0200 639)       if (url.search && url.search !== "?") {
+^b07681b (evals 2026-10-22 10:55:30 +0200 640)         const queryString = stringifyQuery({
+^b07681b (evals 2026-10-22 10:55:30 +0200 641)           ...parseQuery(url.search),
+^b07681b (evals 2026-10-22 10:55:30 +0200 642)           ...parseQuery(urlSegment.search),
+^b07681b (evals 2026-10-22 10:55:30 +0200 643)         });
+^b07681b (evals 2026-10-22 10:55:30 +0200 644)         url.search = queryString.length > 0 ? "?" + queryString : "";
+^b07681b (evals 2026-10-22 10:55:30 +0200 645)       } else {
+^b07681b (evals 2026-10-22 10:55:30 +0200 646)         url.search = urlSegment.search;
+^b07681b (evals 2026-10-22 10:55:30 +0200 647)       }
+^b07681b (evals 2026-10-22 10:55:30 +0200 648)     }
+^b07681b (evals 2026-10-22 10:55:30 +0200 649)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 650) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 651)   return stringifyParsedURL(url);
+^b07681b (evals 2026-10-22 10:55:30 +0200 652) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 653) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 654) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 655)  * Check if two paths are equal or not. Trailing slash and encoding are normalized before comparison.
+^b07681b (evals 2026-10-22 10:55:30 +0200 656)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 657)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 658)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 659)  * isSamePath("/foo", "/foo/"); // true
+^b07681b (evals 2026-10-22 10:55:30 +0200 660)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 661)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 662)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 663)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 664) export function isSamePath(p1: string, p2: string) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 665)   return decode(withoutTrailingSlash(p1)) === decode(withoutTrailingSlash(p2));
+^b07681b (evals 2026-10-22 10:55:30 +0200 666) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 667) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 668) interface CompareURLOptions {
+^b07681b (evals 2026-10-22 10:55:30 +0200 669)   trailingSlash?: boolean;
+^b07681b (evals 2026-10-22 10:55:30 +0200 670)   leadingSlash?: boolean;
+^b07681b (evals 2026-10-22 10:55:30 +0200 671)   encoding?: boolean;
+^b07681b (evals 2026-10-22 10:55:30 +0200 672) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 673) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 674) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 675)  *  Checks if two paths are equal regardless of encoding, trailing slash, and leading slash differences.
+^b07681b (evals 2026-10-22 10:55:30 +0200 676)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 677)  * You can make slash check strict by setting `{ trailingSlash: true, leadingSlash: true }` as options.
+^b07681b (evals 2026-10-22 10:55:30 +0200 678)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 679)  * You can make encoding check strict by setting `{ encoding: true }` as options.
+^b07681b (evals 2026-10-22 10:55:30 +0200 680)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 681)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 682)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 683)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 684)  * isEqual("/foo", "foo"); // true
+^b07681b (evals 2026-10-22 10:55:30 +0200 685)  * isEqual("foo/", "foo"); // true
+^b07681b (evals 2026-10-22 10:55:30 +0200 686)  * isEqual("/foo bar", "/foo%20bar"); // true
+^b07681b (evals 2026-10-22 10:55:30 +0200 687)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 688)  * // Strict compare
+^b07681b (evals 2026-10-22 10:55:30 +0200 689)  * isEqual("/foo", "foo", { leadingSlash: true }); // false
+^b07681b (evals 2026-10-22 10:55:30 +0200 690)  * isEqual("foo/", "foo", { trailingSlash: true }); // false
+^b07681b (evals 2026-10-22 10:55:30 +0200 691)  * isEqual("/foo bar", "/foo%20bar", { encoding: true }); // false
+^b07681b (evals 2026-10-22 10:55:30 +0200 692)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 693)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 694)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 695)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 696) export function isEqual(a: string, b: string, options: CompareURLOptions = {}) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 697)   if (!options.trailingSlash) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 698)     a = withTrailingSlash(a);
+^b07681b (evals 2026-10-22 10:55:30 +0200 699)     b = withTrailingSlash(b);
+^b07681b (evals 2026-10-22 10:55:30 +0200 700)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 701)   if (!options.leadingSlash) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 702)     a = withLeadingSlash(a);
+^b07681b (evals 2026-10-22 10:55:30 +0200 703)     b = withLeadingSlash(b);
+^b07681b (evals 2026-10-22 10:55:30 +0200 704)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 705)   if (!options.encoding) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 706)     a = decode(a);
+^b07681b (evals 2026-10-22 10:55:30 +0200 707)     b = decode(b);
+^b07681b (evals 2026-10-22 10:55:30 +0200 708)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 709)   return a === b;
+^b07681b (evals 2026-10-22 10:55:30 +0200 710) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 711) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 712) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 713)  * Adds or replaces the fragment section of the URL.
+^b07681b (evals 2026-10-22 10:55:30 +0200 714)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 715)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 716)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 717)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 718)  * withFragment("/foo", "bar"); // "/foo#bar"
+^b07681b (evals 2026-10-22 10:55:30 +0200 719)  * withFragment("/foo#bar", "baz"); // "/foo#baz"
+^b07681b (evals 2026-10-22 10:55:30 +0200 720)  * withFragment("/foo#bar", ""); // "/foo"
+^b07681b (evals 2026-10-22 10:55:30 +0200 721)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 722)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 723)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 724)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 725) export function withFragment(input: string, hash: string): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 726)   if (!hash || hash === "#") {
+^b07681b (evals 2026-10-22 10:55:30 +0200 727)     return input;
+^b07681b (evals 2026-10-22 10:55:30 +0200 728)   }
+^b07681b (evals 2026-10-22 10:55:30 +0200 729)   const parsed = parseURL(input);
+^b07681b (evals 2026-10-22 10:55:30 +0200 730)   parsed.hash = hash === "" ? "" : "#" + encodeHash(hash);
+^b07681b (evals 2026-10-22 10:55:30 +0200 731)   return stringifyParsedURL(parsed);
+^b07681b (evals 2026-10-22 10:55:30 +0200 732) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 733) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 734) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 735)  * Removes the fragment section from the URL.
+^b07681b (evals 2026-10-22 10:55:30 +0200 736)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 737)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 738)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 739)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 740)  * withoutFragment("http://example.com/foo?q=123#bar")
+^b07681b (evals 2026-10-22 10:55:30 +0200 741)  * // Returns "http://example.com/foo?q=123"
+^b07681b (evals 2026-10-22 10:55:30 +0200 742)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 743)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 744)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 745)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 746) export function withoutFragment(input: string): string {
+^b07681b (evals 2026-10-22 10:55:30 +0200 747)   return stringifyParsedURL({ ...parseURL(input), hash: "" });
+^b07681b (evals 2026-10-22 10:55:30 +0200 748) }
+^b07681b (evals 2026-10-22 10:55:30 +0200 749) 
+^b07681b (evals 2026-10-22 10:55:30 +0200 750) /**
+^b07681b (evals 2026-10-22 10:55:30 +0200 751)  * Removes the host from the URL while preserving everything else.
+^b07681b (evals 2026-10-22 10:55:30 +0200 752)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 753)  * @example
+^b07681b (evals 2026-10-22 10:55:30 +0200 754)  * ```js
+^b07681b (evals 2026-10-22 10:55:30 +0200 755)  * withoutHost("http://example.com/foo?q=123#bar")
+^b07681b (evals 2026-10-22 10:55:30 +0200 756)  * // Returns "/foo?q=123#bar"
+^b07681b (evals 2026-10-22 10:55:30 +0200 757)  * ```
+^b07681b (evals 2026-10-22 10:55:30 +0200 758)  *
+^b07681b (evals 2026-10-22 10:55:30 +0200 759)  * @group utils
+^b07681b (evals 2026-10-22 10:55:30 +0200 760)  */
+^b07681b (evals 2026-10-22 10:55:30 +0200 761) export function withoutHost(input: string) {
+^b07681b (evals 2026-10-22 10:55:30 +0200 762)   const parsed = parseURL(input);
+^b07681b (evals 2026-10-22 10:55:30 +0200 763)   return (parsed.pathname || "/") + parsed.search + parsed.hash;
+^b07681b (evals 2026-10-22 10:55:30 +0200 764) }

@@ -1,0 +1,136 @@
+$ git blame backoff.go
+9a161fe evals 2026-10-22
+1	package retry
+2	
+3	import (
+4		"math/rand/v2"
+5		"sync"
+6		"time"
+7	)
+8	
+9	// Backoff is an interface that backs off.
+10	type Backoff interface {
+11		// Next returns the time duration to wait and whether to stop.
+12		Next() (next time.Duration, stop bool)
+13	}
+14	
+15	var _ Backoff = (BackoffFunc)(nil)
+16	
+17	// BackoffFunc is a backoff expressed as a function.
+18	type BackoffFunc func() (time.Duration, bool)
+19	
+20	// Next implements Backoff.
+21	func (b BackoffFunc) Next() (time.Duration, bool) {
+22		return b()
+23	}
+24	
+25	// WithJitter wraps a backoff function and adds the specified jitter. j can be
+26	// interpreted as "+/- j". For example, if j were 5 seconds and the backoff
+27	// returned 20s, the value could be between 15 and 25 seconds. The value can
+28	// never be less than 0.
+29	func WithJitter(j time.Duration, next Backoff) Backoff {
+30		return BackoffFunc(func() (time.Duration, bool) {
+31			val, stop := next.Next()
+32			if stop {
+33				return 0, true
+34			}
+35	
+36			if j <= 0 {
+37				return val, false
+38			}
+39	
+40			diff := time.Duration(rand.Int64N(int64(j)*2) - int64(j))
+41			val = max(val+diff, 0)
+42			return val, false
+43		})
+44	}
+45	
+46	// WithJitterPercent wraps a backoff function and adds the specified jitter
+47	// percentage. j can be interpreted as "+/- j%". For example, if j were 5 and
+48	// the backoff returned 20s, the value could be between 19 and 21 seconds. The
+49	// value can never be less than 0 or greater than 100.
+50	func WithJitterPercent(j uint64, next Backoff) Backoff {
+51		return BackoffFunc(func() (time.Duration, bool) {
+52			val, stop := next.Next()
+53			if stop {
+54				return 0, true
+55			}
+56	
+57			if j <= 0 {
+58				return val, false
+59			}
+60	
+61			// Get a value between -j and j, the convert to a percentage
+62			top := rand.Int64N(int64(j)*2) - int64(j)
+63			pct := 1 - float64(top)/100.0
+64	
+65			val = max(time.Duration(float64(val)*pct), 0)
+66			return val, false
+67		})
+68	}
+69	
+70	// WithMaxRetries executes the backoff function up until the maximum attempts.
+71	func WithMaxRetries(max uint64, next Backoff) Backoff {
+72		var l sync.Mutex
+73		var attempt uint64
+74	
+75		return BackoffFunc(func() (time.Duration, bool) {
+76			l.Lock()
+77			defer l.Unlock()
+78	
+79			if attempt >= max {
+80				return 0, true
+81			}
+82			attempt++
+83	
+84			val, stop := next.Next()
+85			if stop {
+86				return 0, true
+87			}
+88	
+89			return val, false
+90		})
+91	}
+92	
+93	// WithCappedDuration sets a maximum on the duration returned from the next
+94	// backoff. This is NOT a total backoff time, but rather a cap on the maximum
+95	// value a backoff can return. Without another middleware, the backoff will
+96	// continue infinitely.
+97	func WithCappedDuration(cap time.Duration, next Backoff) Backoff {
+98		return BackoffFunc(func() (time.Duration, bool) {
+99			val, stop := next.Next()
+100			if stop {
+101				return 0, true
+102			}
+103	
+104			if val <= 0 || val > cap {
+105				val = cap
+106			}
+107			return val, false
+108		})
+109	}
+110	
+111	// WithMaxDuration sets a maximum on the total amount of time a backoff should
+112	// execute. It's best-effort, and should not be used to guarantee an exact
+113	// amount of time.
+114	func WithMaxDuration(timeout time.Duration, next Backoff) Backoff {
+115		start := time.Now()
+116	
+117		return BackoffFunc(func() (time.Duration, bool) {
+118			diff := timeout - time.Since(start)
+119			if diff <= 0 {
+120				return 0, true
+121			}
+122	
+123			val, stop := next.Next()
+124			if stop {
+125				return 0, true
+126			}
+127	
+128			if val <= 0 || val > diff {
+129				val = diff
+130			}
+131			return val, false
+132		})
+133	}
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-n4a0teyz.log]

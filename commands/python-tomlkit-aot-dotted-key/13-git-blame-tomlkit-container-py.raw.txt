@@ -1,0 +1,1262 @@
+$ git blame tomlkit/container.py
+^493abcd (evals 2026-10-22 10:53:58 +0200    1) from __future__ import annotations
+^493abcd (evals 2026-10-22 10:53:58 +0200    2) 
+^493abcd (evals 2026-10-22 10:53:58 +0200    3) import copy
+^493abcd (evals 2026-10-22 10:53:58 +0200    4) import math
+^493abcd (evals 2026-10-22 10:53:58 +0200    5) 
+^493abcd (evals 2026-10-22 10:53:58 +0200    6) from collections.abc import Iterator
+^493abcd (evals 2026-10-22 10:53:58 +0200    7) from typing import TYPE_CHECKING
+^493abcd (evals 2026-10-22 10:53:58 +0200    8) from typing import Any
+^493abcd (evals 2026-10-22 10:53:58 +0200    9) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   10) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   11) if TYPE_CHECKING:
+^493abcd (evals 2026-10-22 10:53:58 +0200   12)     from typing import Self
+^493abcd (evals 2026-10-22 10:53:58 +0200   13) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   14) from tomlkit._compat import decode
+^493abcd (evals 2026-10-22 10:53:58 +0200   15) from tomlkit._types import _CustomDict
+^493abcd (evals 2026-10-22 10:53:58 +0200   16) from tomlkit._utils import merge_dicts
+^493abcd (evals 2026-10-22 10:53:58 +0200   17) from tomlkit.exceptions import KeyAlreadyPresent
+^493abcd (evals 2026-10-22 10:53:58 +0200   18) from tomlkit.exceptions import NonExistentKey
+^493abcd (evals 2026-10-22 10:53:58 +0200   19) from tomlkit.exceptions import TOMLKitError
+^493abcd (evals 2026-10-22 10:53:58 +0200   20) from tomlkit.items import AoT
+^493abcd (evals 2026-10-22 10:53:58 +0200   21) from tomlkit.items import Comment
+^493abcd (evals 2026-10-22 10:53:58 +0200   22) from tomlkit.items import Item
+^493abcd (evals 2026-10-22 10:53:58 +0200   23) from tomlkit.items import Key
+^493abcd (evals 2026-10-22 10:53:58 +0200   24) from tomlkit.items import Null
+^493abcd (evals 2026-10-22 10:53:58 +0200   25) from tomlkit.items import SingleKey
+^493abcd (evals 2026-10-22 10:53:58 +0200   26) from tomlkit.items import Table
+^493abcd (evals 2026-10-22 10:53:58 +0200   27) from tomlkit.items import Trivia
+^493abcd (evals 2026-10-22 10:53:58 +0200   28) from tomlkit.items import Whitespace
+^493abcd (evals 2026-10-22 10:53:58 +0200   29) from tomlkit.items import item as _item
+^493abcd (evals 2026-10-22 10:53:58 +0200   30) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   31) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   32) _NOT_SET = object()
+^493abcd (evals 2026-10-22 10:53:58 +0200   33) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   34) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   35) class Container(_CustomDict):  # type: ignore[type-arg]
+^493abcd (evals 2026-10-22 10:53:58 +0200   36)     """
+^493abcd (evals 2026-10-22 10:53:58 +0200   37)     A container for items within a TOMLDocument.
+^493abcd (evals 2026-10-22 10:53:58 +0200   38) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   39)     This class implements the `dict` interface with copy/deepcopy protocol.
+^493abcd (evals 2026-10-22 10:53:58 +0200   40)     """
+^493abcd (evals 2026-10-22 10:53:58 +0200   41) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   42)     def __init__(self, parsed: bool = False) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200   43)         self._map: dict[Key, int | tuple[int, ...]] = {}
+^493abcd (evals 2026-10-22 10:53:58 +0200   44)         self._body: list[tuple[Key | None, Item]] = []
+^493abcd (evals 2026-10-22 10:53:58 +0200   45)         self._parsed = parsed
+^493abcd (evals 2026-10-22 10:53:58 +0200   46)         self._table_keys: list[Key] = []
+^493abcd (evals 2026-10-22 10:53:58 +0200   47)         # number of already-validated fragments and the temp container they
+^493abcd (evals 2026-10-22 10:53:58 +0200   48)         # were merged into, per out-of-order key; lets parse-time validation
+^493abcd (evals 2026-10-22 10:53:58 +0200   49)         # resume where the previous pass stopped instead of re-merging every
+^493abcd (evals 2026-10-22 10:53:58 +0200   50)         # fragment (quadratic) on each append
+^493abcd (evals 2026-10-22 10:53:58 +0200   51)         self._validation_cache: dict[Key, tuple[int, Container]] = {}
+^493abcd (evals 2026-10-22 10:53:58 +0200   52)         # superset of the keys mapped to an index tuple, so validating all
+^493abcd (evals 2026-10-22 10:53:58 +0200   53)         # out-of-order tables doesn't have to scan every key in the map;
+^493abcd (evals 2026-10-22 10:53:58 +0200   54)         # stale entries are filtered by the per-key isinstance check
+^493abcd (evals 2026-10-22 10:53:58 +0200   55)         self._out_of_order_keys: set[Key] = set()
+^493abcd (evals 2026-10-22 10:53:58 +0200   56) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   57)     @property
+^493abcd (evals 2026-10-22 10:53:58 +0200   58)     def body(self) -> list[tuple[Key | None, Item]]:
+^493abcd (evals 2026-10-22 10:53:58 +0200   59)         return self._body
+^493abcd (evals 2026-10-22 10:53:58 +0200   60) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   61)     def unwrap(self) -> dict[str, Any]:
+^493abcd (evals 2026-10-22 10:53:58 +0200   62)         """Returns as pure python object (ppo)"""
+^493abcd (evals 2026-10-22 10:53:58 +0200   63)         unwrapped: dict[str, Any] = {}
+^493abcd (evals 2026-10-22 10:53:58 +0200   64)         # Resolve each key straight from _map, which already holds the parsed
+^493abcd (evals 2026-10-22 10:53:58 +0200   65)         # Key objects and their body index, instead of via self.items(): the
+^493abcd (evals 2026-10-22 10:53:58 +0200   66)         # inherited MutableMapping iteration goes through __getitem__, which
+^493abcd (evals 2026-10-22 10:53:58 +0200   67)         # rebuilds a SingleKey from the bare string on every key only to throw
+^493abcd (evals 2026-10-22 10:53:58 +0200   68)         # it away. Out-of-order keys (a tuple index) still go through
+^493abcd (evals 2026-10-22 10:53:58 +0200   69)         # OutOfOrderTableProxy so their validation (and fragment merge) runs
+^493abcd (evals 2026-10-22 10:53:58 +0200   70)         # exactly as before. _map iterates in the same insertion order as the
+^493abcd (evals 2026-10-22 10:53:58 +0200   71)         # old self.items().
+^493abcd (evals 2026-10-22 10:53:58 +0200   72)         for key, idx in self._map.items():
+^493abcd (evals 2026-10-22 10:53:58 +0200   73)             if isinstance(idx, tuple):
+^493abcd (evals 2026-10-22 10:53:58 +0200   74)                 value: Any = OutOfOrderTableProxy(self, idx)
+^493abcd (evals 2026-10-22 10:53:58 +0200   75)             else:
+^493abcd (evals 2026-10-22 10:53:58 +0200   76)                 value = self._body[idx][1]
+^493abcd (evals 2026-10-22 10:53:58 +0200   77)             unwrapped[key.key] = value.unwrap() if hasattr(value, "unwrap") else value
+^493abcd (evals 2026-10-22 10:53:58 +0200   78) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   79)         return unwrapped
+^493abcd (evals 2026-10-22 10:53:58 +0200   80) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   81)     @property
+^493abcd (evals 2026-10-22 10:53:58 +0200   82)     def value(self) -> dict[str, Any]:
+^493abcd (evals 2026-10-22 10:53:58 +0200   83)         """The wrapped dict value"""
+^493abcd (evals 2026-10-22 10:53:58 +0200   84)         d: dict[str, Any] = {}
+^493abcd (evals 2026-10-22 10:53:58 +0200   85)         for k, v in self._body:
+^493abcd (evals 2026-10-22 10:53:58 +0200   86)             if k is None:
+^493abcd (evals 2026-10-22 10:53:58 +0200   87)                 continue
+^493abcd (evals 2026-10-22 10:53:58 +0200   88) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   89)             key_str = k.key
+^493abcd (evals 2026-10-22 10:53:58 +0200   90)             val: Any = v.value
+^493abcd (evals 2026-10-22 10:53:58 +0200   91) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   92)             if isinstance(val, Container):
+^493abcd (evals 2026-10-22 10:53:58 +0200   93)                 val = val.value
+^493abcd (evals 2026-10-22 10:53:58 +0200   94) 
+^493abcd (evals 2026-10-22 10:53:58 +0200   95)             if key_str in d:
+^493abcd (evals 2026-10-22 10:53:58 +0200   96)                 merge_dicts(d[key_str], val)
+^493abcd (evals 2026-10-22 10:53:58 +0200   97)             else:
+^493abcd (evals 2026-10-22 10:53:58 +0200   98)                 d[key_str] = val
+^493abcd (evals 2026-10-22 10:53:58 +0200   99) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  100)         return d
+^493abcd (evals 2026-10-22 10:53:58 +0200  101) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  102)     def parsing(self, parsing: bool) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  103)         self._parsed = parsing
+^493abcd (evals 2026-10-22 10:53:58 +0200  104)         self._validation_cache.clear()
+^493abcd (evals 2026-10-22 10:53:58 +0200  105) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  106)         for _, v in self._body:
+^493abcd (evals 2026-10-22 10:53:58 +0200  107)             if isinstance(v, Table):
+^493abcd (evals 2026-10-22 10:53:58 +0200  108)                 v.value.parsing(parsing)
+^493abcd (evals 2026-10-22 10:53:58 +0200  109)             elif isinstance(v, AoT):
+^493abcd (evals 2026-10-22 10:53:58 +0200  110)                 for t in v.body:
+^493abcd (evals 2026-10-22 10:53:58 +0200  111)                     t.value.parsing(parsing)
+^493abcd (evals 2026-10-22 10:53:58 +0200  112) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  113)     def add(self, key: Key | Item | str, item: Any = None) -> Container:
+^493abcd (evals 2026-10-22 10:53:58 +0200  114)         """
+^493abcd (evals 2026-10-22 10:53:58 +0200  115)         Adds an item to the current Container.
+^493abcd (evals 2026-10-22 10:53:58 +0200  116) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  117)         :Example:
+^493abcd (evals 2026-10-22 10:53:58 +0200  118) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  119)         >>> # add a key-value pair
+^493abcd (evals 2026-10-22 10:53:58 +0200  120)         >>> doc.add('key', 'value')
+^493abcd (evals 2026-10-22 10:53:58 +0200  121)         >>> # add a comment or whitespace or newline
+^493abcd (evals 2026-10-22 10:53:58 +0200  122)         >>> doc.add(comment('# comment'))
+^493abcd (evals 2026-10-22 10:53:58 +0200  123)         """
+^493abcd (evals 2026-10-22 10:53:58 +0200  124)         if item is None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  125)             if not isinstance(key, (Comment, Whitespace)):
+^493abcd (evals 2026-10-22 10:53:58 +0200  126)                 raise ValueError(
+^493abcd (evals 2026-10-22 10:53:58 +0200  127)                     "Non comment/whitespace items must have an associated key"
+^493abcd (evals 2026-10-22 10:53:58 +0200  128)                 )
+^493abcd (evals 2026-10-22 10:53:58 +0200  129) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  130)             return self.append(None, key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  131) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  132)         assert not isinstance(key, Item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  133)         return self.append(key, item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  134) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  135)     def _handle_dotted_key(self, key: Key, value: Item) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  136)         if isinstance(value, (Table, AoT)):
+^493abcd (evals 2026-10-22 10:53:58 +0200  137)             raise TOMLKitError("Can't add a table to a dotted key")
+^493abcd (evals 2026-10-22 10:53:58 +0200  138)         name, *mid, last = key
+^493abcd (evals 2026-10-22 10:53:58 +0200  139)         name._dotted = True
+^493abcd (evals 2026-10-22 10:53:58 +0200  140)         table = current = Table(Container(True), Trivia(), False, is_super_table=True)
+^493abcd (evals 2026-10-22 10:53:58 +0200  141)         for _name in mid:
+^493abcd (evals 2026-10-22 10:53:58 +0200  142)             _name._dotted = True
+^493abcd (evals 2026-10-22 10:53:58 +0200  143)             new_table = Table(Container(True), Trivia(), False, is_super_table=True)
+^493abcd (evals 2026-10-22 10:53:58 +0200  144)             current.append(_name, new_table)
+^493abcd (evals 2026-10-22 10:53:58 +0200  145)             current = new_table
+^493abcd (evals 2026-10-22 10:53:58 +0200  146) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  147)         last.sep = key.sep
+^493abcd (evals 2026-10-22 10:53:58 +0200  148)         current.append(last, value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  149) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  150)         self.append(name, table)
+^493abcd (evals 2026-10-22 10:53:58 +0200  151)         return
+^493abcd (evals 2026-10-22 10:53:58 +0200  152) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  153)     def _get_last_index_before_table(self) -> int:
+^493abcd (evals 2026-10-22 10:53:58 +0200  154)         last_index = -1
+^493abcd (evals 2026-10-22 10:53:58 +0200  155)         for i, (k, v) in enumerate(self._body):
+^493abcd (evals 2026-10-22 10:53:58 +0200  156)             if isinstance(v, Null):
+^493abcd (evals 2026-10-22 10:53:58 +0200  157)                 continue  # Null elements are inserted after deletion
+^493abcd (evals 2026-10-22 10:53:58 +0200  158) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  159)             if isinstance(v, Whitespace) and not v.is_fixed():
+^493abcd (evals 2026-10-22 10:53:58 +0200  160)                 continue
+^493abcd (evals 2026-10-22 10:53:58 +0200  161) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  162)             if isinstance(v, (Table, AoT)) and k is not None and not k.is_dotted():
+^493abcd (evals 2026-10-22 10:53:58 +0200  163)                 break
+^493abcd (evals 2026-10-22 10:53:58 +0200  164)             last_index = i
+^493abcd (evals 2026-10-22 10:53:58 +0200  165)         return last_index + 1
+^493abcd (evals 2026-10-22 10:53:58 +0200  166) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  167)     def _validate_out_of_order_table(self, key: Key | None = None) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  168)         if key is None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  169)             for k in list(self._out_of_order_keys):
+^493abcd (evals 2026-10-22 10:53:58 +0200  170)                 assert k is not None
+^493abcd (evals 2026-10-22 10:53:58 +0200  171)                 self._validate_out_of_order_table(k)
+^493abcd (evals 2026-10-22 10:53:58 +0200  172)             return
+^493abcd (evals 2026-10-22 10:53:58 +0200  173)         if key not in self._map:
+^493abcd (evals 2026-10-22 10:53:58 +0200  174)             return
+^493abcd (evals 2026-10-22 10:53:58 +0200  175)         current_idx = self._map[key]
+^493abcd (evals 2026-10-22 10:53:58 +0200  176)         if not isinstance(current_idx, tuple):
+^493abcd (evals 2026-10-22 10:53:58 +0200  177)             return
+^493abcd (evals 2026-10-22 10:53:58 +0200  178)         if self._parsed:
+^493abcd (evals 2026-10-22 10:53:58 +0200  179)             # while parsing, every fragment appended to an out-of-order key
+^493abcd (evals 2026-10-22 10:53:58 +0200  180)             # triggers a validation pass; resume from the cached temp
+^493abcd (evals 2026-10-22 10:53:58 +0200  181)             # container so each fragment is merged (and deep-copied) once
+^493abcd (evals 2026-10-22 10:53:58 +0200  182)             # instead of on every later pass. Fragments are only ever
+^493abcd (evals 2026-10-22 10:53:58 +0200  183)             # appended during parsing, so a count prefix stays valid; any
+^493abcd (evals 2026-10-22 10:53:58 +0200  184)             # other mutation clears the cache.
+^493abcd (evals 2026-10-22 10:53:58 +0200  185)             validated, temp = self._validation_cache.get(key, (0, None))
+^493abcd (evals 2026-10-22 10:53:58 +0200  186)             if validated > len(current_idx):
+^493abcd (evals 2026-10-22 10:53:58 +0200  187)                 validated, temp = 0, None
+^493abcd (evals 2026-10-22 10:53:58 +0200  188)             try:
+^493abcd (evals 2026-10-22 10:53:58 +0200  189)                 temp = OutOfOrderTableProxy.validate(
+^493abcd (evals 2026-10-22 10:53:58 +0200  190)                     self, current_idx[validated:], temp
+^493abcd (evals 2026-10-22 10:53:58 +0200  191)                 )
+^493abcd (evals 2026-10-22 10:53:58 +0200  192)             except Exception:
+^493abcd (evals 2026-10-22 10:53:58 +0200  193)                 # the temp container may be partially mutated; don't let a
+^493abcd (evals 2026-10-22 10:53:58 +0200  194)                 # caught-and-retried failure resume from a poisoned cache
+^493abcd (evals 2026-10-22 10:53:58 +0200  195)                 self._validation_cache.pop(key, None)
+^493abcd (evals 2026-10-22 10:53:58 +0200  196)                 raise
+^493abcd (evals 2026-10-22 10:53:58 +0200  197)             self._validation_cache[key] = (len(current_idx), temp)
+^493abcd (evals 2026-10-22 10:53:58 +0200  198)             return
+^493abcd (evals 2026-10-22 10:53:58 +0200  199)         OutOfOrderTableProxy.validate(self, current_idx)
+^493abcd (evals 2026-10-22 10:53:58 +0200  200) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  201)     def append(
+^493abcd (evals 2026-10-22 10:53:58 +0200  202)         self, key: Key | str | None, item: Any, validate: bool = True
+^493abcd (evals 2026-10-22 10:53:58 +0200  203)     ) -> Container:
+^493abcd (evals 2026-10-22 10:53:58 +0200  204)         """Similar to :meth:`add` but both key and value must be given."""
+^493abcd (evals 2026-10-22 10:53:58 +0200  205)         if not isinstance(key, Key) and key is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  206)             key = SingleKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  207) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  208)         if not isinstance(item, Item):
+^493abcd (evals 2026-10-22 10:53:58 +0200  209)             item = _item(item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  210) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  211)         if key is not None and key.is_multi():
+^493abcd (evals 2026-10-22 10:53:58 +0200  212)             self._handle_dotted_key(key, item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  213)             return self
+^493abcd (evals 2026-10-22 10:53:58 +0200  214) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  215)         if isinstance(item, (AoT, Table)) and item.name is None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  216)             assert isinstance(key, Key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  217)             item.name = key.key
+^493abcd (evals 2026-10-22 10:53:58 +0200  218) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  219)         prev = self._previous_item()
+^493abcd (evals 2026-10-22 10:53:58 +0200  220)         prev_ws = isinstance(prev, Whitespace) or ends_with_whitespace(prev)
+^493abcd (evals 2026-10-22 10:53:58 +0200  221)         if isinstance(item, Table):
+^493abcd (evals 2026-10-22 10:53:58 +0200  222)             if not self._parsed:
+^493abcd (evals 2026-10-22 10:53:58 +0200  223)                 item.invalidate_display_name()
+^493abcd (evals 2026-10-22 10:53:58 +0200  224)             if (
+^493abcd (evals 2026-10-22 10:53:58 +0200  225)                 self._body
+^493abcd (evals 2026-10-22 10:53:58 +0200  226)                 and not (self._parsed or item.trivia.indent or prev_ws)
+^493abcd (evals 2026-10-22 10:53:58 +0200  227)                 and key is not None
+^493abcd (evals 2026-10-22 10:53:58 +0200  228)                 and not key.is_dotted()
+^493abcd (evals 2026-10-22 10:53:58 +0200  229)             ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  230)                 item.trivia.indent = "\n"
+^493abcd (evals 2026-10-22 10:53:58 +0200  231) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  232)         if isinstance(item, AoT) and self._body and not self._parsed:
+^493abcd (evals 2026-10-22 10:53:58 +0200  233)             item.invalidate_display_name()
+^493abcd (evals 2026-10-22 10:53:58 +0200  234)             if item and not ("\n" in item[0].trivia.indent or prev_ws):
+^493abcd (evals 2026-10-22 10:53:58 +0200  235)                 item[0].trivia.indent = "\n" + item[0].trivia.indent
+^493abcd (evals 2026-10-22 10:53:58 +0200  236) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  237)         if key is not None and key in self:
+^493abcd (evals 2026-10-22 10:53:58 +0200  238)             current_idx = self._map[key]
+^493abcd (evals 2026-10-22 10:53:58 +0200  239)             if isinstance(current_idx, tuple):
+^493abcd (evals 2026-10-22 10:53:58 +0200  240)                 current_body_element = self._body[current_idx[-1]]
+^493abcd (evals 2026-10-22 10:53:58 +0200  241)             else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  242)                 current_body_element = self._body[current_idx]
+^493abcd (evals 2026-10-22 10:53:58 +0200  243) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  244)             current = current_body_element[1]
+^493abcd (evals 2026-10-22 10:53:58 +0200  245) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  246)             if isinstance(item, Table):
+^493abcd (evals 2026-10-22 10:53:58 +0200  247)                 if not isinstance(current, (Table, AoT)):
+^493abcd (evals 2026-10-22 10:53:58 +0200  248)                     raise KeyAlreadyPresent(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  249) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  250)                 if item.is_aot_element():
+^493abcd (evals 2026-10-22 10:53:58 +0200  251)                     # New AoT element found later on
+^493abcd (evals 2026-10-22 10:53:58 +0200  252)                     # Adding it to the current AoT
+^493abcd (evals 2026-10-22 10:53:58 +0200  253)                     if not isinstance(current, AoT):
+^493abcd (evals 2026-10-22 10:53:58 +0200  254)                         current = AoT([current, item], parsed=self._parsed)
+^493abcd (evals 2026-10-22 10:53:58 +0200  255) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  256)                         self._replace(key, key, current)
+^493abcd (evals 2026-10-22 10:53:58 +0200  257)                     else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  258)                         current.append(item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  259) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  260)                     return self
+^493abcd (evals 2026-10-22 10:53:58 +0200  261)                 elif isinstance(current, AoT):
+^493abcd (evals 2026-10-22 10:53:58 +0200  262)                     if not item.is_aot_element():
+^493abcd (evals 2026-10-22 10:53:58 +0200  263)                         if item.is_super_table() and len(current.body):
+^493abcd (evals 2026-10-22 10:53:58 +0200  264)                             # A sub-table header such as `[fruit.apple.texture]`
+^493abcd (evals 2026-10-22 10:53:58 +0200  265)                             # appearing after the array `[[fruit]]` (possibly with
+^493abcd (evals 2026-10-22 10:53:58 +0200  266)                             # unrelated tables in between) extends the last element
+^493abcd (evals 2026-10-22 10:53:58 +0200  267)                             # of the array, per the TOML spec.
+^493abcd (evals 2026-10-22 10:53:58 +0200  268)                             last = current[-1]
+^493abcd (evals 2026-10-22 10:53:58 +0200  269)                             for k, v in item.value.body:
+^493abcd (evals 2026-10-22 10:53:58 +0200  270)                                 last.value.append(k, v)
+^493abcd (evals 2026-10-22 10:53:58 +0200  271) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  272)                             return self
+^493abcd (evals 2026-10-22 10:53:58 +0200  273)                         # Tried to define a table after an AoT with the same name.
+^493abcd (evals 2026-10-22 10:53:58 +0200  274)                         raise KeyAlreadyPresent(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  275) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  276)                     current.append(item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  277) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  278)                     return self
+^493abcd (evals 2026-10-22 10:53:58 +0200  279)                 elif current.is_super_table():
+^493abcd (evals 2026-10-22 10:53:58 +0200  280)                     if item.is_super_table():
+^493abcd (evals 2026-10-22 10:53:58 +0200  281)                         # We need to merge both super tables
+^493abcd (evals 2026-10-22 10:53:58 +0200  282)                         if (
+^493abcd (evals 2026-10-22 10:53:58 +0200  283)                             key.is_dotted()
+^493abcd (evals 2026-10-22 10:53:58 +0200  284)                             or (
+^493abcd (evals 2026-10-22 10:53:58 +0200  285)                                 current_body_element[0] is not None
+^493abcd (evals 2026-10-22 10:53:58 +0200  286)                                 and current_body_element[0].is_dotted()
+^493abcd (evals 2026-10-22 10:53:58 +0200  287)                             )
+^493abcd (evals 2026-10-22 10:53:58 +0200  288)                             or self._table_keys[-1] != current_body_element[0]
+^493abcd (evals 2026-10-22 10:53:58 +0200  289)                         ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  290)                             if key.is_dotted() and not self._parsed:
+^493abcd (evals 2026-10-22 10:53:58 +0200  291)                                 idx = self._get_last_index_before_table()
+^493abcd (evals 2026-10-22 10:53:58 +0200  292)                             else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  293)                                 idx = len(self._body)
+^493abcd (evals 2026-10-22 10:53:58 +0200  294) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  295)                             if idx < len(self._body):
+^493abcd (evals 2026-10-22 10:53:58 +0200  296)                                 self._insert_at(idx, key, item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  297)                             else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  298)                                 self._raw_append(key, item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  299) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  300)                             if validate:
+^493abcd (evals 2026-10-22 10:53:58 +0200  301)                                 self._validate_out_of_order_table(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  302) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  303)                             return self
+^493abcd (evals 2026-10-22 10:53:58 +0200  304) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  305)                         # Merge the new super table's body into the existing one
+^493abcd (evals 2026-10-22 10:53:58 +0200  306)                         # in place. Previously this deep-copied `current` before
+^493abcd (evals 2026-10-22 10:53:58 +0200  307)                         # appending, which is O(size of current) on every merge
+^493abcd (evals 2026-10-22 10:53:58 +0200  308)                         # and therefore O(n^2) when many subtables share a super
+^493abcd (evals 2026-10-22 10:53:58 +0200  309)                         # table (e.g. consecutive `[a.b.c]` / `[a.b.d]` headers).
+^493abcd (evals 2026-10-22 10:53:58 +0200  310)                         # Mutating in place is O(1) per merge. The defensive copy
+^493abcd (evals 2026-10-22 10:53:58 +0200  311)                         # that protected the out-of-order validation pass has been
+^493abcd (evals 2026-10-22 10:53:58 +0200  312)                         # moved into OutOfOrderTableProxy (its only consumer).
+^493abcd (evals 2026-10-22 10:53:58 +0200  313)                         for k, v in item.value.body:
+^493abcd (evals 2026-10-22 10:53:58 +0200  314)                             current.append(k, v)
+^493abcd (evals 2026-10-22 10:53:58 +0200  315) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  316)                         return self
+^493abcd (evals 2026-10-22 10:53:58 +0200  317)                     elif (
+^493abcd (evals 2026-10-22 10:53:58 +0200  318)                         current_body_element[0] is not None
+^493abcd (evals 2026-10-22 10:53:58 +0200  319)                         and current_body_element[0].is_dotted()
+^493abcd (evals 2026-10-22 10:53:58 +0200  320)                     ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  321)                         raise TOMLKitError("Redefinition of an existing table")
+^493abcd (evals 2026-10-22 10:53:58 +0200  322)                     else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  323)                         # Merging a concrete table into an existing implicit/super
+^493abcd (evals 2026-10-22 10:53:58 +0200  324)                         # table is only valid if it does not redefine existing
+^493abcd (evals 2026-10-22 10:53:58 +0200  325)                         # subtrees via dotted keys and does not change prior types.
+^493abcd (evals 2026-10-22 10:53:58 +0200  326)                         assert isinstance(current, Table)
+^493abcd (evals 2026-10-22 10:53:58 +0200  327)                         self._validate_table_candidate(current, item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  328)                 elif not item.is_super_table():
+^493abcd (evals 2026-10-22 10:53:58 +0200  329)                     raise KeyAlreadyPresent(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  330)                 else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  331)                     # An existing concrete table (current) is being extended by
+^493abcd (evals 2026-10-22 10:53:58 +0200  332)                     # a super-table (item) — e.g. [a] b=1 then [a.b] c=2 out of
+^493abcd (evals 2026-10-22 10:53:58 +0200  333)                     # order, or [a] b.c=1 then [a.b] d=2.  Validate that the
+^493abcd (evals 2026-10-22 10:53:58 +0200  334)                     # super-table does not redefine any existing key, raising
+^493abcd (evals 2026-10-22 10:53:58 +0200  335)                     # early at parse time.  When validation passes, fall through
+^493abcd (evals 2026-10-22 10:53:58 +0200  336)                     # — _raw_append below will create an out-of-order entry and
+^493abcd (evals 2026-10-22 10:53:58 +0200  337)                     # preserve table ordering in the document.
+^493abcd (evals 2026-10-22 10:53:58 +0200  338)                     assert isinstance(current, Table)
+^493abcd (evals 2026-10-22 10:53:58 +0200  339)                     self._validate_table_candidate(current, item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  340)             elif isinstance(item, AoT):
+^493abcd (evals 2026-10-22 10:53:58 +0200  341)                 if not isinstance(current, AoT):
+^493abcd (evals 2026-10-22 10:53:58 +0200  342)                     # Tried to define an AoT after a table with the same name.
+^493abcd (evals 2026-10-22 10:53:58 +0200  343)                     raise KeyAlreadyPresent(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  344) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  345)                 for table in item.body:
+^493abcd (evals 2026-10-22 10:53:58 +0200  346)                     current.append(table)
+^493abcd (evals 2026-10-22 10:53:58 +0200  347) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  348)                 return self
+^493abcd (evals 2026-10-22 10:53:58 +0200  349)             else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  350)                 raise KeyAlreadyPresent(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  351) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  352)         is_table = isinstance(item, (Table, AoT))
+^493abcd (evals 2026-10-22 10:53:58 +0200  353)         if (
+^493abcd (evals 2026-10-22 10:53:58 +0200  354)             key is not None
+^493abcd (evals 2026-10-22 10:53:58 +0200  355)             and self._body
+^493abcd (evals 2026-10-22 10:53:58 +0200  356)             and not self._parsed
+^493abcd (evals 2026-10-22 10:53:58 +0200  357)             and (not is_table or key.is_dotted())
+^493abcd (evals 2026-10-22 10:53:58 +0200  358)         ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  359)             # If there is already at least one table in the current container
+^493abcd (evals 2026-10-22 10:53:58 +0200  360)             # and the given item is not a table, we need to find the last
+^493abcd (evals 2026-10-22 10:53:58 +0200  361)             # item that is not a table and insert after it
+^493abcd (evals 2026-10-22 10:53:58 +0200  362)             # If no such item exists, insert at the top of the table
+^493abcd (evals 2026-10-22 10:53:58 +0200  363)             last_index = self._get_last_index_before_table()
+^493abcd (evals 2026-10-22 10:53:58 +0200  364) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  365)             if last_index < len(self._body):
+^493abcd (evals 2026-10-22 10:53:58 +0200  366)                 after_item = self._body[last_index][1]
+^493abcd (evals 2026-10-22 10:53:58 +0200  367)                 if not (
+^493abcd (evals 2026-10-22 10:53:58 +0200  368)                     isinstance(after_item, Whitespace)
+^493abcd (evals 2026-10-22 10:53:58 +0200  369)                     or "\n" in after_item.trivia.indent
+^493abcd (evals 2026-10-22 10:53:58 +0200  370)                 ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  371)                     after_item.trivia.indent = "\n" + after_item.trivia.indent
+^493abcd (evals 2026-10-22 10:53:58 +0200  372)                 return self._insert_at(last_index, key, item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  373)             else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  374)                 previous_item = self._body[-1][1]
+^493abcd (evals 2026-10-22 10:53:58 +0200  375)                 if isinstance(previous_item, Table) and previous_item.is_super_table():
+^493abcd (evals 2026-10-22 10:53:58 +0200  376)                     previous_child = previous_item.value._previous_item()
+^493abcd (evals 2026-10-22 10:53:58 +0200  377)                     if (
+^493abcd (evals 2026-10-22 10:53:58 +0200  378)                         previous_child is not None
+^493abcd (evals 2026-10-22 10:53:58 +0200  379)                         and not isinstance(previous_child, Whitespace)
+^493abcd (evals 2026-10-22 10:53:58 +0200  380)                         and "\n" in previous_item.trivia.trail
+^493abcd (evals 2026-10-22 10:53:58 +0200  381)                         and "\n" not in previous_child.trivia.trail
+^493abcd (evals 2026-10-22 10:53:58 +0200  382)                     ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  383)                         previous_child.trivia.trail += previous_item.trivia.trail
+^493abcd (evals 2026-10-22 10:53:58 +0200  384)                 if not (
+^493abcd (evals 2026-10-22 10:53:58 +0200  385)                     isinstance(previous_item, Whitespace)
+^493abcd (evals 2026-10-22 10:53:58 +0200  386)                     or ends_with_whitespace(previous_item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  387)                     or "\n" in previous_item.trivia.trail
+^493abcd (evals 2026-10-22 10:53:58 +0200  388)                 ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  389)                     previous_item.trivia.trail += "\n"
+^493abcd (evals 2026-10-22 10:53:58 +0200  390) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  391)         self._raw_append(key, item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  392)         if validate and key is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  393)             self._validate_out_of_order_table(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  394)         return self
+^493abcd (evals 2026-10-22 10:53:58 +0200  395) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  396)     def _validate_table_candidate(self, current: Table, candidate: Table) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  397)         for k, v in candidate.value.body:
+^493abcd (evals 2026-10-22 10:53:58 +0200  398)             if k is None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  399)                 continue
+^493abcd (evals 2026-10-22 10:53:58 +0200  400) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  401)             if k in current.value._map:
+^493abcd (evals 2026-10-22 10:53:58 +0200  402)                 existing = current.value.item(k)
+^493abcd (evals 2026-10-22 10:53:58 +0200  403)                 if isinstance(existing, (Table, AoT)) != isinstance(v, (Table, AoT)):
+^493abcd (evals 2026-10-22 10:53:58 +0200  404)                     raise KeyAlreadyPresent(k)
+^493abcd (evals 2026-10-22 10:53:58 +0200  405)                 if k.is_dotted():
+^493abcd (evals 2026-10-22 10:53:58 +0200  406)                     raise TOMLKitError("Redefinition of an existing table")
+^493abcd (evals 2026-10-22 10:53:58 +0200  407)                 if isinstance(existing, Table) and isinstance(v, Table):
+^493abcd (evals 2026-10-22 10:53:58 +0200  408)                     if not existing.is_super_table() and not v.is_super_table():
+^493abcd (evals 2026-10-22 10:53:58 +0200  409)                         # Both sides are concrete `[table]` definitions of the
+^493abcd (evals 2026-10-22 10:53:58 +0200  410)                         # same name; the table is declared twice.
+^493abcd (evals 2026-10-22 10:53:58 +0200  411)                         raise KeyAlreadyPresent(k)
+^493abcd (evals 2026-10-22 10:53:58 +0200  412)                     # One side is still an implicit/super table, so a duplicate
+^493abcd (evals 2026-10-22 10:53:58 +0200  413)                     # (if any) is nested deeper - keep checking the subtree.
+^493abcd (evals 2026-10-22 10:53:58 +0200  414)                     self._validate_table_candidate(existing, v)
+^493abcd (evals 2026-10-22 10:53:58 +0200  415)                 continue
+^493abcd (evals 2026-10-22 10:53:58 +0200  416) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  417)             if not k.is_dotted():
+^493abcd (evals 2026-10-22 10:53:58 +0200  418)                 # Even when the candidate key itself is not dotted, an
+^493abcd (evals 2026-10-22 10:53:58 +0200  419)                 # existing dotted key may already use it as a prefix —
+^493abcd (evals 2026-10-22 10:53:58 +0200  420)                 # e.g.  [a] b.c=1 then [a.b] d=2  (b prefixes b.c).
+^493abcd (evals 2026-10-22 10:53:58 +0200  421)                 for existing_key in current.value._map:
+^493abcd (evals 2026-10-22 10:53:58 +0200  422)                     if existing_key.is_dotted() and next(iter(existing_key)) == k:
+^493abcd (evals 2026-10-22 10:53:58 +0200  423)                         raise TOMLKitError("Redefinition of an existing table")
+^493abcd (evals 2026-10-22 10:53:58 +0200  424)                 continue
+^493abcd (evals 2026-10-22 10:53:58 +0200  425) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  426)             head = next(iter(k))
+^493abcd (evals 2026-10-22 10:53:58 +0200  427)             if head in current.value._map:
+^493abcd (evals 2026-10-22 10:53:58 +0200  428)                 raise TOMLKitError("Redefinition of an existing table")
+^493abcd (evals 2026-10-22 10:53:58 +0200  429) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  430)     def _raw_append(self, key: Key | None, item: Item) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  431)         if key is not None and key in self._map:
+^493abcd (evals 2026-10-22 10:53:58 +0200  432)             current_idx = self._map[key]
+^493abcd (evals 2026-10-22 10:53:58 +0200  433)             if not isinstance(current_idx, tuple):
+^493abcd (evals 2026-10-22 10:53:58 +0200  434)                 current_idx = (current_idx,)
+^493abcd (evals 2026-10-22 10:53:58 +0200  435) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  436)             current = self._body[current_idx[-1]][1]
+^493abcd (evals 2026-10-22 10:53:58 +0200  437)             if not isinstance(current, Table):
+^493abcd (evals 2026-10-22 10:53:58 +0200  438)                 raise KeyAlreadyPresent(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  439) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  440)             self._map[key] = (*current_idx, len(self._body))
+^493abcd (evals 2026-10-22 10:53:58 +0200  441)             self._out_of_order_keys.add(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  442)         elif key is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  443)             self._map[key] = len(self._body)
+^493abcd (evals 2026-10-22 10:53:58 +0200  444) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  445)         self._body.append((key, item))
+^493abcd (evals 2026-10-22 10:53:58 +0200  446)         if item.is_table() and key is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  447)             self._table_keys.append(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  448) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  449)         if key is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  450)             dict.__setitem__(self, key.key, item.value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  451) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  452)     def _remove_at(self, idx: int) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  453)         key = self._body[idx][0]
+^493abcd (evals 2026-10-22 10:53:58 +0200  454)         assert key is not None
+^493abcd (evals 2026-10-22 10:53:58 +0200  455)         index = self._map.get(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  456)         if index is None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  457)             raise NonExistentKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  458)         self._validation_cache.clear()
+^493abcd (evals 2026-10-22 10:53:58 +0200  459)         self._body[idx] = (None, Null())
+^493abcd (evals 2026-10-22 10:53:58 +0200  460) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  461)         if isinstance(index, tuple):
+^493abcd (evals 2026-10-22 10:53:58 +0200  462)             index_list = list(index)
+^493abcd (evals 2026-10-22 10:53:58 +0200  463)             index_list.remove(idx)
+^493abcd (evals 2026-10-22 10:53:58 +0200  464)             if len(index_list) == 1:
+^493abcd (evals 2026-10-22 10:53:58 +0200  465)                 self._map[key] = index_list.pop()
+^493abcd (evals 2026-10-22 10:53:58 +0200  466)             else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  467)                 self._map[key] = tuple(index_list)
+^493abcd (evals 2026-10-22 10:53:58 +0200  468)         else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  469)             dict.__delitem__(self, key.key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  470)             self._map.pop(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  471) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  472)     def remove(self, key: Key | str) -> Container:
+^493abcd (evals 2026-10-22 10:53:58 +0200  473)         """Remove a key from the container."""
+^493abcd (evals 2026-10-22 10:53:58 +0200  474)         if not isinstance(key, Key):
+^493abcd (evals 2026-10-22 10:53:58 +0200  475)             key = SingleKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  476) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  477)         idx = self._map.pop(key, None)
+^493abcd (evals 2026-10-22 10:53:58 +0200  478)         if idx is None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  479)             raise NonExistentKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  480) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  481)         self._validation_cache.clear()
+^493abcd (evals 2026-10-22 10:53:58 +0200  482)         if isinstance(idx, tuple):
+^493abcd (evals 2026-10-22 10:53:58 +0200  483)             for i in idx:
+^493abcd (evals 2026-10-22 10:53:58 +0200  484)                 self._body[i] = (None, Null())
+^493abcd (evals 2026-10-22 10:53:58 +0200  485)         else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  486)             self._body[idx] = (None, Null())
+^493abcd (evals 2026-10-22 10:53:58 +0200  487) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  488)         dict.__delitem__(self, key.key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  489) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  490)         return self
+^493abcd (evals 2026-10-22 10:53:58 +0200  491) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  492)     def _insert_after(
+^493abcd (evals 2026-10-22 10:53:58 +0200  493)         self, key: Key | str, other_key: Key | str, item: Any
+^493abcd (evals 2026-10-22 10:53:58 +0200  494)     ) -> Container:
+^493abcd (evals 2026-10-22 10:53:58 +0200  495)         if key is None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  496)             raise ValueError("Key cannot be null in insert_after()")
+^493abcd (evals 2026-10-22 10:53:58 +0200  497) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  498)         if key not in self:
+^493abcd (evals 2026-10-22 10:53:58 +0200  499)             raise NonExistentKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  500) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  501)         if not isinstance(key, Key):
+^493abcd (evals 2026-10-22 10:53:58 +0200  502)             key = SingleKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  503) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  504)         if not isinstance(other_key, Key):
+^493abcd (evals 2026-10-22 10:53:58 +0200  505)             other_key = SingleKey(other_key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  506) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  507)         item = _item(item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  508) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  509)         idx = self._map[key]
+^493abcd (evals 2026-10-22 10:53:58 +0200  510)         # Insert after the max index if there are many.
+^493abcd (evals 2026-10-22 10:53:58 +0200  511)         if isinstance(idx, tuple):
+^493abcd (evals 2026-10-22 10:53:58 +0200  512)             idx = max(idx)
+^493abcd (evals 2026-10-22 10:53:58 +0200  513)         current_item = self._body[idx][1]
+^493abcd (evals 2026-10-22 10:53:58 +0200  514)         if "\n" not in current_item.trivia.trail:
+^493abcd (evals 2026-10-22 10:53:58 +0200  515)             current_item.trivia.trail += "\n"
+^493abcd (evals 2026-10-22 10:53:58 +0200  516) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  517)         # Increment indices after the current index
+^493abcd (evals 2026-10-22 10:53:58 +0200  518)         for k, v in self._map.items():
+^493abcd (evals 2026-10-22 10:53:58 +0200  519)             if isinstance(v, tuple):
+^493abcd (evals 2026-10-22 10:53:58 +0200  520)                 new_indices = []
+^493abcd (evals 2026-10-22 10:53:58 +0200  521)                 for v_ in v:
+^493abcd (evals 2026-10-22 10:53:58 +0200  522)                     if v_ > idx:
+^493abcd (evals 2026-10-22 10:53:58 +0200  523)                         v_ = v_ + 1
+^493abcd (evals 2026-10-22 10:53:58 +0200  524) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  525)                     new_indices.append(v_)
+^493abcd (evals 2026-10-22 10:53:58 +0200  526) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  527)                 self._map[k] = tuple(new_indices)
+^493abcd (evals 2026-10-22 10:53:58 +0200  528)             elif v > idx:
+^493abcd (evals 2026-10-22 10:53:58 +0200  529)                 self._map[k] = v + 1
+^493abcd (evals 2026-10-22 10:53:58 +0200  530) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  531)         self._map[other_key] = idx + 1
+^493abcd (evals 2026-10-22 10:53:58 +0200  532)         self._body.insert(idx + 1, (other_key, item))
+^493abcd (evals 2026-10-22 10:53:58 +0200  533) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  534)         if key is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  535)             dict.__setitem__(self, other_key.key, item.value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  536) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  537)         return self
+^493abcd (evals 2026-10-22 10:53:58 +0200  538) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  539)     def _insert_at(self, idx: int, key: Key | str, item: Any) -> Container:
+^493abcd (evals 2026-10-22 10:53:58 +0200  540)         if idx > len(self._body) - 1:
+^493abcd (evals 2026-10-22 10:53:58 +0200  541)             raise ValueError(f"Unable to insert at position {idx}")
+^493abcd (evals 2026-10-22 10:53:58 +0200  542) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  543)         if not isinstance(key, Key):
+^493abcd (evals 2026-10-22 10:53:58 +0200  544)             key = SingleKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  545) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  546)         item = _item(item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  547) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  548)         if idx > 0:
+^493abcd (evals 2026-10-22 10:53:58 +0200  549)             previous_item = self._body[idx - 1][1]
+^493abcd (evals 2026-10-22 10:53:58 +0200  550)             if not (
+^493abcd (evals 2026-10-22 10:53:58 +0200  551)                 isinstance(previous_item, Whitespace)
+^493abcd (evals 2026-10-22 10:53:58 +0200  552)                 or ends_with_whitespace(previous_item)
+^493abcd (evals 2026-10-22 10:53:58 +0200  553)                 or isinstance(item, (AoT, Table))
+^493abcd (evals 2026-10-22 10:53:58 +0200  554)                 or "\n" in previous_item.trivia.trail
+^493abcd (evals 2026-10-22 10:53:58 +0200  555)             ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  556)                 previous_item.trivia.trail += "\n"
+^493abcd (evals 2026-10-22 10:53:58 +0200  557) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  558)         # Increment indices after the current index
+^493abcd (evals 2026-10-22 10:53:58 +0200  559)         for k, v in self._map.items():
+^493abcd (evals 2026-10-22 10:53:58 +0200  560)             if isinstance(v, tuple):
+^493abcd (evals 2026-10-22 10:53:58 +0200  561)                 new_indices = []
+^493abcd (evals 2026-10-22 10:53:58 +0200  562)                 for v_ in v:
+^493abcd (evals 2026-10-22 10:53:58 +0200  563)                     if v_ >= idx:
+^493abcd (evals 2026-10-22 10:53:58 +0200  564)                         v_ = v_ + 1
+^493abcd (evals 2026-10-22 10:53:58 +0200  565) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  566)                     new_indices.append(v_)
+^493abcd (evals 2026-10-22 10:53:58 +0200  567) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  568)                 self._map[k] = tuple(new_indices)
+^493abcd (evals 2026-10-22 10:53:58 +0200  569)             elif v >= idx:
+^493abcd (evals 2026-10-22 10:53:58 +0200  570)                 self._map[k] = v + 1
+^493abcd (evals 2026-10-22 10:53:58 +0200  571) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  572)         if key in self._map:
+^493abcd (evals 2026-10-22 10:53:58 +0200  573)             current_idx = self._map[key]
+^493abcd (evals 2026-10-22 10:53:58 +0200  574)             if not isinstance(current_idx, tuple):
+^493abcd (evals 2026-10-22 10:53:58 +0200  575)                 current_idx = (current_idx,)
+^493abcd (evals 2026-10-22 10:53:58 +0200  576)             self._map[key] = (*current_idx, idx)
+^493abcd (evals 2026-10-22 10:53:58 +0200  577)             self._out_of_order_keys.add(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  578)         else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  579)             self._map[key] = idx
+^493abcd (evals 2026-10-22 10:53:58 +0200  580)         self._body.insert(idx, (key, item))
+^493abcd (evals 2026-10-22 10:53:58 +0200  581) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  582)         dict.__setitem__(self, key.key, item.value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  583) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  584)         return self
+^493abcd (evals 2026-10-22 10:53:58 +0200  585) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  586)     def item(self, key: Key | str) -> Item | OutOfOrderTableProxy:
+^493abcd (evals 2026-10-22 10:53:58 +0200  587)         """Get an item for the given key."""
+^493abcd (evals 2026-10-22 10:53:58 +0200  588)         if not isinstance(key, Key):
+^493abcd (evals 2026-10-22 10:53:58 +0200  589)             key = SingleKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  590) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  591)         idx = self._map.get(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  592)         if idx is None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  593)             raise NonExistentKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  594) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  595)         if isinstance(idx, tuple):
+^493abcd (evals 2026-10-22 10:53:58 +0200  596)             # The item we are getting is an out of order table
+^493abcd (evals 2026-10-22 10:53:58 +0200  597)             # so we need a proxy to retrieve the proper objects
+^493abcd (evals 2026-10-22 10:53:58 +0200  598)             # from the parent container
+^493abcd (evals 2026-10-22 10:53:58 +0200  599)             return OutOfOrderTableProxy(self, idx)
+^493abcd (evals 2026-10-22 10:53:58 +0200  600) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  601)         return self._body[idx][1]
+^493abcd (evals 2026-10-22 10:53:58 +0200  602) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  603)     def last_item(self) -> Item | None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  604)         """Get the last item."""
+^493abcd (evals 2026-10-22 10:53:58 +0200  605)         if self._body:
+^493abcd (evals 2026-10-22 10:53:58 +0200  606)             return self._body[-1][1]
+^493abcd (evals 2026-10-22 10:53:58 +0200  607)         return None
+^493abcd (evals 2026-10-22 10:53:58 +0200  608) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  609)     def as_string(self) -> str:
+^493abcd (evals 2026-10-22 10:53:58 +0200  610)         """Render as TOML string."""
+^493abcd (evals 2026-10-22 10:53:58 +0200  611)         s = ""
+^493abcd (evals 2026-10-22 10:53:58 +0200  612)         for k, v in self._body:
+^493abcd (evals 2026-10-22 10:53:58 +0200  613)             if k is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  614)                 if isinstance(v, Table):
+^493abcd (evals 2026-10-22 10:53:58 +0200  615)                     if (
+^493abcd (evals 2026-10-22 10:53:58 +0200  616)                         s.strip(" ")
+^493abcd (evals 2026-10-22 10:53:58 +0200  617)                         and not s.strip(" ").endswith("\n")
+^493abcd (evals 2026-10-22 10:53:58 +0200  618)                         and "\n" not in v.trivia.indent
+^493abcd (evals 2026-10-22 10:53:58 +0200  619)                     ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  620)                         s += "\n"
+^493abcd (evals 2026-10-22 10:53:58 +0200  621)                     s += self._render_table(k, v)
+^493abcd (evals 2026-10-22 10:53:58 +0200  622)                 elif isinstance(v, AoT):
+^493abcd (evals 2026-10-22 10:53:58 +0200  623)                     if (
+^493abcd (evals 2026-10-22 10:53:58 +0200  624)                         s.strip(" ")
+^493abcd (evals 2026-10-22 10:53:58 +0200  625)                         and not s.strip(" ").endswith("\n")
+^493abcd (evals 2026-10-22 10:53:58 +0200  626)                         and "\n" not in v.trivia.indent
+^493abcd (evals 2026-10-22 10:53:58 +0200  627)                     ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  628)                         s += "\n"
+^493abcd (evals 2026-10-22 10:53:58 +0200  629)                     s += self._render_aot(k, v)
+^493abcd (evals 2026-10-22 10:53:58 +0200  630)                 else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  631)                     s += self._render_simple_item(k, v)
+^493abcd (evals 2026-10-22 10:53:58 +0200  632)             else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  633)                 s += self._render_simple_item(k, v)
+^493abcd (evals 2026-10-22 10:53:58 +0200  634) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  635)         return s
+^493abcd (evals 2026-10-22 10:53:58 +0200  636) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  637)     def _render_table(self, key: Key, table: Table, prefix: str | None = None) -> str:
+^493abcd (evals 2026-10-22 10:53:58 +0200  638)         cur = ""
+^493abcd (evals 2026-10-22 10:53:58 +0200  639) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  640)         if table.display_name is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  641)             _key = table.display_name
+^493abcd (evals 2026-10-22 10:53:58 +0200  642)         else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  643)             _key = key.as_string()
+^493abcd (evals 2026-10-22 10:53:58 +0200  644) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  645)             if prefix is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  646)                 _key = prefix + "." + _key
+^493abcd (evals 2026-10-22 10:53:58 +0200  647) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  648)         if (
+^493abcd (evals 2026-10-22 10:53:58 +0200  649)             not table.is_super_table()
+^493abcd (evals 2026-10-22 10:53:58 +0200  650)             or (
+^493abcd (evals 2026-10-22 10:53:58 +0200  651)                 any(
+^493abcd (evals 2026-10-22 10:53:58 +0200  652)                     not isinstance(v, (Table, AoT, Whitespace, Null))
+^493abcd (evals 2026-10-22 10:53:58 +0200  653)                     for _, v in table.value.body
+^493abcd (evals 2026-10-22 10:53:58 +0200  654)                 )
+^493abcd (evals 2026-10-22 10:53:58 +0200  655)                 and not key.is_dotted()
+^493abcd (evals 2026-10-22 10:53:58 +0200  656)             )
+^493abcd (evals 2026-10-22 10:53:58 +0200  657)             or (
+^493abcd (evals 2026-10-22 10:53:58 +0200  658)                 any(
+^493abcd (evals 2026-10-22 10:53:58 +0200  659)                     k is not None and k.is_dotted()
+^493abcd (evals 2026-10-22 10:53:58 +0200  660)                     for k, v in table.value.body
+^493abcd (evals 2026-10-22 10:53:58 +0200  661)                     if isinstance(v, Table)
+^493abcd (evals 2026-10-22 10:53:58 +0200  662)                 )
+^493abcd (evals 2026-10-22 10:53:58 +0200  663)                 and not key.is_dotted()
+^493abcd (evals 2026-10-22 10:53:58 +0200  664)             )
+^493abcd (evals 2026-10-22 10:53:58 +0200  665)         ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  666)             open_, close = "[", "]"
+^493abcd (evals 2026-10-22 10:53:58 +0200  667)             if table.is_aot_element():
+^493abcd (evals 2026-10-22 10:53:58 +0200  668)                 open_, close = "[[", "]]"
+^493abcd (evals 2026-10-22 10:53:58 +0200  669) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  670)             newline_in_table_trivia = (
+^493abcd (evals 2026-10-22 10:53:58 +0200  671)                 "\n" if "\n" not in table.trivia.trail and len(table.value) > 0 else ""
+^493abcd (evals 2026-10-22 10:53:58 +0200  672)             )
+^493abcd (evals 2026-10-22 10:53:58 +0200  673)             cur += (
+^493abcd (evals 2026-10-22 10:53:58 +0200  674)                 f"{table.trivia.indent}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  675)                 f"{open_}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  676)                 f"{decode(_key)}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  677)                 f"{close}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  678)                 f"{table.trivia.comment_ws}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  679)                 f"{decode(table.trivia.comment)}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  680)                 f"{table.trivia.trail}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  681)                 f"{newline_in_table_trivia}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  682)             )
+^493abcd (evals 2026-10-22 10:53:58 +0200  683)         elif table.trivia.indent == "\n":
+^493abcd (evals 2026-10-22 10:53:58 +0200  684)             cur += table.trivia.indent
+^493abcd (evals 2026-10-22 10:53:58 +0200  685) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  686)         for k, v in table.value.body:
+^493abcd (evals 2026-10-22 10:53:58 +0200  687)             if isinstance(v, Table):
+^493abcd (evals 2026-10-22 10:53:58 +0200  688)                 if (
+^493abcd (evals 2026-10-22 10:53:58 +0200  689)                     cur.strip(" ")
+^493abcd (evals 2026-10-22 10:53:58 +0200  690)                     and not cur.strip(" ").endswith("\n")
+^493abcd (evals 2026-10-22 10:53:58 +0200  691)                     and "\n" not in v.trivia.indent
+^493abcd (evals 2026-10-22 10:53:58 +0200  692)                 ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  693)                     cur += "\n"
+^493abcd (evals 2026-10-22 10:53:58 +0200  694)                 assert k is not None
+^493abcd (evals 2026-10-22 10:53:58 +0200  695)                 if v.is_super_table():
+^493abcd (evals 2026-10-22 10:53:58 +0200  696)                     if k.is_dotted() and not key.is_dotted():
+^493abcd (evals 2026-10-22 10:53:58 +0200  697)                         # Dotted key inside table
+^493abcd (evals 2026-10-22 10:53:58 +0200  698)                         cur += self._render_table(k, v)
+^493abcd (evals 2026-10-22 10:53:58 +0200  699)                     else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  700)                         cur += self._render_table(k, v, prefix=_key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  701)                 else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  702)                     cur += self._render_table(k, v, prefix=_key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  703)             elif isinstance(v, AoT):
+^493abcd (evals 2026-10-22 10:53:58 +0200  704)                 if (
+^493abcd (evals 2026-10-22 10:53:58 +0200  705)                     cur.strip(" ")
+^493abcd (evals 2026-10-22 10:53:58 +0200  706)                     and not cur.strip(" ").endswith("\n")
+^493abcd (evals 2026-10-22 10:53:58 +0200  707)                     and "\n" not in v.trivia.indent
+^493abcd (evals 2026-10-22 10:53:58 +0200  708)                 ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  709)                     cur += "\n"
+^493abcd (evals 2026-10-22 10:53:58 +0200  710)                 assert k is not None
+^493abcd (evals 2026-10-22 10:53:58 +0200  711)                 cur += self._render_aot(k, v, prefix=_key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  712)             else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  713)                 cur += self._render_simple_item(
+^493abcd (evals 2026-10-22 10:53:58 +0200  714)                     k, v, prefix=_key if key.is_dotted() else None
+^493abcd (evals 2026-10-22 10:53:58 +0200  715)                 )
+^493abcd (evals 2026-10-22 10:53:58 +0200  716) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  717)         return cur
+^493abcd (evals 2026-10-22 10:53:58 +0200  718) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  719)     def _render_aot(self, key: Key, aot: AoT, prefix: str | None = None) -> str:
+^493abcd (evals 2026-10-22 10:53:58 +0200  720)         _key = key.as_string()
+^493abcd (evals 2026-10-22 10:53:58 +0200  721)         if prefix is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  722)             _key = prefix + "." + _key
+^493abcd (evals 2026-10-22 10:53:58 +0200  723) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  724)         cur = ""
+^493abcd (evals 2026-10-22 10:53:58 +0200  725)         _key = decode(_key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  726)         for table in aot.body:
+^493abcd (evals 2026-10-22 10:53:58 +0200  727)             cur += self._render_aot_table(table, prefix=_key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  728) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  729)         return cur
+^493abcd (evals 2026-10-22 10:53:58 +0200  730) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  731)     def _render_aot_table(self, table: Table, prefix: str | None = None) -> str:
+^493abcd (evals 2026-10-22 10:53:58 +0200  732)         cur = ""
+^493abcd (evals 2026-10-22 10:53:58 +0200  733)         _key = prefix or ""
+^493abcd (evals 2026-10-22 10:53:58 +0200  734)         open_, close = "[[", "]]"
+^493abcd (evals 2026-10-22 10:53:58 +0200  735) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  736)         cur += (
+^493abcd (evals 2026-10-22 10:53:58 +0200  737)             f"{table.trivia.indent}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  738)             f"{open_}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  739)             f"{decode(_key)}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  740)             f"{close}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  741)             f"{table.trivia.comment_ws}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  742)             f"{decode(table.trivia.comment)}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  743)             f"{table.trivia.trail}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  744)         )
+^493abcd (evals 2026-10-22 10:53:58 +0200  745) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  746)         for k, v in table.value.body:
+^493abcd (evals 2026-10-22 10:53:58 +0200  747)             if isinstance(v, Table):
+^493abcd (evals 2026-10-22 10:53:58 +0200  748)                 assert k is not None
+^493abcd (evals 2026-10-22 10:53:58 +0200  749)                 if v.is_super_table():
+^493abcd (evals 2026-10-22 10:53:58 +0200  750)                     if k.is_dotted():
+^493abcd (evals 2026-10-22 10:53:58 +0200  751)                         # Dotted key inside table
+^493abcd (evals 2026-10-22 10:53:58 +0200  752)                         cur += self._render_table(k, v)
+^493abcd (evals 2026-10-22 10:53:58 +0200  753)                     else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  754)                         cur += self._render_table(k, v, prefix=_key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  755)                 else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  756)                     cur += self._render_table(k, v, prefix=_key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  757)             elif isinstance(v, AoT):
+^493abcd (evals 2026-10-22 10:53:58 +0200  758)                 assert k is not None
+^493abcd (evals 2026-10-22 10:53:58 +0200  759)                 cur += self._render_aot(k, v, prefix=_key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  760)             else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  761)                 cur += self._render_simple_item(k, v)
+^493abcd (evals 2026-10-22 10:53:58 +0200  762) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  763)         return cur
+^493abcd (evals 2026-10-22 10:53:58 +0200  764) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  765)     def _render_simple_item(
+^493abcd (evals 2026-10-22 10:53:58 +0200  766)         self, key: Key | None, item: Item, prefix: str | None = None
+^493abcd (evals 2026-10-22 10:53:58 +0200  767)     ) -> str:
+^493abcd (evals 2026-10-22 10:53:58 +0200  768)         if key is None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  769)             return item.as_string()
+^493abcd (evals 2026-10-22 10:53:58 +0200  770) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  771)         _key = key.as_string()
+^493abcd (evals 2026-10-22 10:53:58 +0200  772)         if prefix is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  773)             _key = prefix + "." + _key
+^493abcd (evals 2026-10-22 10:53:58 +0200  774) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  775)         return (
+^493abcd (evals 2026-10-22 10:53:58 +0200  776)             f"{item.trivia.indent}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  777)             f"{decode(_key)}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  778)             f"{key.sep}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  779)             f"{decode(item.as_string())}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  780)             f"{item.trivia.comment_ws}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  781)             f"{decode(item.trivia.comment)}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  782)             f"{item.trivia.trail}"
+^493abcd (evals 2026-10-22 10:53:58 +0200  783)         )
+^493abcd (evals 2026-10-22 10:53:58 +0200  784) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  785)     def __len__(self) -> int:
+^493abcd (evals 2026-10-22 10:53:58 +0200  786)         return dict.__len__(self)
+^493abcd (evals 2026-10-22 10:53:58 +0200  787) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  788)     def __iter__(self) -> Iterator[str]:
+^493abcd (evals 2026-10-22 10:53:58 +0200  789)         return iter(dict.keys(self))
+^493abcd (evals 2026-10-22 10:53:58 +0200  790) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  791)     # Dictionary methods
+^493abcd (evals 2026-10-22 10:53:58 +0200  792)     def __getitem__(self, key: Key | str) -> Any:
+^493abcd (evals 2026-10-22 10:53:58 +0200  793)         item = self.item(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  794)         if isinstance(item, Item) and item.is_boolean():
+^493abcd (evals 2026-10-22 10:53:58 +0200  795)             return item.value
+^493abcd (evals 2026-10-22 10:53:58 +0200  796) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  797)         return item
+^493abcd (evals 2026-10-22 10:53:58 +0200  798) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  799)     def __contains__(self, key: object) -> bool:
+^493abcd (evals 2026-10-22 10:53:58 +0200  800)         # Native membership test. The inherited ``MutableMapping.__contains__``
+^493abcd (evals 2026-10-22 10:53:58 +0200  801)         # resolves the value via ``__getitem__``/``item()`` (and builds a
+^493abcd (evals 2026-10-22 10:53:58 +0200  802)         # ``NonExistentKey`` on every absent key) only to discard it. Resolve the
+^493abcd (evals 2026-10-22 10:53:58 +0200  803)         # key the same way ``item()`` does -- ``str`` becomes a ``SingleKey``
+^493abcd (evals 2026-10-22 10:53:58 +0200  804)         # (a non-str/non-``Key`` argument still raises ``TypeError``) -- then
+^493abcd (evals 2026-10-22 10:53:58 +0200  805)         # probe ``_map`` directly. For an out-of-order table the proxy is still
+^493abcd (evals 2026-10-22 10:53:58 +0200  806)         # built so its validation runs exactly as before.
+^493abcd (evals 2026-10-22 10:53:58 +0200  807)         if not isinstance(key, Key):
+^493abcd (evals 2026-10-22 10:53:58 +0200  808)             key = SingleKey(key)  # type: ignore[arg-type]
+^493abcd (evals 2026-10-22 10:53:58 +0200  809)         idx = self._map.get(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  810)         if idx is None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  811)             return False
+^493abcd (evals 2026-10-22 10:53:58 +0200  812)         if isinstance(idx, tuple):
+^493abcd (evals 2026-10-22 10:53:58 +0200  813)             # during parsing every fragment append re-probes membership;
+^493abcd (evals 2026-10-22 10:53:58 +0200  814)             # if the validation cache covers exactly these fragments they
+^493abcd (evals 2026-10-22 10:53:58 +0200  815)             # are already known to merge cleanly, so skip rebuilding the
+^493abcd (evals 2026-10-22 10:53:58 +0200  816)             # proxy (which is linear in the number of fragments)
+^493abcd (evals 2026-10-22 10:53:58 +0200  817)             validated, _ = self._validation_cache.get(key, (0, None))
+^493abcd (evals 2026-10-22 10:53:58 +0200  818)             if not (self._parsed and validated == len(idx)):
+^493abcd (evals 2026-10-22 10:53:58 +0200  819)                 OutOfOrderTableProxy(self, idx)
+^493abcd (evals 2026-10-22 10:53:58 +0200  820)         return True
+^493abcd (evals 2026-10-22 10:53:58 +0200  821) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  822)     def __setitem__(self, key: Key | str, value: Any) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  823)         if key in self:
+^493abcd (evals 2026-10-22 10:53:58 +0200  824)             old_key = next(filter(lambda k: k == key, self._map))
+^493abcd (evals 2026-10-22 10:53:58 +0200  825)             self._replace(old_key, key, value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  826)         else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  827)             self.append(key, value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  828) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  829)     def __delitem__(self, key: Key | str) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  830)         self.remove(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  831) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  832)     def setdefault(self, key: Key | str, default: Any = None) -> Any:
+^493abcd (evals 2026-10-22 10:53:58 +0200  833)         if key not in self:
+^493abcd (evals 2026-10-22 10:53:58 +0200  834)             self[key] = default
+^493abcd (evals 2026-10-22 10:53:58 +0200  835)         return self[key]
+^493abcd (evals 2026-10-22 10:53:58 +0200  836) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  837)     def _replace(self, key: Key | str, new_key: Key | str, value: Item) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  838)         if not isinstance(key, Key):
+^493abcd (evals 2026-10-22 10:53:58 +0200  839)             key = SingleKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  840) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  841)         idx = self._map.get(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  842)         if idx is None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  843)             raise NonExistentKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  844) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  845)         self._replace_at(idx, new_key, value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  846) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  847)     def _replace_at(
+^493abcd (evals 2026-10-22 10:53:58 +0200  848)         self, idx: int | tuple[int, ...], new_key: Key | str, value: Item
+^493abcd (evals 2026-10-22 10:53:58 +0200  849)     ) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  850)         value = _item(value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  851)         self._validation_cache.clear()
+^493abcd (evals 2026-10-22 10:53:58 +0200  852) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  853)         if isinstance(idx, tuple):
+^493abcd (evals 2026-10-22 10:53:58 +0200  854)             for i in idx[1:]:
+^493abcd (evals 2026-10-22 10:53:58 +0200  855)                 self._body[i] = (None, Null())
+^493abcd (evals 2026-10-22 10:53:58 +0200  856) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  857)             idx = idx[0]
+^493abcd (evals 2026-10-22 10:53:58 +0200  858) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  859)         k, v = self._body[idx]
+^493abcd (evals 2026-10-22 10:53:58 +0200  860)         assert k is not None
+^493abcd (evals 2026-10-22 10:53:58 +0200  861)         # A dotted key renders its value inline (e.g. ``a.b = 1``), which is only
+^493abcd (evals 2026-10-22 10:53:58 +0200  862)         # consistent with a super table. When the replacement value renders with
+^493abcd (evals 2026-10-22 10:53:58 +0200  863)         # its own ``[header]`` instead (a non-super table), keeping the dotted key
+^493abcd (evals 2026-10-22 10:53:58 +0200  864)         # duplicates the prefix onto the header (#524). Drop the dotted key so the
+^493abcd (evals 2026-10-22 10:53:58 +0200  865)         # replacement renders as a plain table.
+^493abcd (evals 2026-10-22 10:53:58 +0200  866)         dotted_to_header = (
+^493abcd (evals 2026-10-22 10:53:58 +0200  867)             k.is_dotted() and isinstance(value, Table) and not value.is_super_table()
+^493abcd (evals 2026-10-22 10:53:58 +0200  868)         )
+^493abcd (evals 2026-10-22 10:53:58 +0200  869)         # That new header also captures every sibling that renders inline -- plain
+^493abcd (evals 2026-10-22 10:53:58 +0200  870)         # values and dotted keys -- if any still follow it (#513), so it must be
+^493abcd (evals 2026-10-22 10:53:58 +0200  871)         # moved past them, exactly as a value-to-table change already is.
+^493abcd (evals 2026-10-22 10:53:58 +0200  872)         reposition_dotted = dotted_to_header and any(
+^493abcd (evals 2026-10-22 10:53:58 +0200  873)             not isinstance(cur_val, (Null, Whitespace))
+^493abcd (evals 2026-10-22 10:53:58 +0200  874)             and not (
+^493abcd (evals 2026-10-22 10:53:58 +0200  875)                 isinstance(cur_val, (Table, AoT))
+^493abcd (evals 2026-10-22 10:53:58 +0200  876)                 and (cur_key is None or not cur_key.is_dotted())
+^493abcd (evals 2026-10-22 10:53:58 +0200  877)             )
+^493abcd (evals 2026-10-22 10:53:58 +0200  878)             for cur_key, cur_val in self._body[idx + 1 :]
+^493abcd (evals 2026-10-22 10:53:58 +0200  879)         )
+^493abcd (evals 2026-10-22 10:53:58 +0200  880)         if not isinstance(new_key, Key):
+^493abcd (evals 2026-10-22 10:53:58 +0200  881)             if (
+^493abcd (evals 2026-10-22 10:53:58 +0200  882)                 isinstance(value, (AoT, Table)) != isinstance(v, (AoT, Table))
+^493abcd (evals 2026-10-22 10:53:58 +0200  883)                 or new_key != k.key
+^493abcd (evals 2026-10-22 10:53:58 +0200  884)                 or dotted_to_header
+^493abcd (evals 2026-10-22 10:53:58 +0200  885)             ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  886)                 new_key = SingleKey(new_key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  887)             else:  # Inherit the sep of the old key
+^493abcd (evals 2026-10-22 10:53:58 +0200  888)                 new_key = k
+^493abcd (evals 2026-10-22 10:53:58 +0200  889) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  890)         del self._map[k]
+^493abcd (evals 2026-10-22 10:53:58 +0200  891)         self._map[new_key] = idx
+^493abcd (evals 2026-10-22 10:53:58 +0200  892)         if new_key != k:
+^493abcd (evals 2026-10-22 10:53:58 +0200  893)             dict.__delitem__(self, k.key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  894) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  895)         if (
+^493abcd (evals 2026-10-22 10:53:58 +0200  896)             isinstance(value, (AoT, Table)) != isinstance(v, (AoT, Table))
+^493abcd (evals 2026-10-22 10:53:58 +0200  897)             or reposition_dotted
+^493abcd (evals 2026-10-22 10:53:58 +0200  898)         ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  899)             self.remove(k)
+^493abcd (evals 2026-10-22 10:53:58 +0200  900)             if isinstance(value, (AoT, Table)):
+^493abcd (evals 2026-10-22 10:53:58 +0200  901)                 # New tables must appear after all entries that render inline:
+^493abcd (evals 2026-10-22 10:53:58 +0200  902)                 # plain values and dotted keys (which are super tables). Skip
+^493abcd (evals 2026-10-22 10:53:58 +0200  903)                 # those and insert before the first real ``[header]`` so the new
+^493abcd (evals 2026-10-22 10:53:58 +0200  904)                 # table cannot swallow a following sibling on round-trip.
+^493abcd (evals 2026-10-22 10:53:58 +0200  905)                 for i in range(idx, len(self._body)):
+^493abcd (evals 2026-10-22 10:53:58 +0200  906)                     cur_key, cur_val = self._body[i]
+^493abcd (evals 2026-10-22 10:53:58 +0200  907)                     if isinstance(cur_val, (AoT, Table)) and not (
+^493abcd (evals 2026-10-22 10:53:58 +0200  908)                         cur_key is not None and cur_key.is_dotted()
+^493abcd (evals 2026-10-22 10:53:58 +0200  909)                     ):
+^493abcd (evals 2026-10-22 10:53:58 +0200  910)                         self._insert_at(i, new_key, value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  911)                         idx = i
+^493abcd (evals 2026-10-22 10:53:58 +0200  912)                         break
+^493abcd (evals 2026-10-22 10:53:58 +0200  913)                 else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  914)                     idx = -1
+^493abcd (evals 2026-10-22 10:53:58 +0200  915)                     self.append(new_key, value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  916)             else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  917)                 # the replaced table's slot lies in the table region, where a
+^493abcd (evals 2026-10-22 10:53:58 +0200  918)                 # plain value would be captured by the preceding table on
+^493abcd (evals 2026-10-22 10:53:58 +0200  919)                 # round-trip; append() puts it with the other root-level values
+^493abcd (evals 2026-10-22 10:53:58 +0200  920)                 idx = -1
+^493abcd (evals 2026-10-22 10:53:58 +0200  921)                 self.append(new_key, value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  922)         else:
+^493abcd (evals 2026-10-22 10:53:58 +0200  923)             # Copying trivia
+^493abcd (evals 2026-10-22 10:53:58 +0200  924)             if not isinstance(value, (Whitespace, AoT)):
+^493abcd (evals 2026-10-22 10:53:58 +0200  925)                 value.trivia.indent = v.trivia.indent
+^493abcd (evals 2026-10-22 10:53:58 +0200  926)                 value.trivia.comment_ws = value.trivia.comment_ws or v.trivia.comment_ws
+^493abcd (evals 2026-10-22 10:53:58 +0200  927)                 value.trivia.comment = value.trivia.comment or v.trivia.comment
+^493abcd (evals 2026-10-22 10:53:58 +0200  928)                 value.trivia.trail = v.trivia.trail
+^493abcd (evals 2026-10-22 10:53:58 +0200  929)             self._body[idx] = (new_key, value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  930) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  931)         if value is not v and hasattr(value, "invalidate_display_name"):
+^493abcd (evals 2026-10-22 10:53:58 +0200  932)             value.invalidate_display_name()
+^493abcd (evals 2026-10-22 10:53:58 +0200  933) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  934)         if isinstance(value, Table):
+^493abcd (evals 2026-10-22 10:53:58 +0200  935)             # Insert a cosmetic new line for tables if:
+^493abcd (evals 2026-10-22 10:53:58 +0200  936)             # - it does not have it yet OR is not followed by one
+^493abcd (evals 2026-10-22 10:53:58 +0200  937)             # - it is not the last item, or
+^493abcd (evals 2026-10-22 10:53:58 +0200  938)             # - The table being replaced has a newline
+^493abcd (evals 2026-10-22 10:53:58 +0200  939)             result = self._previous_item_with_index()
+^493abcd (evals 2026-10-22 10:53:58 +0200  940)             assert result is not None
+^493abcd (evals 2026-10-22 10:53:58 +0200  941)             last, _ = result
+^493abcd (evals 2026-10-22 10:53:58 +0200  942)             idx = last if idx < 0 else idx
+^493abcd (evals 2026-10-22 10:53:58 +0200  943)             has_ws = ends_with_whitespace(value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  944)             replace_has_ws = (
+^493abcd (evals 2026-10-22 10:53:58 +0200  945)                 isinstance(v, Table)
+^493abcd (evals 2026-10-22 10:53:58 +0200  946)                 and v.value.body
+^493abcd (evals 2026-10-22 10:53:58 +0200  947)                 and isinstance(v.value.body[-1][1], Whitespace)
+^493abcd (evals 2026-10-22 10:53:58 +0200  948)             )
+^493abcd (evals 2026-10-22 10:53:58 +0200  949)             next_ws = idx < last and isinstance(self._body[idx + 1][1], Whitespace)
+^493abcd (evals 2026-10-22 10:53:58 +0200  950)             if (idx < last or replace_has_ws) and not (next_ws or has_ws):
+^493abcd (evals 2026-10-22 10:53:58 +0200  951)                 value.append(None, Whitespace("\n"))
+^493abcd (evals 2026-10-22 10:53:58 +0200  952) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  953)             assert isinstance(new_key, Key)
+^493abcd (evals 2026-10-22 10:53:58 +0200  954)             dict.__setitem__(self, new_key.key, value.value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  955) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  956)     def __str__(self) -> str:
+^493abcd (evals 2026-10-22 10:53:58 +0200  957)         return str(self.value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  958) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  959)     def __repr__(self) -> str:
+^493abcd (evals 2026-10-22 10:53:58 +0200  960)         return repr(self.value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  961) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  962)     def __eq__(self, other: object) -> bool:
+^493abcd (evals 2026-10-22 10:53:58 +0200  963)         if not isinstance(other, dict):
+^493abcd (evals 2026-10-22 10:53:58 +0200  964)             return NotImplemented
+^493abcd (evals 2026-10-22 10:53:58 +0200  965) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  966)         return bool(_equal_with_nan(self.value, other))
+^493abcd (evals 2026-10-22 10:53:58 +0200  967) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  968)     def _getstate(self, protocol: int) -> tuple[bool]:
+^493abcd (evals 2026-10-22 10:53:58 +0200  969)         return (self._parsed,)
+^493abcd (evals 2026-10-22 10:53:58 +0200  970) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  971)     def __reduce__(self) -> tuple[type, tuple[bool], tuple[Any, ...]]:
+^493abcd (evals 2026-10-22 10:53:58 +0200  972)         return self.__reduce_ex__(2)
+^493abcd (evals 2026-10-22 10:53:58 +0200  973) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  974)     def __reduce_ex__(self, protocol: int) -> tuple[type, tuple[bool], tuple[Any, ...]]:  # type: ignore[override]
+^493abcd (evals 2026-10-22 10:53:58 +0200  975)         return (
+^493abcd (evals 2026-10-22 10:53:58 +0200  976)             self.__class__,
+^493abcd (evals 2026-10-22 10:53:58 +0200  977)             self._getstate(protocol),
+^493abcd (evals 2026-10-22 10:53:58 +0200  978)             (self._map, self._body, self._parsed, self._table_keys),
+^493abcd (evals 2026-10-22 10:53:58 +0200  979)         )
+^493abcd (evals 2026-10-22 10:53:58 +0200  980) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  981)     def __setstate__(self, state: tuple[Any, ...]) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  982)         self._map = state[0]
+^493abcd (evals 2026-10-22 10:53:58 +0200  983)         self._body = state[1]
+^493abcd (evals 2026-10-22 10:53:58 +0200  984)         self._parsed = state[2]
+^493abcd (evals 2026-10-22 10:53:58 +0200  985)         self._table_keys = state[3]
+^493abcd (evals 2026-10-22 10:53:58 +0200  986)         self._out_of_order_keys = {
+^493abcd (evals 2026-10-22 10:53:58 +0200  987)             k for k, v in self._map.items() if isinstance(v, tuple)
+^493abcd (evals 2026-10-22 10:53:58 +0200  988)         }
+^493abcd (evals 2026-10-22 10:53:58 +0200  989) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  990)         for key, item in self._body:
+^493abcd (evals 2026-10-22 10:53:58 +0200  991)             if key is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200  992)                 dict.__setitem__(self, key.key, item.value)
+^493abcd (evals 2026-10-22 10:53:58 +0200  993) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  994)     def copy(self) -> Self:
+^493abcd (evals 2026-10-22 10:53:58 +0200  995)         return copy.copy(self)
+^493abcd (evals 2026-10-22 10:53:58 +0200  996) 
+^493abcd (evals 2026-10-22 10:53:58 +0200  997)     def __copy__(self) -> Self:
+^493abcd (evals 2026-10-22 10:53:58 +0200  998)         c = self.__class__(self._parsed)
+^493abcd (evals 2026-10-22 10:53:58 +0200  999)         for k, v in dict.items(self):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1000)             dict.__setitem__(c, k, v)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1001) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1002)         c._body += self.body
+^493abcd (evals 2026-10-22 10:53:58 +0200 1003)         c._map.update(self._map)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1004)         c._out_of_order_keys |= self._out_of_order_keys
+^493abcd (evals 2026-10-22 10:53:58 +0200 1005) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1006)         return c
+^493abcd (evals 2026-10-22 10:53:58 +0200 1007) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1008)     def _previous_item_with_index(
+^493abcd (evals 2026-10-22 10:53:58 +0200 1009)         self, idx: int | None = None, ignore: tuple[type, ...] = (Null,)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1010)     ) -> tuple[int, Item] | None:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1011)         """Find the immediate previous item before index ``idx``"""
+^493abcd (evals 2026-10-22 10:53:58 +0200 1012)         if idx is None or idx > len(self._body):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1013)             idx = len(self._body)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1014)         for i in range(idx - 1, -1, -1):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1015)             v = self._body[i][-1]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1016)             if not isinstance(v, ignore):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1017)                 return i, v
+^493abcd (evals 2026-10-22 10:53:58 +0200 1018)         return None
+^493abcd (evals 2026-10-22 10:53:58 +0200 1019) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1020)     def _previous_item(
+^493abcd (evals 2026-10-22 10:53:58 +0200 1021)         self, idx: int | None = None, ignore: tuple[type, ...] = (Null,)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1022)     ) -> Item | None:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1023)         """Find the immediate previous item before index ``idx``.
+^493abcd (evals 2026-10-22 10:53:58 +0200 1024)         If ``idx`` is not given, the last item is returned.
+^493abcd (evals 2026-10-22 10:53:58 +0200 1025)         """
+^493abcd (evals 2026-10-22 10:53:58 +0200 1026)         prev = self._previous_item_with_index(idx, ignore)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1027)         return prev[-1] if prev else None
+^493abcd (evals 2026-10-22 10:53:58 +0200 1028) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1029) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1030) class OutOfOrderTableProxy(_CustomDict):  # type: ignore[type-arg]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1031)     @staticmethod
+^493abcd (evals 2026-10-22 10:53:58 +0200 1032)     def validate(
+^493abcd (evals 2026-10-22 10:53:58 +0200 1033)         container: Container,
+^493abcd (evals 2026-10-22 10:53:58 +0200 1034)         indices: tuple[int, ...],
+^493abcd (evals 2026-10-22 10:53:58 +0200 1035)         temp_container: Container | None = None,
+^493abcd (evals 2026-10-22 10:53:58 +0200 1036)     ) -> Container:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1037)         """Validate out of order tables in the given container"""
+^493abcd (evals 2026-10-22 10:53:58 +0200 1038)         # Append all items to a temp container to see if there is any error.
+^493abcd (evals 2026-10-22 10:53:58 +0200 1039)         # We deep-copy each value before appending: appending a super table
+^493abcd (evals 2026-10-22 10:53:58 +0200 1040)         # merges it in place into a matching one already in temp_container, and
+^493abcd (evals 2026-10-22 10:53:58 +0200 1041)         # those values are the live subtables of `container`. Without the copy
+^493abcd (evals 2026-10-22 10:53:58 +0200 1042)         # the merge would mutate the caller's tables (and corrupt a later
+^493abcd (evals 2026-10-22 10:53:58 +0200 1043)         # validation pass). The container merge itself is now copy-free for
+^493abcd (evals 2026-10-22 10:53:58 +0200 1044)         # speed, so this is where the isolation lives.
+^493abcd (evals 2026-10-22 10:53:58 +0200 1045)         # Passing a previous pass's temp container back in (with the already
+^493abcd (evals 2026-10-22 10:53:58 +0200 1046)         # validated indices stripped from `indices`) resumes the validation
+^493abcd (evals 2026-10-22 10:53:58 +0200 1047)         # incrementally.
+^493abcd (evals 2026-10-22 10:53:58 +0200 1048)         if temp_container is None:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1049)             temp_container = Container(True)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1050)         for i in indices:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1051)             _, item = container._body[i]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1052) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1053)             if isinstance(item, Table):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1054)                 for k, v in item.value.body:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1055)                     temp_container.append(k, copy.deepcopy(v), validate=True)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1056) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1057)         temp_container._validate_out_of_order_table()
+^493abcd (evals 2026-10-22 10:53:58 +0200 1058)         return temp_container
+^493abcd (evals 2026-10-22 10:53:58 +0200 1059) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1060)     def __init__(self, container: Container, indices: tuple[int, ...]) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1061)         self._container = container
+^493abcd (evals 2026-10-22 10:53:58 +0200 1062)         self._internal_container = Container(True)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1063)         self._tables: list[Table] = []
+^493abcd (evals 2026-10-22 10:53:58 +0200 1064)         self._tables_map: dict[Key, list[int]] = {}
+^493abcd (evals 2026-10-22 10:53:58 +0200 1065) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1066)         for i in indices:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1067)             _, _item = self._container._body[i]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1068) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1069)             if isinstance(_item, Table):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1070)                 self._tables.append(_item)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1071)                 table_idx = len(self._tables) - 1
+^493abcd (evals 2026-10-22 10:53:58 +0200 1072)                 for k, v in _item.value.body:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1073)                     merged = self._merge_aot_fragment(k, v)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1074)                     if merged is None:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1075)                         self._internal_container._raw_append(k, v)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1076)                     else:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1077)                         v = merged
+^493abcd (evals 2026-10-22 10:53:58 +0200 1078)                     key_indices = self._tables_map.setdefault(k, [])  # type: ignore[arg-type]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1079)                     if table_idx not in key_indices:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1080)                         key_indices.append(table_idx)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1081)                     if k is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1082)                         dict.__setitem__(self, k.key, v)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1083) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1084)         self._internal_container._validate_out_of_order_table()
+^493abcd (evals 2026-10-22 10:53:58 +0200 1085) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1086)     def _merge_aot_fragment(self, key: Key | None, item: Item) -> AoT | None:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1087)         """
+^493abcd (evals 2026-10-22 10:53:58 +0200 1088)         Merge an array-of-tables fragment from a later out-of-order table part.
+^493abcd (evals 2026-10-22 10:53:58 +0200 1089) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1090)         An AoT whose elements are split across out-of-order parts of the same
+^493abcd (evals 2026-10-22 10:53:58 +0200 1091)         table arrives here once per part; ``_raw_append`` only knows how to
+^493abcd (evals 2026-10-22 10:53:58 +0200 1092)         chain duplicate ``Table`` parts and would raise ``KeyAlreadyPresent``.
+^493abcd (evals 2026-10-22 10:53:58 +0200 1093)         The fragments are presented as a new merged ``AoT`` referencing the
+^493abcd (evals 2026-10-22 10:53:58 +0200 1094)         live element tables, without mutating either fragment (the parts keep
+^493abcd (evals 2026-10-22 10:53:58 +0200 1095)         rendering their own elements).
+^493abcd (evals 2026-10-22 10:53:58 +0200 1096) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1097)         Returns the merged ``AoT``, or ``None`` if this is not such a fragment.
+^493abcd (evals 2026-10-22 10:53:58 +0200 1098)         """
+^493abcd (evals 2026-10-22 10:53:58 +0200 1099)         internal = self._internal_container
+^493abcd (evals 2026-10-22 10:53:58 +0200 1100)         if key is None or not isinstance(item, AoT) or key not in internal._map:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1101)             return None
+^493abcd (evals 2026-10-22 10:53:58 +0200 1102)         idx = internal._map[key]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1103)         if isinstance(idx, tuple):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1104)             # A tuple index means the key already resolved to several body
+^493abcd (evals 2026-10-22 10:53:58 +0200 1105)             # positions, which here only happens for a degenerate collision
+^493abcd (evals 2026-10-22 10:53:58 +0200 1106)             # (e.g. a non-AoT part sharing the key). Three or more genuine AoT
+^493abcd (evals 2026-10-22 10:53:58 +0200 1107)             # fragments do not reach this branch: each later fragment merges
+^493abcd (evals 2026-10-22 10:53:58 +0200 1108)             # into the single growing AoT below, so ``idx`` stays an int.
+^493abcd (evals 2026-10-22 10:53:58 +0200 1109)             return None
+^493abcd (evals 2026-10-22 10:53:58 +0200 1110)         existing = internal._body[idx][1]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1111)         if not isinstance(existing, AoT):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1112)             return None
+^493abcd (evals 2026-10-22 10:53:58 +0200 1113) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1114)         merged = AoT([*existing.body, *item.body], parsed=True)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1115)         internal._body[idx] = (internal._body[idx][0], merged)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1116)         dict.__setitem__(internal, key.key, merged.value)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1117)         return merged
+^493abcd (evals 2026-10-22 10:53:58 +0200 1118) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1119)     def unwrap(self) -> dict[str, Any]:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1120)         return self._internal_container.unwrap()
+^493abcd (evals 2026-10-22 10:53:58 +0200 1121) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1122)     @property
+^493abcd (evals 2026-10-22 10:53:58 +0200 1123)     def value(self) -> dict[str, Any]:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1124)         return self._internal_container.value
+^493abcd (evals 2026-10-22 10:53:58 +0200 1125) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1126)     def __str__(self) -> str:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1127)         return str(self.value)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1128) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1129)     def __repr__(self) -> str:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1130)         return repr(self.value)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1131) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1132)     def __contains__(self, key: object) -> bool:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1133)         # Native membership test. The inherited ``MutableMapping.__contains__``
+^493abcd (evals 2026-10-22 10:53:58 +0200 1134)         # resolves the value via ``__getitem__`` (and builds a ``NonExistentKey``
+^493abcd (evals 2026-10-22 10:53:58 +0200 1135)         # on every absent key) only to discard it. Probe the internal container
+^493abcd (evals 2026-10-22 10:53:58 +0200 1136)         # directly -- the same predicate ``__getitem__`` already uses -- which is
+^493abcd (evals 2026-10-22 10:53:58 +0200 1137)         # itself a native ``_map`` lookup that still rebuilds the proxy for an
+^493abcd (evals 2026-10-22 10:53:58 +0200 1138)         # out-of-order key so its validation runs exactly as before.
+^493abcd (evals 2026-10-22 10:53:58 +0200 1139)         return key in self._internal_container
+^493abcd (evals 2026-10-22 10:53:58 +0200 1140) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1141)     def __getitem__(self, key: Key | str) -> Any:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1142)         if key not in self._internal_container:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1143)             raise NonExistentKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1144) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1145)         return self._internal_container[key]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1146) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1147)     def __setitem__(self, key: Key | str, value: Any) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1148)         from .items import item as _item_fn
+^493abcd (evals 2026-10-22 10:53:58 +0200 1149) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1150)         def _is_table_or_aot(it: Any) -> bool:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1151)             return isinstance(_item_fn(it), (Table, AoT))
+^493abcd (evals 2026-10-22 10:53:58 +0200 1152) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1153)         _key: Key = key if isinstance(key, Key) else SingleKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1154) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1155)         if _key in self._tables_map:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1156)             # Overwrite the first table and remove others
+^493abcd (evals 2026-10-22 10:53:58 +0200 1157)             map_indices = self._tables_map[_key]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1158)             while len(map_indices) > 1:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1159)                 table = self._tables[map_indices.pop()]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1160)                 self._remove_table(table)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1161)             old_value = self._tables[map_indices[0]][key]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1162)             if _is_table_or_aot(old_value) and not _is_table_or_aot(value):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1163)                 # Remove the entry from the map and set value again.
+^493abcd (evals 2026-10-22 10:53:58 +0200 1164)                 del self._tables[map_indices[0]][key]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1165)                 del self._tables_map[_key]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1166)                 self[key] = value
+^493abcd (evals 2026-10-22 10:53:58 +0200 1167)                 return
+^493abcd (evals 2026-10-22 10:53:58 +0200 1168)             self._tables[map_indices[0]][key] = value
+^493abcd (evals 2026-10-22 10:53:58 +0200 1169)         elif self._tables:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1170)             if not _is_table_or_aot(value):  # if the value is a plain value
+^493abcd (evals 2026-10-22 10:53:58 +0200 1171)                 for table in self._tables:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1172)                     # find the first table that allows plain values
+^493abcd (evals 2026-10-22 10:53:58 +0200 1173)                     if any(not _is_table_or_aot(v) for _, v in table.items()):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1174)                         table[key] = value
+^493abcd (evals 2026-10-22 10:53:58 +0200 1175)                         break
+^493abcd (evals 2026-10-22 10:53:58 +0200 1176)                 else:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1177)                     # No part holds a plain value yet, so the chosen part must
+^493abcd (evals 2026-10-22 10:53:58 +0200 1178)                     # start rendering its own ``[key]`` header. Prefer a part
+^493abcd (evals 2026-10-22 10:53:58 +0200 1179)                     # that is not a super table (it already renders that header):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1180)                     # turning a header-less super part concrete here would emit a
+^493abcd (evals 2026-10-22 10:53:58 +0200 1181)                     # second, duplicate header next to an existing concrete part
+^493abcd (evals 2026-10-22 10:53:58 +0200 1182)                     # and produce TOML that no longer parses.
+^493abcd (evals 2026-10-22 10:53:58 +0200 1183)                     for table in self._tables:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1184)                         if not table.is_super_table():
+^493abcd (evals 2026-10-22 10:53:58 +0200 1185)                             table[key] = value
+^493abcd (evals 2026-10-22 10:53:58 +0200 1186)                             break
+^493abcd (evals 2026-10-22 10:53:58 +0200 1187)                     else:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1188)                         self._tables[0][key] = value
+^493abcd (evals 2026-10-22 10:53:58 +0200 1189)             else:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1190)                 self._tables[0][key] = value
+^493abcd (evals 2026-10-22 10:53:58 +0200 1191)         else:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1192)             self._container[key] = value
+^493abcd (evals 2026-10-22 10:53:58 +0200 1193) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1194)         self._internal_container[key] = value
+^493abcd (evals 2026-10-22 10:53:58 +0200 1195)         if key is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1196)             dict.__setitem__(self, key, value)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1197) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1198)     def _remove_table(self, table: Table) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1199)         """Remove table from the parent container"""
+^493abcd (evals 2026-10-22 10:53:58 +0200 1200)         self._tables.remove(table)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1201)         for idx, body_item in enumerate(self._container._body):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1202)             if body_item[1] is table:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1203)                 self._container._remove_at(idx)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1204)                 break
+^493abcd (evals 2026-10-22 10:53:58 +0200 1205) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1206)     def __delitem__(self, key: Key | str) -> None:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1207)         _key: Key = key if isinstance(key, Key) else SingleKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1208)         if _key not in self._tables_map:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1209)             raise NonExistentKey(key)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1210) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1211)         for i in reversed(self._tables_map[_key]):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1212)             table = self._tables[i]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1213)             del table[key]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1214)             if not table and len(self._tables) > 1:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1215)                 self._remove_table(table)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1216) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1217)         del self._tables_map[_key]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1218)         del self._internal_container[key]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1219)         if key is not None:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1220)             dict.__delitem__(self, key)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1221) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1222)     def __iter__(self) -> Iterator[str]:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1223)         return iter(dict.keys(self))
+^493abcd (evals 2026-10-22 10:53:58 +0200 1224) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1225)     def __len__(self) -> int:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1226)         return dict.__len__(self)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1227) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1228)     def setdefault(self, key: Key | str, default: Any = None) -> Any:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1229)         if key not in self:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1230)             self[key] = default
+^493abcd (evals 2026-10-22 10:53:58 +0200 1231)         return self[key]
+^493abcd (evals 2026-10-22 10:53:58 +0200 1232) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1233) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1234) def ends_with_whitespace(it: Any) -> bool:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1235)     """Returns ``True`` if the given item ``it`` is a ``Table`` or ``AoT`` object
+^493abcd (evals 2026-10-22 10:53:58 +0200 1236)     ending with a ``Whitespace``.
+^493abcd (evals 2026-10-22 10:53:58 +0200 1237)     """
+^493abcd (evals 2026-10-22 10:53:58 +0200 1238)     if isinstance(it, Whitespace):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1239)         return True
+^493abcd (evals 2026-10-22 10:53:58 +0200 1240)     if isinstance(it, Table):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1241)         previous = it.value._previous_item()
+^493abcd (evals 2026-10-22 10:53:58 +0200 1242)         return previous is not None and ends_with_whitespace(previous)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1243)     return isinstance(it, AoT) and len(it) > 0 and ends_with_whitespace(it[-1])
+^493abcd (evals 2026-10-22 10:53:58 +0200 1244) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1245) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1246) def _equal_with_nan(left: Any, right: Any) -> bool:
+^493abcd (evals 2026-10-22 10:53:58 +0200 1247)     if isinstance(left, dict) and isinstance(right, dict):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1248)         if left.keys() != right.keys():
+^493abcd (evals 2026-10-22 10:53:58 +0200 1249)             return False
+^493abcd (evals 2026-10-22 10:53:58 +0200 1250)         return all(_equal_with_nan(left[k], right[k]) for k in left)
+^493abcd (evals 2026-10-22 10:53:58 +0200 1251) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1252)     if isinstance(left, list) and isinstance(right, list):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1253)         if len(left) != len(right):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1254)             return False
+^493abcd (evals 2026-10-22 10:53:58 +0200 1255)         return all(_equal_with_nan(l, r) for l, r in zip(left, right))  # noqa: B905, E741
+^493abcd (evals 2026-10-22 10:53:58 +0200 1256) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1257)     if isinstance(left, float) and isinstance(right, float):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1258)         if math.isnan(left) and math.isnan(right):
+^493abcd (evals 2026-10-22 10:53:58 +0200 1259)             return True
+^493abcd (evals 2026-10-22 10:53:58 +0200 1260) 
+^493abcd (evals 2026-10-22 10:53:58 +0200 1261)     return bool(left == right)

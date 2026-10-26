@@ -1,0 +1,432 @@
+$ git blame time/src/format_description/parse/strftime.rs
+^c0e8081 (evals 2026-10-22 10:54:54 +0200   1) use alloc::string::String;
+^c0e8081 (evals 2026-10-22 10:54:54 +0200   2) use alloc::vec::Vec;
+^c0e8081 (evals 2026-10-22 10:54:54 +0200   3) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200   4) use crate::error::InvalidFormatDescription;
+^c0e8081 (evals 2026-10-22 10:54:54 +0200   5) use crate::format_description::modifier::Padding;
+^c0e8081 (evals 2026-10-22 10:54:54 +0200   6) use crate::format_description::parse::{
+^c0e8081 (evals 2026-10-22 10:54:54 +0200   7)     Error, ErrorInner, Location, Spanned, SpannedValue, unused,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200   8) };
+^c0e8081 (evals 2026-10-22 10:54:54 +0200   9) use crate::format_description::{BorrowedFormatItem, Component, OwnedFormatItem, modifier};
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  10) use crate::internal_macros::try_likely_ok;
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  11) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  12) /// Parse a sequence of items from the [`strftime` format description][strftime docs].
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  13) ///
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  14) /// The only heap allocation required is for the `Vec` itself. All components are bound to the
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  15) /// lifetime of the input.
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  16) ///
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  17) /// [strftime docs]: https://man7.org/linux/man-pages/man3/strftime.3.html
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  18) #[doc(alias = "parse_strptime_borrowed")]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  19) #[inline]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  20) pub fn parse_strftime_borrowed(
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  21)     s: &str,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  22) ) -> Result<Vec<BorrowedFormatItem<'_>>, InvalidFormatDescription> {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  23)     let mut items = Vec::with_capacity(s.bytes().filter(|&b| b == b'%').count().saturating_add(2));
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  24)     for item in Tokenizer::new(s.as_bytes()) {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  25)         items.push(try_likely_ok!(item));
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  26)     }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  27)     Ok(items)
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  28) }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  29) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  30) /// Parse a sequence of items from the [`strftime` format description][strftime docs].
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  31) ///
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  32) /// This requires heap allocation for some owned items.
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  33) ///
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  34) /// [strftime docs]: https://man7.org/linux/man-pages/man3/strftime.3.html
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  35) #[doc(alias = "parse_strptime_owned")]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  36) #[inline]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  37) pub fn parse_strftime_owned(s: &str) -> Result<OwnedFormatItem, InvalidFormatDescription> {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  38)     parse_strftime_borrowed(s).map(Into::into)
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  39) }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  40) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  41) struct Tokenizer<'input> {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  42)     input: &'input [u8],
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  43)     byte_pos: u32,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  44) }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  45) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  46) impl Tokenizer<'_> {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  47)     #[inline]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  48)     const fn new(input: &[u8]) -> Tokenizer<'_> {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  49)         Tokenizer { input, byte_pos: 0 }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  50)     }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  51) }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  52) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  53) impl<'input> Iterator for Tokenizer<'input> {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  54)     type Item = Result<BorrowedFormatItem<'input>, Error>;
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  55) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  56)     #[inline]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  57)     fn next(&mut self) -> Option<Self::Item> {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  58)         if self.input.is_empty() {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  59)             return None;
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  60)         }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  61) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  62)         if self.input[0] != b'%' {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  63)             let bytes = self
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  64)                 .input
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  65)                 .iter()
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  66)                 .position(|&b| b == b'%')
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  67)                 .unwrap_or(self.input.len()) as u32;
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  68) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  69)             // Safety: `parse_strftime` functions only accept strings and only UTF-8 is consumed, so
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  70)             // UTF-8 validation is unnecessary.
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  71)             let value = unsafe { str::from_utf8_unchecked(&self.input[..bytes as usize]) };
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  72)             self.input = &self.input[bytes as usize..];
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  73)             self.byte_pos += bytes;
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  74) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  75)             return Some(Ok(BorrowedFormatItem::StringLiteral(value)));
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  76)         }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  77) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  78)         let (padding, component, advance) = match self.input.get(1) {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  79)             Some(&b'_') => (Some(Padding::Space), self.input[2], 3),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  80)             Some(&b'-') => (Some(Padding::None), self.input[2], 3),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  81)             Some(&b'0') => (Some(Padding::Zero), self.input[2], 3),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  82)             Some(_) => (None, self.input[1], 2),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  83)             _ => {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  84)                 return Some(Err(error_expected_end(Location {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  85)                     byte: self.byte_pos,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  86)                 })));
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  87)             }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  88)         };
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  89) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  90)         let component_loc = Location {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  91)             byte: self.byte_pos + (advance - 1) as u32,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  92)         };
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  93)         self.input = &self.input[advance..];
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  94)         self.byte_pos += advance as u32;
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  95)         Some(parse_component(
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  96)             padding,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  97)             component.spanned(component_loc.to_self()),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  98)         ))
+^c0e8081 (evals 2026-10-22 10:54:54 +0200  99)     }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 100) }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 101) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 102) #[cold]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 103) fn error_expected_end(location: Location) -> Error {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 104)     Error {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 105)         _inner: unused(location.error("unexpected end of input")),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 106)         public: InvalidFormatDescription::Expected {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 107)             what: "valid escape sequence",
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 108)             index: location.byte as usize,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 109)         },
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 110)     }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 111) }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 112) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 113) #[cold]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 114) fn error_unsupported_modifier(component: Spanned<u8>) -> Error {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 115)     Error {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 116)         _inner: unused(ErrorInner {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 117)             _message: "unsupported modifier",
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 118)             _span: component.span,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 119)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 120)         public: InvalidFormatDescription::NotSupported {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 121)             what: "modifier",
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 122)             context: "",
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 123)             index: component.span.start.byte as usize,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 124)         },
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 125)     }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 126) }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 127) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 128) #[cold]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 129) fn error_unsupported_component(component: Spanned<u8>) -> Error {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 130)     Error {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 131)         _inner: unused(ErrorInner {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 132)             _message: "unsupported component",
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 133)             _span: component.span,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 134)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 135)         public: InvalidFormatDescription::NotSupported {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 136)             what: "component",
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 137)             context: "",
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 138)             index: component.span.start.byte as usize,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 139)         },
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 140)     }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 141) }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 142) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 143) #[cold]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 144) fn error_invalid_component(component: Spanned<u8>) -> Error {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 145)     let name = if component.is_ascii() {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 146)         // Safety: The byte is a single ASCII character, which is guaranteed to be valid
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 147)         // UTF-8.
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 148)         unsafe { String::from_utf8_unchecked(Vec::from([*component])) }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 149)     } else {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 150)         String::from(char::REPLACEMENT_CHARACTER)
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 151)     };
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 152) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 153)     Error {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 154)         _inner: unused(ErrorInner {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 155)             _message: "invalid component",
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 156)             _span: component.span,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 157)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 158)         public: InvalidFormatDescription::InvalidComponentName {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 159)             name,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 160)             index: component.span.start.byte as usize,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 161)         },
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 162)     }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 163) }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 164) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 165) #[inline]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 166) fn parse_component(
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 167)     padding: Option<Padding>,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 168)     component: Spanned<u8>,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 169) ) -> Result<BorrowedFormatItem<'static>, Error> {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 170)     /// Helper macro to create a component.
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 171)     macro_rules! component {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 172)         ($name:ident { $($inner:tt)* }) => {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 173)             BorrowedFormatItem::Component(Component::$name(modifier::$name {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 174)                 $($inner)*
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 175)             }))
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 176)         }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 177)     }
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 178) 
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 179)     Ok(match *component {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 180)         b'%' => BorrowedFormatItem::StringLiteral("%"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 181)         b'a' => component!(WeekdayShort {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 182)             case_sensitive: true
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 183)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 184)         b'A' => component!(WeekdayLong {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 185)             case_sensitive: true,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 186)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 187)         b'b' | b'h' => component!(MonthShort {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 188)             case_sensitive: true,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 189)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 190)         b'B' => component!(MonthLong {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 191)             case_sensitive: true,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 192)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 193)         b'c' => BorrowedFormatItem::Compound(&[
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 194)             component!(WeekdayShort {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 195)                 case_sensitive: true,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 196)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 197)             BorrowedFormatItem::StringLiteral(" "),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 198)             component!(MonthShort {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 199)                 case_sensitive: true,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 200)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 201)             BorrowedFormatItem::StringLiteral(" "),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 202)             component!(Day {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 203)                 padding: Padding::Space
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 204)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 205)             BorrowedFormatItem::StringLiteral(" "),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 206)             component!(Hour24 {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 207)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 208)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 209)             BorrowedFormatItem::StringLiteral(":"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 210)             component!(Minute {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 211)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 212)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 213)             BorrowedFormatItem::StringLiteral(":"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 214)             component!(Second {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 215)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 216)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 217)             BorrowedFormatItem::StringLiteral(" "),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 218)             #[cfg(feature = "large-dates")]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 219)             component!(CalendarYearFullExtendedRange {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 220)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 221)                 sign_is_mandatory: false,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 222)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 223)             #[cfg(not(feature = "large-dates"))]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 224)             component!(CalendarYearFullStandardRange {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 225)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 226)                 sign_is_mandatory: false,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 227)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 228)         ]),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 229)         #[cfg(feature = "large-dates")]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 230)         b'C' => component!(CalendarYearCenturyExtendedRange {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 231)             padding: padding.unwrap_or(Padding::Zero),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 232)             sign_is_mandatory: false,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 233)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 234)         #[cfg(not(feature = "large-dates"))]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 235)         b'C' => component!(CalendarYearCenturyStandardRange {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 236)             padding: padding.unwrap_or(Padding::Zero),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 237)             sign_is_mandatory: false,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 238)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 239)         b'd' => component!(Day {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 240)             padding: padding.unwrap_or(Padding::Zero),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 241)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 242)         b'D' => BorrowedFormatItem::Compound(&[
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 243)             component!(MonthNumerical {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 244)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 245)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 246)             BorrowedFormatItem::StringLiteral("/"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 247)             component!(Day {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 248)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 249)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 250)             BorrowedFormatItem::StringLiteral("/"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 251)             component!(CalendarYearLastTwo {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 252)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 253)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 254)         ]),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 255)         b'e' => component!(Day {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 256)             padding: padding.unwrap_or(Padding::Space),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 257)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 258)         b'F' => BorrowedFormatItem::Compound(&[
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 259)             #[cfg(feature = "large-dates")]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 260)             component!(CalendarYearFullExtendedRange {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 261)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 262)                 sign_is_mandatory: false,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 263)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 264)             #[cfg(not(feature = "large-dates"))]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 265)             component!(CalendarYearFullStandardRange {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 266)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 267)                 sign_is_mandatory: false,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 268)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 269)             BorrowedFormatItem::StringLiteral("-"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 270)             component!(MonthNumerical {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 271)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 272)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 273)             BorrowedFormatItem::StringLiteral("-"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 274)             component!(Day {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 275)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 276)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 277)         ]),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 278)         b'g' => component!(IsoYearLastTwo {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 279)             padding: padding.unwrap_or(Padding::Zero),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 280)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 281)         #[cfg(feature = "large-dates")]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 282)         b'G' => component!(IsoYearFullExtendedRange {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 283)             padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 284)             sign_is_mandatory: false,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 285)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 286)         #[cfg(not(feature = "large-dates"))]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 287)         b'G' => component!(IsoYearFullStandardRange {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 288)             padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 289)             sign_is_mandatory: false,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 290)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 291)         b'H' => component!(Hour24 {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 292)             padding: padding.unwrap_or(Padding::Zero),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 293)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 294)         b'I' => component!(Hour12 {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 295)             padding: padding.unwrap_or(Padding::Zero),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 296)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 297)         b'j' => component!(Ordinal {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 298)             padding: padding.unwrap_or(Padding::Zero),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 299)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 300)         b'k' => component!(Hour24 {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 301)             padding: padding.unwrap_or(Padding::Space),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 302)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 303)         b'l' => component!(Hour12 {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 304)             padding: padding.unwrap_or(Padding::Space),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 305)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 306)         b'm' => component!(MonthNumerical {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 307)             padding: padding.unwrap_or(Padding::Zero),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 308)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 309)         b'M' => component!(Minute {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 310)             padding: padding.unwrap_or(Padding::Zero),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 311)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 312)         b'n' => BorrowedFormatItem::StringLiteral("\n"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 313)         b'O' => return Err(error_unsupported_modifier(component)),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 314)         b'p' => component!(Period {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 315)             is_uppercase: true,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 316)             case_sensitive: true
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 317)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 318)         b'P' => component!(Period {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 319)             is_uppercase: false,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 320)             case_sensitive: true
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 321)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 322)         b'r' => BorrowedFormatItem::Compound(&[
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 323)             component!(Hour12 {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 324)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 325)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 326)             BorrowedFormatItem::StringLiteral(":"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 327)             component!(Minute {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 328)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 329)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 330)             BorrowedFormatItem::StringLiteral(":"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 331)             component!(Second {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 332)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 333)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 334)             BorrowedFormatItem::StringLiteral(" "),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 335)             component!(Period {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 336)                 is_uppercase: true,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 337)                 case_sensitive: true,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 338)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 339)         ]),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 340)         b'R' => BorrowedFormatItem::Compound(&[
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 341)             component!(Hour24 {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 342)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 343)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 344)             BorrowedFormatItem::StringLiteral(":"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 345)             component!(Minute {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 346)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 347)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 348)         ]),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 349)         b's' => component!(UnixTimestampSecond {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 350)             sign_is_mandatory: false,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 351)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 352)         b'S' => component!(Second {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 353)             padding: padding.unwrap_or(Padding::Zero),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 354)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 355)         b't' => BorrowedFormatItem::StringLiteral("\t"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 356)         b'T' => BorrowedFormatItem::Compound(&[
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 357)             component!(Hour24 {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 358)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 359)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 360)             BorrowedFormatItem::StringLiteral(":"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 361)             component!(Minute {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 362)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 363)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 364)             BorrowedFormatItem::StringLiteral(":"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 365)             component!(Second {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 366)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 367)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 368)         ]),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 369)         b'u' => component!(WeekdayMonday { one_indexed: true }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 370)         b'U' => component!(WeekNumberSunday {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 371)             padding: padding.unwrap_or(Padding::Zero),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 372)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 373)         b'V' => component!(WeekNumberIso {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 374)             padding: padding.unwrap_or(Padding::Zero),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 375)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 376)         b'w' => component!(WeekdaySunday { one_indexed: true }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 377)         b'W' => component!(WeekNumberMonday {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 378)             padding: padding.unwrap_or(Padding::Zero),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 379)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 380)         b'x' => BorrowedFormatItem::Compound(&[
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 381)             component!(MonthNumerical {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 382)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 383)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 384)             BorrowedFormatItem::StringLiteral("/"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 385)             component!(Day {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 386)                 padding: Padding::Zero
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 387)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 388)             BorrowedFormatItem::StringLiteral("/"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 389)             component!(CalendarYearLastTwo {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 390)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 391)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 392)         ]),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 393)         b'X' => BorrowedFormatItem::Compound(&[
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 394)             component!(Hour24 {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 395)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 396)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 397)             BorrowedFormatItem::StringLiteral(":"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 398)             component!(Minute {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 399)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 400)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 401)             BorrowedFormatItem::StringLiteral(":"),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 402)             component!(Second {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 403)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 404)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 405)         ]),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 406)         b'y' => component!(CalendarYearLastTwo {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 407)             padding: padding.unwrap_or(Padding::Zero),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 408)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 409)         #[cfg(feature = "large-dates")]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 410)         b'Y' => component!(CalendarYearFullExtendedRange {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 411)             padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 412)             sign_is_mandatory: false,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 413)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 414)         #[cfg(not(feature = "large-dates"))]
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 415)         b'Y' => component!(CalendarYearFullStandardRange {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 416)             padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 417)             sign_is_mandatory: false,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 418)         }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 419)         b'z' => BorrowedFormatItem::Compound(&[
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 420)             component!(OffsetHour {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 421)                 sign_is_mandatory: true,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 422)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 423)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 424)             component!(OffsetMinute {
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 425)                 padding: Padding::Zero,
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 426)             }),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 427)         ]),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 428)         b'Z' => return Err(error_unsupported_component(component)),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 429)         _ => return Err(error_invalid_component(component)),
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 430)     })
+^c0e8081 (evals 2026-10-22 10:54:54 +0200 431) }

@@ -1,0 +1,85 @@
+diff --git a/src/_parser.ts b/src/_parser.ts
+index 992c23d..70cdcf5 100644
+--- a/src/_parser.ts
++++ b/src/_parser.ts
+@@ -51,7 +51,6 @@ export function parseRawArgs<T = Record<string, any>>(
+     {
+       type: "boolean" | "string";
+       short?: string;
+-      default?: any;
+       multiple?: boolean;
+     }
+   > = {};
+@@ -82,7 +81,6 @@ export function parseRawArgs<T = Record<string, any>>(
+       const type = getType(name);
+       options[name] = {
+         type,
+-        default: defaults[name],
+       };
+     }
+   }
+@@ -162,13 +160,24 @@ export function parseRawArgs<T = Record<string, any>>(
+     }
+   }
+ 
+-  // Propagate values between aliases
+-  for (const [alias, main] of aliasToMain.entries()) {
+-    if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
+-      (out as any)[main] = (out as any)[alias];
++  // Resolve explicit values before filling defaults so aliases can override them.
++  propagateAliases();
++
++  for (const [name, value] of Object.entries(defaults)) {
++    if ((out as any)[name] === undefined) {
++      (out as any)[name] = value;
+     }
+-    if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
+-      (out as any)[alias] = (out as any)[main];
++  }
++  propagateAliases();
++
++  function propagateAliases() {
++    for (const [alias, main] of aliasToMain.entries()) {
++      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
++        (out as any)[main] = (out as any)[alias];
++      }
++      if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
++        (out as any)[alias] = (out as any)[main];
++      }
+     }
+   }
+ 
+diff --git a/test/args.test.ts b/test/args.test.ts
+index 732572c..4966a17 100644
+--- a/test/args.test.ts
++++ b/test/args.test.ts
+@@ -99,4 +99,29 @@ describe("args", () => {
+     expect(parsed.userName).toBe("Jane");
+     expect(parsed._).toEqual([]);
+   });
++
++  it.each(["fooBar", "foo-bar"])("should override defaults using aliases for %s", (name) => {
++    const definition: ArgsDef = {
++      [name]: { type: "enum", options: ["one", "two"], default: "two", alias: "f" },
++    };
++
++    for (const flag of ["--fooBar", "--foo-bar", "-f"]) {
++      expect(parseArgs([flag, "one"], definition)).toEqual({
++        _: [],
++        fooBar: "one",
++        "foo-bar": "one",
++        f: "one",
++      });
++    }
++
++    expect(parseArgs([], definition)).toEqual({
++      _: [],
++      fooBar: "two",
++      "foo-bar": "two",
++      f: "two",
++    });
++    expect(() => parseArgs(["--foo-bar", "three"], definition)).toThrowError(
++      "Invalid value for argument:",
++    );
++  });
+ });

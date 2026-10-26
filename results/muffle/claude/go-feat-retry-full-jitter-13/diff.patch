@@ -1,0 +1,110 @@
+diff --git a/README.md b/README.md
+index 47b6e26..68685f6 100644
+--- a/README.md
++++ b/README.md
+@@ -126,6 +126,9 @@ b = WithJitter(500*time.Millisecond, b)
+ 
+ // Return the next value, +/- 5% of the result
+ b = WithJitterPercent(5, b)
++
++// Return a random value between 0 and the next value ("full jitter")
++b = WithFullJitter(b)
+ ```
+ 
+ ### MaxRetries
+diff --git a/backoff.go b/backoff.go
+index b493869..36a48d1 100644
+--- a/backoff.go
++++ b/backoff.go
+@@ -67,6 +67,24 @@ func WithJitterPercent(j uint64, next Backoff) Backoff {
+ 	})
+ }
+ 
++// WithFullJitter wraps a backoff function and returns a random duration in
++// [0, base), where base is the value returned by the wrapped backoff. A zero or
++// negative base is returned unchanged.
++func WithFullJitter(next Backoff) Backoff {
++	return BackoffFunc(func() (time.Duration, bool) {
++		val, stop := next.Next()
++		if stop {
++			return 0, true
++		}
++
++		if val <= 0 {
++			return val, false
++		}
++
++		return time.Duration(rand.Int64N(int64(val))), false
++	})
++}
++
+ // WithMaxRetries executes the backoff function up until the maximum attempts.
+ func WithMaxRetries(max uint64, next Backoff) Backoff {
+ 	var l sync.Mutex
+diff --git a/backoff_test.go b/backoff_test.go
+index 7c528e8..8a749df 100644
+--- a/backoff_test.go
++++ b/backoff_test.go
+@@ -119,6 +119,62 @@ func ExampleWithJitter() {
+ 	}
+ }
+ 
++func TestWithFullJitter(t *testing.T) {
++	t.Parallel()
++
++	for range 100_000 {
++		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
++			return 1 * time.Second, false
++		}))
++		val, stop := b.Next()
++		if stop {
++			t.Errorf("should not stop")
++		}
++
++		if val < 0 || val >= 1*time.Second {
++			t.Errorf("expected %v to be in [0, 1s)", val)
++		}
++	}
++}
++
++func TestWithFullJitter_Stop(t *testing.T) {
++	t.Parallel()
++
++	b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
++		return 1 * time.Second, true
++	}))
++	if val, stop := b.Next(); !stop || val != 0 {
++		t.Errorf("expected stop with 0, got %v, %v", val, stop)
++	}
++}
++
++func TestWithFullJitter_NonPositive(t *testing.T) {
++	t.Parallel()
++
++	for _, base := range []time.Duration{0, -1, -5 * time.Second} {
++		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
++			return base, false
++		}))
++		if val, stop := b.Next(); stop || val != base {
++			t.Errorf("expected %v unchanged, got %v, stop=%v", base, val, stop)
++		}
++	}
++}
++
++func ExampleWithFullJitter() {
++	ctx := context.Background()
++
++	b := retry.NewFibonacci(1 * time.Second)
++	b = retry.WithFullJitter(b)
++
++	if err := retry.Do(ctx, b, func(_ context.Context) error {
++		// TODO: logic here
++		return nil
++	}); err != nil {
++		// handle error
++	}
++}
++
+ func TestWithJitterPercent(t *testing.T) {
+ 	t.Parallel()
+ 

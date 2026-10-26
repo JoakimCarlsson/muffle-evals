@@ -1,0 +1,3732 @@
+$ git show HEAD
+a844dd52 2026-10-22 evals: base
+=== .cargo/config.toml
+new file mode 100644
+@@ -0,0 +1,2 @@
++[resolver]
++incompatible-rust-versions = "fallback"
+=== .clippy.toml
+new file mode 100644
+@@ -0,0 +1,12 @@
++allow-print-in-tests = true
++allow-expect-in-tests = true
++allow-unwrap-in-tests = true
++allow-dbg-in-tests = true
++disallowed-methods = [
++    { path = "std::option::Option::map_or", reason = "prefer `map(..).unwrap_or(..)` for legibility" },
++    { path = "std::option::Option::map_or_else", reason = "prefer `map(..).unwrap_or_else(..)` for legibility" },
++    { path = "std::result::Result::map_or", reason = "prefer `map(..).unwrap_or(..)` for legibility" },
++    { path = "std::result::Result::map_or_else", reason = "prefer `map(..).unwrap_or_else(..)` for legibility" },
++    { path = "std::iter::Iterator::for_each", reason = "prefer `for` for side-effects" },
++    { path = "std::iter::Iterator::try_for_each", reason = "prefer `for` for side-effects" },
++]
+=== .gitattributes
+new file mode 100644
+@@ -0,0 +1,2 @@
++# ensure eol conversions do not happen as tests can rely on them
++* text eol=lf
+=== .github/FUNDING.yml
+new file mode 100644
+@@ -0,0 +1,1 @@
++github: [epage]
+=== .github/renovate.json5
+new file mode 100644
+@@ -0,0 +1,153 @@
++{
++  extends: ["helpers:pinGitHubActionDigests"],
++  schedule: [
++    'before 5am on the first day of the month',
++  ],
++  semanticCommits: 'enabled',
++  commitMessageLowerCase: 'never',
++  configMigration: true,
++  dependencyDashboard: true,
++  "pre-commit": {
++    enabled: true
++  },
++  customManagers: [
++    {
++      customType: 'regex',
++      managerFilePatterns: [
++        '/^rust-toolchain\\.toml$/',
++        '/Cargo.toml$/',
++        '/clippy.toml$/',
++        '/\\.clippy.toml$/',
++        '/^\\.github/workflows/ci.yml$/',
++        '/^\\.github/workflows/rust-next.yml$/',
++      ],
++      matchStrings: [
++        'STABLE.*?(?<currentValue>\\d+\\.\\d+(\\.\\d+)?)',
++        '(?<currentValue>\\d+\\.\\d+(\\.\\d+)?).*?STABLE',
++      ],
++      depNameTemplate: 'STABLE',
++      packageNameTemplate: 'rust-lang/rust',
++      datasourceTemplate: 'github-releases',
++    },
++    {
++      customType: 'regex',
++      managerFilePatterns: [
++        '/^\\.github/workflows/pre-commit.yml$/',
++      ],
++      matchStrings: [
++        'prek-version.*?(?<currentValue>\\d+\\.\\d+(\\.\\d+)?)',
++      ],
++      depNameTemplate: 'prek',
++      packageNameTemplate: 'j178/prek',
++      datasourceTemplate: 'github-releases',
++    },
++  ],
++  packageRules: [
++    {
++      commitMessageTopic: 'Rust Stable',
++      matchManagers: [
++        'custom.regex',
++      ],
++      matchDepNames: [
++        'STABLE',
++      ],
++      extractVersion: '^(?<version>\\d+\\.\\d+)',  // Drop the patch version
++      schedule: [
++        '* * * * *',
++      ],
++      automerge: true,
++    },
++    {
++      commitMessageTopic: 'Prek',
++      matchManagers: [
++        'custom.regex',
++      ],
++      matchDepNames: [
++        'prek',
++      ],
++      extractVersion: '^v(?<version>\\d+\\.\\d+\\.\\d+)',
++      schedule: [
++        '* * * * *',
++      ],
++      automerge: true,
++    },
++    // Goals:
++    // - Keep version reqs low, ignoring compatible normal/build dependencies
++    // - Take advantage of latest dev-dependencies
++    // - Rollup safe upgrades to reduce CI runner load
++    // - Help keep number of versions down by always using latest breaking change
++    // - Have lockfile and manifest in-sync
++    {
++      matchManagers: [
++        'cargo',
++      ],
++      matchDepTypes: [
++        'build-dependencies',
++        'dependencies',
++      ],
++      matchCurrentVersion: '>=0.1.0',
++      matchUpdateTypes: [
++        'patch',
++      ],
++      enabled: false,
++    },
++    {
++      matchManagers: [
++        'cargo',
++      ],
++      matchDepTypes: [
++        'build-dependencies',
++        'dependencies',
++      ],
++      matchCurrentVersion: '>=1.0.0',
++      matchUpdateTypes: [
++        'minor',
++        'patch',
++      ],
++      enabled: false,
++    },
++    {
++      matchManagers: [
++        'cargo',
++      ],
++      matchDepTypes: [
++        'dev-dependencies',
++      ],
++      matchCurrentVersion: '>=0.1.0',
++      matchUpdateTypes: [
++        'patch',
++      ],
++      automerge: true,
++      groupName: 'compatible (dev)',
++    },
++    {
++      matchManagers: [
++        'cargo',
++      ],
++      matchDepTypes: [
++        'dev-dependencies',
++      ],
++      matchCurrentVersion: '>=1.0.0',
++      matchUpdateTypes: [
++        'minor',
++        'patch',
++      ],
++      automerge: true,
++      groupName: 'compatible (dev)',
++    },
++    {
++      matchManagers: [
++        'cargo',
++      ],
++      matchPackageNames: [
++        'toml-test-harness',
++        'toml-test-data',
++        'toml-test',
++      ],
++      schedule: [
++        '* * * * *',
++      ],
++      groupName: 'toml-test',
++    },
++  ],
++}
+=== .github/settings.yml
+new file mode 100644
+@@ -0,0 +1,79 @@
++# These settings are synced to GitHub by https://probot.github.io/apps/settings/
++
++repository:
++  description: "Rust TOML Parser"
++  homepage: "https://docs.rs/toml"
++  topics: "rust toml"
++  has_issues: true
++  has_projects: false
++  has_wiki: false
++  has_downloads: true
++  default_branch: main
++
++  # Preference: people do clean commits
++  allow_merge_commit: true
++  # Backup in case we need to clean up commits
++  allow_squash_merge: true
++  # Not really needed
++  allow_rebase_merge: false
++
++  allow_auto_merge: true
++  delete_branch_on_merge: true
++
++  squash_merge_commit_title: "PR_TITLE"
++  squash_merge_commit_message: "PR_BODY"
++  merge_commit_message: "PR_BODY"
++
++labels:
++  - name: "A-parse"
++    description: "Area: Parsing TOML"
++    color: '#f7e101'
++  - name: "A-edit"
++    description: "Area: TOML editing API"
++    color: '#f7e101'
++  - name: "A-output"
++    description: "Area: Outputting TOML"
++    color: '#f7e101'
++  - name: "A-serde"
++    description: "Area: Serde integration"
++    color: '#f7e101'
++  - name: "A-error"
++    description: "Area: Error reporting"
++    color: '#f7e101'
++  - name: "A-docs"
++    description: "Area: Documentation"
++    color: '#f7e101'
++  - name: "A-meta"
++    description: "Area: Project-wide"
++    color: '#f7e101'
++  - name: "C-bug"
++    description: "Category: Things not working as expected"
++    color: '#f5f1fd'
++  - name: "C-enhancement"
++    description: "Category: Raise on the bar on expectations"
++    color: '#f5f1fd'
++  - name: "C-question"
++    description: Uncertainty is involved
++    color: '#f5f1fd'
++  - name: "M-breaking-change"
++    description: "Meta: Implementing or merging this will introduce a breaking change."
++    color: '#E10C02'
++  - name: "E-help-wanted"
++    description: "Call for participation: Help is requested to fix this issue."
++    color: '#02E10C'
++
++# This serves more as documentation.
++# Branch protection API was replaced by rulesets but settings isn't updated.
++# See https://github.com/repository-settings/app/issues/825
++#
++# branches:
++#   - name: main
++#     protection:
++#       required_pull_request_reviews: null
++#       required_conversation_resolution: true
++#       required_status_checks:
++#         # Required. Require branches to be up to date before merging.
++#         strict: false
++#         contexts: ["CI", "Spell Check with Typos"]
++#       enforce_admins: false
++#       restrictions: null
+=== .github/workflows/audit.yml
+new file mode 100644
+@@ -0,0 +1,87 @@
++name: Audit
++
++permissions:
++  contents: read
++
++on:
++  pull_request:
++  push:
++    branches:
++    - main
++
++env:
++  RUST_BACKTRACE: 1
++  CARGO_TERM_COLOR: always
++  CLICOLOR: 1
++
++concurrency:
++  group: "${{ github.workflow }}-${{ github.ref }}"
++  cancel-in-progress: true
++
++jobs:
++  audit:
++    permissions:
++      contents: none
++    name: Audit
++    needs: [advisories, cargo_deny, actions]
++    runs-on: ubuntu-latest
++    if: "always()"
++    steps:
++      - name: Failed
++        run: exit 1
++        if: "contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')"
++  advisories:
++    permissions:
++      issues: write # to create issues (actions-rs/audit-check)
++      checks: write # to create check (actions-rs/audit-check)
++    runs-on: ubuntu-latest
++    # Prevent sudden announcement of a new advisory from failing ci:
++    continue-on-error: true
++    strategy:
++      matrix:
++        checks:
++          - advisories
++    steps:
++    - name: Checkout repository
++      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
++      with:
++        persist-credentials: false
++    - name: Lint advisories
++      uses: EmbarkStudios/cargo-deny-action@3fd3802e88374d3fe9159b834c7714ec57d6c979 # v2.0.15
++      with:
++        command: check ${{ matrix.checks }}
++        rust-version: stable
++
++  cargo_deny:
++    permissions:
++      issues: write # to create issues (actions-rs/audit-check)
++      checks: write # to create check (actions-rs/audit-check)
++    runs-on: ubuntu-latest
++    strategy:
++      matrix:
++        checks:
++          - bans licenses sources
++    steps:
++    - name: Checkout repository
++      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
++      with:
++        persist-credentials: false
++    - name: Lint bans
++      uses: EmbarkStudios/cargo-deny-action@3fd3802e88374d3fe9159b834c7714ec57d6c979 # v2.0.15
++      with:
++        command: check ${{ matrix.checks }}
++        rust-version: stable
++
++  actions:
++    runs-on: ubuntu-latest
++    permissions:
++      security-events: write
++      contents: read # only needed for private or internal repos
++      actions: read # only needed for private or internal repos
++    steps:
++    - name: Checkout repository
++      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
++      with:
++        persist-credentials: false
++    - name: Run zizmor
++      uses: zizmorcore/zizmor-action@71321a20a9ded102f6e9ce5718a2fcec2c4f70d8 # v0.5.2
+=== .github/workflows/ci.yml
+new file mode 100644
+@@ -0,0 +1,219 @@
++name: CI
++
++permissions:
++  contents: read
++
++on:
++  pull_request:
++  push:
++    branches:
++    - main
++
++env:
++  RUST_BACKTRACE: 1
++  CARGO_TERM_COLOR: always
++  CLICOLOR: 1
++
++concurrency:
++  group: "${{ github.workflow }}-${{ github.ref }}"
++  cancel-in-progress: true
++
++jobs:
++  ci:
++    permissions:
++      contents: none
++    name: CI
++    needs: [test, msrv, lockfile, docs, rustfmt, clippy, minimal-versions]
++    runs-on: ubuntu-latest
++    if: "always()"
++    steps:
++      - name: Failed
++        run: exit 1
++        if: "contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')"
++  test:
++    name: Test
++    strategy:
++      matrix:
++        os: ["ubuntu-latest", "windows-latest", "macos-latest"]
++        rust: ["stable"]
++    continue-on-error: ${{ matrix.rust != 'stable' }}
++    runs-on: ${{ matrix.os }}
++    env:
++      # Reduce amount of data cached
++      CARGO_PROFILE_DEV_DEBUG: line-tables-only
++    steps:
++    - name: Checkout repository
++      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
++      with:
++        persist-credentials: false
++    - name: Install Rust
++      uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
++      with:
++        toolchain: ${{ matrix.rust }}
++    - name: Initialize cache
++      uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
++    - name: Install cargo-hack
++      uses: taiki-e/install-action@97a5807a604e12de3a13b52d868ebecaeeea757c  # v2.75.4
+[+163 more diff lines]
+=== .github/workflows/committed.yml +29 -0
+new file mode 100644
+=== .github/workflows/pre-commit.yml +32 -0
+new file mode 100644
+=== .github/workflows/rust-next.yml +85 -0
+new file mode 100644
+=== .github/workflows/spelling.yml +27 -0
+new file mode 100644
+=== .github/workflows/template.yml +59 -0
+new file mode 100644
+=== .github/zizmor.yml +4 -0
+new file mode 100644
+=== .gitignore +1 -0
+new file mode 100644
+=== .pre-commit-config.yaml +23 -0
+new file mode 100644
+=== CONTRIBUTING.md +87 -0
+new file mode 100644
+=== Cargo.lock +1403 -0
+new file mode 100644
+=== Cargo.toml +100 -0
+new file mode 100644
+=== LICENSE-APACHE +202 -0
+new file mode 100644
+=== LICENSE-MIT +19 -0
+new file mode 100644
+=== README.md +7 -0
+new file mode 100644
+=== _typos.toml +8 -0
+new file mode 100644
+=== committed.toml +3 -0
+new file mode 100644
+=== crates/benchmarks/Cargo.toml +44 -0
+new file mode 100644
+=== crates/benchmarks/benches/0-cargo.rs +174 -0
+new file mode 100644
+=== crates/benchmarks/benches/1-map.rs +174 -0
+new file mode 100644
+=== crates/benchmarks/benches/2-array.rs +174 -0
+new file mode 100644
+=== crates/benchmarks/examples/bench.rs +158 -0
+new file mode 100644
+=== crates/benchmarks/src/Cargo.cargo.toml +117 -0
+new file mode 100644
+=== crates/benchmarks/src/Cargo.web-sys.toml +1632 -0
+new file mode 100644
+=== crates/benchmarks/src/lib.rs +135 -0
+new file mode 100644
+=== crates/serde_spanned/CHANGELOG.md +115 -0
+new file mode 100644
+=== crates/serde_spanned/Cargo.toml +42 -0
+new file mode 100644
+=== crates/serde_spanned/LICENSE-APACHE +1 -0
+new file mode 120000
+=== crates/serde_spanned/LICENSE-MIT +1 -0
+new file mode 120000
+=== crates/serde_spanned/README.md +28 -0
+new file mode 100644
+=== crates/serde_spanned/src/de.rs +81 -0
+new file mode 100644
+=== crates/serde_spanned/src/lib.rs +32 -0
+new file mode 100644
+=== crates/serde_spanned/src/spanned.rs +261 -0
+new file mode 100644
+=== crates/serde_spanned/tests/test.rs +33 -0
+new file mode 100644
+=== crates/serde_toml/Cargo.toml +21 -0
+new file mode 100644
+=== crates/serde_toml/LICENSE-APACHE +1 -0
+new file mode 120000
+=== crates/serde_toml/LICENSE-MIT +1 -0
+new file mode 120000
+=== crates/serde_toml/README.md +3 -0
+new file mode 100644
+=== crates/serde_toml/src/lib.rs +1 -0
+new file mode 100644
+=== crates/toml/CHANGELOG.md +586 -0
+new file mode 100644
+=== crates/toml/Cargo.toml +98 -0
+new file mode 100644
+=== crates/toml/LICENSE-APACHE +1 -0
+new file mode 120000
+=== crates/toml/LICENSE-MIT +1 -0
+new file mode 120000
+=== crates/toml/README.md +29 -0
+new file mode 100644
+=== crates/toml/examples/decode.rs +54 -0
+new file mode 100644
+=== crates/toml/examples/enum_external.rs +45 -0
+new file mode 100644
+=== crates/toml/examples/toml2json.rs +43 -0
+new file mode 100644
+=== crates/toml/src/de/deserializer/array.rs +89 -0
+new file mode 100644
+=== crates/toml/src/de/deserializer/key.rs +260 -0
+new file mode 100644
+=== crates/toml/src/de/deserializer/mod.rs +177 -0
+new file mode 100644
+=== crates/toml/src/de/deserializer/table.rs +216 -0
+new file mode 100644
+=== crates/toml/src/de/deserializer/table_enum.rs +124 -0
+new file mode 100644
+=== crates/toml/src/de/deserializer/value.rs +301 -0
+new file mode 100644
+=== crates/toml/src/de/error.rs +311 -0
+new file mode 100644
+=== crates/toml/src/de/mod.rs +93 -0
+new file mode 100644
+=== crates/toml/src/de/parser/array.rs +124 -0
+new file mode 100644
+=== crates/toml/src/de/parser/dearray.rs +140 -0
+new file mode 100644
+=== crates/toml/src/de/parser/debug.rs +98 -0
+new file mode 100644
+=== crates/toml/src/de/parser/detable.rs +47 -0
+new file mode 100644
+=== crates/toml/src/de/parser/devalue.rs +384 -0
+new file mode 100644
+=== crates/toml/src/de/parser/document.rs +515 -0
+new file mode 100644
+=== crates/toml/src/de/parser/inline_table.rs +277 -0
+new file mode 100644
+=== crates/toml/src/de/parser/key.rs +123 -0
+new file mode 100644
+=== crates/toml/src/de/parser/mod.rs +85 -0
+new file mode 100644
+=== crates/toml/src/de/parser/value.rs +111 -0
+new file mode 100644
+=== crates/toml/src/lib.rs +204 -0
+new file mode 100644
+=== crates/toml/src/macros.rs +456 -0
+new file mode 100644
+=== crates/toml/src/map.rs +677 -0
+new file mode 100644
+=== crates/toml/src/ser/document/array.rs +79 -0
+new file mode 100644
+=== crates/toml/src/ser/document/array_of_tables.rs +275 -0
+new file mode 100644
+=== crates/toml/src/ser/document/buffer.rs +131 -0
+new file mode 100644
+=== crates/toml/src/ser/document/map.rs +167 -0
+new file mode 100644
+=== crates/toml/src/ser/document/mod.rs +266 -0
+new file mode 100644
+=== crates/toml/src/ser/document/strategy.rs +340 -0
+new file mode 100644
+=== crates/toml/src/ser/error.rs +98 -0
+new file mode 100644
+=== crates/toml/src/ser/mod.rs +93 -0
+new file mode 100644
+=== crates/toml/src/ser/style.rs +4 -0
+new file mode 100644
+=== crates/toml/src/ser/value/array.rs +147 -0
+new file mode 100644
+=== crates/toml/src/ser/value/key.rs +200 -0
+new file mode 100644
+=== crates/toml/src/ser/value/map.rs +532 -0
+new file mode 100644
+=== crates/toml/src/ser/value/mod.rs +302 -0
+new file mode 100644
+=== crates/toml/src/table.rs +423 -0
+new file mode 100644
+=== crates/toml/src/value.rs +1208 -0
+new file mode 100644
+=== crates/toml/tests/compliance/invalid.rs +211 -0
+new file mode 100644
+=== crates/toml/tests/compliance/main.rs +26 -0
+new file mode 100644
+=== crates/toml/tests/compliance/parse.rs +707 -0
+new file mode 100644
+=== crates/toml/tests/decoder.rs +91 -0
+new file mode 100644
+=== crates/toml/tests/decoder_compliance.rs +56 -0
+new file mode 100644
+=== crates/toml/tests/encoder.rs +109 -0
+new file mode 100644
+=== crates/toml/tests/encoder_compliance.rs +38 -0
+new file mode 100644
+=== crates/toml/tests/encoder_pretty_compliance.rs +14 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/day-1digit.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/day-zero.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/hour-too-large.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/minute-too-large.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/missing-date-time-sep.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/missing-year-month-sep.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/month-1digit.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/month-zero.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/offset-minus-minute-1digit.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/offset-minus-missing-hour-minute-sep.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/offset-minus-missing-hour-minute.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/offset-minus-missing-minute.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/offset-plus-minute-1digit.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/offset-plus-missing-hour-minute-sep.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/offset-plus-missing-hour-minute.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/offset-plus-missing-minute.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/only-T.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/only-TZ.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/only-Tdot.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/seconds-too-large.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/seconds-trailing-decimal-z.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/seconds-trailing-decimal.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/datetime/year-3digits.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/float/overflow.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/float/trailing-exp-minus.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/float/trailing-exp-plus.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/float/trailing-exp.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/float/trailing-point-exp.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/inline-table/comma.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/integer/invalid-hex-3.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/integer/overflow-neg.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/integer/overflow-pos.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/keys/ml_basic_string.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/keys/ml_literal.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/keys/newline-5.toml +2 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/keys/no-eol-1.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/keys/no-eol-2.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/keys/no-eol-3.toml +4 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/keys/no-eol-4.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/keys/no-eol-5.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/keys/no-eol-6.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/not-toml/deb.toml +6 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/string/bad-escape-6.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/string/missing-quotes-in-array.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/string/missing-quotes-in-inline-table.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/string/no-close-recovery-01.toml +2 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/string/no-close-recovery-02.toml +2 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/append-with-dotted-keys-3.toml +8 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/append-with-dotted-keys-4.toml +2 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/append-with-dotted-keys-5.toml +2 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/append-with-dotted-keys-6.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/append-with-dotted-keys-7.toml +5 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/append-with-dotted-keys-8.toml +5 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/bare-invalid-character.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/dot.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/duplicate-key-1.toml +4 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/duplicate-key-empty-table.toml +5 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/duplicate-key-table-array-3.toml +2 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/ml_basic_string.toml +2 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/ml_literal.toml +2 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/newline-1.toml +3 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/newline-2.toml +3 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/quoted-unclosed-1.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/quoted-unclosed-2.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/trailing-dot.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/invalid/ext/table/value.toml +1 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/valid/ext/table/append-with-dotted-keys-1.json +13 -0
+new file mode 100644
+=== crates/toml/tests/fixtures/valid/ext/table/append-with-dotted-keys-1.toml +6 -0
+new file mode 100644
+=== crates/toml/tests/serde/de_enum.rs +435 -0
+new file mode 100644
+=== crates/toml/tests/serde/de_errors.rs +423 -0
+new file mode 100644
+=== crates/toml/tests/serde/de_key.rs +339 -0
+new file mode 100644
+=== crates/toml/tests/serde/general.rs +2171 -0
+new file mode 100644
+=== crates/toml/tests/serde/main.rs +51 -0
+new file mode 100644
+=== crates/toml/tests/serde/ser_enum.rs +426 -0
+new file mode 100644
+=== crates/toml/tests/serde/ser_key.rs +558 -0
+new file mode 100644
+=== crates/toml/tests/serde/ser_tables_last.rs +164 -0
+new file mode 100644
+=== crates/toml/tests/serde/ser_to_string.rs +228 -0
+new file mode 100644
+=== crates/toml/tests/serde/ser_to_string_pretty.rs +231 -0
+new file mode 100644
+=== crates/toml/tests/serde/spanned.rs +812 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/double-comma-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/double-comma-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/extend-defined-aot.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/extending-table.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/missing-separator-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/missing-separator-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-close-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-close-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-close-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-close-04.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-close-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-close-06.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-close-07.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-close-08.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-close-table-01.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-close-table-02.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-close-table-03.stderr +19 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-close-table-04.stderr +33 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-comma-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-comma-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/no-comma-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/only-comma-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/only-comma-02.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/tables-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/tables-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/text-after-array-entries.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/text-before-array-separator.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/array/text-in-array.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/almost-false-with-extra.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/almost-false.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/almost-true-with-extra.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/almost-true.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/capitalized-false.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/capitalized-true.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/just-f.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/just-t.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/mixed-case-false.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/mixed-case-true.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/mixed-case.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/starting-same-false.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/starting-same-true.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/wrong-case-false.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/bool/wrong-case-true.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/bare-cr.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/bare-formfeed.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/bare-null.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml/tests/snapshots/invalid/control/bare-null.stderr differ
+=== crates/toml/tests/snapshots/invalid/control/bare-vertical-tab.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/comment-cr.stderr +6 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/comment-del.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/comment-ff.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/comment-lf.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/comment-null.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml/tests/snapshots/invalid/control/comment-null.stderr differ
+=== crates/toml/tests/snapshots/invalid/control/comment-us.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/linetab-number-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/linetab-number-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/linetab-number-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/linetab-number-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/multi-cr.stderr +6 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/multi-del.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/multi-lf.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/multi-null.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml/tests/snapshots/invalid/control/multi-null.stderr differ
+=== crates/toml/tests/snapshots/invalid/control/multi-us.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/only-ff.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/only-null.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml/tests/snapshots/invalid/control/only-null.stderr differ
+=== crates/toml/tests/snapshots/invalid/control/only-vt.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/rawmulti-cr.stderr +6 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/rawmulti-del.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/rawmulti-lf.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/rawmulti-null.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml/tests/snapshots/invalid/control/rawmulti-null.stderr differ
+=== crates/toml/tests/snapshots/invalid/control/rawmulti-us.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/rawstring-cr.stderr +6 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/rawstring-del.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/rawstring-lf.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/rawstring-null.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml/tests/snapshots/invalid/control/rawstring-null.stderr differ
+=== crates/toml/tests/snapshots/invalid/control/rawstring-us.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/string-bs.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/string-cr.stderr +6 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/string-del.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/string-lf.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/control/string-null.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml/tests/snapshots/invalid/control/string-null.stderr differ
+=== crates/toml/tests/snapshots/invalid/control/string-us.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/day-zero.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/feb-29.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/feb-30.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/hour-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/leading-zero-date.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/leading-zero-datetime.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/mday-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/mday-under.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/minute-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/month-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/month-under.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/no-date-time-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/no-leads-month.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/no-leads-with-milli.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/no-leads.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/no-t.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/no-year-month-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/offset-minus-minute-1digit.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/offset-minus-no-hour-minute-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/offset-minus-no-hour-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/offset-minus-no-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/offset-overflow-hour.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/offset-overflow-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/offset-plus-minute-1digit.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/offset-plus-no-hour-minute-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/offset-plus-no-hour-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/offset-plus-no-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/only-T.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/only-TZ.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/only-Tdot.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/second-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/second-trailing-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/second-trailing-dotz.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/time-no-leads.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/trailing-x.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/y10k-date.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/y10k-datetime.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/datetime/y10k.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/encoding/bad-codepoint.stderr +1 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/encoding/bad-utf8-at-end.stderr +1 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/encoding/bad-utf8-in-array.stderr +1 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/encoding/bad-utf8-in-comment.stderr +1 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/encoding/bad-utf8-in-multiline-literal.stderr +1 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/encoding/bad-utf8-in-multiline.stderr +1 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/encoding/bad-utf8-in-string-literal.stderr +1 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/encoding/bad-utf8-in-string.stderr +1 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/encoding/bom-not-at-start-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/encoding/bom-not-at-start-02.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/encoding/bom-not-at-start-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/encoding/ideographic-space.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/encoding/utf16-bom.stderr +1 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/encoding/utf16-comment.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml/tests/snapshots/invalid/encoding/utf16-comment.stderr differ
+=== crates/toml/tests/snapshots/invalid/encoding/utf16-key.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml/tests/snapshots/invalid/encoding/utf16-key.stderr differ
+=== crates/toml/tests/snapshots/invalid/ext/datetime/day-1digit.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/day-zero.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/hour-too-large.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/minute-too-large.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/missing-date-time-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/missing-year-month-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/month-1digit.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/month-zero.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/offset-minus-minute-1digit.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/offset-minus-missing-hour-minute-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/offset-minus-missing-hour-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/offset-minus-missing-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/offset-plus-minute-1digit.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/offset-plus-missing-hour-minute-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/offset-plus-missing-hour-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/offset-plus-missing-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/only-T.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/only-TZ.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/only-Tdot.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/seconds-too-large.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/seconds-trailing-decimal-z.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/seconds-trailing-decimal.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/datetime/year-3digits.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/float/overflow.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/float/trailing-exp-minus.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/float/trailing-exp-plus.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/float/trailing-exp.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/float/trailing-point-exp.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/inline-table/comma.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/integer/invalid-hex-3.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/integer/overflow-neg.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/integer/overflow-pos.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/keys/ml_basic_string.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/keys/ml_literal.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/keys/newline-5.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/keys/no-eol-1.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/keys/no-eol-2.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/keys/no-eol-3.stderr +33 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/keys/no-eol-4.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/keys/no-eol-5.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/keys/no-eol-6.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/not-toml/deb.stderr +47 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/string/bad-escape-6.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/string/missing-quotes-in-array.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/string/missing-quotes-in-inline-table.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/string/no-close-recovery-01.stderr +19 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/string/no-close-recovery-02.stderr +19 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/append-with-dotted-keys-3.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/append-with-dotted-keys-4.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/append-with-dotted-keys-5.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/append-with-dotted-keys-6.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/append-with-dotted-keys-7.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/append-with-dotted-keys-8.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/bare-invalid-character.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/dot.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/duplicate-key-1.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/duplicate-key-empty-table.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/duplicate-key-table-array-3.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/ml_basic_string.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/ml_literal.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/newline-1.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/newline-2.stderr +26 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/quoted-unclosed-1.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/quoted-unclosed-2.stderr +19 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/trailing-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/ext/table/value.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/arabic-zero-01.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/arabic-zero-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/arabic-zero-03.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/arabic-zero-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/double-dot-01.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/double-dot-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/exp-dot-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/exp-dot-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/exp-dot-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/exp-double-e-01.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/exp-double-e-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/exp-double-us.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/exp-leading-us.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/exp-trailing-us-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/exp-trailing-us-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/exp-trailing-us.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/inf-capital.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/inf-incomplete-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/inf-incomplete-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/inf-incomplete-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/inf_underscore.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/leading-dot-neg.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/leading-dot-plus.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/leading-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/leading-us.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/leading-zero-neg.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/leading-zero-plus.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/leading-zero.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/nan-capital.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/nan-incomplete-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/nan-incomplete-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/nan-incomplete-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/nan_underscore.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/trailing-dot-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/trailing-dot-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/trailing-dot-min.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/trailing-dot-plus.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/trailing-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/trailing-exp-dot.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/trailing-exp-minus.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/trailing-exp-plus.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/trailing-exp.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/trailing-us-exp-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/trailing-us-exp-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/trailing-us.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/us-after-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/float/us-before-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/bad-key-syntax.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/double-comma.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/duplicate-key-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/duplicate-key-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/duplicate-key-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/duplicate-key-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/empty-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/empty-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/empty-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/no-close-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/no-close-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/no-comma-01.stderr +33 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/no-comma-02.stderr +33 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/overwrite-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/overwrite-02.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/overwrite-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/overwrite-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/overwrite-05.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/overwrite-06.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/overwrite-07.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/overwrite-08.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/overwrite-09.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/inline-table/overwrite-10.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/arabic-zero-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/arabic-zero-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/arabic-zero-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/arabic-zero-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/capital-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/capital-hex.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/capital-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/double-sign-nex.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/double-sign-plus.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/double-us.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/incomplete-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/incomplete-hex.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/incomplete-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/invalid-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/invalid-hex-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/invalid-hex-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/invalid-hex-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/invalid-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/leading-us-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/leading-us-hex.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/leading-us-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/leading-us.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/leading-zero-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/leading-zero-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/leading-zero-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/leading-zero-sign-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/leading-zero-sign-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/leading-zero-sign-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/negative-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/negative-hex.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/negative-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/positive-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/positive-hex.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/positive-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/text-after-integer.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/trailing-us-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/trailing-us-hex.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/trailing-us-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/trailing-us.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/us-after-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/us-after-hex.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/integer/us-after-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/after-array.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/after-table.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/after-value.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/bare-invalid-character-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/bare-invalid-character-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/dot.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/dotdot.stderr +19 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/dotted-redefine-table-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/dotted-redefine-table-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/duplicate-keys-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/duplicate-keys-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/duplicate-keys-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/duplicate-keys-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/duplicate-keys-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/duplicate-keys-06.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/duplicate-keys-07.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/duplicate-keys-08.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/duplicate-keys-09.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/empty.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/end-in-escape.stderr +19 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/escape.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/hash.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/multiline-key-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/multiline-key-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/multiline-key-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/multiline-key-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/newline-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/newline-02.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/newline-03.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/newline-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/newline-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/newline-06.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/no-eol-01.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/no-eol-02.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/no-eol-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/no-eol-04.stderr +33 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/no-eol-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/no-eol-06.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/no-eol-07.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/only-float.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/only-int.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/only-str.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/open-bracket.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/partial-quoted.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/quoted-unclosed-01.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/quoted-unclosed-02.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/single-open-bracket.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/space-quoted.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/space.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/special-character.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/start-bracket.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/start-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/tab-quoted.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/tab.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/two-equals-01.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/two-equals-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/two-equals-03.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/without-value-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/without-value-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/without-value-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/without-value-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/without-value-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/without-value-06.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/key/without-value-07.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-date/day-1digit.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-date/feb-29.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-date/feb-30.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-date/mday-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-date/mday-under.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-date/month-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-date/month-under.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-date/no-leads-with-milli.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-date/no-leads.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-date/trailing-t.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-date/y10k.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-date/year-3digits.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-datetime/feb-29.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-datetime/feb-30.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-datetime/hour-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-datetime/mday-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-datetime/mday-under.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-datetime/minute-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-datetime/month-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-datetime/month-under.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-datetime/no-leads-with-milli.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-datetime/no-leads.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-datetime/no-t.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-datetime/second-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-datetime/time-no-leads.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-datetime/y10k.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-time/hour-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-time/minute-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-time/second-over.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-time/time-no-leads-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-time/time-no-leads-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-time/trailing-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/local-time/trailing-dotdot.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/spec-1.1.0/common-16-0.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/spec-1.1.0/common-19-0.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/spec-1.1.0/common-2.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/spec-1.1.0/common-46-0.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/spec-1.1.0/common-46-1.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/spec-1.1.0/common-49-0.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/spec-1.1.0/common-5.stderr +26 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/spec-1.1.0/common-50-0.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-byte-escape.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-concat.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-escape-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-escape-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-escape-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-escape-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-escape-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-hex-esc-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-hex-esc-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-hex-esc-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-hex-esc-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-hex-esc-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-multiline.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-slash-escape.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-uni-esc-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-uni-esc-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-uni-esc-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-uni-esc-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-uni-esc-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-uni-esc-06.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-uni-esc-07.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-uni-esc-ml-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-uni-esc-ml-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-uni-esc-ml-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-uni-esc-ml-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-uni-esc-ml-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-uni-esc-ml-06.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/bad-uni-esc-ml-07.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/basic-multiline-out-of-range-unicode-escape-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/basic-multiline-out-of-range-unicode-escape-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/basic-multiline-quotes.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/basic-multiline-unknown-escape.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/basic-out-of-range-unicode-escape-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/basic-out-of-range-unicode-escape-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/basic-unknown-escape.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/literal-multiline-quotes-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/literal-multiline-quotes-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/missing-quotes-array.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/missing-quotes-inline-table.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/missing-quotes.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-bad-escape-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-bad-escape-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-bad-escape-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-bad-escape-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-escape-space-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-escape-space-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-lit-no-close-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-lit-no-close-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-lit-no-close-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-lit-no-close-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-no-close-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-no-close-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-no-close-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-no-close-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-no-close-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/multiline-quotes-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-close-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-close-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-close-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-close-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-close-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-close-06.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-close-07.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-close-08.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-close-09.stderr +19 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-close-10.stderr +19 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-open-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-open-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-open-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-open-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-open-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-open-06.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-open-07.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/no-open-08.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/text-after-string.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/string/wrong-close.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/append-with-dotted-keys-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/append-with-dotted-keys-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/append-with-dotted-keys-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/append-with-dotted-keys-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/append-with-dotted-keys-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/append-with-dotted-keys-06.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/append-with-dotted-keys-07.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/append-with-dotted-keys-08.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/array-empty.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/array-implicit.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/array-no-close-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/array-no-close-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/array-no-close-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/array-no-close-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/bare-invalid-character-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/bare-invalid-character-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/dot.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/dotdot.stderr +19 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/duplicate-key-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/duplicate-key-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/duplicate-key-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/duplicate-key-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/duplicate-key-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/duplicate-key-06.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/duplicate-key-07.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/duplicate-key-08.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/duplicate-key-09.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/duplicate-key-10.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/duplicate-key-11.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/duplicate-key-12.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/duplicate-key-13.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/duplicate-key-14.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/empty-implicit-table.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/empty.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/equals-sign.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/llbrace.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/multiline-key-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/multiline-key-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/nested-brackets-close.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/nested-brackets-open.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/newline-01.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/newline-02.stderr +26 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/newline-03.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/newline-04.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/newline-05.stderr +19 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/no-close-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/no-close-02.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/no-close-03.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/no-close-04.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/no-close-05.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/no-close-06.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/no-close-07.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/no-close-08.stderr +19 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/no-close-09.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/overwrite-array-in-parent.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/overwrite-bool-with-array.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/overwrite-with-deep-table.stderr +12 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/redefine-01.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/redefine-02.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/redefine-03.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/rrbrace.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/super-twice.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/text-after-table.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/trailing-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/whitespace.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/snapshots/invalid/table/with-pound.stderr +5 -0
+new file mode 100644
+=== crates/toml/tests/testsuite/macros.rs +377 -0
+new file mode 100644
+=== crates/toml/tests/testsuite/main.rs +12 -0
+new file mode 100644
+=== crates/toml/tests/testsuite/table.rs +65 -0
+new file mode 100644
+=== crates/toml/tests/testsuite/value.rs +27 -0
+new file mode 100644
+=== crates/toml_datetime/CHANGELOG.md +160 -0
+new file mode 100644
+=== crates/toml_datetime/Cargo.toml +39 -0
+new file mode 100644
+=== crates/toml_datetime/LICENSE-APACHE +1 -0
+new file mode 120000
+=== crates/toml_datetime/LICENSE-MIT +1 -0
+new file mode 120000
+=== crates/toml_datetime/README.md +21 -0
+new file mode 100644
+=== crates/toml_datetime/src/datetime.rs +961 -0
+new file mode 100644
+=== crates/toml_datetime/src/de.rs +156 -0
+new file mode 100644
+=== crates/toml_datetime/src/lib.rs +39 -0
+new file mode 100644
+=== crates/toml_datetime/src/ser.rs +242 -0
+new file mode 100644
+=== crates/toml_datetime/tests/display.rs +101 -0
+new file mode 100644
+=== crates/toml_datetime/tests/parse.rs +134 -0
+new file mode 100644
+=== crates/toml_edit/CHANGELOG.md +1137 -0
+new file mode 100644
+=== crates/toml_edit/Cargo.toml +92 -0
+new file mode 100644
+=== crates/toml_edit/LICENSE-APACHE +1 -0
+new file mode 120000
+=== crates/toml_edit/LICENSE-MIT +1 -0
+new file mode 120000
+=== crates/toml_edit/README.md +59 -0
+new file mode 100644
+=== crates/toml_edit/examples/visit.rs +284 -0
+new file mode 100644
+=== crates/toml_edit/src/array.rs +442 -0
+new file mode 100644
+=== crates/toml_edit/src/array_of_tables.rs +205 -0
+new file mode 100644
+=== crates/toml_edit/src/de/array.rs +87 -0
+new file mode 100644
+=== crates/toml_edit/src/de/error.rs +75 -0
+new file mode 100644
+=== crates/toml_edit/src/de/key.rs +290 -0
+new file mode 100644
+=== crates/toml_edit/src/de/mod.rs +250 -0
+new file mode 100644
+=== crates/toml_edit/src/de/table.rs +207 -0
+new file mode 100644
+=== crates/toml_edit/src/de/table_enum.rs +176 -0
+new file mode 100644
+=== crates/toml_edit/src/de/value.rs +293 -0
+new file mode 100644
+=== crates/toml_edit/src/document.rs +246 -0
+new file mode 100644
+=== crates/toml_edit/src/encode.rs +450 -0
+new file mode 100644
+=== crates/toml_edit/src/error.rs +299 -0
+new file mode 100644
+=== crates/toml_edit/src/index.rs +142 -0
+new file mode 100644
+=== crates/toml_edit/src/inline_table.rs +750 -0
+new file mode 100644
+=== crates/toml_edit/src/item.rs +450 -0
+new file mode 100644
+=== crates/toml_edit/src/key.rs +397 -0
+new file mode 100644
+=== crates/toml_edit/src/lib.rs +147 -0
+new file mode 100644
+=== crates/toml_edit/src/parser/array.rs +161 -0
+new file mode 100644
+=== crates/toml_edit/src/parser/debug.rs +98 -0
+new file mode 100644
+=== crates/toml_edit/src/parser/document.rs +573 -0
+new file mode 100644
+=== crates/toml_edit/src/parser/inline_table.rs +342 -0
+new file mode 100644
+=== crates/toml_edit/src/parser/key.rs +168 -0
+new file mode 100644
+=== crates/toml_edit/src/parser/mod.rs +156 -0
+new file mode 100644
+=== crates/toml_edit/src/parser/value.rs +150 -0
+new file mode 100644
+=== crates/toml_edit/src/raw_string.rs +168 -0
+new file mode 100644
+=== crates/toml_edit/src/repr.rs +281 -0
+new file mode 100644
+=== crates/toml_edit/src/ser/array.rs +102 -0
+new file mode 100644
+=== crates/toml_edit/src/ser/error.rs +84 -0
+new file mode 100644
+=== crates/toml_edit/src/ser/key.rs +181 -0
+new file mode 100644
+=== crates/toml_edit/src/ser/map.rs +445 -0
+new file mode 100644
+=== crates/toml_edit/src/ser/mod.rs +105 -0
+new file mode 100644
+=== crates/toml_edit/src/ser/pretty.rs +58 -0
+new file mode 100644
+=== crates/toml_edit/src/ser/value.rs +249 -0
+new file mode 100644
+=== crates/toml_edit/src/table.rs +821 -0
+new file mode 100644
+=== crates/toml_edit/src/value.rs +386 -0
+new file mode 100644
+=== crates/toml_edit/src/visit.rs +239 -0
+new file mode 100644
+=== crates/toml_edit/src/visit_mut.rs +256 -0
+new file mode 100644
+=== crates/toml_edit/tests/compliance/invalid.rs +211 -0
+new file mode 100644
+=== crates/toml_edit/tests/compliance/main.rs +25 -0
+new file mode 100644
+=== crates/toml_edit/tests/compliance/parse.rs +694 -0
+new file mode 100644
+=== crates/toml_edit/tests/decoder.rs +111 -0
+new file mode 100644
+=== crates/toml_edit/tests/decoder_compliance.rs +52 -0
+new file mode 100644
+=== crates/toml_edit/tests/encoder.rs +116 -0
+new file mode 100644
+=== crates/toml_edit/tests/encoder_compliance.rs +34 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/day-1digit.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/day-zero.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/hour-too-large.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/minute-too-large.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/missing-date-time-sep.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/missing-year-month-sep.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/month-1digit.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/month-zero.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/offset-minus-minute-1digit.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/offset-minus-missing-hour-minute-sep.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/offset-minus-missing-hour-minute.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/offset-minus-missing-minute.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/offset-plus-minute-1digit.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/offset-plus-missing-hour-minute-sep.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/offset-plus-missing-hour-minute.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/offset-plus-missing-minute.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/only-T.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/only-TZ.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/only-Tdot.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/seconds-too-large.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/seconds-trailing-decimal-z.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/seconds-trailing-decimal.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/datetime/year-3digits.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/float/overflow.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/float/trailing-exp-minus.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/float/trailing-exp-plus.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/float/trailing-exp.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/float/trailing-point-exp.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/inline-table/comma.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/integer/invalid-hex-3.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/integer/overflow-neg.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/integer/overflow-pos.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/keys/ml_basic_string.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/keys/ml_literal.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/keys/newline-5.toml +2 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/keys/no-eol-1.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/keys/no-eol-2.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/keys/no-eol-3.toml +4 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/keys/no-eol-4.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/keys/no-eol-5.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/keys/no-eol-6.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/not-toml/deb.toml +6 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/string/bad-escape-6.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/string/missing-quotes-in-array.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/string/missing-quotes-in-inline-table.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/string/no-close-recovery-01.toml +2 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/string/no-close-recovery-02.toml +2 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/append-with-dotted-keys-3.toml +8 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/append-with-dotted-keys-4.toml +2 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/append-with-dotted-keys-5.toml +2 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/append-with-dotted-keys-6.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/append-with-dotted-keys-7.toml +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/append-with-dotted-keys-8.toml +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/bare-invalid-character.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/dot.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/duplicate-key-1.toml +4 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/duplicate-key-empty-table.toml +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/duplicate-key-table-array-3.toml +2 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/ml_basic_string.toml +2 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/ml_literal.toml +2 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/newline-1.toml +3 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/newline-2.toml +3 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/quoted-unclosed-1.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/quoted-unclosed-2.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/trailing-dot.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/invalid/ext/table/value.toml +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/valid/ext/table/append-with-dotted-keys-1.json +13 -0
+new file mode 100644
+=== crates/toml_edit/tests/fixtures/valid/ext/table/append-with-dotted-keys-1.toml +6 -0
+new file mode 100644
+=== crates/toml_edit/tests/serde/de_enum.rs +435 -0
+new file mode 100644
+=== crates/toml_edit/tests/serde/de_errors.rs +423 -0
+new file mode 100644
+=== crates/toml_edit/tests/serde/de_key.rs +275 -0
+new file mode 100644
+=== crates/toml_edit/tests/serde/general.rs +2002 -0
+new file mode 100644
+=== crates/toml_edit/tests/serde/main.rs +51 -0
+new file mode 100644
+=== crates/toml_edit/tests/serde/ser_enum.rs +422 -0
+new file mode 100644
+=== crates/toml_edit/tests/serde/ser_key.rs +451 -0
+new file mode 100644
+=== crates/toml_edit/tests/serde/ser_tables_last.rs +164 -0
+new file mode 100644
+=== crates/toml_edit/tests/serde/ser_to_string.rs +206 -0
+new file mode 100644
+=== crates/toml_edit/tests/serde/ser_to_string_pretty.rs +231 -0
+new file mode 100644
+=== crates/toml_edit/tests/serde/spanned.rs +812 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/double-comma-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/double-comma-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/extend-defined-aot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/extending-table.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/missing-separator-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/missing-separator-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-close-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-close-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-close-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-close-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-close-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-close-06.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-close-07.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-close-08.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-close-table-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-close-table-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-close-table-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-close-table-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-comma-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-comma-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/no-comma-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/only-comma-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/only-comma-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/tables-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/tables-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/text-after-array-entries.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/text-before-array-separator.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/array/text-in-array.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/almost-false-with-extra.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/almost-false.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/almost-true-with-extra.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/almost-true.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/capitalized-false.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/capitalized-true.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/just-f.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/just-t.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/mixed-case-false.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/mixed-case-true.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/mixed-case.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/starting-same-false.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/starting-same-true.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/wrong-case-false.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/bool/wrong-case-true.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/bare-cr.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/bare-formfeed.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/bare-null.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml_edit/tests/snapshots/invalid/control/bare-null.stderr differ
+=== crates/toml_edit/tests/snapshots/invalid/control/bare-vertical-tab.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/comment-cr.stderr +6 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/comment-del.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/comment-ff.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/comment-lf.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/comment-null.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml_edit/tests/snapshots/invalid/control/comment-null.stderr differ
+=== crates/toml_edit/tests/snapshots/invalid/control/comment-us.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/linetab-number-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/linetab-number-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/linetab-number-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/linetab-number-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/multi-cr.stderr +6 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/multi-del.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/multi-lf.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/multi-null.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml_edit/tests/snapshots/invalid/control/multi-null.stderr differ
+=== crates/toml_edit/tests/snapshots/invalid/control/multi-us.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/only-ff.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/only-null.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml_edit/tests/snapshots/invalid/control/only-null.stderr differ
+=== crates/toml_edit/tests/snapshots/invalid/control/only-vt.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/rawmulti-cr.stderr +6 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/rawmulti-del.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/rawmulti-lf.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/rawmulti-null.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml_edit/tests/snapshots/invalid/control/rawmulti-null.stderr differ
+=== crates/toml_edit/tests/snapshots/invalid/control/rawmulti-us.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/rawstring-cr.stderr +6 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/rawstring-del.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/rawstring-lf.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/rawstring-null.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml_edit/tests/snapshots/invalid/control/rawstring-null.stderr differ
+=== crates/toml_edit/tests/snapshots/invalid/control/rawstring-us.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/string-bs.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/string-cr.stderr +6 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/string-del.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/string-lf.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/control/string-null.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml_edit/tests/snapshots/invalid/control/string-null.stderr differ
+=== crates/toml_edit/tests/snapshots/invalid/control/string-us.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/day-zero.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/feb-29.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/feb-30.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/hour-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/leading-zero-date.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/leading-zero-datetime.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/mday-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/mday-under.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/minute-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/month-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/month-under.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/no-date-time-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/no-leads-month.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/no-leads-with-milli.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/no-leads.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/no-t.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/no-year-month-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/offset-minus-minute-1digit.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/offset-minus-no-hour-minute-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/offset-minus-no-hour-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/offset-minus-no-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/offset-overflow-hour.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/offset-overflow-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/offset-plus-minute-1digit.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/offset-plus-no-hour-minute-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/offset-plus-no-hour-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/offset-plus-no-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/only-T.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/only-TZ.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/only-Tdot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/second-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/second-trailing-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/second-trailing-dotz.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/time-no-leads.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/trailing-x.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/y10k-date.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/y10k-datetime.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/datetime/y10k.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/encoding/bad-codepoint.stderr +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/encoding/bad-utf8-at-end.stderr +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/encoding/bad-utf8-in-array.stderr +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/encoding/bad-utf8-in-comment.stderr +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/encoding/bad-utf8-in-multiline-literal.stderr +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/encoding/bad-utf8-in-multiline.stderr +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/encoding/bad-utf8-in-string-literal.stderr +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/encoding/bad-utf8-in-string.stderr +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/encoding/bom-not-at-start-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/encoding/bom-not-at-start-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/encoding/bom-not-at-start-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/encoding/ideographic-space.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/encoding/utf16-bom.stderr +1 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/encoding/utf16-comment.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml_edit/tests/snapshots/invalid/encoding/utf16-comment.stderr differ
+=== crates/toml_edit/tests/snapshots/invalid/encoding/utf16-key.stderr
+new file mode 100644
+Binary files /dev/null and b/crates/toml_edit/tests/snapshots/invalid/encoding/utf16-key.stderr differ
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/day-1digit.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/day-zero.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/hour-too-large.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/minute-too-large.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/missing-date-time-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/missing-year-month-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/month-1digit.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/month-zero.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/offset-minus-minute-1digit.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/offset-minus-missing-hour-minute-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/offset-minus-missing-hour-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/offset-minus-missing-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/offset-plus-minute-1digit.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/offset-plus-missing-hour-minute-sep.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/offset-plus-missing-hour-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/offset-plus-missing-minute.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/only-T.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/only-TZ.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/only-Tdot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/seconds-too-large.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/seconds-trailing-decimal-z.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/seconds-trailing-decimal.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/datetime/year-3digits.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/float/overflow.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/float/trailing-exp-minus.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/float/trailing-exp-plus.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/float/trailing-exp.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/float/trailing-point-exp.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/inline-table/comma.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/integer/invalid-hex-3.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/integer/overflow-neg.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/integer/overflow-pos.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/keys/ml_basic_string.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/keys/ml_literal.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/keys/newline-5.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/keys/no-eol-1.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/keys/no-eol-2.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/keys/no-eol-3.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/keys/no-eol-4.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/keys/no-eol-5.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/keys/no-eol-6.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/not-toml/deb.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/string/bad-escape-6.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/string/missing-quotes-in-array.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/string/missing-quotes-in-inline-table.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/string/no-close-recovery-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/string/no-close-recovery-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/append-with-dotted-keys-3.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/append-with-dotted-keys-4.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/append-with-dotted-keys-5.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/append-with-dotted-keys-6.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/append-with-dotted-keys-7.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/append-with-dotted-keys-8.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/bare-invalid-character.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/dot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/duplicate-key-1.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/duplicate-key-empty-table.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/duplicate-key-table-array-3.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/ml_basic_string.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/ml_literal.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/newline-1.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/newline-2.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/quoted-unclosed-1.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/quoted-unclosed-2.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/trailing-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/ext/table/value.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/arabic-zero-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/arabic-zero-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/arabic-zero-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/arabic-zero-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/double-dot-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/double-dot-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/exp-dot-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/exp-dot-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/exp-dot-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/exp-double-e-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/exp-double-e-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/exp-double-us.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/exp-leading-us.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/exp-trailing-us-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/exp-trailing-us-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/exp-trailing-us.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/inf-capital.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/inf-incomplete-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/inf-incomplete-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/inf-incomplete-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/inf_underscore.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/leading-dot-neg.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/leading-dot-plus.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/leading-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/leading-us.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/leading-zero-neg.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/leading-zero-plus.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/leading-zero.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/nan-capital.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/nan-incomplete-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/nan-incomplete-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/nan-incomplete-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/nan_underscore.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/trailing-dot-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/trailing-dot-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/trailing-dot-min.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/trailing-dot-plus.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/trailing-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/trailing-exp-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/trailing-exp-minus.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/trailing-exp-plus.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/trailing-exp.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/trailing-us-exp-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/trailing-us-exp-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/trailing-us.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/us-after-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/float/us-before-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/bad-key-syntax.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/double-comma.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/duplicate-key-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/duplicate-key-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/duplicate-key-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/duplicate-key-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/empty-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/empty-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/empty-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/no-close-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/no-close-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/no-comma-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/no-comma-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/overwrite-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/overwrite-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/overwrite-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/overwrite-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/overwrite-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/overwrite-06.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/overwrite-07.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/overwrite-08.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/overwrite-09.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/inline-table/overwrite-10.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/arabic-zero-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/arabic-zero-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/arabic-zero-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/arabic-zero-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/capital-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/capital-hex.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/capital-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/double-sign-nex.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/double-sign-plus.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/double-us.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/incomplete-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/incomplete-hex.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/incomplete-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/invalid-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/invalid-hex-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/invalid-hex-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/invalid-hex-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/invalid-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/leading-us-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/leading-us-hex.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/leading-us-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/leading-us.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/leading-zero-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/leading-zero-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/leading-zero-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/leading-zero-sign-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/leading-zero-sign-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/leading-zero-sign-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/negative-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/negative-hex.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/negative-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/positive-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/positive-hex.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/positive-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/text-after-integer.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/trailing-us-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/trailing-us-hex.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/trailing-us-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/trailing-us.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/us-after-bin.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/us-after-hex.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/integer/us-after-oct.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/after-array.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/after-table.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/after-value.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/bare-invalid-character-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/bare-invalid-character-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/dot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/dotdot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/dotted-redefine-table-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/dotted-redefine-table-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/duplicate-keys-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/duplicate-keys-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/duplicate-keys-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/duplicate-keys-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/duplicate-keys-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/duplicate-keys-06.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/duplicate-keys-07.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/duplicate-keys-08.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/duplicate-keys-09.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/empty.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/end-in-escape.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/escape.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/hash.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/multiline-key-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/multiline-key-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/multiline-key-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/multiline-key-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/newline-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/newline-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/newline-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/newline-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/newline-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/newline-06.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/no-eol-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/no-eol-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/no-eol-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/no-eol-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/no-eol-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/no-eol-06.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/no-eol-07.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/only-float.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/only-int.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/only-str.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/open-bracket.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/partial-quoted.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/quoted-unclosed-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/quoted-unclosed-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/single-open-bracket.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/space-quoted.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/space.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/special-character.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/start-bracket.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/start-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/tab-quoted.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/tab.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/two-equals-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/two-equals-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/two-equals-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/without-value-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/without-value-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/without-value-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/without-value-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/without-value-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/without-value-06.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/key/without-value-07.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-date/day-1digit.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-date/feb-29.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-date/feb-30.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-date/mday-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-date/mday-under.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-date/month-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-date/month-under.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-date/no-leads-with-milli.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-date/no-leads.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-date/trailing-t.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-date/y10k.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-date/year-3digits.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-datetime/feb-29.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-datetime/feb-30.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-datetime/hour-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-datetime/mday-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-datetime/mday-under.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-datetime/minute-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-datetime/month-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-datetime/month-under.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-datetime/no-leads-with-milli.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-datetime/no-leads.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-datetime/no-t.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-datetime/second-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-datetime/time-no-leads.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-datetime/y10k.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-time/hour-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-time/minute-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-time/second-over.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-time/time-no-leads-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-time/time-no-leads-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-time/trailing-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/local-time/trailing-dotdot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.0.0/inline-table-2-0.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.0.0/inline-table-3-0.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.0.0/key-value-pair-1.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.0.0/keys-2.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.0.0/string-4-0.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.0.0/string-7-0.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.0.0/table-9-0.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.0.0/table-9-1.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.1.0/common-16-0.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.1.0/common-19-0.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.1.0/common-2.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.1.0/common-46-0.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.1.0/common-46-1.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.1.0/common-49-0.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.1.0/common-5.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/spec-1.1.0/common-50-0.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-byte-escape.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-concat.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-escape-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-escape-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-escape-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-escape-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-escape-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-hex-esc-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-hex-esc-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-hex-esc-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-hex-esc-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-hex-esc-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-multiline.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-slash-escape.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-uni-esc-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-uni-esc-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-uni-esc-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-uni-esc-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-uni-esc-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-uni-esc-06.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-uni-esc-07.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-uni-esc-ml-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-uni-esc-ml-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-uni-esc-ml-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-uni-esc-ml-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-uni-esc-ml-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-uni-esc-ml-06.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/bad-uni-esc-ml-07.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/basic-multiline-out-of-range-unicode-escape-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/basic-multiline-out-of-range-unicode-escape-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/basic-multiline-quotes.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/basic-multiline-unknown-escape.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/basic-out-of-range-unicode-escape-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/basic-out-of-range-unicode-escape-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/basic-unknown-escape.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/literal-multiline-quotes-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/literal-multiline-quotes-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/missing-quotes-array.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/missing-quotes-inline-table.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/missing-quotes.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-bad-escape-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-bad-escape-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-bad-escape-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-bad-escape-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-escape-space-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-escape-space-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-lit-no-close-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-lit-no-close-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-lit-no-close-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-lit-no-close-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-no-close-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-no-close-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-no-close-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-no-close-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-no-close-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/multiline-quotes-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-close-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-close-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-close-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-close-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-close-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-close-06.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-close-07.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-close-08.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-close-09.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-close-10.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-open-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-open-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-open-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-open-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-open-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-open-06.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-open-07.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/no-open-08.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/text-after-string.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/string/wrong-close.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/append-with-dotted-keys-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/append-with-dotted-keys-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/append-with-dotted-keys-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/append-with-dotted-keys-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/append-with-dotted-keys-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/append-with-dotted-keys-06.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/append-with-dotted-keys-07.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/append-with-dotted-keys-08.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/array-empty.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/array-implicit.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/array-no-close-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/array-no-close-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/array-no-close-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/array-no-close-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/bare-invalid-character-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/bare-invalid-character-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/dot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/dotdot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/duplicate-key-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/duplicate-key-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/duplicate-key-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/duplicate-key-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/duplicate-key-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/duplicate-key-06.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/duplicate-key-07.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/duplicate-key-08.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/duplicate-key-09.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/duplicate-key-10.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/duplicate-key-11.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/duplicate-key-12.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/duplicate-key-13.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/duplicate-key-14.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/empty-implicit-table.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/empty.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/equals-sign.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/llbrace.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/multiline-key-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/multiline-key-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/nested-brackets-close.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/nested-brackets-open.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/newline-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/newline-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/newline-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/newline-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/newline-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/no-close-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/no-close-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/no-close-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/no-close-04.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/no-close-05.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/no-close-06.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/no-close-07.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/no-close-08.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/no-close-09.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/overwrite-array-in-parent.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/overwrite-bool-with-array.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/overwrite-with-deep-table.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/redefine-01.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/redefine-02.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/redefine-03.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/rrbrace.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/super-twice.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/text-after-table.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/trailing-dot.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/whitespace.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/snapshots/invalid/table/with-pound.stderr +5 -0
+new file mode 100644
+=== crates/toml_edit/tests/testsuite/edit.rs +1901 -0
+new file mode 100644
+=== crates/toml_edit/tests/testsuite/main.rs +4 -0
+new file mode 100644
+=== crates/toml_edit_fuzz/.gitignore +3 -0
+new file mode 100644
+=== crates/toml_edit_fuzz/Cargo.toml +24 -0
+new file mode 100644
+=== crates/toml_edit_fuzz/README.md +8 -0
+new file mode 100644
+=== crates/toml_edit_fuzz/parse_document.rs +54 -0
+new file mode 100644
+=== crates/toml_edit_fuzz/seeds/0001 +36 -0
+new file mode 100644
+=== crates/toml_parser/CHANGELOG.md +120 -0
+new file mode 100644
+=== crates/toml_parser/Cargo.toml +46 -0
+new file mode 100644
+=== crates/toml_parser/LICENSE-APACHE +1 -0
+new file mode 120000
+=== crates/toml_parser/LICENSE-MIT +1 -0
+new file mode 120000
+=== crates/toml_parser/README.md +21 -0
+new file mode 100644
+=== crates/toml_parser/src/debug.rs +140 -0
+new file mode 100644
+=== crates/toml_parser/src/decoder/mod.rs +117 -0
+new file mode 100644
+=== crates/toml_parser/src/decoder/scalar.rs +797 -0
+new file mode 100644
+=== crates/toml_parser/src/decoder/string.rs +1305 -0
+new file mode 100644
+=== crates/toml_parser/src/decoder/ws.rs +76 -0
+new file mode 100644
+=== crates/toml_parser/src/error.rs +102 -0
+new file mode 100644
+=== crates/toml_parser/src/lexer/mod.rs +634 -0
+new file mode 100644
+=== crates/toml_parser/src/lexer/test.rs +1700 -0
+new file mode 100644
+=== crates/toml_parser/src/lexer/token.rs +106 -0
+new file mode 100644
+=== crates/toml_parser/src/lib.rs +49 -0
+new file mode 100644
+=== crates/toml_parser/src/macros.rs +1 -0
+new file mode 100644
+=== crates/toml_parser/src/parser/document.rs +1631 -0
+new file mode 100644
+=== crates/toml_parser/src/parser/event.rs +543 -0
+new file mode 100644
+=== crates/toml_parser/src/parser/mod.rs +16 -0
+new file mode 100644
+=== crates/toml_parser/src/source.rs +394 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__array_and_inline_table_outside_recursion_limit.txt +240 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__array_and_inline_table_within_recursion_limit.txt +131 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__array_outside_recursion_limit.txt +130 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__array_within_recursion_limit.txt +101 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_bom.txt +130 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_complex.txt +1056 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_dot.txt +109 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_dot_dot.txt +149 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_dot_dot_key.txt +129 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_dot_key.txt +89 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_empty.txt +5 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_inline_table_dot.txt +144 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_inline_table_dot_dot.txt +184 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_inline_table_dot_dot_key.txt +164 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_inline_table_dot_key.txt +124 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_inline_table_key_dot.txt +124 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_inline_table_key_dot_dot.txt +164 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_inline_table_key_dot_dot_key.txt +144 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_inline_table_missing_key.txt +104 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_invalid.txt +100 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_invalid_comment.txt +70 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_invalid_cr.txt +70 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_key_datetime.txt +46 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_key_dot.txt +84 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_key_dot_dot.txt +124 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_key_dot_dot_key.txt +104 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_key_string.txt +48 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_key_string_comment.txt +53 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_key_ws.txt +83 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_missing_key.txt +69 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_table.txt +78 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_table_dot.txt +129 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_table_dot_dot.txt +169 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_table_dot_dot_key.txt +109 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_table_dot_key.txt +109 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_table_key_dot.txt +109 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_table_key_dot_dot.txt +149 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_table_key_dot_dot_key.txt +129 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_table_missing_key.txt +84 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__document_ws.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__float_with_bad_underscore.txt +44 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__hex_with_bad_chars.txt +52 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__hex_with_spaces.txt +48 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__inline_table_outside_recursion_limit.txt +250 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_document__inline_table_within_recursion_limit.txt +161 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_simple_key__simple_key_empty.txt +22 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_simple_key__simple_key_string.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_simple_key__simple_key_string_literal.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_simple_key__simple_key_unquoted_ascii.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_comments_only.txt +46 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_empty.txt +16 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_extra_trailing_comma.txt +48 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_floats.txt +51 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_inline_table.txt +224 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_integer.txt +21 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_integers.txt +51 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_integers_newlines.txt +61 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_integers_surrounded_comment.txt +91 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_integers_trailing_comma.txt +46 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_integers_trailing_comment.txt +61 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_leading_comma.txt +43 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_nested_multiple_types.txt +127 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_nested_same_type.txt +121 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_no_close.txt +33 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_only_comma.txt +38 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_string_types.txt +79 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_strings.txt +57 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_trailing_comma.txt +26 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__array_whitespace.txt +21 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__datetime_date.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__datetime_local.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__datetime_local_fractional_seconds.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__datetime_local_fractional_seconds_truncated.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__datetime_offset_hour.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__datetime_offset_lower_t.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__datetime_offset_lower_z.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__datetime_offset_minutes.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__datetime_offset_space.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__datetime_offset_z.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__datetime_time.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__datetime_time_fractional_seconds.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_exceed_f64.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_exp_negative.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_exp_positive.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_f64_max.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_f64_min.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_inf.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_inf_negative.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_inf_positive.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_nan.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_nan_negative.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_nan_positive.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_negative.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_negative_exp_negative.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_pos.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_positive.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_sep.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__float_sep_bad.txt +50 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__hex_escape.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__inline_table_dotted_key.txt +63 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__inline_table_empty.txt +16 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__inline_table_key_value.txt +41 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__inline_table_leading_comma.txt +80 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__inline_table_multiple_key_values.txt +83 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__inline_table_no_close.txt +58 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__inline_table_no_comma.txt +102 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__inline_table_no_eq.txt +60 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__inline_table_only_comma.txt +38 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__inline_table_repeated_key.txt +118 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__inline_table_trailing_comma.txt +58 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__inline_table_ws.txt +21 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_bin_sep.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_every_other_sep.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_exceed_i64.txt +22 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_hex.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_hex_neg.txt +34 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_i64_max.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_i64_min.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_leading_sep.txt +24 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_multiple_seps.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_neg_hex.txt +24 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_neg_sep.txt +24 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_negative.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_oct_sep.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_one_sep.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_pos_sep.txt +24 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_positive.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_trailing_sep.txt +24 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__integer_zero.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_confusing_quotes_1.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_confusing_quotes_2.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_confusing_quotes_3.txt +30 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_confusing_quotes_4.txt +57 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_escaped.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_escaped_escape.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_literal_confusing_quotes.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_literal_escaped_1.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_literal_escaped_2.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_literal_path_1.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_literal_path_2.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_literal_quotes.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_missing_opening.txt +28 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_ml_string_literal_multiple_lines.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_ml_string_multiple_lines.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_trailing_slash_1.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_trailing_slash_2.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__string_trailing_slash_3.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__value_array.txt +224 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__value_datetime.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__value_empty.txt +28 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__value_float.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__value_inline_table.txt +83 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__value_integer_with_seps.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__value_ml_string_literal_multiline.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__value_ml_string_literal_single_line.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__value_negative_integer.txt +11 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__value_string_escaped.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/snapshots/testsuite__parse_value__value_string_escaped_unicode.txt +13 -0
+new file mode 100644
+=== crates/toml_parser/tests/testsuite/main.rs +135 -0
+new file mode 100644
+=== crates/toml_parser/tests/testsuite/parse_document.rs +528 -0
+new file mode 100644
+=== crates/toml_parser/tests/testsuite/parse_simple_key.rs +36 -0
+new file mode 100644
+=== crates/toml_parser/tests/testsuite/parse_value.rs +666 -0
+new file mode 100644
+=== crates/toml_writer/CHANGELOG.md +95 -0
+new file mode 100644
+=== crates/toml_writer/Cargo.toml +41 -0
+new file mode 100644
+=== crates/toml_writer/LICENSE-APACHE +1 -0
+new file mode 120000
+=== crates/toml_writer/LICENSE-MIT +1 -0
+new file mode 120000
+=== crates/toml_writer/README.md +23 -0
+new file mode 100644
+=== crates/toml_writer/src/integer.rs +220 -0
+new file mode 100644
+=== crates/toml_writer/src/key.rs +55 -0
+new file mode 100644
+=== crates/toml_writer/src/lib.rs +84 -0
+new file mode 100644
+=== crates/toml_writer/src/string.rs +438 -0
+new file mode 100644
+=== crates/toml_writer/src/value.rs +249 -0
+new file mode 100644
+=== crates/toml_writer/src/write.rs +88 -0
+new file mode 100644
+=== crates/toml_writer/tests/float.rs +43 -0
+new file mode 100644
+=== crates/toml_writer/tests/integer.rs +99 -0
+new file mode 100644
+=== crates/toml_writer/tests/string.rs +635 -0
+new file mode 100644
+=== deny.toml +240 -0
+new file mode 100644
+=== release.toml +3 -0
+new file mode 100644
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-oki6gzik.log]

@@ -1,0 +1,1837 @@
+$ git blame url/src/parser.rs
+^88d5626 (evals 2026-10-22 10:55:21 +0200    1) // Copyright 2013-2016 The rust-url developers.
+^88d5626 (evals 2026-10-22 10:55:21 +0200    2) //
+^88d5626 (evals 2026-10-22 10:55:21 +0200    3) // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+^88d5626 (evals 2026-10-22 10:55:21 +0200    4) // http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+^88d5626 (evals 2026-10-22 10:55:21 +0200    5) // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+^88d5626 (evals 2026-10-22 10:55:21 +0200    6) // option. This file may not be copied, modified, or distributed
+^88d5626 (evals 2026-10-22 10:55:21 +0200    7) // except according to those terms.
+^88d5626 (evals 2026-10-22 10:55:21 +0200    8) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200    9) use alloc::borrow::Cow;
+^88d5626 (evals 2026-10-22 10:55:21 +0200   10) use alloc::string::String;
+^88d5626 (evals 2026-10-22 10:55:21 +0200   11) use core::fmt::{self, Formatter, Write};
+^88d5626 (evals 2026-10-22 10:55:21 +0200   12) use core::str;
+^88d5626 (evals 2026-10-22 10:55:21 +0200   13) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200   14) use crate::host::{Host, HostInternal};
+^88d5626 (evals 2026-10-22 10:55:21 +0200   15) use crate::Url;
+^88d5626 (evals 2026-10-22 10:55:21 +0200   16) use form_urlencoded::EncodingOverride;
+^88d5626 (evals 2026-10-22 10:55:21 +0200   17) use percent_encoding::{percent_encode, utf8_percent_encode, AsciiSet, CONTROLS};
+^88d5626 (evals 2026-10-22 10:55:21 +0200   18) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200   19) /// https://url.spec.whatwg.org/#fragment-percent-encode-set
+^88d5626 (evals 2026-10-22 10:55:21 +0200   20) const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
+^88d5626 (evals 2026-10-22 10:55:21 +0200   21) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200   22) /// https://url.spec.whatwg.org/#path-percent-encode-set
+^88d5626 (evals 2026-10-22 10:55:21 +0200   23) const PATH: &AsciiSet = &FRAGMENT.add(b'#').add(b'?').add(b'{').add(b'}');
+^88d5626 (evals 2026-10-22 10:55:21 +0200   24) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200   25) /// https://url.spec.whatwg.org/#userinfo-percent-encode-set
+^88d5626 (evals 2026-10-22 10:55:21 +0200   26) pub(crate) const USERINFO: &AsciiSet = &PATH
+^88d5626 (evals 2026-10-22 10:55:21 +0200   27)     .add(b'/')
+^88d5626 (evals 2026-10-22 10:55:21 +0200   28)     .add(b':')
+^88d5626 (evals 2026-10-22 10:55:21 +0200   29)     .add(b';')
+^88d5626 (evals 2026-10-22 10:55:21 +0200   30)     .add(b'=')
+^88d5626 (evals 2026-10-22 10:55:21 +0200   31)     .add(b'@')
+^88d5626 (evals 2026-10-22 10:55:21 +0200   32)     .add(b'[')
+^88d5626 (evals 2026-10-22 10:55:21 +0200   33)     .add(b'\\')
+^88d5626 (evals 2026-10-22 10:55:21 +0200   34)     .add(b']')
+^88d5626 (evals 2026-10-22 10:55:21 +0200   35)     .add(b'^')
+^88d5626 (evals 2026-10-22 10:55:21 +0200   36)     .add(b'|');
+^88d5626 (evals 2026-10-22 10:55:21 +0200   37) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200   38) pub(crate) const PATH_SEGMENT: &AsciiSet = &PATH.add(b'/').add(b'%');
+^88d5626 (evals 2026-10-22 10:55:21 +0200   39) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200   40) // The backslash (\) character is treated as a path separator in special URLs
+^88d5626 (evals 2026-10-22 10:55:21 +0200   41) // so it needs to be additionally escaped in that case.
+^88d5626 (evals 2026-10-22 10:55:21 +0200   42) pub(crate) const SPECIAL_PATH_SEGMENT: &AsciiSet = &PATH_SEGMENT.add(b'\\');
+^88d5626 (evals 2026-10-22 10:55:21 +0200   43) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200   44) // https://url.spec.whatwg.org/#query-state
+^88d5626 (evals 2026-10-22 10:55:21 +0200   45) const QUERY: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'#').add(b'<').add(b'>');
+^88d5626 (evals 2026-10-22 10:55:21 +0200   46) const SPECIAL_QUERY: &AsciiSet = &QUERY.add(b'\'');
+^88d5626 (evals 2026-10-22 10:55:21 +0200   47) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200   48) pub type ParseResult<T> = Result<T, ParseError>;
+^88d5626 (evals 2026-10-22 10:55:21 +0200   49) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200   50) macro_rules! simple_enum_error {
+^88d5626 (evals 2026-10-22 10:55:21 +0200   51)     ($($name: ident => $description: expr,)+) => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200   52)         /// Errors that can occur during parsing.
+^88d5626 (evals 2026-10-22 10:55:21 +0200   53)         ///
+^88d5626 (evals 2026-10-22 10:55:21 +0200   54)         /// This may be extended in the future so exhaustive matching is
+^88d5626 (evals 2026-10-22 10:55:21 +0200   55)         /// forbidden.
+^88d5626 (evals 2026-10-22 10:55:21 +0200   56)         #[derive(PartialEq, Eq, Clone, Copy, Debug)]
+^88d5626 (evals 2026-10-22 10:55:21 +0200   57)         #[non_exhaustive]
+^88d5626 (evals 2026-10-22 10:55:21 +0200   58)         pub enum ParseError {
+^88d5626 (evals 2026-10-22 10:55:21 +0200   59)             $(
+^88d5626 (evals 2026-10-22 10:55:21 +0200   60)                 $name,
+^88d5626 (evals 2026-10-22 10:55:21 +0200   61)             )+
+^88d5626 (evals 2026-10-22 10:55:21 +0200   62)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200   63) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200   64)         impl fmt::Display for ParseError {
+^88d5626 (evals 2026-10-22 10:55:21 +0200   65)             fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
+^88d5626 (evals 2026-10-22 10:55:21 +0200   66)                 match *self {
+^88d5626 (evals 2026-10-22 10:55:21 +0200   67)                     $(
+^88d5626 (evals 2026-10-22 10:55:21 +0200   68)                         ParseError::$name => fmt.write_str($description),
+^88d5626 (evals 2026-10-22 10:55:21 +0200   69)                     )+
+^88d5626 (evals 2026-10-22 10:55:21 +0200   70)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200   71)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200   72)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200   73)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200   74) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200   75) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200   76) macro_rules! ascii_tab_or_new_line_pattern {
+^88d5626 (evals 2026-10-22 10:55:21 +0200   77)     () => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200   78)         '\t' | '\n' | '\r'
+^88d5626 (evals 2026-10-22 10:55:21 +0200   79)     };
+^88d5626 (evals 2026-10-22 10:55:21 +0200   80) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200   81) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200   82) #[cfg(feature = "std")]
+^88d5626 (evals 2026-10-22 10:55:21 +0200   83) impl std::error::Error for ParseError {}
+^88d5626 (evals 2026-10-22 10:55:21 +0200   84) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200   85) #[cfg(not(feature = "std"))]
+^88d5626 (evals 2026-10-22 10:55:21 +0200   86) impl core::error::Error for ParseError {}
+^88d5626 (evals 2026-10-22 10:55:21 +0200   87) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200   88) simple_enum_error! {
+^88d5626 (evals 2026-10-22 10:55:21 +0200   89)     EmptyHost => "empty host",
+^88d5626 (evals 2026-10-22 10:55:21 +0200   90)     IdnaError => "invalid international domain name",
+^88d5626 (evals 2026-10-22 10:55:21 +0200   91)     InvalidPort => "invalid port number",
+^88d5626 (evals 2026-10-22 10:55:21 +0200   92)     InvalidIpv4Address => "invalid IPv4 address",
+^88d5626 (evals 2026-10-22 10:55:21 +0200   93)     InvalidIpv6Address => "invalid IPv6 address",
+^88d5626 (evals 2026-10-22 10:55:21 +0200   94)     InvalidDomainCharacter => "invalid domain character",
+^88d5626 (evals 2026-10-22 10:55:21 +0200   95)     RelativeUrlWithoutBase => "relative URL without a base",
+^88d5626 (evals 2026-10-22 10:55:21 +0200   96)     RelativeUrlWithCannotBeABaseBase => "relative URL with a cannot-be-a-base base",
+^88d5626 (evals 2026-10-22 10:55:21 +0200   97)     SetHostOnCannotBeABaseUrl => "a cannot-be-a-base URL doesn’t have a host to set",
+^88d5626 (evals 2026-10-22 10:55:21 +0200   98)     Overflow => "URLs more than 4 GB are not supported",
+^88d5626 (evals 2026-10-22 10:55:21 +0200   99) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  100) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  101) impl From<::idna::Errors> for ParseError {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  102)     fn from(_: ::idna::Errors) -> Self {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  103)         Self::IdnaError
+^88d5626 (evals 2026-10-22 10:55:21 +0200  104)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  105) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  106) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  107) macro_rules! syntax_violation_enum {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  108)     ($($name: ident => $description: literal,)+) => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  109)         /// Non-fatal syntax violations that can occur during parsing.
+^88d5626 (evals 2026-10-22 10:55:21 +0200  110)         ///
+^88d5626 (evals 2026-10-22 10:55:21 +0200  111)         /// This may be extended in the future so exhaustive matching is
+^88d5626 (evals 2026-10-22 10:55:21 +0200  112)         /// forbidden.
+^88d5626 (evals 2026-10-22 10:55:21 +0200  113)         #[derive(PartialEq, Eq, Clone, Copy, Debug)]
+^88d5626 (evals 2026-10-22 10:55:21 +0200  114)         #[non_exhaustive]
+^88d5626 (evals 2026-10-22 10:55:21 +0200  115)         pub enum SyntaxViolation {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  116)             $(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  117)                 /// ```text
+^88d5626 (evals 2026-10-22 10:55:21 +0200  118)                 #[doc = $description]
+^88d5626 (evals 2026-10-22 10:55:21 +0200  119)                 /// ```
+^88d5626 (evals 2026-10-22 10:55:21 +0200  120)                 $name,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  121)             )+
+^88d5626 (evals 2026-10-22 10:55:21 +0200  122)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  123) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  124)         impl SyntaxViolation {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  125)             pub fn description(&self) -> &'static str {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  126)                 match *self {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  127)                     $(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  128)                         SyntaxViolation::$name => $description,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  129)                     )+
+^88d5626 (evals 2026-10-22 10:55:21 +0200  130)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  131)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  132)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  133)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  134) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  135) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  136) syntax_violation_enum! {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  137)     Backslash => "backslash",
+^88d5626 (evals 2026-10-22 10:55:21 +0200  138)     C0SpaceIgnored =>
+^88d5626 (evals 2026-10-22 10:55:21 +0200  139)         "leading or trailing control or space character are ignored in URLs",
+^88d5626 (evals 2026-10-22 10:55:21 +0200  140)     EmbeddedCredentials =>
+^88d5626 (evals 2026-10-22 10:55:21 +0200  141)         "embedding authentication information (username or password) \
+^88d5626 (evals 2026-10-22 10:55:21 +0200  142)          in an URL is not recommended",
+^88d5626 (evals 2026-10-22 10:55:21 +0200  143)     ExpectedDoubleSlash => "expected //",
+^88d5626 (evals 2026-10-22 10:55:21 +0200  144)     ExpectedFileDoubleSlash => "expected // after file:",
+^88d5626 (evals 2026-10-22 10:55:21 +0200  145)     FileWithHostAndWindowsDrive => "file: with host and Windows drive letter",
+^88d5626 (evals 2026-10-22 10:55:21 +0200  146)     NonUrlCodePoint => "non-URL code point",
+^88d5626 (evals 2026-10-22 10:55:21 +0200  147)     NullInFragment => "NULL characters are ignored in URL fragment identifiers",
+^88d5626 (evals 2026-10-22 10:55:21 +0200  148)     PercentDecode => "expected 2 hex digits after %",
+^88d5626 (evals 2026-10-22 10:55:21 +0200  149)     TabOrNewlineIgnored => "tabs or newlines are ignored in URLs",
+^88d5626 (evals 2026-10-22 10:55:21 +0200  150)     UnencodedAtSign => "unencoded @ sign in username or password",
+^88d5626 (evals 2026-10-22 10:55:21 +0200  151) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  152) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  153) impl fmt::Display for SyntaxViolation {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  154)     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  155)         fmt::Display::fmt(self.description(), f)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  156)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  157) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  158) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  159) #[derive(Copy, Clone, PartialEq, Eq)]
+^88d5626 (evals 2026-10-22 10:55:21 +0200  160) pub enum SchemeType {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  161)     File,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  162)     SpecialNotFile,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  163)     NotSpecial,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  164) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  165) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  166) impl SchemeType {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  167)     pub fn is_special(&self) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  168)         !matches!(*self, Self::NotSpecial)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  169)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  170) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  171)     pub fn is_file(&self) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  172)         matches!(*self, Self::File)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  173)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  174) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  175) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  176) impl<T: AsRef<str>> From<T> for SchemeType {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  177)     fn from(s: T) -> Self {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  178)         match s.as_ref() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  179)             "http" | "https" | "ws" | "wss" | "ftp" => Self::SpecialNotFile,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  180)             "file" => Self::File,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  181)             _ => Self::NotSpecial,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  182)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  183)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  184) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  185) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  186) pub fn default_port(scheme: &str) -> Option<u16> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  187)     match scheme {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  188)         "http" | "ws" => Some(80),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  189)         "https" | "wss" => Some(443),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  190)         "ftp" => Some(21),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  191)         _ => None,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  192)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  193) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  194) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  195) #[derive(Clone, Debug)]
+^88d5626 (evals 2026-10-22 10:55:21 +0200  196) pub struct Input<'i> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  197)     chars: str::Chars<'i>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  198) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  199) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  200) impl<'i> Input<'i> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  201)     pub fn new_no_trim(input: &'i str) -> Self {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  202)         Input {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  203)             chars: input.chars(),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  204)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  205)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  206) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  207)     pub fn new_trim_tab_and_newlines(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  208)         original_input: &'i str,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  209)         vfn: Option<&dyn Fn(SyntaxViolation)>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  210)     ) -> Self {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  211)         let input = original_input.trim_matches(ascii_tab_or_new_line);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  212)         if let Some(vfn) = vfn {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  213)             if input.len() < original_input.len() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  214)                 vfn(SyntaxViolation::C0SpaceIgnored)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  215)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  216)             if input.chars().any(ascii_tab_or_new_line) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  217)                 vfn(SyntaxViolation::TabOrNewlineIgnored)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  218)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  219)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  220)         Input {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  221)             chars: input.chars(),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  222)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  223)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  224) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  225)     pub fn new_trim_c0_control_and_space(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  226)         original_input: &'i str,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  227)         vfn: Option<&dyn Fn(SyntaxViolation)>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  228)     ) -> Self {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  229)         let input = original_input.trim_matches(c0_control_or_space);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  230)         if let Some(vfn) = vfn {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  231)             if input.len() < original_input.len() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  232)                 vfn(SyntaxViolation::C0SpaceIgnored)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  233)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  234)             if input.chars().any(ascii_tab_or_new_line) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  235)                 vfn(SyntaxViolation::TabOrNewlineIgnored)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  236)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  237)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  238)         Input {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  239)             chars: input.chars(),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  240)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  241)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  242) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  243)     #[inline]
+^88d5626 (evals 2026-10-22 10:55:21 +0200  244)     pub fn is_empty(&self) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  245)         self.clone().next().is_none()
+^88d5626 (evals 2026-10-22 10:55:21 +0200  246)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  247) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  248)     #[inline]
+^88d5626 (evals 2026-10-22 10:55:21 +0200  249)     pub fn starts_with<P: Pattern>(&self, p: P) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  250)         p.split_prefix(&mut self.clone())
+^88d5626 (evals 2026-10-22 10:55:21 +0200  251)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  252) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  253)     #[inline]
+^88d5626 (evals 2026-10-22 10:55:21 +0200  254)     pub fn split_prefix<P: Pattern>(&self, p: P) -> Option<Self> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  255)         let mut remaining = self.clone();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  256)         if p.split_prefix(&mut remaining) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  257)             Some(remaining)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  258)         } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  259)             None
+^88d5626 (evals 2026-10-22 10:55:21 +0200  260)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  261)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  262) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  263)     #[inline]
+^88d5626 (evals 2026-10-22 10:55:21 +0200  264)     fn split_first(&self) -> (Option<char>, Self) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  265)         let mut remaining = self.clone();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  266)         (remaining.next(), remaining)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  267)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  268) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  269)     #[inline]
+^88d5626 (evals 2026-10-22 10:55:21 +0200  270)     fn count_matching<F: Fn(char) -> bool>(&self, f: F) -> (u32, Self) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  271)         let mut count = 0;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  272)         let mut remaining = self.clone();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  273)         loop {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  274)             let mut input = remaining.clone();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  275)             if matches!(input.next(), Some(c) if f(c)) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  276)                 remaining = input;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  277)                 count += 1;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  278)             } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  279)                 return (count, remaining);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  280)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  281)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  282)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  283) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  284)     #[inline]
+^88d5626 (evals 2026-10-22 10:55:21 +0200  285)     fn next_utf8(&mut self) -> Option<(char, &'i str)> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  286)         loop {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  287)             let utf8 = self.chars.as_str();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  288)             match self.chars.next() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  289)                 Some(c) => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  290)                     if !ascii_tab_or_new_line(c) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  291)                         return Some((c, &utf8[..c.len_utf8()]));
+^88d5626 (evals 2026-10-22 10:55:21 +0200  292)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  293)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  294)                 None => return None,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  295)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  296)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  297)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  298) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  299) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  300) pub trait Pattern {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  301)     fn split_prefix(self, input: &mut Input) -> bool;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  302) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  303) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  304) impl Pattern for char {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  305)     fn split_prefix(self, input: &mut Input) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  306)         input.next() == Some(self)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  307)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  308) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  309) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  310) impl Pattern for &str {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  311)     fn split_prefix(self, input: &mut Input) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  312)         for c in self.chars() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  313)             if input.next() != Some(c) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  314)                 return false;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  315)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  316)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  317)         true
+^88d5626 (evals 2026-10-22 10:55:21 +0200  318)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  319) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  320) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  321) impl<F: FnMut(char) -> bool> Pattern for F {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  322)     fn split_prefix(self, input: &mut Input) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  323)         input.next().map_or(false, self)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  324)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  325) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  326) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  327) impl Iterator for Input<'_> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  328)     type Item = char;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  329)     fn next(&mut self) -> Option<char> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  330)         self.chars.by_ref().find(|&c| !ascii_tab_or_new_line(c))
+^88d5626 (evals 2026-10-22 10:55:21 +0200  331)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  332) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  333)     fn size_hint(&self) -> (usize, Option<usize>) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  334)         (0, Some(self.chars.as_str().len()))
+^88d5626 (evals 2026-10-22 10:55:21 +0200  335)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  336) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  337) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  338) pub struct Parser<'a> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  339)     pub serialization: String,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  340)     pub base_url: Option<&'a Url>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  341)     pub query_encoding_override: EncodingOverride<'a>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  342)     pub violation_fn: Option<&'a dyn Fn(SyntaxViolation)>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  343)     pub context: Context,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  344) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  345) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  346) #[derive(PartialEq, Eq, Copy, Clone)]
+^88d5626 (evals 2026-10-22 10:55:21 +0200  347) pub enum Context {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  348)     UrlParser,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  349)     Setter,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  350)     PathSegmentSetter,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  351) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  352) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  353) impl Parser<'_> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  354)     fn log_violation(&self, v: SyntaxViolation) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  355)         if let Some(f) = self.violation_fn {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  356)             f(v)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  357)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  358)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  359) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  360)     fn log_violation_if(&self, v: SyntaxViolation, test: impl FnOnce() -> bool) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  361)         if let Some(f) = self.violation_fn {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  362)             if test() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  363)                 f(v)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  364)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  365)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  366)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  367) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  368)     pub fn for_setter(serialization: String) -> Self {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  369)         Parser {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  370)             serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  371)             base_url: None,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  372)             query_encoding_override: None,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  373)             violation_fn: None,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  374)             context: Context::Setter,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  375)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  376)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  377) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  378)     /// https://url.spec.whatwg.org/#concept-basic-url-parser
+^88d5626 (evals 2026-10-22 10:55:21 +0200  379)     pub fn parse_url(mut self, input: &str) -> ParseResult<Url> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  380)         let input = Input::new_trim_c0_control_and_space(input, self.violation_fn);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  381)         if let Ok(remaining) = self.parse_scheme(input.clone()) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  382)             return self.parse_with_scheme(remaining);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  383)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  384) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  385)         // No-scheme state
+^88d5626 (evals 2026-10-22 10:55:21 +0200  386)         if let Some(base_url) = self.base_url {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  387)             if input.starts_with('#') {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  388)                 self.fragment_only(base_url, input)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  389)             } else if base_url.cannot_be_a_base() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  390)                 Err(ParseError::RelativeUrlWithCannotBeABaseBase)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  391)             } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  392)                 let scheme_type = SchemeType::from(base_url.scheme());
+^88d5626 (evals 2026-10-22 10:55:21 +0200  393)                 if scheme_type.is_file() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  394)                     self.parse_file(input, scheme_type, Some(base_url))
+^88d5626 (evals 2026-10-22 10:55:21 +0200  395)                 } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  396)                     self.parse_relative(input, scheme_type, base_url)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  397)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  398)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  399)         } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  400)             Err(ParseError::RelativeUrlWithoutBase)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  401)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  402)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  403) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  404)     pub fn parse_scheme<'i>(&mut self, mut input: Input<'i>) -> Result<Input<'i>, ()> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  405)         // starts_with will also fail for empty strings so we can skip that comparison for perf
+^88d5626 (evals 2026-10-22 10:55:21 +0200  406)         if !input.starts_with(ascii_alpha) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  407)             return Err(());
+^88d5626 (evals 2026-10-22 10:55:21 +0200  408)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  409)         debug_assert!(self.serialization.is_empty());
+^88d5626 (evals 2026-10-22 10:55:21 +0200  410)         while let Some(c) = input.next() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  411)             match c {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  412)                 'a'..='z' | '0'..='9' | '+' | '-' | '.' => self.serialization.push(c),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  413)                 'A'..='Z' => self.serialization.push(c.to_ascii_lowercase()),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  414)                 ':' => return Ok(input),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  415)                 _ => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  416)                     self.serialization.clear();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  417)                     return Err(());
+^88d5626 (evals 2026-10-22 10:55:21 +0200  418)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  419)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  420)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  421)         // EOF before ':'
+^88d5626 (evals 2026-10-22 10:55:21 +0200  422)         if self.context == Context::Setter {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  423)             Ok(input)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  424)         } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  425)             self.serialization.clear();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  426)             Err(())
+^88d5626 (evals 2026-10-22 10:55:21 +0200  427)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  428)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  429) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  430)     fn parse_with_scheme(mut self, input: Input<'_>) -> ParseResult<Url> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  431)         use crate::SyntaxViolation::{ExpectedDoubleSlash, ExpectedFileDoubleSlash};
+^88d5626 (evals 2026-10-22 10:55:21 +0200  432)         let scheme_end = to_u32(self.serialization.len())?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  433)         let scheme_type = SchemeType::from(&self.serialization);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  434)         self.serialization.push(':');
+^88d5626 (evals 2026-10-22 10:55:21 +0200  435)         match scheme_type {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  436)             SchemeType::File => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  437)                 self.log_violation_if(ExpectedFileDoubleSlash, || !input.starts_with("//"));
+^88d5626 (evals 2026-10-22 10:55:21 +0200  438)                 let base_file_url = self.base_url.and_then(|base| {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  439)                     if base.scheme() == "file" {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  440)                         Some(base)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  441)                     } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  442)                         None
+^88d5626 (evals 2026-10-22 10:55:21 +0200  443)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  444)                 });
+^88d5626 (evals 2026-10-22 10:55:21 +0200  445)                 self.serialization.clear();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  446)                 self.parse_file(input, scheme_type, base_file_url)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  447)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  448)             SchemeType::SpecialNotFile => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  449)                 // special relative or authority state
+^88d5626 (evals 2026-10-22 10:55:21 +0200  450)                 let (slashes_count, remaining) = input.count_matching(|c| matches!(c, '/' | '\\'));
+^88d5626 (evals 2026-10-22 10:55:21 +0200  451)                 if let Some(base_url) = self.base_url {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  452)                     if slashes_count < 2
+^88d5626 (evals 2026-10-22 10:55:21 +0200  453)                         && base_url.scheme() == &self.serialization[..scheme_end as usize]
+^88d5626 (evals 2026-10-22 10:55:21 +0200  454)                     {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  455)                         // "Cannot-be-a-base" URLs only happen with "not special" schemes.
+^88d5626 (evals 2026-10-22 10:55:21 +0200  456)                         debug_assert!(!base_url.cannot_be_a_base());
+^88d5626 (evals 2026-10-22 10:55:21 +0200  457)                         self.serialization.clear();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  458)                         return self.parse_relative(input, scheme_type, base_url);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  459)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  460)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  461)                 // special authority slashes state
+^88d5626 (evals 2026-10-22 10:55:21 +0200  462)                 self.log_violation_if(ExpectedDoubleSlash, || {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  463)                     input
+^88d5626 (evals 2026-10-22 10:55:21 +0200  464)                         .clone()
+^88d5626 (evals 2026-10-22 10:55:21 +0200  465)                         .take_while(|&c| matches!(c, '/' | '\\'))
+^88d5626 (evals 2026-10-22 10:55:21 +0200  466)                         .collect::<String>()
+^88d5626 (evals 2026-10-22 10:55:21 +0200  467)                         != "//"
+^88d5626 (evals 2026-10-22 10:55:21 +0200  468)                 });
+^88d5626 (evals 2026-10-22 10:55:21 +0200  469)                 self.after_double_slash(remaining, scheme_type, scheme_end)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  470)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  471)             SchemeType::NotSpecial => self.parse_non_special(input, scheme_type, scheme_end),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  472)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  473)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  474) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  475)     /// Scheme other than file, http, https, ws, ws, ftp.
+^88d5626 (evals 2026-10-22 10:55:21 +0200  476)     fn parse_non_special(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  477)         mut self,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  478)         input: Input<'_>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  479)         scheme_type: SchemeType,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  480)         scheme_end: u32,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  481)     ) -> ParseResult<Url> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  482)         // path or authority state (
+^88d5626 (evals 2026-10-22 10:55:21 +0200  483)         if let Some(input) = input.split_prefix("//") {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  484)             return self.after_double_slash(input, scheme_type, scheme_end);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  485)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  486)         // Anarchist URL (no authority)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  487)         let path_start = to_u32(self.serialization.len())?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  488)         let username_end = path_start;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  489)         let host_start = path_start;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  490)         let host_end = path_start;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  491)         let host = HostInternal::None;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  492)         let port = None;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  493)         let remaining = if let Some(input) = input.split_prefix('/') {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  494)             self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200  495)             self.parse_path(scheme_type, &mut false, path_start as usize, input)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  496)         } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  497)             self.parse_cannot_be_a_base_path(input)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  498)         };
+^88d5626 (evals 2026-10-22 10:55:21 +0200  499)         self.with_query_and_fragment(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  500)             scheme_type,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  501)             scheme_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  502)             username_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  503)             host_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  504)             host_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  505)             host,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  506)             port,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  507)             path_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  508)             remaining,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  509)         )
+^88d5626 (evals 2026-10-22 10:55:21 +0200  510)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  511) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  512)     fn parse_file(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  513)         mut self,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  514)         input: Input<'_>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  515)         scheme_type: SchemeType,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  516)         base_file_url: Option<&Url>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  517)     ) -> ParseResult<Url> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  518)         use crate::SyntaxViolation::Backslash;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  519)         // file state
+^88d5626 (evals 2026-10-22 10:55:21 +0200  520)         debug_assert!(self.serialization.is_empty());
+^88d5626 (evals 2026-10-22 10:55:21 +0200  521)         let (first_char, input_after_first_char) = input.split_first();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  522)         if matches!(first_char, Some('/') | Some('\\')) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  523)             self.log_violation_if(SyntaxViolation::Backslash, || first_char == Some('\\'));
+^88d5626 (evals 2026-10-22 10:55:21 +0200  524)             // file slash state
+^88d5626 (evals 2026-10-22 10:55:21 +0200  525)             let (next_char, input_after_next_char) = input_after_first_char.split_first();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  526)             if matches!(next_char, Some('/') | Some('\\')) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  527)                 self.log_violation_if(Backslash, || next_char == Some('\\'));
+^88d5626 (evals 2026-10-22 10:55:21 +0200  528)                 // file host state
+^88d5626 (evals 2026-10-22 10:55:21 +0200  529)                 self.serialization.push_str("file://");
+^88d5626 (evals 2026-10-22 10:55:21 +0200  530)                 let scheme_end = "file".len() as u32;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  531)                 let host_start = "file://".len() as u32;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  532)                 let (path_start, mut host, remaining) =
+^88d5626 (evals 2026-10-22 10:55:21 +0200  533)                     self.parse_file_host(input_after_next_char)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  534)                 let mut host_end = to_u32(self.serialization.len())?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  535)                 let mut has_host = !matches!(host, HostInternal::None);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  536)                 let remaining = if path_start {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  537)                     self.parse_path_start(SchemeType::File, &mut has_host, remaining)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  538)                 } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  539)                     let path_start = self.serialization.len();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  540)                     self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200  541)                     self.parse_path(SchemeType::File, &mut has_host, path_start, remaining)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  542)                 };
+^88d5626 (evals 2026-10-22 10:55:21 +0200  543) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  544)                 // For file URLs that have a host and whose path starts
+^88d5626 (evals 2026-10-22 10:55:21 +0200  545)                 // with the windows drive letter we just remove the host.
+^88d5626 (evals 2026-10-22 10:55:21 +0200  546)                 if !has_host {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  547)                     self.serialization
+^88d5626 (evals 2026-10-22 10:55:21 +0200  548)                         .drain(host_start as usize..host_end as usize);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  549)                     host_end = host_start;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  550)                     host = HostInternal::None;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  551)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  552)                 let (query_start, fragment_start) =
+^88d5626 (evals 2026-10-22 10:55:21 +0200  553)                     self.parse_query_and_fragment(scheme_type, scheme_end, remaining)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  554)                 return Ok(Url {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  555)                     serialization: self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  556)                     scheme_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  557)                     username_end: host_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  558)                     host_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  559)                     host_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  560)                     host,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  561)                     port: None,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  562)                     path_start: host_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  563)                     query_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  564)                     fragment_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  565)                 });
+^88d5626 (evals 2026-10-22 10:55:21 +0200  566)             } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  567)                 self.serialization.push_str("file://");
+^88d5626 (evals 2026-10-22 10:55:21 +0200  568)                 let scheme_end = "file".len() as u32;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  569)                 let host_start = "file://".len();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  570)                 let mut host_end = host_start;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  571)                 let mut host = HostInternal::None;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  572)                 if !starts_with_windows_drive_letter_segment(&input_after_first_char) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  573)                     if let Some(base_url) = base_file_url {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  574)                         let first_segment = base_url.path_segments().unwrap().next().unwrap();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  575)                         if is_normalized_windows_drive_letter(first_segment) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  576)                             self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200  577)                             self.serialization.push_str(first_segment);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  578)                         } else if let Some(host_str) = base_url.host_str() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  579)                             self.serialization.push_str(host_str);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  580)                             host_end = self.serialization.len();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  581)                             host = base_url.host;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  582)                         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  583)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  584)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  585)                 // If c is the EOF code point, U+002F (/), U+005C (\), U+003F (?), or U+0023 (#), then decrease pointer by one
+^88d5626 (evals 2026-10-22 10:55:21 +0200  586)                 let parse_path_input = if let Some(c) = first_char {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  587)                     if c == '/' || c == '\\' || c == '?' || c == '#' {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  588)                         input
+^88d5626 (evals 2026-10-22 10:55:21 +0200  589)                     } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  590)                         input_after_first_char
+^88d5626 (evals 2026-10-22 10:55:21 +0200  591)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  592)                 } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  593)                     input_after_first_char
+^88d5626 (evals 2026-10-22 10:55:21 +0200  594)                 };
+^88d5626 (evals 2026-10-22 10:55:21 +0200  595) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  596)                 let remaining =
+^88d5626 (evals 2026-10-22 10:55:21 +0200  597)                     self.parse_path(SchemeType::File, &mut false, host_end, parse_path_input);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  598) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  599)                 let host_start = host_start as u32;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  600) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  601)                 let (query_start, fragment_start) =
+^88d5626 (evals 2026-10-22 10:55:21 +0200  602)                     self.parse_query_and_fragment(scheme_type, scheme_end, remaining)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  603) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  604)                 let host_end = host_end as u32;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  605)                 return Ok(Url {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  606)                     serialization: self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  607)                     scheme_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  608)                     username_end: host_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  609)                     host_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  610)                     host_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  611)                     host,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  612)                     port: None,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  613)                     path_start: host_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  614)                     query_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  615)                     fragment_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  616)                 });
+^88d5626 (evals 2026-10-22 10:55:21 +0200  617)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  618)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  619)         if let Some(base_url) = base_file_url {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  620)             match first_char {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  621)                 None => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  622)                     // Copy everything except the fragment
+^88d5626 (evals 2026-10-22 10:55:21 +0200  623)                     let before_fragment = match base_url.fragment_start {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  624)                         Some(i) => &base_url.serialization[..i as usize],
+^88d5626 (evals 2026-10-22 10:55:21 +0200  625)                         None => &*base_url.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  626)                     };
+^88d5626 (evals 2026-10-22 10:55:21 +0200  627)                     self.serialization.push_str(before_fragment);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  628)                     Ok(Url {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  629)                         serialization: self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  630)                         fragment_start: None,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  631)                         ..*base_url
+^88d5626 (evals 2026-10-22 10:55:21 +0200  632)                     })
+^88d5626 (evals 2026-10-22 10:55:21 +0200  633)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  634)                 Some('?') => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  635)                     // Copy everything up to the query string
+^88d5626 (evals 2026-10-22 10:55:21 +0200  636)                     let before_query = match (base_url.query_start, base_url.fragment_start) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  637)                         (None, None) => &*base_url.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  638)                         (Some(i), _) | (None, Some(i)) => base_url.slice(..i),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  639)                     };
+^88d5626 (evals 2026-10-22 10:55:21 +0200  640)                     self.serialization.push_str(before_query);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  641)                     let (query_start, fragment_start) =
+^88d5626 (evals 2026-10-22 10:55:21 +0200  642)                         self.parse_query_and_fragment(scheme_type, base_url.scheme_end, input)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  643)                     Ok(Url {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  644)                         serialization: self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  645)                         query_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  646)                         fragment_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  647)                         ..*base_url
+^88d5626 (evals 2026-10-22 10:55:21 +0200  648)                     })
+^88d5626 (evals 2026-10-22 10:55:21 +0200  649)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  650)                 Some('#') => self.fragment_only(base_url, input),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  651)                 _ => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  652)                     if !starts_with_windows_drive_letter_segment(&input) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  653)                         let before_query = match (base_url.query_start, base_url.fragment_start) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  654)                             (None, None) => &*base_url.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  655)                             (Some(i), _) | (None, Some(i)) => base_url.slice(..i),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  656)                         };
+^88d5626 (evals 2026-10-22 10:55:21 +0200  657)                         self.serialization.push_str(before_query);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  658)                         self.shorten_path(SchemeType::File, base_url.path_start as usize);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  659)                         let remaining = self.parse_path(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  660)                             SchemeType::File,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  661)                             &mut true,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  662)                             base_url.path_start as usize,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  663)                             input,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  664)                         );
+^88d5626 (evals 2026-10-22 10:55:21 +0200  665)                         self.with_query_and_fragment(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  666)                             SchemeType::File,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  667)                             base_url.scheme_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  668)                             base_url.username_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  669)                             base_url.host_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  670)                             base_url.host_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  671)                             base_url.host,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  672)                             base_url.port,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  673)                             base_url.path_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  674)                             remaining,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  675)                         )
+^88d5626 (evals 2026-10-22 10:55:21 +0200  676)                     } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  677)                         self.serialization.push_str("file:///");
+^88d5626 (evals 2026-10-22 10:55:21 +0200  678)                         let scheme_end = "file".len() as u32;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  679)                         let path_start = "file://".len();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  680)                         let remaining =
+^88d5626 (evals 2026-10-22 10:55:21 +0200  681)                             self.parse_path(SchemeType::File, &mut false, path_start, input);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  682)                         let (query_start, fragment_start) =
+^88d5626 (evals 2026-10-22 10:55:21 +0200  683)                             self.parse_query_and_fragment(SchemeType::File, scheme_end, remaining)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  684)                         let path_start = path_start as u32;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  685)                         Ok(Url {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  686)                             serialization: self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  687)                             scheme_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  688)                             username_end: path_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  689)                             host_start: path_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  690)                             host_end: path_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  691)                             host: HostInternal::None,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  692)                             port: None,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  693)                             path_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  694)                             query_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  695)                             fragment_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  696)                         })
+^88d5626 (evals 2026-10-22 10:55:21 +0200  697)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  698)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  699)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  700)         } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  701)             self.serialization.push_str("file:///");
+^88d5626 (evals 2026-10-22 10:55:21 +0200  702)             let scheme_end = "file".len() as u32;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  703)             let path_start = "file://".len();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  704)             let remaining = self.parse_path(SchemeType::File, &mut false, path_start, input);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  705)             let (query_start, fragment_start) =
+^88d5626 (evals 2026-10-22 10:55:21 +0200  706)                 self.parse_query_and_fragment(SchemeType::File, scheme_end, remaining)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  707)             let path_start = path_start as u32;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  708)             Ok(Url {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  709)                 serialization: self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  710)                 scheme_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  711)                 username_end: path_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  712)                 host_start: path_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  713)                 host_end: path_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  714)                 host: HostInternal::None,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  715)                 port: None,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  716)                 path_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  717)                 query_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  718)                 fragment_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  719)             })
+^88d5626 (evals 2026-10-22 10:55:21 +0200  720)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  721)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  722) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  723)     fn parse_relative(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  724)         mut self,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  725)         input: Input<'_>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  726)         scheme_type: SchemeType,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  727)         base_url: &Url,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  728)     ) -> ParseResult<Url> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  729)         // relative state
+^88d5626 (evals 2026-10-22 10:55:21 +0200  730)         debug_assert!(self.serialization.is_empty());
+^88d5626 (evals 2026-10-22 10:55:21 +0200  731)         let (first_char, input_after_first_char) = input.split_first();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  732)         match first_char {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  733)             None => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  734)                 // Copy everything except the fragment
+^88d5626 (evals 2026-10-22 10:55:21 +0200  735)                 let before_fragment = match base_url.fragment_start {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  736)                     Some(i) => &base_url.serialization[..i as usize],
+^88d5626 (evals 2026-10-22 10:55:21 +0200  737)                     None => &*base_url.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  738)                 };
+^88d5626 (evals 2026-10-22 10:55:21 +0200  739)                 self.serialization.push_str(before_fragment);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  740)                 Ok(Url {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  741)                     serialization: self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  742)                     fragment_start: None,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  743)                     ..*base_url
+^88d5626 (evals 2026-10-22 10:55:21 +0200  744)                 })
+^88d5626 (evals 2026-10-22 10:55:21 +0200  745)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  746)             Some('?') => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  747)                 // Copy everything up to the query string
+^88d5626 (evals 2026-10-22 10:55:21 +0200  748)                 let before_query = match (base_url.query_start, base_url.fragment_start) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  749)                     (None, None) => &*base_url.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  750)                     (Some(i), _) | (None, Some(i)) => base_url.slice(..i),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  751)                 };
+^88d5626 (evals 2026-10-22 10:55:21 +0200  752)                 self.serialization.push_str(before_query);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  753)                 let (query_start, fragment_start) =
+^88d5626 (evals 2026-10-22 10:55:21 +0200  754)                     self.parse_query_and_fragment(scheme_type, base_url.scheme_end, input)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  755)                 Ok(Url {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  756)                     serialization: self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  757)                     query_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  758)                     fragment_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  759)                     ..*base_url
+^88d5626 (evals 2026-10-22 10:55:21 +0200  760)                 })
+^88d5626 (evals 2026-10-22 10:55:21 +0200  761)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  762)             Some('#') => self.fragment_only(base_url, input),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  763)             Some('/') | Some('\\') => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  764)                 let (slashes_count, remaining) = input.count_matching(|c| matches!(c, '/' | '\\'));
+^88d5626 (evals 2026-10-22 10:55:21 +0200  765)                 if slashes_count >= 2 {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  766)                     self.log_violation_if(SyntaxViolation::ExpectedDoubleSlash, || {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  767)                         input
+^88d5626 (evals 2026-10-22 10:55:21 +0200  768)                             .clone()
+^88d5626 (evals 2026-10-22 10:55:21 +0200  769)                             .take_while(|&c| matches!(c, '/' | '\\'))
+^88d5626 (evals 2026-10-22 10:55:21 +0200  770)                             .collect::<String>()
+^88d5626 (evals 2026-10-22 10:55:21 +0200  771)                             != "//"
+^88d5626 (evals 2026-10-22 10:55:21 +0200  772)                     });
+^88d5626 (evals 2026-10-22 10:55:21 +0200  773)                     let scheme_end = base_url.scheme_end;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  774)                     debug_assert!(base_url.byte_at(scheme_end) == b':');
+^88d5626 (evals 2026-10-22 10:55:21 +0200  775)                     self.serialization
+^88d5626 (evals 2026-10-22 10:55:21 +0200  776)                         .push_str(base_url.slice(..scheme_end + 1));
+^88d5626 (evals 2026-10-22 10:55:21 +0200  777)                     if let Some(after_prefix) = input.split_prefix("//") {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  778)                         return self.after_double_slash(after_prefix, scheme_type, scheme_end);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  779)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  780)                     return self.after_double_slash(remaining, scheme_type, scheme_end);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  781)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  782)                 let path_start = base_url.path_start;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  783)                 self.serialization.push_str(base_url.slice(..path_start));
+^88d5626 (evals 2026-10-22 10:55:21 +0200  784)                 self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200  785)                 let remaining = self.parse_path(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  786)                     scheme_type,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  787)                     &mut true,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  788)                     path_start as usize,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  789)                     input_after_first_char,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  790)                 );
+^88d5626 (evals 2026-10-22 10:55:21 +0200  791)                 self.with_query_and_fragment(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  792)                     scheme_type,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  793)                     base_url.scheme_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  794)                     base_url.username_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  795)                     base_url.host_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  796)                     base_url.host_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  797)                     base_url.host,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  798)                     base_url.port,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  799)                     base_url.path_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  800)                     remaining,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  801)                 )
+^88d5626 (evals 2026-10-22 10:55:21 +0200  802)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  803)             _ => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  804)                 let before_query = match (base_url.query_start, base_url.fragment_start) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  805)                     (None, None) => &*base_url.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  806)                     (Some(i), _) | (None, Some(i)) => base_url.slice(..i),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  807)                 };
+^88d5626 (evals 2026-10-22 10:55:21 +0200  808)                 self.serialization.push_str(before_query);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  809)                 // FIXME spec says just "remove last entry", not the "pop" algorithm
+^88d5626 (evals 2026-10-22 10:55:21 +0200  810)                 self.pop_path(scheme_type, base_url.path_start as usize);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  811)                 // A special url always has a path.
+^88d5626 (evals 2026-10-22 10:55:21 +0200  812)                 // A path always starts with '/'
+^88d5626 (evals 2026-10-22 10:55:21 +0200  813)                 if self.serialization.len() == base_url.path_start as usize
+^88d5626 (evals 2026-10-22 10:55:21 +0200  814)                     && (SchemeType::from(base_url.scheme()).is_special() || !input.is_empty())
+^88d5626 (evals 2026-10-22 10:55:21 +0200  815)                 {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  816)                     self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200  817)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  818)                 let remaining = match input.split_first() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  819)                     (Some('/'), remaining) => self.parse_path(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  820)                         scheme_type,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  821)                         &mut true,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  822)                         base_url.path_start as usize,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  823)                         remaining,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  824)                     ),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  825)                     _ => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  826)                         self.parse_path(scheme_type, &mut true, base_url.path_start as usize, input)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  827)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  828)                 };
+^88d5626 (evals 2026-10-22 10:55:21 +0200  829)                 self.with_query_and_fragment(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  830)                     scheme_type,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  831)                     base_url.scheme_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  832)                     base_url.username_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  833)                     base_url.host_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  834)                     base_url.host_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  835)                     base_url.host,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  836)                     base_url.port,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  837)                     base_url.path_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  838)                     remaining,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  839)                 )
+^88d5626 (evals 2026-10-22 10:55:21 +0200  840)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  841)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  842)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  843) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  844)     fn after_double_slash(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  845)         mut self,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  846)         input: Input<'_>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  847)         scheme_type: SchemeType,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  848)         scheme_end: u32,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  849)     ) -> ParseResult<Url> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  850)         self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200  851)         self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200  852)         // authority state
+^88d5626 (evals 2026-10-22 10:55:21 +0200  853)         let before_authority = self.serialization.len();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  854)         let (username_end, remaining) = self.parse_userinfo(input, scheme_type)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  855)         let has_authority = before_authority != self.serialization.len();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  856)         // host state
+^88d5626 (evals 2026-10-22 10:55:21 +0200  857)         let host_start = to_u32(self.serialization.len())?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  858)         let (host_end, host, port, remaining) =
+^88d5626 (evals 2026-10-22 10:55:21 +0200  859)             self.parse_host_and_port(remaining, scheme_end, scheme_type)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  860)         if host == HostInternal::None && has_authority {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  861)             return Err(ParseError::EmptyHost);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  862)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  863)         // path state
+^88d5626 (evals 2026-10-22 10:55:21 +0200  864)         let path_start = to_u32(self.serialization.len())?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  865)         let remaining = self.parse_path_start(scheme_type, &mut true, remaining);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  866)         self.with_query_and_fragment(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  867)             scheme_type,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  868)             scheme_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  869)             username_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  870)             host_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  871)             host_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  872)             host,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  873)             port,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  874)             path_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  875)             remaining,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  876)         )
+^88d5626 (evals 2026-10-22 10:55:21 +0200  877)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  878) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  879)     /// Return (username_end, remaining)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  880)     fn parse_userinfo<'i>(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  881)         &mut self,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  882)         mut input: Input<'i>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  883)         scheme_type: SchemeType,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  884)     ) -> ParseResult<(u32, Input<'i>)> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  885)         let mut last_at = None;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  886)         let mut remaining = input.clone();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  887)         let mut char_count = 0;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  888)         while let Some(c) = remaining.next() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  889)             match c {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  890)                 '@' => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  891)                     if last_at.is_some() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  892)                         self.log_violation(SyntaxViolation::UnencodedAtSign)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  893)                     } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  894)                         self.log_violation(SyntaxViolation::EmbeddedCredentials)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  895)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  896)                     last_at = Some((char_count, remaining.clone()))
+^88d5626 (evals 2026-10-22 10:55:21 +0200  897)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  898)                 '/' | '?' | '#' => break,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  899)                 '\\' if scheme_type.is_special() => break,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  900)                 _ => (),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  901)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  902)             char_count += 1;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  903)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  904)         let (mut userinfo_char_count, remaining) = match last_at {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  905)             None => return Ok((to_u32(self.serialization.len())?, input)),
+^88d5626 (evals 2026-10-22 10:55:21 +0200  906)             Some((0, remaining)) => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  907)                 // Otherwise, if one of the following is true
+^88d5626 (evals 2026-10-22 10:55:21 +0200  908)                 // c is the EOF code point, U+002F (/), U+003F (?), or U+0023 (#)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  909)                 // url is special and c is U+005C (\)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  910)                 // If @ flag is set and buffer is the empty string, validation error, return failure.
+^88d5626 (evals 2026-10-22 10:55:21 +0200  911)                 if let (Some(c), _) = remaining.split_first() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  912)                     if c == '/' || c == '?' || c == '#' || (scheme_type.is_special() && c == '\\') {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  913)                         return Err(ParseError::EmptyHost);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  914)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  915)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  916)                 return Ok((to_u32(self.serialization.len())?, remaining));
+^88d5626 (evals 2026-10-22 10:55:21 +0200  917)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  918)             Some(x) => x,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  919)         };
+^88d5626 (evals 2026-10-22 10:55:21 +0200  920) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  921)         let mut username_end = None;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  922)         let mut has_password = false;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  923)         let mut has_username = false;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  924)         while userinfo_char_count > 0 {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  925)             let (c, utf8_c) = input.next_utf8().unwrap();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  926)             userinfo_char_count -= 1;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  927)             if c == ':' && username_end.is_none() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  928)                 // Start parsing password
+^88d5626 (evals 2026-10-22 10:55:21 +0200  929)                 username_end = Some(to_u32(self.serialization.len())?);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  930)                 // We don't add a colon if the password is empty
+^88d5626 (evals 2026-10-22 10:55:21 +0200  931)                 if userinfo_char_count > 0 {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  932)                     self.serialization.push(':');
+^88d5626 (evals 2026-10-22 10:55:21 +0200  933)                     has_password = true;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  934)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  935)             } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  936)                 if !has_password {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  937)                     has_username = true;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  938)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  939)                 self.check_url_code_point(c, &input);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  940)                 self.serialization
+^88d5626 (evals 2026-10-22 10:55:21 +0200  941)                     .extend(utf8_percent_encode(utf8_c, USERINFO));
+^88d5626 (evals 2026-10-22 10:55:21 +0200  942)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  943)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  944)         let username_end = match username_end {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  945)             Some(i) => i,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  946)             None => to_u32(self.serialization.len())?,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  947)         };
+^88d5626 (evals 2026-10-22 10:55:21 +0200  948)         if has_username || has_password {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  949)             self.serialization.push('@');
+^88d5626 (evals 2026-10-22 10:55:21 +0200  950)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  951)         Ok((username_end, remaining))
+^88d5626 (evals 2026-10-22 10:55:21 +0200  952)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  953) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  954)     fn parse_host_and_port<'i>(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  955)         &mut self,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  956)         input: Input<'i>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  957)         scheme_end: u32,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  958)         scheme_type: SchemeType,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  959)     ) -> ParseResult<(u32, HostInternal, Option<u16>, Input<'i>)> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  960)         let (host, remaining) = Parser::parse_host(input, scheme_type)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  961)         write!(&mut self.serialization, "{host}").unwrap();
+^88d5626 (evals 2026-10-22 10:55:21 +0200  962)         let host_end = to_u32(self.serialization.len())?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  963)         if let Host::Domain(h) = &host {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  964)             if h.is_empty() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  965)                 // Port with an empty host
+^88d5626 (evals 2026-10-22 10:55:21 +0200  966)                 if remaining.starts_with(":") {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  967)                     return Err(ParseError::EmptyHost);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  968)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  969)                 if scheme_type.is_special() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  970)                     return Err(ParseError::EmptyHost);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  971)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  972)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  973)         };
+^88d5626 (evals 2026-10-22 10:55:21 +0200  974) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  975)         let (port, remaining) = if let Some(remaining) = remaining.split_prefix(':') {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  976)             let scheme = || default_port(&self.serialization[..scheme_end as usize]);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  977)             let (port, remaining) = Parser::parse_port(remaining, scheme, self.context)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200  978)             if let Some(port) = port {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  979)                 self.serialization.push(':');
+^88d5626 (evals 2026-10-22 10:55:21 +0200  980)                 let mut buffer = [0u8; 5];
+^88d5626 (evals 2026-10-22 10:55:21 +0200  981)                 let port_str = fast_u16_to_str(&mut buffer, port);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  982)                 self.serialization.push_str(port_str);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  983)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  984)             (port, remaining)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  985)         } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  986)             (None, remaining)
+^88d5626 (evals 2026-10-22 10:55:21 +0200  987)         };
+^88d5626 (evals 2026-10-22 10:55:21 +0200  988)         Ok((host_end, host.into(), port, remaining))
+^88d5626 (evals 2026-10-22 10:55:21 +0200  989)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  990) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200  991)     pub fn parse_host(
+^88d5626 (evals 2026-10-22 10:55:21 +0200  992)         mut input: Input<'_>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  993)         scheme_type: SchemeType,
+^88d5626 (evals 2026-10-22 10:55:21 +0200  994)     ) -> ParseResult<(Host<Cow<'_, str>>, Input<'_>)> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  995)         if scheme_type.is_file() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200  996)             return Parser::get_file_host(input);
+^88d5626 (evals 2026-10-22 10:55:21 +0200  997)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200  998)         // Undo the Input abstraction here to avoid allocating in the common case
+^88d5626 (evals 2026-10-22 10:55:21 +0200  999)         // where the host part of the input does not contain any tab or newline
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1000)         let input_str = input.chars.as_str();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1001)         let mut inside_square_brackets = false;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1002)         let mut has_ignored_chars = false;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1003)         let mut non_ignored_chars = 0;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1004)         let mut bytes = 0;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1005)         for c in input_str.chars() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1006)             match c {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1007)                 ':' if !inside_square_brackets => break,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1008)                 '\\' if scheme_type.is_special() => break,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1009)                 '/' | '?' | '#' => break,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1010)                 ascii_tab_or_new_line_pattern!() => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1011)                     has_ignored_chars = true;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1012)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1013)                 '[' => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1014)                     inside_square_brackets = true;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1015)                     non_ignored_chars += 1
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1016)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1017)                 ']' => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1018)                     inside_square_brackets = false;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1019)                     non_ignored_chars += 1
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1020)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1021)                 _ => non_ignored_chars += 1,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1022)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1023)             bytes += c.len_utf8();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1024)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1025)         let host_str;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1026)         {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1027)             let host_input = input.by_ref().take(non_ignored_chars);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1028)             if has_ignored_chars {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1029)                 host_str = Cow::Owned(host_input.collect());
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1030)             } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1031)                 for _ in host_input {}
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1032)                 host_str = Cow::Borrowed(&input_str[..bytes]);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1033)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1034)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1035)         if scheme_type == SchemeType::SpecialNotFile && host_str.is_empty() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1036)             return Err(ParseError::EmptyHost);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1037)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1038)         if !scheme_type.is_special() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1039)             let host = Host::parse_opaque_cow(host_str)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1040)             return Ok((host, input));
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1041)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1042)         let host = Host::parse_cow(host_str)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1043)         Ok((host, input))
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1044)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1045) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1046)     fn get_file_host(input: Input<'_>) -> ParseResult<(Host<Cow<'_, str>>, Input<'_>)> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1047)         let (_, host_str, remaining) = Parser::file_host(input)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1048)         let host = match Host::parse(&host_str)? {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1049)             Host::Domain(ref d) if d == "localhost" => Host::Domain(Cow::Borrowed("")),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1050)             Host::Domain(s) => Host::Domain(Cow::Owned(s)),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1051)             Host::Ipv4(ip) => Host::Ipv4(ip),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1052)             Host::Ipv6(ip) => Host::Ipv6(ip),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1053)         };
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1054)         Ok((host, remaining))
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1055)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1056) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1057)     fn parse_file_host<'i>(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1058)         &mut self,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1059)         input: Input<'i>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1060)     ) -> ParseResult<(bool, HostInternal, Input<'i>)> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1061)         let has_host;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1062)         let (_, host_str, remaining) = Parser::file_host(input)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1063)         let host = if host_str.is_empty() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1064)             has_host = false;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1065)             HostInternal::None
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1066)         } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1067)             match Host::parse_cow(host_str)? {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1068)                 Host::Domain(ref d) if d == "localhost" => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1069)                     has_host = false;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1070)                     HostInternal::None
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1071)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1072)                 host => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1073)                     write!(&mut self.serialization, "{host}").unwrap();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1074)                     has_host = true;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1075)                     host.into()
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1076)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1077)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1078)         };
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1079)         Ok((has_host, host, remaining))
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1080)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1081) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1082)     pub fn file_host(input: Input<'_>) -> ParseResult<(bool, Cow<'_, str>, Input<'_>)> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1083)         // Undo the Input abstraction here to avoid allocating in the common case
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1084)         // where the host part of the input does not contain any tab or newline
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1085)         let input_str = input.chars.as_str();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1086)         let mut has_ignored_chars = false;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1087)         let mut non_ignored_chars = 0;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1088)         let mut bytes = 0;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1089)         for c in input_str.chars() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1090)             match c {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1091)                 '/' | '\\' | '?' | '#' => break,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1092)                 ascii_tab_or_new_line_pattern!() => has_ignored_chars = true,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1093)                 _ => non_ignored_chars += 1,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1094)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1095)             bytes += c.len_utf8();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1096)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1097)         let host_str;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1098)         let mut remaining = input.clone();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1099)         {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1100)             let host_input = remaining.by_ref().take(non_ignored_chars);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1101)             if has_ignored_chars {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1102)                 host_str = Cow::Owned(host_input.collect());
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1103)             } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1104)                 for _ in host_input {}
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1105)                 host_str = Cow::Borrowed(&input_str[..bytes]);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1106)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1107)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1108)         if is_windows_drive_letter(&host_str) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1109)             return Ok((false, "".into(), input));
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1110)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1111)         Ok((true, host_str, remaining))
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1112)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1113) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1114)     pub fn parse_port<P>(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1115)         mut input: Input<'_>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1116)         default_port: P,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1117)         context: Context,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1118)     ) -> ParseResult<(Option<u16>, Input<'_>)>
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1119)     where
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1120)         P: Fn() -> Option<u16>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1121)     {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1122)         let mut port: u32 = 0;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1123)         let mut has_any_digit = false;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1124)         while let (Some(c), remaining) = input.split_first() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1125)             if let Some(digit) = c.to_digit(10) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1126)                 port = port * 10 + digit;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1127)                 if port > u16::MAX as u32 {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1128)                     return Err(ParseError::InvalidPort);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1129)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1130)                 has_any_digit = true;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1131)             } else if context == Context::UrlParser && !matches!(c, '/' | '\\' | '?' | '#') {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1132)                 return Err(ParseError::InvalidPort);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1133)             } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1134)                 break;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1135)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1136)             input = remaining;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1137)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1138) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1139)         if !has_any_digit && context == Context::Setter && !input.is_empty() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1140)             return Err(ParseError::InvalidPort);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1141)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1142) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1143)         let mut opt_port = Some(port as u16);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1144)         if !has_any_digit || opt_port == default_port() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1145)             opt_port = None;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1146)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1147)         Ok((opt_port, input))
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1148)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1149) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1150)     pub fn parse_path_start<'i>(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1151)         &mut self,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1152)         scheme_type: SchemeType,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1153)         has_host: &mut bool,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1154)         input: Input<'i>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1155)     ) -> Input<'i> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1156)         let path_start = self.serialization.len();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1157)         let (maybe_c, remaining) = input.split_first();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1158)         // If url is special, then:
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1159)         if scheme_type.is_special() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1160)             if maybe_c == Some('\\') {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1161)                 // If c is U+005C (\), validation error.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1162)                 self.log_violation(SyntaxViolation::Backslash);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1163)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1164)             // A special URL always has a non-empty path.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1165)             if !self.serialization.ends_with('/') {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1166)                 self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1167)                 // We have already made sure the forward slash is present.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1168)                 if maybe_c == Some('/') || maybe_c == Some('\\') {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1169)                     return self.parse_path(scheme_type, has_host, path_start, remaining);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1170)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1171)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1172)             return self.parse_path(scheme_type, has_host, path_start, input);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1173)         } else if maybe_c == Some('?') || maybe_c == Some('#') {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1174)             // Otherwise, if state override is not given and c is U+003F (?),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1175)             // set url’s query to the empty string and state to query state.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1176)             // Otherwise, if state override is not given and c is U+0023 (#),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1177)             // set url’s fragment to the empty string and state to fragment state.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1178)             // The query and path states will be handled by the caller.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1179)             return input;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1180)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1181) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1182)         if maybe_c.is_some() && maybe_c != Some('/') {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1183)             self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1184)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1185)         // Otherwise, if c is not the EOF code point:
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1186)         self.parse_path(scheme_type, has_host, path_start, input)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1187)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1188) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1189)     pub fn parse_path<'i>(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1190)         &mut self,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1191)         scheme_type: SchemeType,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1192)         has_host: &mut bool,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1193)         path_start: usize,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1194)         mut input: Input<'i>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1195)     ) -> Input<'i> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1196)         // it's much faster to call utf8_percent_encode in bulk
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1197)         fn push_pending(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1198)             serialization: &mut String,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1199)             start_str: &str,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1200)             remaining_len: usize,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1201)             context: Context,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1202)             scheme_type: SchemeType,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1203)         ) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1204)             let text = &start_str[..start_str.len() - remaining_len];
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1205)             if text.is_empty() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1206)                 return;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1207)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1208)             if context == Context::PathSegmentSetter {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1209)                 if scheme_type.is_special() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1210)                     serialization.extend(utf8_percent_encode(text, SPECIAL_PATH_SEGMENT));
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1211)                 } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1212)                     serialization.extend(utf8_percent_encode(text, PATH_SEGMENT));
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1213)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1214)             } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1215)                 serialization.extend(utf8_percent_encode(text, PATH));
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1216)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1217)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1218) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1219)         // Relative path state
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1220)         loop {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1221)             let mut segment_start = self.serialization.len();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1222)             let mut ends_with_slash = false;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1223)             let mut start_str = input.chars.as_str();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1224)             loop {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1225)                 let input_before_c = input.clone();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1226)                 // bypass input.next() and manually handle ascii_tab_or_new_line
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1227)                 // in order to encode string slices in bulk
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1228)                 let c = if let Some(c) = input.chars.next() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1229)                     c
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1230)                 } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1231)                     push_pending(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1232)                         &mut self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1233)                         start_str,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1234)                         0,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1235)                         self.context,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1236)                         scheme_type,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1237)                     );
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1238)                     break;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1239)                 };
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1240)                 match c {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1241)                     ascii_tab_or_new_line_pattern!() => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1242)                         push_pending(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1243)                             &mut self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1244)                             start_str,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1245)                             input_before_c.chars.as_str().len(),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1246)                             self.context,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1247)                             scheme_type,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1248)                         );
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1249)                         start_str = input.chars.as_str();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1250)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1251)                     '/' if self.context != Context::PathSegmentSetter => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1252)                         push_pending(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1253)                             &mut self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1254)                             start_str,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1255)                             input_before_c.chars.as_str().len(),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1256)                             self.context,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1257)                             scheme_type,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1258)                         );
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1259)                         self.serialization.push(c);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1260)                         ends_with_slash = true;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1261)                         break;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1262)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1263)                     '\\' if self.context != Context::PathSegmentSetter
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1264)                         && scheme_type.is_special() =>
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1265)                     {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1266)                         push_pending(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1267)                             &mut self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1268)                             start_str,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1269)                             input_before_c.chars.as_str().len(),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1270)                             self.context,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1271)                             scheme_type,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1272)                         );
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1273)                         self.log_violation(SyntaxViolation::Backslash);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1274)                         self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1275)                         ends_with_slash = true;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1276)                         break;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1277)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1278)                     '?' | '#' if self.context == Context::UrlParser => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1279)                         push_pending(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1280)                             &mut self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1281)                             start_str,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1282)                             input_before_c.chars.as_str().len(),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1283)                             self.context,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1284)                             scheme_type,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1285)                         );
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1286)                         input = input_before_c;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1287)                         break;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1288)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1289)                     _ => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1290)                         self.check_url_code_point(c, &input);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1291)                         if scheme_type.is_file()
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1292)                             && self.serialization.len() > path_start
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1293)                             && is_normalized_windows_drive_letter(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1294)                                 &self.serialization[path_start + 1..],
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1295)                             )
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1296)                         {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1297)                             push_pending(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1298)                                 &mut self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1299)                                 start_str,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1300)                                 input_before_c.chars.as_str().len(),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1301)                                 self.context,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1302)                                 scheme_type,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1303)                             );
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1304)                             start_str = input_before_c.chars.as_str();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1305)                             self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1306)                             segment_start += 1;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1307)                         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1308)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1309)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1310)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1311) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1312)             let segment_before_slash = if ends_with_slash {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1313)                 &self.serialization[segment_start..self.serialization.len() - 1]
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1314)             } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1315)                 &self.serialization[segment_start..self.serialization.len()]
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1316)             };
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1317)             match segment_before_slash {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1318)                 // If buffer is a double-dot path segment, shorten url’s path,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1319)                 ".." | "%2e%2e" | "%2e%2E" | "%2E%2e" | "%2E%2E" | "%2e." | "%2E." | ".%2e"
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1320)                 | ".%2E" => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1321)                     debug_assert!(self.serialization.as_bytes()[segment_start - 1] == b'/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1322)                     self.serialization.truncate(segment_start);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1323)                     if self.serialization.ends_with('/')
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1324)                         && Parser::last_slash_can_be_removed(&self.serialization, path_start)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1325)                     {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1326)                         self.serialization.pop();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1327)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1328)                     self.shorten_path(scheme_type, path_start);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1329) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1330)                     // and then if neither c is U+002F (/), nor url is special and c is U+005C (\), append the empty string to url’s path.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1331)                     if ends_with_slash && !self.serialization.ends_with('/') {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1332)                         self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1333)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1334)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1335)                 // Otherwise, if buffer is a single-dot path segment and if neither c is U+002F (/),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1336)                 // nor url is special and c is U+005C (\), append the empty string to url’s path.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1337)                 "." | "%2e" | "%2E" => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1338)                     self.serialization.truncate(segment_start);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1339)                     if !self.serialization.ends_with('/') {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1340)                         self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1341)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1342)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1343)                 _ => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1344)                     // If url’s scheme is "file", url’s path is empty, and buffer is a Windows drive letter, then
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1345)                     if scheme_type.is_file()
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1346)                         && segment_start == path_start + 1
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1347)                         && is_windows_drive_letter(segment_before_slash)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1348)                     {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1349)                         // Replace the second code point in buffer with U+003A (:).
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1350)                         if let Some(c) = segment_before_slash.chars().next() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1351)                             self.serialization.truncate(segment_start);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1352)                             self.serialization.push(c);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1353)                             self.serialization.push(':');
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1354)                             if ends_with_slash {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1355)                                 self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1356)                             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1357)                         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1358)                         // If url’s host is neither the empty string nor null,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1359)                         // validation error, set url’s host to the empty string.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1360)                         if *has_host {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1361)                             self.log_violation(SyntaxViolation::FileWithHostAndWindowsDrive);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1362)                             *has_host = false; // FIXME account for this in callers
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1363)                         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1364)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1365)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1366)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1367)             if !ends_with_slash {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1368)                 break;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1369)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1370)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1371)         if scheme_type.is_file() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1372)             // while url’s path’s size is greater than 1
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1373)             // and url’s path[0] is the empty string,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1374)             // validation error, remove the first item from url’s path.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1375)             //FIXME: log violation
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1376)             let path = self.serialization.split_off(path_start);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1377)             self.serialization.push('/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1378)             self.serialization.push_str(path.trim_start_matches('/'));
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1379)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1380) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1381)         input
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1382)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1383) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1384)     fn last_slash_can_be_removed(serialization: &str, path_start: usize) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1385)         let url_before_segment = &serialization[..serialization.len() - 1];
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1386)         if let Some(segment_before_start) = url_before_segment.rfind('/') {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1387)             // Do not remove the root slash
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1388)             segment_before_start >= path_start
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1389)                 // Or a windows drive letter slash
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1390)                 && !path_starts_with_windows_drive_letter(&serialization[segment_before_start..])
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1391)         } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1392)             false
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1393)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1394)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1395) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1396)     /// https://url.spec.whatwg.org/#shorten-a-urls-path
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1397)     fn shorten_path(&mut self, scheme_type: SchemeType, path_start: usize) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1398)         // If path is empty, then return.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1399)         if self.serialization.len() == path_start {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1400)             return;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1401)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1402)         // If url’s scheme is "file", path’s size is 1, and path[0] is a normalized Windows drive letter, then return.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1403)         if scheme_type.is_file()
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1404)             && is_normalized_windows_drive_letter(&self.serialization[path_start..])
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1405)         {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1406)             return;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1407)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1408)         // Remove path’s last item.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1409)         self.pop_path(scheme_type, path_start);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1410)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1411) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1412)     /// https://url.spec.whatwg.org/#pop-a-urls-path
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1413)     fn pop_path(&mut self, scheme_type: SchemeType, path_start: usize) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1414)         if self.serialization.len() > path_start {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1415)             let slash_position = self.serialization[path_start..].rfind('/').unwrap();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1416)             // + 1 since rfind returns the position before the slash.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1417)             let segment_start = path_start + slash_position + 1;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1418)             // Don’t pop a Windows drive letter
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1419)             if !(scheme_type.is_file()
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1420)                 && is_normalized_windows_drive_letter(&self.serialization[segment_start..]))
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1421)             {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1422)                 self.serialization.truncate(segment_start);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1423)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1424)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1425)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1426) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1427)     pub fn parse_cannot_be_a_base_path<'i>(&mut self, mut input: Input<'i>) -> Input<'i> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1428)         loop {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1429)             let input_before_c = input.clone();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1430)             match input.next_utf8() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1431)                 Some(('?', _)) | Some(('#', _)) if self.context == Context::UrlParser => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1432)                     return input_before_c
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1433)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1434)                 Some((c, utf8_c)) => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1435)                     self.check_url_code_point(c, &input);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1436)                     self.serialization
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1437)                         .extend(utf8_percent_encode(utf8_c, CONTROLS));
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1438)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1439)                 None => return input,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1440)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1441)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1442)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1443) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1444)     #[allow(clippy::too_many_arguments)]
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1445)     fn with_query_and_fragment(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1446)         mut self,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1447)         scheme_type: SchemeType,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1448)         scheme_end: u32,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1449)         username_end: u32,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1450)         host_start: u32,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1451)         host_end: u32,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1452)         host: HostInternal,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1453)         port: Option<u16>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1454)         mut path_start: u32,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1455)         remaining: Input<'_>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1456)     ) -> ParseResult<Url> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1457)         // Special case for anarchist URL's with a leading empty path segment
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1458)         // This prevents web+demo:/.//not-a-host/ or web+demo:/path/..//not-a-host/,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1459)         // when parsed and then serialized, from ending up as web+demo://not-a-host/
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1460)         // (they end up as web+demo:/.//not-a-host/).
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1461)         //
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1462)         // If url’s host is null, url does not have an opaque path,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1463)         // url’s path’s size is greater than 1, and url’s path[0] is the empty string,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1464)         // then append U+002F (/) followed by U+002E (.) to output.
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1465)         let scheme_end_as_usize = scheme_end as usize;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1466)         let path_start_as_usize = path_start as usize;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1467)         if path_start_as_usize == scheme_end_as_usize + 1 {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1468)             // Anarchist URL
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1469)             if self.serialization[path_start_as_usize..].starts_with("//") {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1470)                 // Case 1: The base URL did not have an empty path segment, but the resulting one does
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1471)                 // Insert the "/." prefix
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1472)                 self.serialization.insert_str(path_start_as_usize, "/.");
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1473)                 path_start += 2;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1474)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1475)             assert!(!self.serialization[scheme_end_as_usize..].starts_with("://"));
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1476)         } else if path_start_as_usize == scheme_end_as_usize + 3
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1477)             && &self.serialization[scheme_end_as_usize..path_start_as_usize] == ":/."
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1478)         {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1479)             // Anarchist URL with leading empty path segment
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1480)             // The base URL has a "/." between the host and the path
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1481)             assert_eq!(self.serialization.as_bytes()[path_start_as_usize], b'/');
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1482)             if self
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1483)                 .serialization
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1484)                 .as_bytes()
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1485)                 .get(path_start_as_usize + 1)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1486)                 .copied()
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1487)                 != Some(b'/')
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1488)             {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1489)                 // Case 2: The base URL had an empty path segment, but the resulting one does not
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1490)                 // Remove the "/." prefix
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1491)                 self.serialization
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1492)                     .replace_range(scheme_end_as_usize..path_start_as_usize, ":");
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1493)                 path_start -= 2;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1494)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1495)             assert!(!self.serialization[scheme_end_as_usize..].starts_with("://"));
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1496)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1497) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1498)         let (query_start, fragment_start) =
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1499)             self.parse_query_and_fragment(scheme_type, scheme_end, remaining)?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1500)         Ok(Url {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1501)             serialization: self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1502)             scheme_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1503)             username_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1504)             host_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1505)             host_end,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1506)             host,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1507)             port,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1508)             path_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1509)             query_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1510)             fragment_start,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1511)         })
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1512)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1513) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1514)     /// Return (query_start, fragment_start)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1515)     fn parse_query_and_fragment(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1516)         &mut self,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1517)         scheme_type: SchemeType,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1518)         scheme_end: u32,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1519)         mut input: Input<'_>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1520)     ) -> ParseResult<(Option<u32>, Option<u32>)> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1521)         let mut query_start = None;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1522)         match input.next() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1523)             Some('#') => {}
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1524)             Some('?') => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1525)                 query_start = Some(to_u32(self.serialization.len())?);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1526)                 self.serialization.push('?');
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1527)                 let remaining = self.parse_query(scheme_type, scheme_end, input);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1528)                 if let Some(remaining) = remaining {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1529)                     input = remaining
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1530)                 } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1531)                     return Ok((query_start, None));
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1532)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1533)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1534)             None => return Ok((None, None)),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1535)             _ => panic!("Programming error. parse_query_and_fragment() called without ? or #"),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1536)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1537) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1538)         let fragment_start = to_u32(self.serialization.len())?;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1539)         self.serialization.push('#');
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1540)         self.parse_fragment(input);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1541)         Ok((query_start, Some(fragment_start)))
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1542)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1543) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1544)     pub fn parse_query<'i>(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1545)         &mut self,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1546)         scheme_type: SchemeType,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1547)         scheme_end: u32,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1548)         input: Input<'i>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1549)     ) -> Option<Input<'i>> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1550)         struct QueryPartIter<'i, 'p> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1551)             is_url_parser: bool,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1552)             input: Input<'i>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1553)             violation_fn: Option<&'p dyn Fn(SyntaxViolation)>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1554)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1555) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1556)         impl<'i> Iterator for QueryPartIter<'i, '_> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1557)             type Item = (&'i str, bool);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1558) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1559)             fn next(&mut self) -> Option<Self::Item> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1560)                 let start = self.input.chars.as_str();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1561)                 // bypass self.input.next() in order to get string slices
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1562)                 // which are faster to operate on
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1563)                 while let Some(c) = self.input.chars.next() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1564)                     match c {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1565)                         ascii_tab_or_new_line_pattern!() => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1566)                             return Some((
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1567)                                 &start[..start.len() - self.input.chars.as_str().len() - 1],
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1568)                                 false,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1569)                             ));
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1570)                         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1571)                         '#' if self.is_url_parser => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1572)                             return Some((
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1573)                                 &start[..start.len() - self.input.chars.as_str().len() - 1],
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1574)                                 true,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1575)                             ));
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1576)                         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1577)                         c => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1578)                             if let Some(vfn) = &self.violation_fn {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1579)                                 check_url_code_point(vfn, c, &self.input);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1580)                             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1581)                         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1582)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1583)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1584)                 if start.is_empty() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1585)                     None
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1586)                 } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1587)                     Some((start, false))
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1588)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1589)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1590)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1591) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1592)         let mut part_iter = QueryPartIter {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1593)             is_url_parser: self.context == Context::UrlParser,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1594)             input,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1595)             violation_fn: self.violation_fn,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1596)         };
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1597)         let set = if scheme_type.is_special() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1598)             SPECIAL_QUERY
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1599)         } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1600)             QUERY
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1601)         };
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1602)         let query_encoding_override = self.query_encoding_override.filter(|_| {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1603)             matches!(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1604)                 &self.serialization[..scheme_end as usize],
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1605)                 "http" | "https" | "file" | "ftp"
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1606)             )
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1607)         });
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1608) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1609)         while let Some((part, is_finished)) = part_iter.next() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1610)             match query_encoding_override {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1611)                 // slightly faster to be repetitive and not convert text to Cow
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1612)                 Some(o) => self.serialization.extend(percent_encode(&o(part), set)),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1613)                 None => self
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1614)                     .serialization
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1615)                     .extend(percent_encode(part.as_bytes(), set)),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1616)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1617)             if is_finished {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1618)                 return Some(part_iter.input);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1619)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1620)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1621) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1622)         None
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1623)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1624) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1625)     fn fragment_only(mut self, base_url: &Url, mut input: Input<'_>) -> ParseResult<Url> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1626)         let before_fragment = match base_url.fragment_start {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1627)             Some(i) => base_url.slice(..i),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1628)             None => &*base_url.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1629)         };
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1630)         debug_assert!(self.serialization.is_empty());
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1631)         self.serialization
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1632)             .reserve(before_fragment.len() + input.chars.as_str().len());
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1633)         self.serialization.push_str(before_fragment);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1634)         self.serialization.push('#');
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1635)         let next = input.next();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1636)         debug_assert!(next == Some('#'));
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1637)         self.parse_fragment(input);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1638)         Ok(Url {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1639)             serialization: self.serialization,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1640)             fragment_start: Some(to_u32(before_fragment.len())?),
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1641)             ..*base_url
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1642)         })
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1643)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1644) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1645)     pub fn parse_fragment(&mut self, input: Input<'_>) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1646)         struct FragmentPartIter<'i, 'p> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1647)             input: Input<'i>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1648)             violation_fn: Option<&'p dyn Fn(SyntaxViolation)>,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1649)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1650) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1651)         impl<'i> Iterator for FragmentPartIter<'i, '_> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1652)             type Item = &'i str;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1653) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1654)             fn next(&mut self) -> Option<Self::Item> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1655)                 let start = self.input.chars.as_str();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1656)                 // bypass self.input.next() in order to get string slices
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1657)                 // which are faster to operate on
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1658)                 while let Some(c) = self.input.chars.next() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1659)                     match c {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1660)                         ascii_tab_or_new_line_pattern!() => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1661)                             return Some(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1662)                                 &start[..start.len() - self.input.chars.as_str().len() - 1],
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1663)                             );
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1664)                         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1665)                         '\0' => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1666)                             if let Some(vfn) = &self.violation_fn {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1667)                                 vfn(SyntaxViolation::NullInFragment);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1668)                             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1669)                         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1670)                         c => {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1671)                             if let Some(vfn) = &self.violation_fn {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1672)                                 check_url_code_point(vfn, c, &self.input);
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1673)                             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1674)                         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1675)                     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1676)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1677)                 if start.is_empty() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1678)                     None
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1679)                 } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1680)                     Some(start)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1681)                 }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1682)             }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1683)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1684) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1685)         let part_iter = FragmentPartIter {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1686)             input,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1687)             violation_fn: self.violation_fn,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1688)         };
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1689) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1690)         for part in part_iter {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1691)             self.serialization
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1692)                 .extend(utf8_percent_encode(part, FRAGMENT));
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1693)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1694)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1695) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1696)     #[inline]
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1697)     fn check_url_code_point(&self, c: char, input: &Input<'_>) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1698)         if let Some(vfn) = self.violation_fn {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1699)             check_url_code_point(vfn, c, input)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1700)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1701)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1702) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1703) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1704) fn check_url_code_point(vfn: &dyn Fn(SyntaxViolation), c: char, input: &Input<'_>) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1705)     if c == '%' {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1706)         let mut input = input.clone();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1707)         if !matches!((input.next(), input.next()), (Some(a), Some(b))
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1708)                              if a.is_ascii_hexdigit() && b.is_ascii_hexdigit())
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1709)         {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1710)             vfn(SyntaxViolation::PercentDecode)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1711)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1712)     } else if !is_url_code_point(c) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1713)         vfn(SyntaxViolation::NonUrlCodePoint)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1714)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1715) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1716) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1717) // Non URL code points:
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1718) // U+0000 to U+0020 (space)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1719) // " # % < > [ \ ] ^ ` { | }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1720) // U+007F to U+009F
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1721) // surrogates
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1722) // U+FDD0 to U+FDEF
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1723) // Last two of each plane: U+__FFFE to U+__FFFF for __ in 00 to 10 hex
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1724) #[inline]
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1725) fn is_url_code_point(c: char) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1726)     matches!(c,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1727)         'a'..='z' |
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1728)         'A'..='Z' |
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1729)         '0'..='9' |
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1730)         '!' | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | '-' |
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1731)         '.' | '/' | ':' | ';' | '=' | '?' | '@' | '_' | '~' |
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1732)         '\u{A0}'..='\u{D7FF}' | '\u{E000}'..='\u{FDCF}' | '\u{FDF0}'..='\u{FFFD}' |
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1733)         '\u{10000}'..='\u{1FFFD}' | '\u{20000}'..='\u{2FFFD}' |
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1734)         '\u{30000}'..='\u{3FFFD}' | '\u{40000}'..='\u{4FFFD}' |
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1735)         '\u{50000}'..='\u{5FFFD}' | '\u{60000}'..='\u{6FFFD}' |
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1736)         '\u{70000}'..='\u{7FFFD}' | '\u{80000}'..='\u{8FFFD}' |
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1737)         '\u{90000}'..='\u{9FFFD}' | '\u{A0000}'..='\u{AFFFD}' |
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1738)         '\u{B0000}'..='\u{BFFFD}' | '\u{C0000}'..='\u{CFFFD}' |
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1739)         '\u{D0000}'..='\u{DFFFD}' | '\u{E1000}'..='\u{EFFFD}' |
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1740)         '\u{F0000}'..='\u{FFFFD}' | '\u{100000}'..='\u{10FFFD}')
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1741) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1742) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1743) /// https://infra.spec.whatwg.org/#c0-control-or-space
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1744) #[inline]
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1745) fn c0_control_or_space(ch: char) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1746)     ch <= ' ' // U+0000 to U+0020
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1747) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1748) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1749) /// https://infra.spec.whatwg.org/#ascii-tab-or-newline
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1750) #[inline]
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1751) fn ascii_tab_or_new_line(ch: char) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1752)     matches!(ch, ascii_tab_or_new_line_pattern!())
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1753) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1754) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1755) /// https://url.spec.whatwg.org/#ascii-alpha
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1756) #[inline]
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1757) pub fn ascii_alpha(ch: char) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1758)     ch.is_ascii_alphabetic()
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1759) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1760) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1761) #[inline]
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1762) pub fn to_u32(i: usize) -> ParseResult<u32> {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1763)     if i <= u32::MAX as usize {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1764)         Ok(i as u32)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1765)     } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1766)         Err(ParseError::Overflow)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1767)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1768) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1769) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1770) fn is_normalized_windows_drive_letter(segment: &str) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1771)     is_windows_drive_letter(segment) && segment.as_bytes()[1] == b':'
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1772) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1773) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1774) /// Whether the scheme is file:, the path has a single segment, and that segment
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1775) /// is a Windows drive letter
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1776) #[inline]
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1777) pub fn is_windows_drive_letter(segment: &str) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1778)     segment.len() == 2 && starts_with_windows_drive_letter(segment)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1779) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1780) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1781) /// Whether path starts with a root slash
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1782) /// and a windows drive letter eg: "/c:" or "/a:/"
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1783) fn path_starts_with_windows_drive_letter(s: &str) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1784)     if let Some(c) = s.as_bytes().first() {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1785)         matches!(c, b'/' | b'\\' | b'?' | b'#') && starts_with_windows_drive_letter(&s[1..])
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1786)     } else {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1787)         false
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1788)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1789) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1790) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1791) fn starts_with_windows_drive_letter(s: &str) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1792)     s.len() >= 2
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1793)         && ascii_alpha(s.as_bytes()[0] as char)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1794)         && matches!(s.as_bytes()[1], b':' | b'|')
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1795)         && (s.len() == 2 || matches!(s.as_bytes()[2], b'/' | b'\\' | b'?' | b'#'))
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1796) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1797) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1798) /// https://url.spec.whatwg.org/#start-with-a-windows-drive-letter
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1799) fn starts_with_windows_drive_letter_segment(input: &Input<'_>) -> bool {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1800)     let mut input = input.clone();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1801)     match (input.next(), input.next(), input.next()) {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1802)         // its first two code points are a Windows drive letter
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1803)         // its third code point is U+002F (/), U+005C (\), U+003F (?), or U+0023 (#).
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1804)         (Some(a), Some(b), Some(c))
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1805)             if ascii_alpha(a) && matches!(b, ':' | '|') && matches!(c, '/' | '\\' | '?' | '#') =>
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1806)         {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1807)             true
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1808)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1809)         // its first two code points are a Windows drive letter
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1810)         // its length is 2
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1811)         (Some(a), Some(b), None) if ascii_alpha(a) && matches!(b, ':' | '|') => true,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1812)         _ => false,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1813)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1814) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1815) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1816) #[inline]
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1817) fn fast_u16_to_str(
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1818)     // max 5 digits for u16 (65535)
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1819)     buffer: &mut [u8; 5],
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1820)     mut value: u16,
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1821) ) -> &str {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1822)     let mut index = buffer.len();
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1823) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1824)     loop {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1825)         index -= 1;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1826)         buffer[index] = b'0' + (value % 10) as u8;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1827)         value /= 10;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1828)         if value == 0 {
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1829)             break;
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1830)         }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1831)     }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1832) 
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1833)     // SAFETY: we know the values in the buffer from the
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1834)     // current index on will be a number
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1835)     unsafe { core::str::from_utf8_unchecked(&buffer[index..]) }
+^88d5626 (evals 2026-10-22 10:55:21 +0200 1836) }

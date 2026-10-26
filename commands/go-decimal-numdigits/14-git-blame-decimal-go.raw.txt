@@ -1,0 +1,2393 @@
+$ git blame decimal.go
+^921ab32 (evals 2026-10-22 10:53:53 +0200    1) // Package decimal implements an arbitrary precision fixed-point decimal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200    2) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200    3) // The zero-value of a Decimal is 0, as you would expect.
+^921ab32 (evals 2026-10-22 10:53:53 +0200    4) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200    5) // The best way to create a new Decimal is to use decimal.NewFromString, ex:
+^921ab32 (evals 2026-10-22 10:53:53 +0200    6) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200    7) //	n, err := decimal.NewFromString("-123.4567")
+^921ab32 (evals 2026-10-22 10:53:53 +0200    8) //	n.String() // output: "-123.4567"
+^921ab32 (evals 2026-10-22 10:53:53 +0200    9) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200   10) // To use Decimal as part of a struct:
+^921ab32 (evals 2026-10-22 10:53:53 +0200   11) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200   12) //	type StructName struct {
+^921ab32 (evals 2026-10-22 10:53:53 +0200   13) //	    Number Decimal
+^921ab32 (evals 2026-10-22 10:53:53 +0200   14) //	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200   15) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200   16) // Note: This can "only" represent numbers with a maximum of 2^31 digits after the decimal point.
+^921ab32 (evals 2026-10-22 10:53:53 +0200   17) package decimal
+^921ab32 (evals 2026-10-22 10:53:53 +0200   18) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200   19) import (
+^921ab32 (evals 2026-10-22 10:53:53 +0200   20) 	"database/sql/driver"
+^921ab32 (evals 2026-10-22 10:53:53 +0200   21) 	"encoding/binary"
+^921ab32 (evals 2026-10-22 10:53:53 +0200   22) 	"fmt"
+^921ab32 (evals 2026-10-22 10:53:53 +0200   23) 	"math"
+^921ab32 (evals 2026-10-22 10:53:53 +0200   24) 	"math/big"
+^921ab32 (evals 2026-10-22 10:53:53 +0200   25) 	"regexp"
+^921ab32 (evals 2026-10-22 10:53:53 +0200   26) 	"strconv"
+^921ab32 (evals 2026-10-22 10:53:53 +0200   27) 	"strings"
+^921ab32 (evals 2026-10-22 10:53:53 +0200   28) )
+^921ab32 (evals 2026-10-22 10:53:53 +0200   29) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200   30) // DivisionPrecision is the number of decimal places in the result when it
+^921ab32 (evals 2026-10-22 10:53:53 +0200   31) // doesn't divide exactly.
+^921ab32 (evals 2026-10-22 10:53:53 +0200   32) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200   33) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200   34) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200   35) //	d1 := decimal.NewFromFloat(2).Div(decimal.NewFromFloat(3))
+^921ab32 (evals 2026-10-22 10:53:53 +0200   36) //	d1.String() // output: "0.6666666666666667"
+^921ab32 (evals 2026-10-22 10:53:53 +0200   37) //	d2 := decimal.NewFromFloat(2).Div(decimal.NewFromFloat(30000))
+^921ab32 (evals 2026-10-22 10:53:53 +0200   38) //	d2.String() // output: "0.0000666666666667"
+^921ab32 (evals 2026-10-22 10:53:53 +0200   39) //	d3 := decimal.NewFromFloat(20000).Div(decimal.NewFromFloat(3))
+^921ab32 (evals 2026-10-22 10:53:53 +0200   40) //	d3.String() // output: "6666.6666666666666667"
+^921ab32 (evals 2026-10-22 10:53:53 +0200   41) //	decimal.DivisionPrecision = 3
+^921ab32 (evals 2026-10-22 10:53:53 +0200   42) //	d4 := decimal.NewFromFloat(2).Div(decimal.NewFromFloat(3))
+^921ab32 (evals 2026-10-22 10:53:53 +0200   43) //	d4.String() // output: "0.667"
+^921ab32 (evals 2026-10-22 10:53:53 +0200   44) var DivisionPrecision = 16
+^921ab32 (evals 2026-10-22 10:53:53 +0200   45) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200   46) // PowPrecisionNegativeExponent specifies the maximum precision of the result (digits after decimal point)
+^921ab32 (evals 2026-10-22 10:53:53 +0200   47) // when calculating decimal power. Only used for cases where the exponent is a negative number.
+^921ab32 (evals 2026-10-22 10:53:53 +0200   48) // This constant applies to Pow, PowInt32 and PowBigInt methods, PowWithPrecision method is not constrained by it.
+^921ab32 (evals 2026-10-22 10:53:53 +0200   49) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200   50) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200   51) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200   52) //	d1, err := decimal.NewFromFloat(15.2).PowInt32(-2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200   53) //	d1.String() // output: "0.0043282548476454"
+^921ab32 (evals 2026-10-22 10:53:53 +0200   54) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200   55) //	decimal.PowPrecisionNegativeExponent = 24
+^921ab32 (evals 2026-10-22 10:53:53 +0200   56) //	d2, err := decimal.NewFromFloat(15.2).PowInt32(-2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200   57) //	d2.String() // output: "0.004328254847645429362881"
+^921ab32 (evals 2026-10-22 10:53:53 +0200   58) var PowPrecisionNegativeExponent = 16
+^921ab32 (evals 2026-10-22 10:53:53 +0200   59) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200   60) // MarshalJSONWithoutQuotes should be set to true if you want the decimal to
+^921ab32 (evals 2026-10-22 10:53:53 +0200   61) // be JSON marshaled as a number, instead of as a string.
+^921ab32 (evals 2026-10-22 10:53:53 +0200   62) // WARNING: this is dangerous for decimals with many digits, since many JSON
+^921ab32 (evals 2026-10-22 10:53:53 +0200   63) // unmarshallers (ex: Javascript's) will unmarshal JSON numbers to IEEE 754
+^921ab32 (evals 2026-10-22 10:53:53 +0200   64) // double-precision floating point numbers, which means you can potentially
+^921ab32 (evals 2026-10-22 10:53:53 +0200   65) // silently lose precision.
+^921ab32 (evals 2026-10-22 10:53:53 +0200   66) var MarshalJSONWithoutQuotes = false
+^921ab32 (evals 2026-10-22 10:53:53 +0200   67) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200   68) // TrimTrailingZeros specifies whether trailing zeroes should be trimmed from a string representation of decimal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200   69) // If set to true, trailing zeroes will be truncated (2.00 -> 2, 3.11 -> 3.11, 13.000 -> 13),
+^921ab32 (evals 2026-10-22 10:53:53 +0200   70) // otherwise trailing zeroes will be preserved (2.00 -> 2.00, 3.11 -> 3.11, 13.000 -> 13.000).
+^921ab32 (evals 2026-10-22 10:53:53 +0200   71) // Setting this value to false can be useful for APIs where exact decimal string representation matters.
+^921ab32 (evals 2026-10-22 10:53:53 +0200   72) var TrimTrailingZeros = true
+^921ab32 (evals 2026-10-22 10:53:53 +0200   73) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200   74) // UseScientificNotation specifies whether scientific notation should be used when a decimal is turned
+^921ab32 (evals 2026-10-22 10:53:53 +0200   75) // into a string that has a "negative" precision.
+^921ab32 (evals 2026-10-22 10:53:53 +0200   76) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200   77) // For example, 1200 rounded to the nearest 100 cannot accurately be shown as "1200" because the last two
+^921ab32 (evals 2026-10-22 10:53:53 +0200   78) // digits are unknown. With this set to true, that number would be expressed as "1.2E3" instead.
+^921ab32 (evals 2026-10-22 10:53:53 +0200   79) var UseScientificNotation = false
+^921ab32 (evals 2026-10-22 10:53:53 +0200   80) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200   81) // ExpMaxIterations specifies the maximum number of iterations needed to calculate
+^921ab32 (evals 2026-10-22 10:53:53 +0200   82) // precise natural exponent value using ExpHullAbrham method.
+^921ab32 (evals 2026-10-22 10:53:53 +0200   83) var ExpMaxIterations = 1000
+^921ab32 (evals 2026-10-22 10:53:53 +0200   84) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200   85) // Zero constant, to make computations faster.
+^921ab32 (evals 2026-10-22 10:53:53 +0200   86) // Zero should never be compared with == or != directly, please use decimal.Equal or decimal.Cmp instead.
+^921ab32 (evals 2026-10-22 10:53:53 +0200   87) var Zero = Decimal{}
+^921ab32 (evals 2026-10-22 10:53:53 +0200   88) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200   89) var zeroInt = big.NewInt(0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200   90) var oneInt = big.NewInt(1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200   91) var twoInt = big.NewInt(2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200   92) var fourInt = big.NewInt(4)
+^921ab32 (evals 2026-10-22 10:53:53 +0200   93) var fiveInt = big.NewInt(5)
+^921ab32 (evals 2026-10-22 10:53:53 +0200   94) var tenInt = big.NewInt(10)
+^921ab32 (evals 2026-10-22 10:53:53 +0200   95) var twentyInt = big.NewInt(20)
+^921ab32 (evals 2026-10-22 10:53:53 +0200   96) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200   97) var factorials = []Decimal{New(1, 0)}
+^921ab32 (evals 2026-10-22 10:53:53 +0200   98) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200   99) // Decimal represents a fixed-point decimal. It is immutable.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  100) // number = value * 10 ^ exp
+^921ab32 (evals 2026-10-22 10:53:53 +0200  101) type Decimal struct {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  102) 	value *big.Int
+^921ab32 (evals 2026-10-22 10:53:53 +0200  103) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  104) 	// NOTE(vadim): this must be an int32, because we cast it to float64 during
+^921ab32 (evals 2026-10-22 10:53:53 +0200  105) 	// calculations. If exp is 64 bit, we might lose precision.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  106) 	// If we cared about being able to represent every possible decimal, we
+^921ab32 (evals 2026-10-22 10:53:53 +0200  107) 	// could make exp a *big.Int but it would hurt performance and numbers
+^921ab32 (evals 2026-10-22 10:53:53 +0200  108) 	// like that are unrealistic.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  109) 	exp int32
+^921ab32 (evals 2026-10-22 10:53:53 +0200  110) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  111) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  112) func (d Decimal) getValue() *big.Int {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  113) 	if d.value == nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  114) 		return zeroInt
+^921ab32 (evals 2026-10-22 10:53:53 +0200  115) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  116) 	return d.value
+^921ab32 (evals 2026-10-22 10:53:53 +0200  117) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  118) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  119) // New returns a new fixed-point decimal, value * 10 ^ exp.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  120) func New(value int64, exp int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  121) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  122) 		value: big.NewInt(value),
+^921ab32 (evals 2026-10-22 10:53:53 +0200  123) 		exp:   exp,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  124) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  125) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  126) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  127) // NewFromInt converts an int64 to Decimal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  128) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  129) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  130) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  131) //	NewFromInt(123).String() // output: "123"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  132) //	NewFromInt(-10).String() // output: "-10"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  133) func NewFromInt(value int64) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  134) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  135) 		value: big.NewInt(value),
+^921ab32 (evals 2026-10-22 10:53:53 +0200  136) 		exp:   0,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  137) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  138) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  139) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  140) // NewFromInt32 converts an int32 to Decimal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  141) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  142) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  143) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  144) //	NewFromInt(123).String() // output: "123"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  145) //	NewFromInt(-10).String() // output: "-10"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  146) func NewFromInt32(value int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  147) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  148) 		value: big.NewInt(int64(value)),
+^921ab32 (evals 2026-10-22 10:53:53 +0200  149) 		exp:   0,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  150) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  151) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  152) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  153) // NewFromUint64 converts an uint64 to Decimal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  154) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  155) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  156) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  157) //	NewFromUint64(123).String() // output: "123"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  158) func NewFromUint64(value uint64) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  159) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  160) 		value: new(big.Int).SetUint64(value),
+^921ab32 (evals 2026-10-22 10:53:53 +0200  161) 		exp:   0,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  162) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  163) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  164) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  165) // NewFromBigInt returns a new Decimal from a big.Int, value * 10 ^ exp
+^921ab32 (evals 2026-10-22 10:53:53 +0200  166) func NewFromBigInt(value *big.Int, exp int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  167) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  168) 		value: new(big.Int).Set(value),
+^921ab32 (evals 2026-10-22 10:53:53 +0200  169) 		exp:   exp,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  170) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  171) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  172) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  173) // NewFromBigRat returns a new Decimal from a big.Rat. The numerator and
+^921ab32 (evals 2026-10-22 10:53:53 +0200  174) // denominator are divided and rounded to the given precision.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  175) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  176) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  177) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  178) //	d1 := NewFromBigRat(big.NewRat(0, 1), 0)    // output: "0"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  179) //	d2 := NewFromBigRat(big.NewRat(4, 5), 1)    // output: "0.8"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  180) //	d3 := NewFromBigRat(big.NewRat(1000, 3), 3) // output: "333.333"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  181) //	d4 := NewFromBigRat(big.NewRat(2, 7), 4)    // output: "0.2857"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  182) func NewFromBigRat(value *big.Rat, precision int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  183) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  184) 		value: new(big.Int).Set(value.Num()),
+^921ab32 (evals 2026-10-22 10:53:53 +0200  185) 		exp:   0,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  186) 	}.DivRound(Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  187) 		value: new(big.Int).Set(value.Denom()),
+^921ab32 (evals 2026-10-22 10:53:53 +0200  188) 		exp:   0,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  189) 	}, precision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  190) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  191) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  192) // NewFromString returns a new Decimal from a string representation.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  193) // Trailing zeroes are not trimmed.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  194) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  195) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  196) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  197) //	d, err := NewFromString("-123.45")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  198) //	d2, err := NewFromString(".0001")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  199) //	d3, err := NewFromString("1.47000")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  200) func NewFromString(value string) (Decimal, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  201) 	originalInput := value
+^921ab32 (evals 2026-10-22 10:53:53 +0200  202) 	var intString string
+^921ab32 (evals 2026-10-22 10:53:53 +0200  203) 	var exp int64
+^921ab32 (evals 2026-10-22 10:53:53 +0200  204) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  205) 	// Check if number is using scientific notation and find dots
+^921ab32 (evals 2026-10-22 10:53:53 +0200  206) 	eIndex := -1
+^921ab32 (evals 2026-10-22 10:53:53 +0200  207) 	pIndex := -1
+^921ab32 (evals 2026-10-22 10:53:53 +0200  208) 	for i, r := range value {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  209) 		if r == 'E' || r == 'e' {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  210) 			if eIndex > -1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  211) 				return Decimal{}, fmt.Errorf("can't convert %s to decimal: multiple 'E' characters found", value)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  212) 			}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  213) 			eIndex = i
+^921ab32 (evals 2026-10-22 10:53:53 +0200  214) 			continue
+^921ab32 (evals 2026-10-22 10:53:53 +0200  215) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  216) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  217) 		if r == '.' {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  218) 			if pIndex > -1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  219) 				return Decimal{}, fmt.Errorf("can't convert %s to decimal: too many .s", value)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  220) 			}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  221) 			pIndex = i
+^921ab32 (evals 2026-10-22 10:53:53 +0200  222) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  223) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  224) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  225) 	if eIndex != -1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  226) 		expInt, err := strconv.ParseInt(value[eIndex+1:], 10, 32)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  227) 		if err != nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  228) 			if e, ok := err.(*strconv.NumError); ok && e.Err == strconv.ErrRange {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  229) 				return Decimal{}, fmt.Errorf("can't convert %s to decimal: fractional part too long", value)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  230) 			}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  231) 			return Decimal{}, fmt.Errorf("can't convert %s to decimal: exponent is not numeric", value)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  232) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  233) 		value = value[:eIndex]
+^921ab32 (evals 2026-10-22 10:53:53 +0200  234) 		exp = expInt
+^921ab32 (evals 2026-10-22 10:53:53 +0200  235) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  236) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  237) 	if pIndex == -1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  238) 		// There is no decimal point, we can just parse the original string as
+^921ab32 (evals 2026-10-22 10:53:53 +0200  239) 		// an int
+^921ab32 (evals 2026-10-22 10:53:53 +0200  240) 		intString = value
+^921ab32 (evals 2026-10-22 10:53:53 +0200  241) 	} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  242) 		if pIndex+1 < len(value) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  243) 			intString = value[:pIndex] + value[pIndex+1:]
+^921ab32 (evals 2026-10-22 10:53:53 +0200  244) 		} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  245) 			intString = value[:pIndex]
+^921ab32 (evals 2026-10-22 10:53:53 +0200  246) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  247) 		expInt := -len(value[pIndex+1:])
+^921ab32 (evals 2026-10-22 10:53:53 +0200  248) 		exp += int64(expInt)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  249) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  250) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  251) 	var dValue *big.Int
+^921ab32 (evals 2026-10-22 10:53:53 +0200  252) 	// strconv.ParseInt is faster than new(big.Int).SetString so this is just a shortcut for strings we know won't overflow
+^921ab32 (evals 2026-10-22 10:53:53 +0200  253) 	if len(intString) <= 18 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  254) 		parsed64, err := strconv.ParseInt(intString, 10, 64)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  255) 		if err != nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  256) 			return Decimal{}, fmt.Errorf("can't convert %s to decimal", value)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  257) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  258) 		dValue = big.NewInt(parsed64)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  259) 	} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  260) 		dValue = new(big.Int)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  261) 		_, ok := dValue.SetString(intString, 10)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  262) 		if !ok {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  263) 			return Decimal{}, fmt.Errorf("can't convert %s to decimal", value)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  264) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  265) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  266) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  267) 	if exp < math.MinInt32 || exp > math.MaxInt32 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  268) 		// NOTE(vadim): I doubt a string could realistically be this long
+^921ab32 (evals 2026-10-22 10:53:53 +0200  269) 		return Decimal{}, fmt.Errorf("can't convert %s to decimal: fractional part too long", originalInput)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  270) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  271) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  272) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  273) 		value: dValue,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  274) 		exp:   int32(exp),
+^921ab32 (evals 2026-10-22 10:53:53 +0200  275) 	}, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200  276) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  277) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  278) // NewFromFormattedString returns a new Decimal from a formatted string representation.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  279) // The second argument - replRegexp, is a regular expression that is used to find characters that should be
+^921ab32 (evals 2026-10-22 10:53:53 +0200  280) // removed from given decimal string representation. All matched characters will be replaced with an empty string.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  281) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  282) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  283) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  284) //	r := regexp.MustCompile("[$,]")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  285) //	d1, err := NewFromFormattedString("$5,125.99", r)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  286) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  287) //	r2 := regexp.MustCompile("[_]")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  288) //	d2, err := NewFromFormattedString("1_000_000", r2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  289) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  290) //	r3 := regexp.MustCompile("[USD\\s]")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  291) //	d3, err := NewFromFormattedString("5000 USD", r3)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  292) func NewFromFormattedString(value string, replRegexp *regexp.Regexp) (Decimal, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  293) 	parsedValue := replRegexp.ReplaceAllString(value, "")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  294) 	d, err := NewFromString(parsedValue)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  295) 	if err != nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  296) 		return Decimal{}, err
+^921ab32 (evals 2026-10-22 10:53:53 +0200  297) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  298) 	return d, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200  299) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  300) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  301) // RequireFromString returns a new Decimal from a string representation
+^921ab32 (evals 2026-10-22 10:53:53 +0200  302) // or panics if NewFromString had returned an error.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  303) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  304) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  305) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  306) //	d := RequireFromString("-123.45")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  307) //	d2 := RequireFromString(".0001")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  308) func RequireFromString(value string) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  309) 	dec, err := NewFromString(value)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  310) 	if err != nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  311) 		panic(err)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  312) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  313) 	return dec
+^921ab32 (evals 2026-10-22 10:53:53 +0200  314) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  315) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  316) // NewFromFloat converts a float64 to Decimal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  317) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  318) // The converted number will contain the number of significant digits that can be
+^921ab32 (evals 2026-10-22 10:53:53 +0200  319) // represented in a float with reliable roundtrip.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  320) // This is typically 15 digits, but may be more in some cases.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  321) // See https://www.exploringbinary.com/decimal-precision-of-binary-floating-point-numbers/ for more information.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  322) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  323) // For slightly faster conversion, use NewFromFloatWithExponent where you can specify the precision in absolute terms.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  324) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  325) // NOTE: this will panic on NaN, +/-inf
+^921ab32 (evals 2026-10-22 10:53:53 +0200  326) func NewFromFloat(value float64) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  327) 	if value == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  328) 		return New(0, 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  329) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  330) 	return newFromFloat(value, math.Float64bits(value), &float64info)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  331) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  332) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  333) // NewFromFloat32 converts a float32 to Decimal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  334) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  335) // The converted number will contain the number of significant digits that can be
+^921ab32 (evals 2026-10-22 10:53:53 +0200  336) // represented in a float with reliable roundtrip.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  337) // This is typically 6-8 digits depending on the input.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  338) // See https://www.exploringbinary.com/decimal-precision-of-binary-floating-point-numbers/ for more information.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  339) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  340) // For slightly faster conversion, use NewFromFloatWithExponent where you can specify the precision in absolute terms.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  341) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  342) // NOTE: this will panic on NaN, +/-inf
+^921ab32 (evals 2026-10-22 10:53:53 +0200  343) func NewFromFloat32(value float32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  344) 	if value == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  345) 		return New(0, 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  346) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  347) 	// XOR is workaround for https://github.com/golang/go/issues/26285
+^921ab32 (evals 2026-10-22 10:53:53 +0200  348) 	a := math.Float32bits(value) ^ 0x80808080
+^921ab32 (evals 2026-10-22 10:53:53 +0200  349) 	return newFromFloat(float64(value), uint64(a)^0x80808080, &float32info)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  350) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  351) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  352) func newFromFloat(val float64, bits uint64, flt *floatInfo) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  353) 	if math.IsNaN(val) || math.IsInf(val, 0) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  354) 		panic(fmt.Sprintf("Cannot create a Decimal from %v", val))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  355) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  356) 	exp := int(bits>>flt.mantbits) & (1<<flt.expbits - 1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  357) 	mant := bits & (uint64(1)<<flt.mantbits - 1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  358) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  359) 	switch exp {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  360) 	case 0:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  361) 		// denormalized
+^921ab32 (evals 2026-10-22 10:53:53 +0200  362) 		exp++
+^921ab32 (evals 2026-10-22 10:53:53 +0200  363) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  364) 	default:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  365) 		// add implicit top bit
+^921ab32 (evals 2026-10-22 10:53:53 +0200  366) 		mant |= uint64(1) << flt.mantbits
+^921ab32 (evals 2026-10-22 10:53:53 +0200  367) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  368) 	exp += flt.bias
+^921ab32 (evals 2026-10-22 10:53:53 +0200  369) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  370) 	var d decimal
+^921ab32 (evals 2026-10-22 10:53:53 +0200  371) 	d.Assign(mant)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  372) 	d.Shift(exp - int(flt.mantbits))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  373) 	d.neg = bits>>(flt.expbits+flt.mantbits) != 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200  374) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  375) 	roundShortest(&d, mant, exp, flt)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  376) 	// If less than 19 digits, we can do calculation in an int64.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  377) 	if d.nd < 19 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  378) 		tmp := int64(0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  379) 		m := int64(1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  380) 		for i := d.nd - 1; i >= 0; i-- {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  381) 			tmp += m * int64(d.d[i]-'0')
+^921ab32 (evals 2026-10-22 10:53:53 +0200  382) 			m *= 10
+^921ab32 (evals 2026-10-22 10:53:53 +0200  383) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  384) 		if d.neg {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  385) 			tmp *= -1
+^921ab32 (evals 2026-10-22 10:53:53 +0200  386) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  387) 		return Decimal{value: big.NewInt(tmp), exp: int32(d.dp) - int32(d.nd)}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  388) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  389) 	dValue := new(big.Int)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  390) 	dValue, ok := dValue.SetString(string(d.d[:d.nd]), 10)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  391) 	if ok {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  392) 		return Decimal{value: dValue, exp: int32(d.dp) - int32(d.nd)}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  393) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  394) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  395) 	return NewFromFloatWithExponent(val, int32(d.dp)-int32(d.nd))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  396) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  397) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  398) // NewFromFloatWithExponent converts a float64 to Decimal, with an arbitrary
+^921ab32 (evals 2026-10-22 10:53:53 +0200  399) // number of fractional digits.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  400) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  401) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  402) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  403) //	NewFromFloatWithExponent(123.456, -2).String() // output: "123.46"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  404) func NewFromFloatWithExponent(value float64, exp int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  405) 	if math.IsNaN(value) || math.IsInf(value, 0) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  406) 		panic(fmt.Sprintf("Cannot create a Decimal from %v", value))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  407) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  408) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  409) 	bits := math.Float64bits(value)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  410) 	mant := bits & (1<<52 - 1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  411) 	exp2 := int32((bits >> 52) & (1<<11 - 1))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  412) 	sign := bits >> 63
+^921ab32 (evals 2026-10-22 10:53:53 +0200  413) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  414) 	if exp2 == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  415) 		// specials
+^921ab32 (evals 2026-10-22 10:53:53 +0200  416) 		if mant == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  417) 			return Decimal{}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  418) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  419) 		// subnormal
+^921ab32 (evals 2026-10-22 10:53:53 +0200  420) 		exp2++
+^921ab32 (evals 2026-10-22 10:53:53 +0200  421) 	} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  422) 		// normal
+^921ab32 (evals 2026-10-22 10:53:53 +0200  423) 		mant |= 1 << 52
+^921ab32 (evals 2026-10-22 10:53:53 +0200  424) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  425) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  426) 	exp2 -= 1023 + 52
+^921ab32 (evals 2026-10-22 10:53:53 +0200  427) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  428) 	// normalizing base-2 values
+^921ab32 (evals 2026-10-22 10:53:53 +0200  429) 	for mant&1 == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  430) 		mant = mant >> 1
+^921ab32 (evals 2026-10-22 10:53:53 +0200  431) 		exp2++
+^921ab32 (evals 2026-10-22 10:53:53 +0200  432) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  433) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  434) 	// maximum number of fractional base-10 digits to represent 2^N exactly cannot be more than -N if N<0
+^921ab32 (evals 2026-10-22 10:53:53 +0200  435) 	if exp < 0 && exp < exp2 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  436) 		if exp2 < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  437) 			exp = exp2
+^921ab32 (evals 2026-10-22 10:53:53 +0200  438) 		} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  439) 			exp = 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200  440) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  441) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  442) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  443) 	// representing 10^M * 2^N as 5^M * 2^(M+N)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  444) 	exp2 -= exp
+^921ab32 (evals 2026-10-22 10:53:53 +0200  445) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  446) 	temp := big.NewInt(1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  447) 	dMant := big.NewInt(int64(mant))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  448) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  449) 	// applying 5^M
+^921ab32 (evals 2026-10-22 10:53:53 +0200  450) 	if exp > 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  451) 		temp = temp.SetInt64(int64(exp))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  452) 		temp = temp.Exp(fiveInt, temp, nil)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  453) 	} else if exp < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  454) 		temp = temp.SetInt64(-int64(exp))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  455) 		temp = temp.Exp(fiveInt, temp, nil)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  456) 		dMant = dMant.Mul(dMant, temp)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  457) 		temp = temp.SetUint64(1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  458) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  459) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  460) 	// applying 2^(M+N)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  461) 	if exp2 > 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  462) 		dMant = dMant.Lsh(dMant, uint(exp2))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  463) 	} else if exp2 < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  464) 		temp = temp.Lsh(temp, uint(-exp2))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  465) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  466) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  467) 	// rounding and downscaling
+^921ab32 (evals 2026-10-22 10:53:53 +0200  468) 	if exp > 0 || exp2 < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  469) 		halfDown := new(big.Int).Rsh(temp, 1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  470) 		dMant = dMant.Add(dMant, halfDown)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  471) 		dMant = dMant.Quo(dMant, temp)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  472) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  473) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  474) 	if sign == 1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  475) 		dMant = dMant.Neg(dMant)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  476) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  477) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  478) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  479) 		value: dMant,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  480) 		exp:   exp,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  481) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  482) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  483) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  484) // Copy returns a copy of decimal with the same value and exponent, but a different pointer to value.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  485) func (d Decimal) Copy() Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  486) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  487) 		value: new(big.Int).Set(d.getValue()),
+^921ab32 (evals 2026-10-22 10:53:53 +0200  488) 		exp:   d.exp,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  489) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  490) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  491) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  492) // rescale returns a rescaled version of the decimal. Returned
+^921ab32 (evals 2026-10-22 10:53:53 +0200  493) // decimal may be less precise if the given exponent is bigger
+^921ab32 (evals 2026-10-22 10:53:53 +0200  494) // than the initial exponent of the Decimal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  495) // NOTE: this will truncate, NOT round
+^921ab32 (evals 2026-10-22 10:53:53 +0200  496) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  497) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  498) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  499) //	d := New(12345, -4)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  500) //	d2 := d.rescale(-1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  501) //	d3 := d2.rescale(-4)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  502) //	println(d1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  503) //	println(d2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  504) //	println(d3)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  505) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  506) // Output:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  507) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  508) //	1.2345
+^921ab32 (evals 2026-10-22 10:53:53 +0200  509) //	1.2
+^921ab32 (evals 2026-10-22 10:53:53 +0200  510) //	1.2000
+^921ab32 (evals 2026-10-22 10:53:53 +0200  511) func (d Decimal) rescale(exp int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  512) 	if d.exp == exp {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  513) 		return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  514) 			new(big.Int).Set(d.getValue()),
+^921ab32 (evals 2026-10-22 10:53:53 +0200  515) 			d.exp,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  516) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  517) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  518) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  519) 	// NOTE(vadim): must convert exps to float64 before - to prevent overflow
+^921ab32 (evals 2026-10-22 10:53:53 +0200  520) 	diff := math.Abs(float64(exp) - float64(d.exp))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  521) 	value := new(big.Int).Set(d.getValue())
+^921ab32 (evals 2026-10-22 10:53:53 +0200  522) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  523) 	expScale := new(big.Int).Exp(tenInt, big.NewInt(int64(diff)), nil)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  524) 	if exp > d.exp {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  525) 		value = value.Quo(value, expScale)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  526) 	} else if exp < d.exp {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  527) 		value = value.Mul(value, expScale)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  528) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  529) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  530) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  531) 		value: value,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  532) 		exp:   exp,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  533) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  534) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  535) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  536) // Abs returns the absolute value of the decimal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  537) func (d Decimal) Abs() Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  538) 	if !d.IsNegative() {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  539) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200  540) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  541) 	d2Value := new(big.Int).Abs(d.getValue())
+^921ab32 (evals 2026-10-22 10:53:53 +0200  542) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  543) 		value: d2Value,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  544) 		exp:   d.exp,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  545) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  546) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  547) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  548) // Add returns d + d2.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  549) func (d Decimal) Add(d2 Decimal) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  550) 	rd, rd2 := RescalePair(d, d2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  551) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  552) 	d3Value := new(big.Int).Add(rd.getValue(), rd2.getValue())
+^921ab32 (evals 2026-10-22 10:53:53 +0200  553) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  554) 		value: d3Value,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  555) 		exp:   rd.exp,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  556) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  557) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  558) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  559) // Sub returns d - d2.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  560) func (d Decimal) Sub(d2 Decimal) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  561) 	rd, rd2 := RescalePair(d, d2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  562) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  563) 	d3Value := new(big.Int).Sub(rd.getValue(), rd2.getValue())
+^921ab32 (evals 2026-10-22 10:53:53 +0200  564) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  565) 		value: d3Value,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  566) 		exp:   rd.exp,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  567) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  568) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  569) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  570) // Neg returns -d.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  571) func (d Decimal) Neg() Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  572) 	val := new(big.Int).Neg(d.getValue())
+^921ab32 (evals 2026-10-22 10:53:53 +0200  573) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  574) 		value: val,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  575) 		exp:   d.exp,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  576) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  577) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  578) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  579) // Mul returns d * d2.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  580) func (d Decimal) Mul(d2 Decimal) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  581) 	expInt64 := int64(d.exp) + int64(d2.exp)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  582) 	if expInt64 > math.MaxInt32 || expInt64 < math.MinInt32 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  583) 		// NOTE(vadim): better to panic than give incorrect results, as
+^921ab32 (evals 2026-10-22 10:53:53 +0200  584) 		// Decimals are usually used for money
+^921ab32 (evals 2026-10-22 10:53:53 +0200  585) 		panic(fmt.Sprintf("exponent %v overflows an int32!", expInt64))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  586) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  587) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  588) 	d3Value := new(big.Int).Mul(d.getValue(), d2.getValue())
+^921ab32 (evals 2026-10-22 10:53:53 +0200  589) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  590) 		value: d3Value,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  591) 		exp:   int32(expInt64),
+^921ab32 (evals 2026-10-22 10:53:53 +0200  592) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  593) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  594) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  595) // Shift shifts the decimal in base 10.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  596) // It shifts left when shift is positive and right if shift is negative.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  597) // In simpler terms, the given value for shift is added to the exponent
+^921ab32 (evals 2026-10-22 10:53:53 +0200  598) // of the decimal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  599) func (d Decimal) Shift(shift int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  600) 	return Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200  601) 		value: new(big.Int).Set(d.getValue()),
+^921ab32 (evals 2026-10-22 10:53:53 +0200  602) 		exp:   d.exp + shift,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  603) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  604) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  605) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  606) // Div returns d / d2. If it doesn't divide exactly, the result will have
+^921ab32 (evals 2026-10-22 10:53:53 +0200  607) // DivisionPrecision digits after the decimal point.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  608) func (d Decimal) Div(d2 Decimal) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  609) 	return d.DivRound(d2, int32(DivisionPrecision))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  610) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  611) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  612) // QuoRem does division with remainder
+^921ab32 (evals 2026-10-22 10:53:53 +0200  613) // d.QuoRem(d2,precision) returns quotient q and remainder r such that
+^921ab32 (evals 2026-10-22 10:53:53 +0200  614) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  615) //	d = d2 * q + r, q an integer multiple of 10^(-precision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  616) //	0 <= r < abs(d2) * 10 ^(-precision) if d>=0
+^921ab32 (evals 2026-10-22 10:53:53 +0200  617) //	0 >= r > -abs(d2) * 10 ^(-precision) if d<0
+^921ab32 (evals 2026-10-22 10:53:53 +0200  618) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  619) // Note that precision<0 is allowed as input.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  620) func (d Decimal) QuoRem(d2 Decimal, precision int32) (Decimal, Decimal) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  621) 	if d2.getValue().Sign() == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  622) 		panic("decimal division by 0")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  623) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  624) 	scale := -precision
+^921ab32 (evals 2026-10-22 10:53:53 +0200  625) 	e := int64(d.exp) - int64(d2.exp) - int64(scale)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  626) 	if e > math.MaxInt32 || e < math.MinInt32 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  627) 		panic("overflow in decimal QuoRem")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  628) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  629) 	var aa, bb, expo big.Int
+^921ab32 (evals 2026-10-22 10:53:53 +0200  630) 	var scalerest int32
+^921ab32 (evals 2026-10-22 10:53:53 +0200  631) 	// d = a 10^ea
+^921ab32 (evals 2026-10-22 10:53:53 +0200  632) 	// d2 = b 10^eb
+^921ab32 (evals 2026-10-22 10:53:53 +0200  633) 	if e < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  634) 		aa = *d.getValue()
+^921ab32 (evals 2026-10-22 10:53:53 +0200  635) 		expo.SetInt64(-e)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  636) 		bb.Exp(tenInt, &expo, nil)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  637) 		bb.Mul(d2.getValue(), &bb)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  638) 		scalerest = d.exp
+^921ab32 (evals 2026-10-22 10:53:53 +0200  639) 		// now aa = a
+^921ab32 (evals 2026-10-22 10:53:53 +0200  640) 		//     bb = b 10^(scale + eb - ea)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  641) 	} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  642) 		expo.SetInt64(e)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  643) 		aa.Exp(tenInt, &expo, nil)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  644) 		aa.Mul(d.getValue(), &aa)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  645) 		bb = *d2.getValue()
+^921ab32 (evals 2026-10-22 10:53:53 +0200  646) 		scalerest = scale + d2.exp
+^921ab32 (evals 2026-10-22 10:53:53 +0200  647) 		// now aa = a ^ (ea - eb - scale)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  648) 		//     bb = b
+^921ab32 (evals 2026-10-22 10:53:53 +0200  649) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  650) 	var q, r big.Int
+^921ab32 (evals 2026-10-22 10:53:53 +0200  651) 	q.QuoRem(&aa, &bb, &r)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  652) 	dq := Decimal{value: &q, exp: scale}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  653) 	dr := Decimal{value: &r, exp: scalerest}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  654) 	return dq, dr
+^921ab32 (evals 2026-10-22 10:53:53 +0200  655) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  656) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  657) // DivRound divides and rounds to a given precision
+^921ab32 (evals 2026-10-22 10:53:53 +0200  658) // i.e. to an integer multiple of 10^(-precision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  659) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  660) //	for a positive quotient digit 5 is rounded up, away from 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200  661) //	if the quotient is negative then digit 5 is rounded down, away from 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200  662) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  663) // Note that precision<0 is allowed as input.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  664) func (d Decimal) DivRound(d2 Decimal, precision int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  665) 	// QuoRem already checks initialization
+^921ab32 (evals 2026-10-22 10:53:53 +0200  666) 	q, r := d.QuoRem(d2, precision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  667) 	// the actual rounding decision is based on comparing r*10^precision and d2/2
+^921ab32 (evals 2026-10-22 10:53:53 +0200  668) 	// instead compare 2 r 10 ^precision and d2
+^921ab32 (evals 2026-10-22 10:53:53 +0200  669) 	var rv2 big.Int
+^921ab32 (evals 2026-10-22 10:53:53 +0200  670) 	rv2.Abs(r.getValue())
+^921ab32 (evals 2026-10-22 10:53:53 +0200  671) 	rv2.Lsh(&rv2, 1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  672) 	// now rv2 = abs(r.value) * 2
+^921ab32 (evals 2026-10-22 10:53:53 +0200  673) 	r2 := Decimal{value: &rv2, exp: r.exp + precision}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  674) 	// r2 is now 2 * r * 10 ^ precision
+^921ab32 (evals 2026-10-22 10:53:53 +0200  675) 	var c = r2.Cmp(d2.Abs())
+^921ab32 (evals 2026-10-22 10:53:53 +0200  676) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  677) 	if c < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  678) 		return q
+^921ab32 (evals 2026-10-22 10:53:53 +0200  679) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  680) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  681) 	if d.getValue().Sign()*d2.getValue().Sign() < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  682) 		return q.Sub(New(1, -precision))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  683) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  684) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  685) 	return q.Add(New(1, -precision))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  686) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  687) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  688) // Mod returns d % d2.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  689) func (d Decimal) Mod(d2 Decimal) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  690) 	_, r := d.QuoRem(d2, 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  691) 	return r
+^921ab32 (evals 2026-10-22 10:53:53 +0200  692) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  693) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  694) // Pow returns d to the power of d2.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  695) // When exponent is negative the returned decimal will have maximum precision of PowPrecisionNegativeExponent places after decimal point.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  696) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  697) // Pow returns 0 (zero-value of Decimal) instead of error for power operation edge cases, to handle those edge cases use PowWithPrecision
+^921ab32 (evals 2026-10-22 10:53:53 +0200  698) // Edge cases not handled by Pow:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  699) //   - 0 ** 0 => undefined value
+^921ab32 (evals 2026-10-22 10:53:53 +0200  700) //   - 0 ** y, where y < 0 => infinity
+^921ab32 (evals 2026-10-22 10:53:53 +0200  701) //   - x ** y, where x < 0 and y is non-integer decimal => imaginary value
+^921ab32 (evals 2026-10-22 10:53:53 +0200  702) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  703) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  704) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  705) //	d1 := decimal.NewFromFloat(4.0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  706) //	d2 := decimal.NewFromFloat(4.0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  707) //	res1 := d1.Pow(d2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  708) //	res1.String() // output: "256"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  709) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  710) //	d3 := decimal.NewFromFloat(5.0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  711) //	d4 := decimal.NewFromFloat(5.73)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  712) //	res2 := d3.Pow(d4)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  713) //	res2.String() // output: "10118.08037125"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  714) func (d Decimal) Pow(d2 Decimal) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  715) 	baseSign := d.Sign()
+^921ab32 (evals 2026-10-22 10:53:53 +0200  716) 	expSign := d2.Sign()
+^921ab32 (evals 2026-10-22 10:53:53 +0200  717) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  718) 	if baseSign == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  719) 		if expSign == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  720) 			return Decimal{}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  721) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  722) 		if expSign == 1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  723) 			return Decimal{zeroInt, 0}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  724) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  725) 		if expSign == -1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  726) 			return Decimal{}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  727) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  728) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  729) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  730) 	if expSign == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  731) 		return Decimal{oneInt, 0}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  732) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  733) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  734) 	// TODO: optimize extraction of fractional part
+^921ab32 (evals 2026-10-22 10:53:53 +0200  735) 	one := Decimal{oneInt, 0}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  736) 	expIntPart, expFracPart := d2.QuoRem(one, 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  737) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  738) 	if baseSign == -1 && !expFracPart.IsZero() {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  739) 		return Decimal{}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  740) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  741) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  742) 	intPartPow, _ := d.PowBigInt(expIntPart.getValue())
+^921ab32 (evals 2026-10-22 10:53:53 +0200  743) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  744) 	// if exponent is an integer we don't need to calculate d1**frac(d2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  745) 	if expFracPart.getValue().Sign() == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  746) 		return intPartPow
+^921ab32 (evals 2026-10-22 10:53:53 +0200  747) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  748) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  749) 	// TODO: optimize NumDigits for more performant precision adjustment
+^921ab32 (evals 2026-10-22 10:53:53 +0200  750) 	digitsBase := d.NumDigits()
+^921ab32 (evals 2026-10-22 10:53:53 +0200  751) 	digitsExponent := d2.NumDigits()
+^921ab32 (evals 2026-10-22 10:53:53 +0200  752) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  753) 	precision := digitsBase
+^921ab32 (evals 2026-10-22 10:53:53 +0200  754) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  755) 	if digitsExponent > precision {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  756) 		precision += digitsExponent
+^921ab32 (evals 2026-10-22 10:53:53 +0200  757) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  758) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  759) 	precision += 6
+^921ab32 (evals 2026-10-22 10:53:53 +0200  760) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  761) 	// Calculate x ** frac(y), where
+^921ab32 (evals 2026-10-22 10:53:53 +0200  762) 	// x ** frac(y) = exp(ln(x ** frac(y)) = exp(ln(x) * frac(y))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  763) 	fracPartPow, err := d.Abs().Ln(-d.exp + int32(precision))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  764) 	if err != nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  765) 		return Decimal{}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  766) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  767) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  768) 	fracPartPow = fracPartPow.Mul(expFracPart)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  769) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  770) 	fracPartPow, err = fracPartPow.ExpTaylor(-d.exp + int32(precision))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  771) 	if err != nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  772) 		return Decimal{}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  773) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  774) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  775) 	// Join integer and fractional part,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  776) 	// base ** (expBase + expFrac) = base ** expBase * base ** expFrac
+^921ab32 (evals 2026-10-22 10:53:53 +0200  777) 	res := intPartPow.Mul(fracPartPow)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  778) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  779) 	return res
+^921ab32 (evals 2026-10-22 10:53:53 +0200  780) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  781) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  782) // PowWithPrecision returns d to the power of d2.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  783) // Precision parameter specifies minimum precision of the result (digits after decimal point).
+^921ab32 (evals 2026-10-22 10:53:53 +0200  784) // Returned decimal is not rounded to 'precision' places after decimal point.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  785) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  786) // PowWithPrecision returns error when:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  787) //   - 0 ** 0 => undefined value
+^921ab32 (evals 2026-10-22 10:53:53 +0200  788) //   - 0 ** y, where y < 0 => infinity
+^921ab32 (evals 2026-10-22 10:53:53 +0200  789) //   - x ** y, where x < 0 and y is non-integer decimal => imaginary value
+^921ab32 (evals 2026-10-22 10:53:53 +0200  790) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  791) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  792) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  793) //	d1 := decimal.NewFromFloat(4.0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  794) //	d2 := decimal.NewFromFloat(4.0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  795) //	res1, err := d1.PowWithPrecision(d2, 2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  796) //	res1.String() // output: "256"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  797) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  798) //	d3 := decimal.NewFromFloat(5.0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  799) //	d4 := decimal.NewFromFloat(5.73)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  800) //	res2, err := d3.PowWithPrecision(d4, 5)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  801) //	res2.String() // output: "10118.080371595015625"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  802) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  803) //	d5 := decimal.NewFromFloat(-3.0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  804) //	d6 := decimal.NewFromFloat(-6.0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  805) //	res3, err := d5.PowWithPrecision(d6, 10)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  806) //	res3.String() // output: "0.0013717421"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  807) func (d Decimal) PowWithPrecision(d2 Decimal, precision int32) (Decimal, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  808) 	baseSign := d.Sign()
+^921ab32 (evals 2026-10-22 10:53:53 +0200  809) 	expSign := d2.Sign()
+^921ab32 (evals 2026-10-22 10:53:53 +0200  810) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  811) 	if baseSign == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  812) 		if expSign == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  813) 			return Decimal{}, fmt.Errorf("cannot represent undefined value of 0**0")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  814) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  815) 		if expSign == 1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  816) 			return Decimal{zeroInt, 0}, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200  817) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  818) 		if expSign == -1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  819) 			return Decimal{}, fmt.Errorf("cannot represent infinity value of 0 ** y, where y < 0")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  820) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  821) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  822) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  823) 	if expSign == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  824) 		return Decimal{oneInt, 0}, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200  825) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  826) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  827) 	// TODO: optimize extraction of fractional part
+^921ab32 (evals 2026-10-22 10:53:53 +0200  828) 	one := Decimal{oneInt, 0}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  829) 	expIntPart, expFracPart := d2.QuoRem(one, 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  830) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  831) 	if baseSign == -1 && !expFracPart.IsZero() {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  832) 		return Decimal{}, fmt.Errorf("cannot represent imaginary value of x ** y, where x < 0 and y is non-integer decimal")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  833) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  834) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  835) 	intPartPow, _ := d.powBigIntWithPrecision(expIntPart.getValue(), precision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  836) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  837) 	// if exponent is an integer we don't need to calculate d1**frac(d2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  838) 	if expFracPart.getValue().Sign() == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  839) 		return intPartPow, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200  840) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  841) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  842) 	// TODO: optimize NumDigits for more performant precision adjustment
+^921ab32 (evals 2026-10-22 10:53:53 +0200  843) 	digitsBase := d.NumDigits()
+^921ab32 (evals 2026-10-22 10:53:53 +0200  844) 	digitsExponent := d2.NumDigits()
+^921ab32 (evals 2026-10-22 10:53:53 +0200  845) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  846) 	if int32(digitsBase) > precision {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  847) 		precision = int32(digitsBase)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  848) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  849) 	if int32(digitsExponent) > precision {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  850) 		precision += int32(digitsExponent)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  851) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  852) 	// increase precision by 10 to compensate for errors in further calculations
+^921ab32 (evals 2026-10-22 10:53:53 +0200  853) 	precision += 10
+^921ab32 (evals 2026-10-22 10:53:53 +0200  854) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  855) 	// Calculate x ** frac(y), where
+^921ab32 (evals 2026-10-22 10:53:53 +0200  856) 	// x ** frac(y) = exp(ln(x ** frac(y)) = exp(ln(x) * frac(y))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  857) 	fracPartPow, err := d.Abs().Ln(precision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  858) 	if err != nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  859) 		return Decimal{}, err
+^921ab32 (evals 2026-10-22 10:53:53 +0200  860) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  861) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  862) 	fracPartPow = fracPartPow.Mul(expFracPart)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  863) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  864) 	fracPartPow, err = fracPartPow.ExpTaylor(precision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  865) 	if err != nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  866) 		return Decimal{}, err
+^921ab32 (evals 2026-10-22 10:53:53 +0200  867) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  868) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  869) 	// Join integer and fractional part,
+^921ab32 (evals 2026-10-22 10:53:53 +0200  870) 	// base ** (expBase + expFrac) = base ** expBase * base ** expFrac
+^921ab32 (evals 2026-10-22 10:53:53 +0200  871) 	res := intPartPow.Mul(fracPartPow)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  872) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  873) 	return res, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200  874) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  875) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  876) // PowInt32 returns d to the power of exp, where exp is int32.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  877) // Only returns error when d and exp is 0, thus result is undefined.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  878) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  879) // When exponent is negative the returned decimal will have maximum precision of PowPrecisionNegativeExponent places after decimal point.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  880) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  881) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  882) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  883) //	d1, err := decimal.NewFromFloat(4.0).PowInt32(4)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  884) //	d1.String() // output: "256"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  885) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  886) //	d2, err := decimal.NewFromFloat(3.13).PowInt32(5)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  887) //	d2.String() // output: "300.4150512793"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  888) func (d Decimal) PowInt32(exp int32) (Decimal, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  889) 	if d.IsZero() && exp == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  890) 		return Decimal{}, fmt.Errorf("cannot represent undefined value of 0**0")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  891) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  892) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  893) 	isExpNeg := exp < 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200  894) 	exp = abs(exp)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  895) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  896) 	n, result := d, New(1, 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  897) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  898) 	for exp > 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  899) 		if exp%2 == 1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  900) 			result = result.Mul(n)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  901) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  902) 		exp /= 2
+^921ab32 (evals 2026-10-22 10:53:53 +0200  903) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  904) 		if exp > 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  905) 			n = n.Mul(n)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  906) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  907) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  908) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  909) 	if isExpNeg {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  910) 		return New(1, 0).DivRound(result, int32(PowPrecisionNegativeExponent)), nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200  911) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  912) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  913) 	return result, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200  914) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  915) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  916) // PowBigInt returns d to the power of exp, where exp is big.Int.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  917) // Only returns error when d and exp is 0, thus result is undefined.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  918) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  919) // When exponent is negative the returned decimal will have maximum precision of PowPrecisionNegativeExponent places after decimal point.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  920) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  921) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  922) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  923) //	d1, err := decimal.NewFromFloat(3.0).PowBigInt(big.NewInt(3))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  924) //	d1.String() // output: "27"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  925) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  926) //	d2, err := decimal.NewFromFloat(629.25).PowBigInt(big.NewInt(5))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  927) //	d2.String() // output: "98654323103449.5673828125"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  928) func (d Decimal) PowBigInt(exp *big.Int) (Decimal, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  929) 	return d.powBigIntWithPrecision(exp, int32(PowPrecisionNegativeExponent))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  930) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  931) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  932) func (d Decimal) powBigIntWithPrecision(exp *big.Int, precision int32) (Decimal, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  933) 	if d.IsZero() && exp.Sign() == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  934) 		return Decimal{}, fmt.Errorf("cannot represent undefined value of 0**0")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  935) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  936) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  937) 	tmpExp := new(big.Int).Set(exp)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  938) 	isExpNeg := exp.Sign() < 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200  939) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  940) 	if isExpNeg {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  941) 		tmpExp.Abs(tmpExp)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  942) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  943) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  944) 	n, result := d, New(1, 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  945) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  946) 	for tmpExp.Sign() > 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  947) 		if tmpExp.Bit(0) == 1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  948) 			result = result.Mul(n)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  949) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  950) 		tmpExp.Rsh(tmpExp, 1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  951) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  952) 		if tmpExp.Sign() > 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  953) 			n = n.Mul(n)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  954) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  955) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  956) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  957) 	if isExpNeg {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  958) 		return New(1, 0).DivRound(result, precision), nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200  959) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  960) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  961) 	return result, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200  962) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200  963) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  964) // ExpHullAbrham calculates the natural exponent of decimal (e to the power of d) using Hull-Abraham algorithm.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  965) // OverallPrecision argument specifies the overall precision of the result (integer part + decimal part).
+^921ab32 (evals 2026-10-22 10:53:53 +0200  966) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  967) // ExpHullAbrham is faster than ExpTaylor for small precision values, but it is much slower for large precision values.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  968) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  969) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200  970) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200  971) //	NewFromFloat(26.1).ExpHullAbrham(2).String()    // output: "220000000000"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  972) //	NewFromFloat(26.1).ExpHullAbrham(20).String()   // output: "216314672147.05767284"
+^921ab32 (evals 2026-10-22 10:53:53 +0200  973) func (d Decimal) ExpHullAbrham(overallPrecision uint32) (Decimal, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  974) 	// Algorithm based on Variable precision exponential function.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  975) 	// ACM Transactions on Mathematical Software by T. E. Hull & A. Abrham.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  976) 	if d.IsZero() {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  977) 		return Decimal{oneInt, 0}, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200  978) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  979) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  980) 	currentPrecision := overallPrecision
+^921ab32 (evals 2026-10-22 10:53:53 +0200  981) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  982) 	// Algorithm does not work if currentPrecision * 23 < |x|.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  983) 	// Precision is automatically increased in such cases, so the value can be calculated precisely.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  984) 	// If newly calculated precision is higher than ExpMaxIterations the currentPrecision will not be changed.
+^921ab32 (evals 2026-10-22 10:53:53 +0200  985) 	f := d.Abs().InexactFloat64()
+^921ab32 (evals 2026-10-22 10:53:53 +0200  986) 	if ncp := f / 23; ncp > float64(currentPrecision) && ncp < float64(ExpMaxIterations) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  987) 		currentPrecision = uint32(math.Ceil(ncp))
+^921ab32 (evals 2026-10-22 10:53:53 +0200  988) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  989) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  990) 	// fail if abs(d) beyond an over/underflow threshold
+^921ab32 (evals 2026-10-22 10:53:53 +0200  991) 	overflowThreshold := New(23*int64(currentPrecision), 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  992) 	if d.Abs().Cmp(overflowThreshold) > 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  993) 		return Decimal{}, fmt.Errorf("over/underflow threshold, exp(x) cannot be calculated precisely")
+^921ab32 (evals 2026-10-22 10:53:53 +0200  994) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200  995) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200  996) 	// Return 1 if abs(d) small enough; this also avoids later over/underflow
+^921ab32 (evals 2026-10-22 10:53:53 +0200  997) 	overflowThreshold2 := New(9, -int32(currentPrecision)-1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200  998) 	if d.Abs().Cmp(overflowThreshold2) <= 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200  999) 		return Decimal{oneInt, d.exp}, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1000) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1001) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1002) 	// t is the smallest integer >= 0 such that the corresponding abs(d/k) < 1
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1003) 	t := d.exp + int32(d.NumDigits()) // Add d.NumDigits because the paper assumes that d.value [0.1, 1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1004) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1005) 	if t < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1006) 		t = 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1007) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1008) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1009) 	k := New(1, t)                                          // reduction factor
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1010) 	r := Decimal{new(big.Int).Set(d.getValue()), d.exp - t} // reduced argument
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1011) 	p := int32(currentPrecision) + t + 2                    // precision for calculating the sum
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1012) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1013) 	// Determine n, the number of therms for calculating sum
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1014) 	// use first Newton step (1.435p - 1.182) / log10(p/abs(r))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1015) 	// for solving appropriate equation, along with directed
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1016) 	// roundings and simple rational bound for log10(p/abs(r))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1017) 	rf := r.Abs().InexactFloat64()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1018) 	pf := float64(p)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1019) 	nf := math.Ceil((1.453*pf - 1.182) / math.Log10(pf/rf))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1020) 	if nf > float64(ExpMaxIterations) || math.IsNaN(nf) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1021) 		return Decimal{}, fmt.Errorf("exact value cannot be calculated in <=ExpMaxIterations iterations")
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1022) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1023) 	n := int64(nf)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1024) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1025) 	tmp := New(0, 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1026) 	sum := New(1, 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1027) 	one := New(1, 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1028) 	for i := n - 1; i > 0; i-- {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1029) 		tmp.value.SetInt64(i)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1030) 		sum = sum.Mul(r.DivRound(tmp, p))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1031) 		sum = sum.Add(one)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1032) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1033) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1034) 	ki := k.IntPart()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1035) 	res := New(1, 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1036) 	for i := ki; i > 0; i-- {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1037) 		res = res.Mul(sum)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1038) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1039) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1040) 	resNumDigits := int32(res.NumDigits())
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1041) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1042) 	var roundDigits int32
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1043) 	if resNumDigits > abs(res.exp) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1044) 		roundDigits = int32(currentPrecision) - resNumDigits - res.exp
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1045) 	} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1046) 		roundDigits = int32(currentPrecision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1047) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1048) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1049) 	res = res.Round(roundDigits)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1050) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1051) 	return res, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1052) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1053) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1054) // ExpTaylor calculates the natural exponent of decimal (e to the power of d) using Taylor series expansion.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1055) // Precision argument specifies how precise the result must be (number of digits after decimal point).
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1056) // Negative precision is allowed.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1057) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1058) // ExpTaylor is much faster for large precision values than ExpHullAbrham.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1059) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1060) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1061) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1062) //	d, err := NewFromFloat(26.1).ExpTaylor(2).String()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1063) //	d.String()  // output: "216314672147.06"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1064) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1065) //	NewFromFloat(26.1).ExpTaylor(20).String()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1066) //	d.String()  // output: "216314672147.05767284062928674083"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1067) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1068) //	NewFromFloat(26.1).ExpTaylor(-10).String()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1069) //	d.String()  // output: "220000000000"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1070) func (d Decimal) ExpTaylor(precision int32) (Decimal, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1071) 	// Note(mwoss): Implementation can be optimized by exclusively using big.Int API only
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1072) 	if d.IsZero() {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1073) 		return Decimal{oneInt, 0}.Round(precision), nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1074) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1075) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1076) 	var epsilon Decimal
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1077) 	var divPrecision int32
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1078) 	if precision < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1079) 		epsilon = New(1, -1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1080) 		divPrecision = 8
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1081) 	} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1082) 		epsilon = New(1, -precision-1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1083) 		divPrecision = precision + 1
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1084) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1085) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1086) 	decAbs := d.Abs()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1087) 	pow := d.Abs()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1088) 	factorial := New(1, 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1089) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1090) 	result := New(1, 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1091) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1092) 	for i := int64(1); ; {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1093) 		step := pow.DivRound(factorial, divPrecision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1094) 		result = result.Add(step)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1095) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1096) 		// Stop Taylor series when current step is smaller than epsilon
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1097) 		if step.Cmp(epsilon) < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1098) 			break
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1099) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1100) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1101) 		pow = pow.Mul(decAbs)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1102) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1103) 		i++
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1104) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1105) 		// Calculate next factorial number or retrieve cached value
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1106) 		if len(factorials) >= int(i) && !factorials[i-1].IsZero() {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1107) 			factorial = factorials[i-1]
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1108) 		} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1109) 			// To avoid any race conditions, firstly the zero value is appended to a slice to create
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1110) 			// a spot for newly calculated factorial. After that, the zero value is replaced by calculated
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1111) 			// factorial using the index notation.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1112) 			factorial = factorials[i-2].Mul(New(i, 0))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1113) 			factorials = append(factorials, Zero)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1114) 			factorials[i-1] = factorial
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1115) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1116) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1117) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1118) 	if d.Sign() < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1119) 		result = New(1, 0).DivRound(result, precision+1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1120) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1121) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1122) 	result = result.Round(precision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1123) 	return result, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1124) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1125) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1126) // Ln calculates natural logarithm of d.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1127) // Precision argument specifies how precise the result must be (number of digits after decimal point).
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1128) // Negative precision is allowed.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1129) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1130) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1131) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1132) //	d1, err := NewFromFloat(13.3).Ln(2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1133) //	d1.String()  // output: "2.59"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1134) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1135) //	d2, err := NewFromFloat(579.161).Ln(10)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1136) //	d2.String()  // output: "6.3615805046"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1137) func (d Decimal) Ln(precision int32) (Decimal, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1138) 	// Algorithm based on The Use of Iteration Methods for Approximating the Natural Logarithm,
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1139) 	// James F. Epperson, The American Mathematical Monthly, Vol. 96, No. 9, November 1989, pp. 831-835.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1140) 	if d.IsNegative() {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1141) 		return Decimal{}, fmt.Errorf("cannot calculate natural logarithm for negative decimals")
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1142) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1143) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1144) 	if d.IsZero() {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1145) 		return Decimal{}, fmt.Errorf("cannot represent natural logarithm of 0, result: -infinity")
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1146) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1147) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1148) 	calcPrecision := precision + 2
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1149) 	z := d.Copy()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1150) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1151) 	var comp1, comp3, comp2, comp4, reduceAdjust Decimal
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1152) 	comp1 = z.Sub(Decimal{oneInt, 0})
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1153) 	comp3 = Decimal{oneInt, -1}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1154) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1155) 	// for decimal in range [0.9, 1.1] where ln(d) is close to 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1156) 	usePowerSeries := false
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1157) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1158) 	if comp1.Abs().Cmp(comp3) <= 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1159) 		usePowerSeries = true
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1160) 	} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1161) 		// reduce input decimal to range [0.1, 1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1162) 		expDelta := int32(z.NumDigits()) + z.exp
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1163) 		z.exp -= expDelta
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1164) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1165) 		// Input decimal was reduced by factor of 10^expDelta, thus we will need to add
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1166) 		// ln(10^expDelta) = expDelta * ln(10)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1167) 		// to the result to compensate that
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1168) 		ln10 := ln10.withPrecision(calcPrecision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1169) 		reduceAdjust = NewFromInt32(expDelta)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1170) 		reduceAdjust = reduceAdjust.Mul(ln10)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1171) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1172) 		comp1 = z.Sub(Decimal{oneInt, 0})
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1173) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1174) 		if comp1.Abs().Cmp(comp3) <= 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1175) 			usePowerSeries = true
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1176) 		} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1177) 			// initial estimate using floats
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1178) 			zFloat := z.InexactFloat64()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1179) 			comp1 = NewFromFloat(math.Log(zFloat))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1180) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1181) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1182) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1183) 	epsilon := Decimal{oneInt, -calcPrecision}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1184) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1185) 	if usePowerSeries {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1186) 		// Power Series - https://en.wikipedia.org/wiki/Logarithm#Power_series
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1187) 		// Calculating n-th term of formula: ln(z+1) = 2 sum [ 1 / (2n+1) * (z / (z+2))^(2n+1) ]
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1188) 		// until the difference between current and next term is smaller than epsilon.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1189) 		// Coverage quite fast for decimals close to 1.0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1190) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1191) 		// z + 2
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1192) 		comp2 = comp1.Add(Decimal{twoInt, 0})
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1193) 		// z / (z + 2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1194) 		comp3 = comp1.DivRound(comp2, calcPrecision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1195) 		// 2 * (z / (z + 2))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1196) 		comp1 = comp3.Add(comp3)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1197) 		comp2 = comp1.Copy()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1198) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1199) 		for n := 1; ; n++ {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1200) 			// 2 * (z / (z+2))^(2n+1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1201) 			comp2 = comp2.Mul(comp3).Mul(comp3)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1202) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1203) 			// 1 / (2n+1) * 2 * (z / (z+2))^(2n+1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1204) 			comp4 = NewFromInt(int64(2*n + 1))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1205) 			comp4 = comp2.DivRound(comp4, calcPrecision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1206) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1207) 			// comp1 = 2 sum [ 1 / (2n+1) * (z / (z+2))^(2n+1) ]
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1208) 			comp1 = comp1.Add(comp4)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1209) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1210) 			if comp4.Abs().Cmp(epsilon) <= 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1211) 				break
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1212) 			}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1213) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1214) 	} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1215) 		// Halley's Iteration.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1216) 		// Calculating n-th term of formula: a_(n+1) = a_n - 2 * (exp(a_n) - z) / (exp(a_n) + z),
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1217) 		// until the difference between current and next term is smaller than epsilon
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1218) 		var prevStep Decimal
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1219) 		maxIters := calcPrecision*2 + 10
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1220) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1221) 		for i := int32(0); i < maxIters; i++ {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1222) 			// exp(a_n)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1223) 			comp3, _ = comp1.ExpTaylor(calcPrecision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1224) 			// exp(a_n) - z
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1225) 			comp2 = comp3.Sub(z)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1226) 			// 2 * (exp(a_n) - z)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1227) 			comp2 = comp2.Add(comp2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1228) 			// exp(a_n) + z
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1229) 			comp4 = comp3.Add(z)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1230) 			// 2 * (exp(a_n) - z) / (exp(a_n) + z)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1231) 			comp3 = comp2.DivRound(comp4, calcPrecision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1232) 			// comp1 = a_(n+1) = a_n - 2 * (exp(a_n) - z) / (exp(a_n) + z)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1233) 			comp1 = comp1.Sub(comp3)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1234) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1235) 			if prevStep.Add(comp3).IsZero() {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1236) 				// If iteration steps oscillate we should return early and prevent an infinity loop
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1237) 				// NOTE(mwoss): This should be quite a rare case, returning error is not necessary
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1238) 				break
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1239) 			}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1240) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1241) 			if comp3.Abs().Cmp(epsilon) <= 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1242) 				break
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1243) 			}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1244) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1245) 			prevStep = comp3
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1246) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1247) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1248) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1249) 	comp1 = comp1.Add(reduceAdjust)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1250) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1251) 	return comp1.Round(precision), nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1252) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1253) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1254) // NumDigits returns the number of digits of the decimal coefficient (d.Value)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1255) func (d Decimal) NumDigits() int {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1256) 	v := d.getValue()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1257) 	if v.IsInt64() {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1258) 		i64 := v.Int64()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1259) 		// restrict fast path to integers with exact conversion to float64
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1260) 		if i64 <= (1<<53) && i64 >= -(1<<53) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1261) 			if i64 == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1262) 				return 1
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1263) 			}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1264) 			return int(math.Log10(math.Abs(float64(i64)))) + 1
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1265) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1266) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1267) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1268) 	estimatedNumDigits := int(float64(v.BitLen()) / math.Log2(10))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1269) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1270) 	// estimatedNumDigits (lg10) may be off by 1, need to verify
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1271) 	digitsBigInt := big.NewInt(int64(estimatedNumDigits))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1272) 	errorCorrectionUnit := digitsBigInt.Exp(tenInt, digitsBigInt, nil)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1273) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1274) 	if v.CmpAbs(errorCorrectionUnit) >= 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1275) 		return estimatedNumDigits + 1
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1276) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1277) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1278) 	return estimatedNumDigits
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1279) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1280) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1281) // IsInteger returns true when decimal can be represented as an integer value, otherwise, it returns false.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1282) func (d Decimal) IsInteger() bool {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1283) 	// The most typical case, all decimal with exponent higher or equal 0 can be represented as integer
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1284) 	if d.exp >= 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1285) 		return true
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1286) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1287) 	// When the exponent is negative we have to check every number after the decimal place
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1288) 	// If all of them are zeroes, we are sure that given decimal can be represented as an integer
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1289) 	var r big.Int
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1290) 	q := new(big.Int).Set(d.getValue())
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1291) 	for z := abs(d.exp); z > 0; z-- {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1292) 		q.QuoRem(q, tenInt, &r)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1293) 		if r.Cmp(zeroInt) != 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1294) 			return false
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1295) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1296) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1297) 	return true
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1298) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1299) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1300) // Abs calculates absolute value of any int32. Used for calculating absolute value of decimal's exponent.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1301) func abs(n int32) int32 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1302) 	if n < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1303) 		return -n
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1304) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1305) 	return n
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1306) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1307) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1308) // Cmp compares the numbers represented by d and d2 and returns:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1309) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1310) //	-1 if d <  d2
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1311) //	 0 if d == d2
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1312) //	+1 if d >  d2
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1313) func (d Decimal) Cmp(d2 Decimal) int {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1314) 	if d.exp == d2.exp {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1315) 		return d.getValue().Cmp(d2.getValue())
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1316) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1317) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1318) 	rd, rd2 := RescalePair(d, d2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1319) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1320) 	return rd.getValue().Cmp(rd2.getValue())
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1321) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1322) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1323) // Compare compares the numbers represented by d and d2 and returns:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1324) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1325) //	-1 if d <  d2
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1326) //	 0 if d == d2
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1327) //	+1 if d >  d2
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1328) func (d Decimal) Compare(d2 Decimal) int {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1329) 	return d.Cmp(d2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1330) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1331) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1332) // Equal returns whether the numbers represented by d and d2 are equal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1333) func (d Decimal) Equal(d2 Decimal) bool {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1334) 	return d.Cmp(d2) == 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1335) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1336) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1337) // Deprecated: Equals is deprecated, please use Equal method instead.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1338) func (d Decimal) Equals(d2 Decimal) bool {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1339) 	return d.Equal(d2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1340) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1341) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1342) // GreaterThan (GT) returns true when d is greater than d2.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1343) func (d Decimal) GreaterThan(d2 Decimal) bool {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1344) 	return d.Cmp(d2) == 1
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1345) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1346) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1347) // GreaterThanOrEqual (GTE) returns true when d is greater than or equal to d2.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1348) func (d Decimal) GreaterThanOrEqual(d2 Decimal) bool {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1349) 	cmp := d.Cmp(d2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1350) 	return cmp == 1 || cmp == 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1351) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1352) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1353) // LessThan (LT) returns true when d is less than d2.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1354) func (d Decimal) LessThan(d2 Decimal) bool {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1355) 	return d.Cmp(d2) == -1
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1356) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1357) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1358) // LessThanOrEqual (LTE) returns true when d is less than or equal to d2.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1359) func (d Decimal) LessThanOrEqual(d2 Decimal) bool {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1360) 	cmp := d.Cmp(d2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1361) 	return cmp == -1 || cmp == 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1362) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1363) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1364) // Sign returns:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1365) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1366) //	-1 if d <  0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1367) //	 0 if d == 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1368) //	+1 if d >  0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1369) func (d Decimal) Sign() int {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1370) 	return d.getValue().Sign()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1371) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1372) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1373) // IsPositive return
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1374) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1375) //	true if d > 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1376) //	false if d == 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1377) //	false if d < 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1378) func (d Decimal) IsPositive() bool {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1379) 	return d.Sign() == 1
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1380) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1381) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1382) // IsNegative return
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1383) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1384) //	true if d < 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1385) //	false if d == 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1386) //	false if d > 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1387) func (d Decimal) IsNegative() bool {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1388) 	return d.Sign() == -1
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1389) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1390) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1391) // IsZero return
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1392) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1393) //	true if d == 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1394) //	false if d > 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1395) //	false if d < 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1396) func (d Decimal) IsZero() bool {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1397) 	return d.Sign() == 0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1398) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1399) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1400) // Exponent returns the exponent, or scale component of the decimal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1401) func (d Decimal) Exponent() int32 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1402) 	return d.exp
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1403) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1404) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1405) // Coefficient returns the coefficient of the decimal. It is scaled by 10^Exponent()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1406) func (d Decimal) Coefficient() *big.Int {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1407) 	// we copy the coefficient so that mutating the result does not mutate the Decimal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1408) 	return new(big.Int).Set(d.getValue())
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1409) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1410) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1411) // CoefficientInt64 returns the coefficient of the decimal as int64. It is scaled by 10^Exponent()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1412) // If coefficient cannot be represented in an int64, the result will be undefined.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1413) func (d Decimal) CoefficientInt64() int64 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1414) 	return d.getValue().Int64()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1415) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1416) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1417) // IntPart returns the integer component of the decimal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1418) func (d Decimal) IntPart() int64 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1419) 	scaledD := d.rescale(0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1420) 	return scaledD.getValue().Int64()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1421) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1422) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1423) // BigInt returns integer component of the decimal as a BigInt.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1424) func (d Decimal) BigInt() *big.Int {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1425) 	scaledD := d.rescale(0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1426) 	return scaledD.getValue()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1427) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1428) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1429) // BigFloat returns decimal as BigFloat.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1430) // Be aware that casting decimal to BigFloat might cause a loss of precision.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1431) func (d Decimal) BigFloat() *big.Float {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1432) 	f := &big.Float{}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1433) 	f.SetString(d.String())
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1434) 	return f
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1435) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1436) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1437) // Rat returns a rational number representation of the decimal.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1438) func (d Decimal) Rat() *big.Rat {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1439) 	if d.exp <= 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1440) 		// NOTE(vadim): must negate after casting to prevent int32 overflow
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1441) 		denom := new(big.Int).Exp(tenInt, big.NewInt(-int64(d.exp)), nil)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1442) 		return new(big.Rat).SetFrac(d.getValue(), denom)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1443) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1444) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1445) 	mul := new(big.Int).Exp(tenInt, big.NewInt(int64(d.exp)), nil)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1446) 	num := new(big.Int).Mul(d.getValue(), mul)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1447) 	return new(big.Rat).SetFrac(num, oneInt)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1448) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1449) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1450) // Float64 returns the nearest float64 value for d and a bool indicating
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1451) // whether f represents d exactly.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1452) // For more details, see the documentation for big.Rat.Float64
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1453) func (d Decimal) Float64() (f float64, exact bool) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1454) 	return d.Rat().Float64()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1455) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1456) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1457) // InexactFloat64 returns the nearest float64 value for d.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1458) // It doesn't indicate if the returned value represents d exactly.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1459) func (d Decimal) InexactFloat64() float64 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1460) 	f, _ := d.Float64()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1461) 	return f
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1462) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1463) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1464) // String returns the string representation of the decimal
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1465) // with the fixed point.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1466) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1467) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1468) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1469) //	d := New(-12345, -3)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1470) //	println(d.String())
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1471) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1472) // Output:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1473) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1474) //	-12.345
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1475) func (d Decimal) String() string {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1476) 	return d.string(TrimTrailingZeros, UseScientificNotation)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1477) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1478) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1479) // StringFixed returns a rounded fixed-point string with places digits after
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1480) // the decimal point.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1481) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1482) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1483) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1484) //	NewFromFloat(0).StringFixed(2) // output: "0.00"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1485) //	NewFromFloat(0).StringFixed(0) // output: "0"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1486) //	NewFromFloat(5.45).StringFixed(0) // output: "5"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1487) //	NewFromFloat(5.45).StringFixed(1) // output: "5.5"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1488) //	NewFromFloat(5.45).StringFixed(2) // output: "5.45"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1489) //	NewFromFloat(5.45).StringFixed(3) // output: "5.450"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1490) //	NewFromFloat(545).StringFixed(-1) // output: "540"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1491) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1492) // Regardless of the UseScientificNotation option, the returned string will never be in scientific notation.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1493) func (d Decimal) StringFixed(places int32) string {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1494) 	rounded := d.Round(places)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1495) 	return rounded.string(false, false)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1496) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1497) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1498) // StringFixedBank returns a banker rounded fixed-point string with places digits
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1499) // after the decimal point.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1500) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1501) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1502) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1503) //	NewFromFloat(0).StringFixedBank(2) // output: "0.00"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1504) //	NewFromFloat(0).StringFixedBank(0) // output: "0"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1505) //	NewFromFloat(5.45).StringFixedBank(0) // output: "5"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1506) //	NewFromFloat(5.45).StringFixedBank(1) // output: "5.4"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1507) //	NewFromFloat(5.45).StringFixedBank(2) // output: "5.45"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1508) //	NewFromFloat(5.45).StringFixedBank(3) // output: "5.450"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1509) //	NewFromFloat(545).StringFixedBank(-1) // output: "540"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1510) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1511) // Regardless of the UseScientificNotation option, the returned string will never be in scientific notation.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1512) func (d Decimal) StringFixedBank(places int32) string {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1513) 	rounded := d.RoundBank(places)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1514) 	return rounded.string(false, false)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1515) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1516) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1517) // StringFixedCash returns a Swedish/Cash rounded fixed-point string. For
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1518) // more details see the documentation at function RoundCash.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1519) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1520) // Regardless of the UseScientificNotation option, the returned string will never be in scientific notation.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1521) func (d Decimal) StringFixedCash(interval uint8) string {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1522) 	rounded := d.RoundCash(interval)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1523) 	return rounded.string(false, false)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1524) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1525) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1526) // Round rounds the decimal to places decimal places.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1527) // If places < 0, it will round the integer part to the nearest 10^(-places).
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1528) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1529) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1530) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1531) //	NewFromFloat(5.45).Round(1).String() // output: "5.5"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1532) //	NewFromFloat(545).Round(-1).String() // output: "550" (with UseScientificNotation false, "5.5E2" if true)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1533) func (d Decimal) Round(places int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1534) 	if d.exp == -places {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1535) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1536) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1537) 	// truncate to places + 1
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1538) 	ret := d.rescale(-places - 1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1539) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1540) 	// add sign(d) * 0.5
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1541) 	if ret.value.Sign() < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1542) 		ret.value.Sub(ret.value, fiveInt)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1543) 	} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1544) 		ret.value.Add(ret.value, fiveInt)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1545) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1546) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1547) 	// floor for positive numbers, ceil for negative numbers
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1548) 	_, m := ret.value.DivMod(ret.value, tenInt, new(big.Int))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1549) 	ret.exp++
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1550) 	if ret.value.Sign() < 0 && m.Cmp(zeroInt) != 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1551) 		ret.value.Add(ret.value, oneInt)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1552) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1553) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1554) 	return ret
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1555) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1556) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1557) // RoundCeil rounds the decimal towards +infinity.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1558) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1559) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1560) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1561) //	NewFromFloat(545).RoundCeil(-2).String()   // output: "600"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1562) //	NewFromFloat(500).RoundCeil(-2).String()   // output: "500"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1563) //	NewFromFloat(1.1001).RoundCeil(2).String() // output: "1.11"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1564) //	NewFromFloat(-1.454).RoundCeil(1).String() // output: "-1.4"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1565) func (d Decimal) RoundCeil(places int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1566) 	if d.exp >= -places {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1567) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1568) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1569) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1570) 	rescaled := d.rescale(-places)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1571) 	if d.Equal(rescaled) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1572) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1573) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1574) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1575) 	if d.getValue().Sign() > 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1576) 		rescaled.value = new(big.Int).Add(rescaled.getValue(), oneInt)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1577) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1578) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1579) 	return rescaled
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1580) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1581) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1582) // RoundFloor rounds the decimal towards -infinity.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1583) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1584) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1585) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1586) //	NewFromFloat(545).RoundFloor(-2).String()   // output: "500"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1587) //	NewFromFloat(-500).RoundFloor(-2).String()   // output: "-500"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1588) //	NewFromFloat(1.1001).RoundFloor(2).String() // output: "1.1"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1589) //	NewFromFloat(-1.454).RoundFloor(1).String() // output: "-1.5"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1590) func (d Decimal) RoundFloor(places int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1591) 	if d.exp >= -places {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1592) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1593) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1594) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1595) 	rescaled := d.rescale(-places)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1596) 	if d.Equal(rescaled) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1597) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1598) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1599) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1600) 	if d.getValue().Sign() < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1601) 		rescaled.value = new(big.Int).Sub(rescaled.getValue(), oneInt)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1602) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1603) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1604) 	return rescaled
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1605) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1606) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1607) // RoundUp rounds the decimal away from zero.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1608) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1609) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1610) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1611) //	NewFromFloat(545).RoundUp(-2).String()   // output: "600"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1612) //	NewFromFloat(500).RoundUp(-2).String()   // output: "500"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1613) //	NewFromFloat(1.1001).RoundUp(2).String() // output: "1.11"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1614) //	NewFromFloat(-1.454).RoundUp(1).String() // output: "-1.5"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1615) func (d Decimal) RoundUp(places int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1616) 	if d.exp >= -places {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1617) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1618) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1619) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1620) 	rescaled := d.rescale(-places)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1621) 	if d.Equal(rescaled) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1622) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1623) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1624) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1625) 	if d.getValue().Sign() > 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1626) 		rescaled.value = new(big.Int).Add(rescaled.getValue(), oneInt)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1627) 	} else if d.getValue().Sign() < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1628) 		rescaled.value = new(big.Int).Sub(rescaled.getValue(), oneInt)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1629) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1630) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1631) 	return rescaled
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1632) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1633) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1634) // RoundDown rounds the decimal towards zero.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1635) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1636) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1637) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1638) //	NewFromFloat(545).RoundDown(-2).String()   // output: "500"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1639) //	NewFromFloat(-500).RoundDown(-2).String()   // output: "-500"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1640) //	NewFromFloat(1.1001).RoundDown(2).String() // output: "1.1"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1641) //	NewFromFloat(-1.454).RoundDown(1).String() // output: "-1.4"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1642) func (d Decimal) RoundDown(places int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1643) 	if d.exp >= -places {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1644) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1645) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1646) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1647) 	rescaled := d.rescale(-places)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1648) 	if d.Equal(rescaled) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1649) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1650) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1651) 	return rescaled
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1652) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1653) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1654) // RoundBank rounds the decimal to places decimal places.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1655) // If the final digit to round is equidistant from the nearest two integers the
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1656) // rounded value is taken as the even number
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1657) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1658) // If places < 0, it will round the integer part to the nearest 10^(-places).
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1659) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1660) // Examples:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1661) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1662) //	NewFromFloat(5.45).RoundBank(1).String() // output: "5.4"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1663) //	NewFromFloat(545).RoundBank(-1).String() // output: "540"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1664) //	NewFromFloat(5.46).RoundBank(1).String() // output: "5.5"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1665) //	NewFromFloat(546).RoundBank(-1).String() // output: "550"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1666) //	NewFromFloat(5.55).RoundBank(1).String() // output: "5.6"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1667) //	NewFromFloat(555).RoundBank(-1).String() // output: "560"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1668) func (d Decimal) RoundBank(places int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1669) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1670) 	round := d.Round(places)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1671) 	remainder := d.Sub(round).Abs()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1672) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1673) 	half := New(5, -places-1)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1674) 	if remainder.Cmp(half) == 0 && round.getValue().Bit(0) != 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1675) 		if round.getValue().Sign() < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1676) 			round.value = new(big.Int).Add(round.getValue(), oneInt)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1677) 		} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1678) 			round.value = new(big.Int).Sub(round.getValue(), oneInt)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1679) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1680) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1681) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1682) 	return round
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1683) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1684) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1685) // RoundCash aka Cash/Penny/öre rounding rounds decimal to a specific
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1686) // interval. The amount payable for a cash transaction is rounded to the nearest
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1687) // multiple of the minimum currency unit available. The following intervals are
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1688) // available: 5, 10, 25, 50 and 100; any other number throws a panic.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1689) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1690) //	  5:   5 cent rounding 3.43 => 3.45
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1691) //	 10:  10 cent rounding 3.45 => 3.50 (5 gets rounded up)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1692) //	 25:  25 cent rounding 3.41 => 3.50
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1693) //	 50:  50 cent rounding 3.75 => 4.00
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1694) //	100: 100 cent rounding 3.50 => 4.00
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1695) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1696) // For more details: https://en.wikipedia.org/wiki/Cash_rounding
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1697) func (d Decimal) RoundCash(interval uint8) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1698) 	var iVal *big.Int
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1699) 	switch interval {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1700) 	case 5:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1701) 		iVal = twentyInt
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1702) 	case 10:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1703) 		iVal = tenInt
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1704) 	case 25:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1705) 		iVal = fourInt
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1706) 	case 50:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1707) 		iVal = twoInt
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1708) 	case 100:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1709) 		iVal = oneInt
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1710) 	default:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1711) 		panic(fmt.Sprintf("Decimal does not support this Cash rounding interval `%d`. Supported: 5, 10, 25, 50, 100", interval))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1712) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1713) 	dVal := Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1714) 		value: iVal,
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1715) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1716) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1717) 	// TODO: optimize those calculations to reduce the high allocations (~29 allocs).
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1718) 	return d.Mul(dVal).Round(0).Div(dVal).Truncate(2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1719) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1720) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1721) // Floor returns the nearest integer value less than or equal to d.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1722) func (d Decimal) Floor() Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1723) 	if d.exp >= 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1724) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1725) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1726) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1727) 	exp := big.NewInt(10)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1728) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1729) 	// NOTE(vadim): must negate after casting to prevent int32 overflow
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1730) 	exp.Exp(exp, big.NewInt(-int64(d.exp)), nil)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1731) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1732) 	z := new(big.Int).Div(d.getValue(), exp)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1733) 	return Decimal{value: z, exp: 0}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1734) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1735) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1736) // Ceil returns the nearest integer value greater than or equal to d.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1737) func (d Decimal) Ceil() Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1738) 	if d.exp >= 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1739) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1740) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1741) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1742) 	exp := big.NewInt(10)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1743) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1744) 	// NOTE(vadim): must negate after casting to prevent int32 overflow
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1745) 	exp.Exp(exp, big.NewInt(-int64(d.exp)), nil)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1746) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1747) 	z, m := new(big.Int).DivMod(d.getValue(), exp, new(big.Int))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1748) 	if m.Cmp(zeroInt) != 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1749) 		z.Add(z, oneInt)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1750) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1751) 	return Decimal{value: z, exp: 0}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1752) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1753) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1754) // Truncate truncates off digits from the number, without rounding.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1755) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1756) // NOTE: precision is the last digit that will not be truncated (must be >= 0).
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1757) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1758) // Example:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1759) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1760) //	decimal.NewFromString("123.456").Truncate(2).String() // "123.45"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1761) func (d Decimal) Truncate(precision int32) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1762) 	if precision >= 0 && -precision > d.exp {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1763) 		return d.rescale(-precision)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1764) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1765) 	return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1766) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1767) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1768) // UnmarshalJSON implements the json.Unmarshaler interface.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1769) func (d *Decimal) UnmarshalJSON(decimalBytes []byte) error {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1770) 	if string(decimalBytes) == "null" {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1771) 		return nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1772) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1773) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1774) 	decimal, err := NewFromString(unquoteIfQuoted(string(decimalBytes)))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1775) 	*d = decimal
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1776) 	if err != nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1777) 		return fmt.Errorf("error decoding string '%s': %s", string(decimalBytes), err)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1778) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1779) 	return nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1780) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1781) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1782) // MarshalJSON implements the json.Marshaler interface.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1783) func (d Decimal) MarshalJSON() ([]byte, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1784) 	var str string
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1785) 	if MarshalJSONWithoutQuotes {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1786) 		str = d.String()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1787) 	} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1788) 		str = "\"" + d.String() + "\""
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1789) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1790) 	return []byte(str), nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1791) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1792) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1793) // UnmarshalBinary implements the encoding.BinaryUnmarshaler interface. As a string representation
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1794) // is already used when encoding to text, this method stores that string as []byte
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1795) func (d *Decimal) UnmarshalBinary(data []byte) error {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1796) 	// Verify we have at least 4 bytes for the exponent. The GOB encoded value
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1797) 	// may be empty.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1798) 	if len(data) < 4 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1799) 		return fmt.Errorf("error decoding binary %v: expected at least 4 bytes, got %d", data, len(data))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1800) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1801) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1802) 	// Extract the exponent
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1803) 	d.exp = int32(binary.BigEndian.Uint32(data[:4]))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1804) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1805) 	// Extract the value
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1806) 	d.value = new(big.Int)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1807) 	if err := d.value.GobDecode(data[4:]); err != nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1808) 		return fmt.Errorf("error decoding binary %v: %s", data, err)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1809) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1810) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1811) 	return nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1812) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1813) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1814) // MarshalBinary implements the encoding.BinaryMarshaler interface.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1815) func (d Decimal) MarshalBinary() (data []byte, err error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1816) 	// exp is written first, but encode value first to know output size
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1817) 	var valueData []byte
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1818) 	if valueData, err = d.getValue().GobEncode(); err != nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1819) 		return nil, err
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1820) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1821) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1822) 	// Write the exponent in front, since it's a fixed size
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1823) 	expData := make([]byte, 4, len(valueData)+4)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1824) 	binary.BigEndian.PutUint32(expData, uint32(d.exp))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1825) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1826) 	// Return the byte array
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1827) 	return append(expData, valueData...), nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1828) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1829) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1830) // Scan implements the sql.Scanner interface for database deserialization.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1831) func (d *Decimal) Scan(value interface{}) error {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1832) 	// first try to see if the data is stored in database as a Numeric datatype
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1833) 	switch v := value.(type) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1834) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1835) 	case float32:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1836) 		*d = NewFromFloat(float64(v))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1837) 		return nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1838) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1839) 	case float64:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1840) 		// numeric in sqlite3 sends us float64
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1841) 		*d = NewFromFloat(v)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1842) 		return nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1843) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1844) 	case int64:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1845) 		// at least in sqlite3 when the value is 0 in db, the data is sent
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1846) 		// to us as an int64 instead of a float64 ...
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1847) 		*d = New(v, 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1848) 		return nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1849) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1850) 	case uint64:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1851) 		// while clickhouse may send 0 in db as uint64
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1852) 		*d = NewFromUint64(v)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1853) 		return nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1854) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1855) 	case string:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1856) 		var err error
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1857) 		*d, err = NewFromString(unquoteIfQuoted(v))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1858) 		return err
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1859) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1860) 	case []byte:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1861) 		var err error
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1862) 		*d, err = NewFromString(unquoteIfQuoted(string(v)))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1863) 		return err
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1864) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1865) 	default:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1866) 		return fmt.Errorf("could not convert value '%+v' to any known type", value)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1867) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1868) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1869) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1870) // Value implements the driver.Valuer interface for database serialization.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1871) func (d Decimal) Value() (driver.Value, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1872) 	return d.String(), nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1873) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1874) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1875) // UnmarshalText implements the encoding.TextUnmarshaler interface for XML
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1876) // deserialization.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1877) func (d *Decimal) UnmarshalText(text []byte) error {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1878) 	str := string(text)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1879) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1880) 	dec, err := NewFromString(str)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1881) 	*d = dec
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1882) 	if err != nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1883) 		return fmt.Errorf("error decoding string '%s': %s", str, err)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1884) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1885) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1886) 	return nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1887) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1888) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1889) // MarshalText implements the encoding.TextMarshaler interface for XML
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1890) // serialization.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1891) func (d Decimal) MarshalText() (text []byte, err error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1892) 	return []byte(d.String()), nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1893) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1894) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1895) // GobEncode implements the gob.GobEncoder interface for gob serialization.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1896) func (d Decimal) GobEncode() ([]byte, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1897) 	return d.MarshalBinary()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1898) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1899) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1900) // GobDecode implements the gob.GobDecoder interface for gob serialization.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1901) func (d *Decimal) GobDecode(data []byte) error {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1902) 	return d.UnmarshalBinary(data)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1903) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1904) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1905) // DecodeSpanner decodes a Spanner value into a Decimal
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1906) func (d *Decimal) DecodeSpanner(val interface{}) error {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1907) 	return d.Scan(val)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1908) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1909) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1910) // EncodeSpanner encodes a Decimal into a Spanner value
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1911) func (d Decimal) EncodeSpanner() (interface{}, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1912) 	return d.String(), nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1913) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1914) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1915) // StringScaled first scales the decimal then calls .String() on it.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1916) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1917) // Deprecated: buggy and unintuitive. Use StringFixed instead.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1918) func (d Decimal) StringScaled(exp int32) string {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1919) 	return d.rescale(exp).String()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1920) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1921) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1922) func (d Decimal) string(trimTrailingZeros, useScientificNotation bool) string {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1923) 	if d.exp == 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1924) 		return d.rescale(0).getValue().String()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1925) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1926) 	if d.exp >= 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1927) 		if useScientificNotation {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1928) 			return d.ScientificNotationString()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1929) 		} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1930) 			return d.rescale(0).value.String()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1931) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1932) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1933) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1934) 	abs := new(big.Int).Abs(d.getValue())
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1935) 	str := abs.String()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1936) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1937) 	var intPart, fractionalPart string
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1938) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1939) 	// NOTE(vadim): this cast to int will cause bugs if d.exp == INT_MIN
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1940) 	// and you are on a 32-bit machine. Won't fix this super-edge case.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1941) 	dExpInt := int(d.exp)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1942) 	if len(str) > -dExpInt {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1943) 		intPart = str[:len(str)+dExpInt]
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1944) 		fractionalPart = str[len(str)+dExpInt:]
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1945) 	} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1946) 		intPart = "0"
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1947) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1948) 		num0s := -dExpInt - len(str)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1949) 		fractionalPart = strings.Repeat("0", num0s) + str
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1950) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1951) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1952) 	if trimTrailingZeros {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1953) 		i := len(fractionalPart) - 1
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1954) 		for ; i >= 0; i-- {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1955) 			if fractionalPart[i] != '0' {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1956) 				break
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1957) 			}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1958) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1959) 		fractionalPart = fractionalPart[:i+1]
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1960) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1961) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1962) 	number := intPart
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1963) 	if len(fractionalPart) > 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1964) 		number += "." + fractionalPart
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1965) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1966) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1967) 	if d.getValue().Sign() < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1968) 		return "-" + number
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1969) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1970) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1971) 	return number
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1972) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1973) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1974) // ScientificNotationString serializes the decimal into standard scientific notation.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1975) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1976) // The notation is normalized to have one non-zero digit followed by a decimal point and
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1977) // the remaining significant digits followed by "E" and the base-10 exponent.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1978) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1979) // A zero, which has no significant digits, is simply serialized to "0".
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1980) func (d Decimal) ScientificNotationString() string {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1981) 	exp := int(d.exp)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1982) 	intStr := new(big.Int).Abs(d.getValue()).String()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1983) 	if intStr == "0" {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1984) 		return intStr
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1985) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1986) 	first := intStr[0]
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1987) 	var remaining string
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1988) 	if len(intStr) > 1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1989) 		remaining = "." + intStr[1:]
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1990) 		exp = exp + len(intStr) - 1
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1991) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1992) 	number := string(first) + remaining + "E" + strconv.Itoa(exp)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1993) 	if d.value.Sign() < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1994) 		return "-" + number
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1995) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1996) 	return number
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1997) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1998) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 1999) // Min returns the smallest Decimal that was passed in the arguments.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2000) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2001) // To call this function with an array, you must do:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2002) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2003) //	Min(arr[0], arr[1:]...)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2004) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2005) // This makes it harder to accidentally call Min with 0 arguments.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2006) func Min(first Decimal, rest ...Decimal) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2007) 	ans := first
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2008) 	for _, item := range rest {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2009) 		if item.Cmp(ans) < 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2010) 			ans = item
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2011) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2012) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2013) 	return ans
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2014) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2015) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2016) // Max returns the largest Decimal that was passed in the arguments.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2017) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2018) // To call this function with an array, you must do:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2019) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2020) //	Max(arr[0], arr[1:]...)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2021) //
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2022) // This makes it harder to accidentally call Max with 0 arguments.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2023) func Max(first Decimal, rest ...Decimal) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2024) 	ans := first
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2025) 	for _, item := range rest {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2026) 		if item.Cmp(ans) > 0 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2027) 			ans = item
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2028) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2029) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2030) 	return ans
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2031) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2032) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2033) // Sum returns the combined total of the provided first and rest Decimals
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2034) func Sum(first Decimal, rest ...Decimal) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2035) 	total := first
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2036) 	for _, item := range rest {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2037) 		total = total.Add(item)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2038) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2039) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2040) 	return total
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2041) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2042) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2043) // Avg returns the average value of the provided first and rest Decimals
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2044) func Avg(first Decimal, rest ...Decimal) Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2045) 	count := New(int64(len(rest)+1), 0)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2046) 	sum := Sum(first, rest...)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2047) 	return sum.Div(count)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2048) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2049) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2050) // RescalePair rescales two decimals to common exponential value (minimal exp of both decimals)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2051) func RescalePair(d1 Decimal, d2 Decimal) (Decimal, Decimal) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2052) 	if d1.exp < d2.exp {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2053) 		return d1, d2.rescale(d1.exp)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2054) 	} else if d1.exp > d2.exp {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2055) 		return d1.rescale(d2.exp), d2
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2056) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2057) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2058) 	return d1, d2
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2059) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2060) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2061) func unquoteIfQuoted(value string) string {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2062) 	// If the amount is quoted, strip the quotes
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2063) 	if len(value) > 2 && value[0] == '"' && value[len(value)-1] == '"' {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2064) 		return value[1 : len(value)-1]
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2065) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2066) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2067) 	return value
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2068) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2069) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2070) // NullDecimal represents a nullable decimal with compatibility for
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2071) // scanning null values from the database.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2072) type NullDecimal struct {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2073) 	Decimal Decimal
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2074) 	Valid   bool
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2075) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2076) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2077) func NewNullDecimal(d Decimal) NullDecimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2078) 	return NullDecimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2079) 		Decimal: d,
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2080) 		Valid:   true,
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2081) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2082) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2083) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2084) // Scan implements the sql.Scanner interface for database deserialization.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2085) func (d *NullDecimal) Scan(value interface{}) error {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2086) 	if value == nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2087) 		d.Valid = false
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2088) 		return nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2089) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2090) 	d.Valid = true
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2091) 	return d.Decimal.Scan(value)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2092) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2093) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2094) // Value implements the driver.Valuer interface for database serialization.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2095) func (d NullDecimal) Value() (driver.Value, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2096) 	if !d.Valid {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2097) 		return nil, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2098) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2099) 	return d.Decimal.Value()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2100) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2101) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2102) // UnmarshalJSON implements the json.Unmarshaler interface.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2103) func (d *NullDecimal) UnmarshalJSON(decimalBytes []byte) error {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2104) 	if string(decimalBytes) == "null" {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2105) 		d.Valid = false
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2106) 		return nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2107) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2108) 	d.Valid = true
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2109) 	return d.Decimal.UnmarshalJSON(decimalBytes)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2110) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2111) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2112) // MarshalJSON implements the json.Marshaler interface.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2113) func (d NullDecimal) MarshalJSON() ([]byte, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2114) 	if !d.Valid {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2115) 		return []byte("null"), nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2116) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2117) 	return d.Decimal.MarshalJSON()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2118) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2119) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2120) // UnmarshalText implements the encoding.TextUnmarshaler interface for XML
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2121) // deserialization
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2122) func (d *NullDecimal) UnmarshalText(text []byte) error {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2123) 	str := string(text)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2124) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2125) 	// check for empty XML or XML without body e.g., <tag></tag>
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2126) 	if str == "" {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2127) 		d.Valid = false
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2128) 		return nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2129) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2130) 	if err := d.Decimal.UnmarshalText(text); err != nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2131) 		d.Valid = false
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2132) 		return err
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2133) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2134) 	d.Valid = true
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2135) 	return nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2136) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2137) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2138) // MarshalText implements the encoding.TextMarshaler interface for XML
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2139) // serialization.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2140) func (d NullDecimal) MarshalText() (text []byte, err error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2141) 	if !d.Valid {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2142) 		return []byte{}, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2143) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2144) 	return d.Decimal.MarshalText()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2145) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2146) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2147) // DecodeSpanner decodes a Spanner value into a Decimal
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2148) func (d *NullDecimal) DecodeSpanner(value interface{}) error {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2149) 	switch t := value.(type) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2150) 	case nil:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2151) 		d.Valid = false
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2152) 		return nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2153) 	case *string:
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2154) 		if t == nil {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2155) 			d.Valid = false
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2156) 			return nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2157) 		}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2158) 		value = *t
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2159) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2160) 	d.Valid = true
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2161) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2162) 	return d.Decimal.Scan(value)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2163) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2164) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2165) // EncodeSpanner encodes a Decimal into a Spanner value
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2166) func (d NullDecimal) EncodeSpanner() (interface{}, error) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2167) 	if !d.Valid {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2168) 		return nil, nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2169) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2170) 	return d.Decimal.String(), nil
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2171) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2172) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2173) // Trig functions
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2174) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2175) // Atan returns the arctangent, in radians, of x.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2176) func (d Decimal) Atan() Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2177) 	if d.Equal(NewFromFloat(0.0)) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2178) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2179) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2180) 	if d.GreaterThan(NewFromFloat(0.0)) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2181) 		return d.satan()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2182) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2183) 	return d.Neg().satan().Neg()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2184) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2185) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2186) func (d Decimal) xatan() Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2187) 	P0 := NewFromFloat(-8.750608600031904122785e-01)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2188) 	P1 := NewFromFloat(-1.615753718733365076637e+01)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2189) 	P2 := NewFromFloat(-7.500855792314704667340e+01)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2190) 	P3 := NewFromFloat(-1.228866684490136173410e+02)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2191) 	P4 := NewFromFloat(-6.485021904942025371773e+01)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2192) 	Q0 := NewFromFloat(2.485846490142306297962e+01)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2193) 	Q1 := NewFromFloat(1.650270098316988542046e+02)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2194) 	Q2 := NewFromFloat(4.328810604912902668951e+02)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2195) 	Q3 := NewFromFloat(4.853903996359136964868e+02)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2196) 	Q4 := NewFromFloat(1.945506571482613964425e+02)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2197) 	z := d.Mul(d)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2198) 	b1 := P0.Mul(z).Add(P1).Mul(z).Add(P2).Mul(z).Add(P3).Mul(z).Add(P4).Mul(z)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2199) 	b2 := z.Add(Q0).Mul(z).Add(Q1).Mul(z).Add(Q2).Mul(z).Add(Q3).Mul(z).Add(Q4)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2200) 	z = b1.Div(b2)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2201) 	z = d.Mul(z).Add(d)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2202) 	return z
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2203) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2204) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2205) // satan reduces its argument (known to be positive)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2206) // to the range [0, 0.66] and calls xatan.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2207) func (d Decimal) satan() Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2208) 	Morebits := NewFromFloat(6.123233995736765886130e-17) // pi/2 = PIO2 + Morebits
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2209) 	Tan3pio8 := NewFromFloat(2.41421356237309504880)      // tan(3*pi/8)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2210) 	pi := NewFromFloat(3.14159265358979323846264338327950288419716939937510582097494459)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2211) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2212) 	if d.LessThanOrEqual(NewFromFloat(0.66)) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2213) 		return d.xatan()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2214) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2215) 	if d.GreaterThan(Tan3pio8) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2216) 		return pi.Div(NewFromFloat(2.0)).Sub(NewFromFloat(1.0).Div(d).xatan()).Add(Morebits)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2217) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2218) 	return pi.Div(NewFromFloat(4.0)).Add((d.Sub(NewFromFloat(1.0)).Div(d.Add(NewFromFloat(1.0)))).xatan()).Add(NewFromFloat(0.5).Mul(Morebits))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2219) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2220) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2221) // sin coefficients
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2222) var _sin = [...]Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2223) 	NewFromFloat(1.58962301576546568060e-10), // 0x3de5d8fd1fd19ccd
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2224) 	NewFromFloat(-2.50507477628578072866e-8), // 0xbe5ae5e5a9291f5d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2225) 	NewFromFloat(2.75573136213857245213e-6),  // 0x3ec71de3567d48a1
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2226) 	NewFromFloat(-1.98412698295895385996e-4), // 0xbf2a01a019bfdf03
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2227) 	NewFromFloat(8.33333333332211858878e-3),  // 0x3f8111111110f7d0
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2228) 	NewFromFloat(-1.66666666666666307295e-1), // 0xbfc5555555555548
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2229) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2230) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2231) // Sin returns the sine of the radian argument x.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2232) func (d Decimal) Sin() Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2233) 	PI4A := NewFromFloat(7.85398125648498535156e-1)                             // 0x3fe921fb40000000, Pi/4 split into three parts
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2234) 	PI4B := NewFromFloat(3.77489470793079817668e-8)                             // 0x3e64442d00000000,
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2235) 	PI4C := NewFromFloat(2.69515142907905952645e-15)                            // 0x3ce8469898cc5170,
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2236) 	M4PI := NewFromFloat(1.273239544735162542821171882678754627704620361328125) // 4/pi
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2237) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2238) 	if d.Equal(NewFromFloat(0.0)) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2239) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2240) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2241) 	// make argument positive but save the sign
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2242) 	sign := false
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2243) 	if d.LessThan(NewFromFloat(0.0)) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2244) 		d = d.Neg()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2245) 		sign = true
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2246) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2247) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2248) 	j := d.Mul(M4PI).IntPart()    // integer part of x/(Pi/4), as integer for tests on the phase angle
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2249) 	y := NewFromFloat(float64(j)) // integer part of x/(Pi/4), as float
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2250) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2251) 	// map zeros to origin
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2252) 	if j&1 == 1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2253) 		j++
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2254) 		y = y.Add(NewFromFloat(1.0))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2255) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2256) 	j &= 7 // octant modulo 2Pi radians (360 degrees)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2257) 	// reflect in x axis
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2258) 	if j > 3 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2259) 		sign = !sign
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2260) 		j -= 4
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2261) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2262) 	z := d.Sub(y.Mul(PI4A)).Sub(y.Mul(PI4B)).Sub(y.Mul(PI4C)) // Extended precision modular arithmetic
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2263) 	zz := z.Mul(z)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2264) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2265) 	if j == 1 || j == 2 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2266) 		w := zz.Mul(zz).Mul(_cos[0].Mul(zz).Add(_cos[1]).Mul(zz).Add(_cos[2]).Mul(zz).Add(_cos[3]).Mul(zz).Add(_cos[4]).Mul(zz).Add(_cos[5]))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2267) 		y = NewFromFloat(1.0).Sub(NewFromFloat(0.5).Mul(zz)).Add(w)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2268) 	} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2269) 		y = z.Add(z.Mul(zz).Mul(_sin[0].Mul(zz).Add(_sin[1]).Mul(zz).Add(_sin[2]).Mul(zz).Add(_sin[3]).Mul(zz).Add(_sin[4]).Mul(zz).Add(_sin[5])))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2270) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2271) 	if sign {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2272) 		y = y.Neg()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2273) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2274) 	return y
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2275) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2276) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2277) // cos coefficients
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2278) var _cos = [...]Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2279) 	NewFromFloat(-1.13585365213876817300e-11), // 0xbda8fa49a0861a9b
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2280) 	NewFromFloat(2.08757008419747316778e-9),   // 0x3e21ee9d7b4e3f05
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2281) 	NewFromFloat(-2.75573141792967388112e-7),  // 0xbe927e4f7eac4bc6
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2282) 	NewFromFloat(2.48015872888517045348e-5),   // 0x3efa01a019c844f5
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2283) 	NewFromFloat(-1.38888888888730564116e-3),  // 0xbf56c16c16c14f91
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2284) 	NewFromFloat(4.16666666666665929218e-2),   // 0x3fa555555555554b
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2285) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2286) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2287) // Cos returns the cosine of the radian argument x.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2288) func (d Decimal) Cos() Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2289) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2290) 	PI4A := NewFromFloat(7.85398125648498535156e-1)                             // 0x3fe921fb40000000, Pi/4 split into three parts
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2291) 	PI4B := NewFromFloat(3.77489470793079817668e-8)                             // 0x3e64442d00000000,
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2292) 	PI4C := NewFromFloat(2.69515142907905952645e-15)                            // 0x3ce8469898cc5170,
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2293) 	M4PI := NewFromFloat(1.273239544735162542821171882678754627704620361328125) // 4/pi
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2294) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2295) 	// make argument positive
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2296) 	sign := false
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2297) 	if d.LessThan(NewFromFloat(0.0)) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2298) 		d = d.Neg()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2299) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2300) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2301) 	j := d.Mul(M4PI).IntPart()    // integer part of x/(Pi/4), as integer for tests on the phase angle
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2302) 	y := NewFromFloat(float64(j)) // integer part of x/(Pi/4), as float
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2303) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2304) 	// map zeros to origin
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2305) 	if j&1 == 1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2306) 		j++
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2307) 		y = y.Add(NewFromFloat(1.0))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2308) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2309) 	j &= 7 // octant modulo 2Pi radians (360 degrees)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2310) 	// reflect in x axis
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2311) 	if j > 3 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2312) 		sign = !sign
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2313) 		j -= 4
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2314) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2315) 	if j > 1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2316) 		sign = !sign
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2317) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2318) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2319) 	z := d.Sub(y.Mul(PI4A)).Sub(y.Mul(PI4B)).Sub(y.Mul(PI4C)) // Extended precision modular arithmetic
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2320) 	zz := z.Mul(z)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2321) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2322) 	if j == 1 || j == 2 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2323) 		y = z.Add(z.Mul(zz).Mul(_sin[0].Mul(zz).Add(_sin[1]).Mul(zz).Add(_sin[2]).Mul(zz).Add(_sin[3]).Mul(zz).Add(_sin[4]).Mul(zz).Add(_sin[5])))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2324) 	} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2325) 		w := zz.Mul(zz).Mul(_cos[0].Mul(zz).Add(_cos[1]).Mul(zz).Add(_cos[2]).Mul(zz).Add(_cos[3]).Mul(zz).Add(_cos[4]).Mul(zz).Add(_cos[5]))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2326) 		y = NewFromFloat(1.0).Sub(NewFromFloat(0.5).Mul(zz)).Add(w)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2327) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2328) 	if sign {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2329) 		y = y.Neg()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2330) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2331) 	return y
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2332) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2333) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2334) var _tanP = [...]Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2335) 	NewFromFloat(-1.30936939181383777646e+4), // 0xc0c992d8d24f3f38
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2336) 	NewFromFloat(1.15351664838587416140e+6),  // 0x413199eca5fc9ddd
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2337) 	NewFromFloat(-1.79565251976484877988e+7), // 0xc1711fead3299176
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2338) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2339) var _tanQ = [...]Decimal{
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2340) 	NewFromFloat(1.00000000000000000000e+0),
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2341) 	NewFromFloat(1.36812963470692954678e+4),  //0x40cab8a5eeb36572
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2342) 	NewFromFloat(-1.32089234440210967447e+6), //0xc13427bc582abc96
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2343) 	NewFromFloat(2.50083801823357915839e+7),  //0x4177d98fc2ead8ef
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2344) 	NewFromFloat(-5.38695755929454629881e+7), //0xc189afe03cbe5a31
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2345) }
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2346) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2347) // Tan returns the tangent of the radian argument x.
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2348) func (d Decimal) Tan() Decimal {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2349) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2350) 	PI4A := NewFromFloat(7.85398125648498535156e-1)                             // 0x3fe921fb40000000, Pi/4 split into three parts
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2351) 	PI4B := NewFromFloat(3.77489470793079817668e-8)                             // 0x3e64442d00000000,
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2352) 	PI4C := NewFromFloat(2.69515142907905952645e-15)                            // 0x3ce8469898cc5170,
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2353) 	M4PI := NewFromFloat(1.273239544735162542821171882678754627704620361328125) // 4/pi
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2354) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2355) 	if d.Equal(NewFromFloat(0.0)) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2356) 		return d
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2357) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2358) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2359) 	// make argument positive but save the sign
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2360) 	sign := false
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2361) 	if d.LessThan(NewFromFloat(0.0)) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2362) 		d = d.Neg()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2363) 		sign = true
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2364) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2365) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2366) 	j := d.Mul(M4PI).IntPart()    // integer part of x/(Pi/4), as integer for tests on the phase angle
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2367) 	y := NewFromFloat(float64(j)) // integer part of x/(Pi/4), as float
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2368) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2369) 	// map zeros to origin
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2370) 	if j&1 == 1 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2371) 		j++
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2372) 		y = y.Add(NewFromFloat(1.0))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2373) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2374) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2375) 	z := d.Sub(y.Mul(PI4A)).Sub(y.Mul(PI4B)).Sub(y.Mul(PI4C)) // Extended precision modular arithmetic
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2376) 	zz := z.Mul(z)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2377) 
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2378) 	if zz.GreaterThan(NewFromFloat(1e-14)) {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2379) 		w := zz.Mul(_tanP[0].Mul(zz).Add(_tanP[1]).Mul(zz).Add(_tanP[2]))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2380) 		x := zz.Add(_tanQ[1]).Mul(zz).Add(_tanQ[2]).Mul(zz).Add(_tanQ[3]).Mul(zz).Add(_tanQ[4])
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2381) 		y = z.Add(z.Mul(w.Div(x)))
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2382) 	} else {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2383) 		y = z
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2384) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2385) 	if j&2 == 2 {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2386) 		y = NewFromFloat(-1.0).Div(y)
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2387) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2388) 	if sign {
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2389) 		y = y.Neg()
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2390) 	}
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2391) 	return y
+^921ab32 (evals 2026-10-22 10:53:53 +0200 2392) }

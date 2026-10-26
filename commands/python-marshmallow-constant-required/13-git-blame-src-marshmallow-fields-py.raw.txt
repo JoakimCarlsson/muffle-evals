@@ -1,0 +1,2095 @@
+$ git blame src/marshmallow/fields.py
+^909604f (evals 2026-10-22 10:53:58 +0200    1) # ruff: noqa: SLF001
+^909604f (evals 2026-10-22 10:53:58 +0200    2) from __future__ import annotations
+^909604f (evals 2026-10-22 10:53:58 +0200    3) 
+^909604f (evals 2026-10-22 10:53:58 +0200    4) import abc
+^909604f (evals 2026-10-22 10:53:58 +0200    5) import collections
+^909604f (evals 2026-10-22 10:53:58 +0200    6) import copy
+^909604f (evals 2026-10-22 10:53:58 +0200    7) import datetime as dt
+^909604f (evals 2026-10-22 10:53:58 +0200    8) import decimal
+^909604f (evals 2026-10-22 10:53:58 +0200    9) import email.utils
+^909604f (evals 2026-10-22 10:53:58 +0200   10) import ipaddress
+^909604f (evals 2026-10-22 10:53:58 +0200   11) import math
+^909604f (evals 2026-10-22 10:53:58 +0200   12) import numbers
+^909604f (evals 2026-10-22 10:53:58 +0200   13) import typing
+^909604f (evals 2026-10-22 10:53:58 +0200   14) import uuid
+^909604f (evals 2026-10-22 10:53:58 +0200   15) from collections.abc import Mapping as _Mapping
+^909604f (evals 2026-10-22 10:53:58 +0200   16) from enum import Enum as EnumType
+^909604f (evals 2026-10-22 10:53:58 +0200   17) 
+^909604f (evals 2026-10-22 10:53:58 +0200   18) try:
+^909604f (evals 2026-10-22 10:53:58 +0200   19)     from typing import Unpack
+^909604f (evals 2026-10-22 10:53:58 +0200   20) except ImportError:  # Remove when dropping Python 3.10
+^909604f (evals 2026-10-22 10:53:58 +0200   21)     from typing_extensions import Unpack
+^909604f (evals 2026-10-22 10:53:58 +0200   22) 
+^909604f (evals 2026-10-22 10:53:58 +0200   23) # Remove when dropping Python 3.10
+^909604f (evals 2026-10-22 10:53:58 +0200   24) try:
+^909604f (evals 2026-10-22 10:53:58 +0200   25)     from backports.datetime_fromisoformat import MonkeyPatch
+^909604f (evals 2026-10-22 10:53:58 +0200   26) except ImportError:
+^909604f (evals 2026-10-22 10:53:58 +0200   27)     pass
+^909604f (evals 2026-10-22 10:53:58 +0200   28) else:
+^909604f (evals 2026-10-22 10:53:58 +0200   29)     MonkeyPatch.patch_fromisoformat()
+^909604f (evals 2026-10-22 10:53:58 +0200   30) 
+^909604f (evals 2026-10-22 10:53:58 +0200   31) from marshmallow import class_registry, types, utils, validate
+^909604f (evals 2026-10-22 10:53:58 +0200   32) from marshmallow.constants import missing as missing_
+^909604f (evals 2026-10-22 10:53:58 +0200   33) from marshmallow.exceptions import (
+^909604f (evals 2026-10-22 10:53:58 +0200   34)     StringNotCollectionError,
+^909604f (evals 2026-10-22 10:53:58 +0200   35)     ValidationError,
+^909604f (evals 2026-10-22 10:53:58 +0200   36)     _FieldInstanceResolutionError,
+^909604f (evals 2026-10-22 10:53:58 +0200   37) )
+^909604f (evals 2026-10-22 10:53:58 +0200   38) from marshmallow.validate import And, Length
+^909604f (evals 2026-10-22 10:53:58 +0200   39) 
+^909604f (evals 2026-10-22 10:53:58 +0200   40) if typing.TYPE_CHECKING:
+^909604f (evals 2026-10-22 10:53:58 +0200   41)     from marshmallow.schema import Schema, SchemaMeta
+^909604f (evals 2026-10-22 10:53:58 +0200   42) 
+^909604f (evals 2026-10-22 10:53:58 +0200   43) 
+^909604f (evals 2026-10-22 10:53:58 +0200   44) __all__ = [
+^909604f (evals 2026-10-22 10:53:58 +0200   45)     "IP",
+^909604f (evals 2026-10-22 10:53:58 +0200   46)     "URL",
+^909604f (evals 2026-10-22 10:53:58 +0200   47)     "UUID",
+^909604f (evals 2026-10-22 10:53:58 +0200   48)     "AwareDateTime",
+^909604f (evals 2026-10-22 10:53:58 +0200   49)     "Bool",
+^909604f (evals 2026-10-22 10:53:58 +0200   50)     "Boolean",
+^909604f (evals 2026-10-22 10:53:58 +0200   51)     "Constant",
+^909604f (evals 2026-10-22 10:53:58 +0200   52)     "Date",
+^909604f (evals 2026-10-22 10:53:58 +0200   53)     "DateTime",
+^909604f (evals 2026-10-22 10:53:58 +0200   54)     "Decimal",
+^909604f (evals 2026-10-22 10:53:58 +0200   55)     "Dict",
+^909604f (evals 2026-10-22 10:53:58 +0200   56)     "Email",
+^909604f (evals 2026-10-22 10:53:58 +0200   57)     "Enum",
+^909604f (evals 2026-10-22 10:53:58 +0200   58)     "Field",
+^909604f (evals 2026-10-22 10:53:58 +0200   59)     "Float",
+^909604f (evals 2026-10-22 10:53:58 +0200   60)     "Function",
+^909604f (evals 2026-10-22 10:53:58 +0200   61)     "IPInterface",
+^909604f (evals 2026-10-22 10:53:58 +0200   62)     "IPv4",
+^909604f (evals 2026-10-22 10:53:58 +0200   63)     "IPv4Interface",
+^909604f (evals 2026-10-22 10:53:58 +0200   64)     "IPv6",
+^909604f (evals 2026-10-22 10:53:58 +0200   65)     "IPv6Interface",
+^909604f (evals 2026-10-22 10:53:58 +0200   66)     "Int",
+^909604f (evals 2026-10-22 10:53:58 +0200   67)     "Integer",
+^909604f (evals 2026-10-22 10:53:58 +0200   68)     "List",
+^909604f (evals 2026-10-22 10:53:58 +0200   69)     "Mapping",
+^909604f (evals 2026-10-22 10:53:58 +0200   70)     "Method",
+^909604f (evals 2026-10-22 10:53:58 +0200   71)     "NaiveDateTime",
+^909604f (evals 2026-10-22 10:53:58 +0200   72)     "Nested",
+^909604f (evals 2026-10-22 10:53:58 +0200   73)     "Number",
+^909604f (evals 2026-10-22 10:53:58 +0200   74)     "Pluck",
+^909604f (evals 2026-10-22 10:53:58 +0200   75)     "Raw",
+^909604f (evals 2026-10-22 10:53:58 +0200   76)     "Str",
+^909604f (evals 2026-10-22 10:53:58 +0200   77)     "String",
+^909604f (evals 2026-10-22 10:53:58 +0200   78)     "Time",
+^909604f (evals 2026-10-22 10:53:58 +0200   79)     "TimeDelta",
+^909604f (evals 2026-10-22 10:53:58 +0200   80)     "Tuple",
+^909604f (evals 2026-10-22 10:53:58 +0200   81)     "Url",
+^909604f (evals 2026-10-22 10:53:58 +0200   82) ]
+^909604f (evals 2026-10-22 10:53:58 +0200   83) 
+^909604f (evals 2026-10-22 10:53:58 +0200   84) _InternalT = typing.TypeVar("_InternalT")
+^909604f (evals 2026-10-22 10:53:58 +0200   85) 
+^909604f (evals 2026-10-22 10:53:58 +0200   86) 
+^909604f (evals 2026-10-22 10:53:58 +0200   87) class _BaseFieldKwargs(typing.TypedDict, total=False):
+^909604f (evals 2026-10-22 10:53:58 +0200   88)     load_default: typing.Any
+^909604f (evals 2026-10-22 10:53:58 +0200   89)     dump_default: typing.Any
+^909604f (evals 2026-10-22 10:53:58 +0200   90)     data_key: str | None
+^909604f (evals 2026-10-22 10:53:58 +0200   91)     attribute: str | None
+^909604f (evals 2026-10-22 10:53:58 +0200   92)     validate: types.Validator | typing.Iterable[types.Validator] | None
+^909604f (evals 2026-10-22 10:53:58 +0200   93)     required: bool
+^909604f (evals 2026-10-22 10:53:58 +0200   94)     allow_none: bool | None
+^909604f (evals 2026-10-22 10:53:58 +0200   95)     load_only: bool
+^909604f (evals 2026-10-22 10:53:58 +0200   96)     dump_only: bool
+^909604f (evals 2026-10-22 10:53:58 +0200   97)     error_messages: dict[str, str] | None
+^909604f (evals 2026-10-22 10:53:58 +0200   98)     metadata: typing.Mapping[str, typing.Any] | None
+^909604f (evals 2026-10-22 10:53:58 +0200   99) 
+^909604f (evals 2026-10-22 10:53:58 +0200  100) 
+^909604f (evals 2026-10-22 10:53:58 +0200  101) def _resolve_field_instance(cls_or_instance: Field | type[Field]) -> Field:
+^909604f (evals 2026-10-22 10:53:58 +0200  102)     """Return a Field instance from a Field class or instance.
+^909604f (evals 2026-10-22 10:53:58 +0200  103) 
+^909604f (evals 2026-10-22 10:53:58 +0200  104)     :param cls_or_instance: Field class or instance.
+^909604f (evals 2026-10-22 10:53:58 +0200  105)     """
+^909604f (evals 2026-10-22 10:53:58 +0200  106)     if isinstance(cls_or_instance, type):
+^909604f (evals 2026-10-22 10:53:58 +0200  107)         if not issubclass(cls_or_instance, Field):
+^909604f (evals 2026-10-22 10:53:58 +0200  108)             raise _FieldInstanceResolutionError
+^909604f (evals 2026-10-22 10:53:58 +0200  109)         return cls_or_instance()
+^909604f (evals 2026-10-22 10:53:58 +0200  110)     if not isinstance(cls_or_instance, Field):
+^909604f (evals 2026-10-22 10:53:58 +0200  111)         raise _FieldInstanceResolutionError
+^909604f (evals 2026-10-22 10:53:58 +0200  112)     return cls_or_instance
+^909604f (evals 2026-10-22 10:53:58 +0200  113) 
+^909604f (evals 2026-10-22 10:53:58 +0200  114) 
+^909604f (evals 2026-10-22 10:53:58 +0200  115) class Field(typing.Generic[_InternalT]):
+^909604f (evals 2026-10-22 10:53:58 +0200  116)     """Base field from which all other fields inherit.
+^909604f (evals 2026-10-22 10:53:58 +0200  117)     This class should not be used directly within Schemas.
+^909604f (evals 2026-10-22 10:53:58 +0200  118) 
+^909604f (evals 2026-10-22 10:53:58 +0200  119)     :param dump_default: If set, this value will be used during serialization if the
+^909604f (evals 2026-10-22 10:53:58 +0200  120)         input value is missing. If not set, the field will be excluded from the
+^909604f (evals 2026-10-22 10:53:58 +0200  121)         serialized output if the input value is missing. May be a value or a callable.
+^909604f (evals 2026-10-22 10:53:58 +0200  122)     :param load_default: Default deserialization value for the field if the field is not
+^909604f (evals 2026-10-22 10:53:58 +0200  123)         found in the input data. May be a value or a callable.
+^909604f (evals 2026-10-22 10:53:58 +0200  124)     :param data_key: The name of the dict key in the external representation, i.e.
+^909604f (evals 2026-10-22 10:53:58 +0200  125)         the input of `load` and the output of `dump`.
+^909604f (evals 2026-10-22 10:53:58 +0200  126)         If `None`, the key will match the name of the field.
+^909604f (evals 2026-10-22 10:53:58 +0200  127)     :param attribute: The name of the key/attribute in the internal representation, i.e.
+^909604f (evals 2026-10-22 10:53:58 +0200  128)         the output of `load` and the input of `dump`.
+^909604f (evals 2026-10-22 10:53:58 +0200  129)         If `None`, the key/attribute will match the name of the field.
+^909604f (evals 2026-10-22 10:53:58 +0200  130)         Note: This should only be used for very specific use cases such as
+^909604f (evals 2026-10-22 10:53:58 +0200  131)         outputting multiple fields for a single attribute, or using keys/attributes
+^909604f (evals 2026-10-22 10:53:58 +0200  132)         that are invalid variable names, unsuitable for field names. In most cases,
+^909604f (evals 2026-10-22 10:53:58 +0200  133)         you should use ``data_key`` instead.
+^909604f (evals 2026-10-22 10:53:58 +0200  134)     :param validate: Validator or collection of validators that are called
+^909604f (evals 2026-10-22 10:53:58 +0200  135)         during deserialization. Validator takes a field's input value as
+^909604f (evals 2026-10-22 10:53:58 +0200  136)         its only parameter and returns a boolean.
+^909604f (evals 2026-10-22 10:53:58 +0200  137)         If it returns `False`, an :exc:`ValidationError` is raised.
+^909604f (evals 2026-10-22 10:53:58 +0200  138)     :param required: Raise a :exc:`ValidationError` if the field value
+^909604f (evals 2026-10-22 10:53:58 +0200  139)         is not supplied during deserialization.
+^909604f (evals 2026-10-22 10:53:58 +0200  140)     :param allow_none: Set this to `True` if `None` should be considered a valid value during
+^909604f (evals 2026-10-22 10:53:58 +0200  141)         validation/deserialization. If set to `False` (the default), `None` is considered invalid input.
+^909604f (evals 2026-10-22 10:53:58 +0200  142)         If ``load_default`` is explicitly set to `None` and ``allow_none`` is unset,
+^909604f (evals 2026-10-22 10:53:58 +0200  143)         `allow_none` is implicitly set to ``True``.
+^909604f (evals 2026-10-22 10:53:58 +0200  144)     :param load_only: If `True` skip this field during serialization, otherwise
+^909604f (evals 2026-10-22 10:53:58 +0200  145)         its value will be present in the serialized data.
+^909604f (evals 2026-10-22 10:53:58 +0200  146)     :param dump_only: If `True` skip this field during deserialization, otherwise
+^909604f (evals 2026-10-22 10:53:58 +0200  147)         its value will be present in the deserialized object. In the context of an
+^909604f (evals 2026-10-22 10:53:58 +0200  148)         HTTP API, this effectively marks the field as "read-only".
+^909604f (evals 2026-10-22 10:53:58 +0200  149)     :param error_messages: Overrides for `Field.default_error_messages`.
+^909604f (evals 2026-10-22 10:53:58 +0200  150)     :param metadata: Extra information to be stored as field metadata.
+^909604f (evals 2026-10-22 10:53:58 +0200  151) 
+^909604f (evals 2026-10-22 10:53:58 +0200  152)     .. versionchanged:: 3.0.0b8
+^909604f (evals 2026-10-22 10:53:58 +0200  153)         Add ``data_key`` parameter for the specifying the key in the input and
+^909604f (evals 2026-10-22 10:53:58 +0200  154)         output data. This parameter replaced both ``load_from`` and ``dump_to``.
+^909604f (evals 2026-10-22 10:53:58 +0200  155)     .. versionchanged:: 3.13.0
+^909604f (evals 2026-10-22 10:53:58 +0200  156)         Replace ``missing`` and ``default`` parameters with ``load_default`` and ``dump_default``.
+^909604f (evals 2026-10-22 10:53:58 +0200  157)     .. versionchanged:: 3.24.0
+^909604f (evals 2026-10-22 10:53:58 +0200  158)         `Field <marshmallow.fields.Field>` should no longer be used as a field within a `Schema <marshmallow.Schema>`.
+^909604f (evals 2026-10-22 10:53:58 +0200  159)         Use `Raw <marshmallow.fields.Raw>` or another `Field <marshmallow.fields.Field>` subclass instead.
+^909604f (evals 2026-10-22 10:53:58 +0200  160)     .. versionchanged:: 4.0.0
+^909604f (evals 2026-10-22 10:53:58 +0200  161)         Remove ``context`` property.
+^909604f (evals 2026-10-22 10:53:58 +0200  162)     """
+^909604f (evals 2026-10-22 10:53:58 +0200  163) 
+^909604f (evals 2026-10-22 10:53:58 +0200  164)     # Some fields, such as Method fields and Function fields, are not expected
+^909604f (evals 2026-10-22 10:53:58 +0200  165)     #  to exist as attributes on the objects to serialize. Set this to False
+^909604f (evals 2026-10-22 10:53:58 +0200  166)     #  for those fields
+^909604f (evals 2026-10-22 10:53:58 +0200  167)     _CHECK_ATTRIBUTE = True
+^909604f (evals 2026-10-22 10:53:58 +0200  168) 
+^909604f (evals 2026-10-22 10:53:58 +0200  169)     #: Default error messages for various kinds of errors. The keys in this dictionary
+^909604f (evals 2026-10-22 10:53:58 +0200  170)     #: are passed to `Field.make_error`. The values are error messages passed to
+^909604f (evals 2026-10-22 10:53:58 +0200  171)     #: :exc:`marshmallow.exceptions.ValidationError`.
+^909604f (evals 2026-10-22 10:53:58 +0200  172)     default_error_messages: dict[str, str] = {
+^909604f (evals 2026-10-22 10:53:58 +0200  173)         "required": "Missing data for required field.",
+^909604f (evals 2026-10-22 10:53:58 +0200  174)         "null": "Field may not be null.",
+^909604f (evals 2026-10-22 10:53:58 +0200  175)         "validator_failed": "Invalid value.",
+^909604f (evals 2026-10-22 10:53:58 +0200  176)     }
+^909604f (evals 2026-10-22 10:53:58 +0200  177) 
+^909604f (evals 2026-10-22 10:53:58 +0200  178)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200  179)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  180)         *,
+^909604f (evals 2026-10-22 10:53:58 +0200  181)         load_default: typing.Any = missing_,
+^909604f (evals 2026-10-22 10:53:58 +0200  182)         dump_default: typing.Any = missing_,
+^909604f (evals 2026-10-22 10:53:58 +0200  183)         data_key: str | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  184)         attribute: str | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  185)         validate: types.Validator | typing.Iterable[types.Validator] | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  186)         required: bool = False,
+^909604f (evals 2026-10-22 10:53:58 +0200  187)         allow_none: bool | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  188)         load_only: bool = False,
+^909604f (evals 2026-10-22 10:53:58 +0200  189)         dump_only: bool = False,
+^909604f (evals 2026-10-22 10:53:58 +0200  190)         error_messages: dict[str, str] | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  191)         metadata: typing.Mapping[str, typing.Any] | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  192)     ) -> None:
+^909604f (evals 2026-10-22 10:53:58 +0200  193)         self.dump_default = dump_default
+^909604f (evals 2026-10-22 10:53:58 +0200  194)         self.load_default = load_default
+^909604f (evals 2026-10-22 10:53:58 +0200  195) 
+^909604f (evals 2026-10-22 10:53:58 +0200  196)         self.attribute = attribute
+^909604f (evals 2026-10-22 10:53:58 +0200  197)         self.data_key = data_key
+^909604f (evals 2026-10-22 10:53:58 +0200  198)         self.validate = validate
+^909604f (evals 2026-10-22 10:53:58 +0200  199)         if validate is None:
+^909604f (evals 2026-10-22 10:53:58 +0200  200)             self.validators = []
+^909604f (evals 2026-10-22 10:53:58 +0200  201)         elif callable(validate):
+^909604f (evals 2026-10-22 10:53:58 +0200  202)             self.validators = [validate]
+^909604f (evals 2026-10-22 10:53:58 +0200  203)         elif utils.is_iterable_but_not_string(validate):
+^909604f (evals 2026-10-22 10:53:58 +0200  204)             self.validators = list(validate)
+^909604f (evals 2026-10-22 10:53:58 +0200  205)         else:
+^909604f (evals 2026-10-22 10:53:58 +0200  206)             raise ValueError(
+^909604f (evals 2026-10-22 10:53:58 +0200  207)                 "The 'validate' parameter must be a callable "
+^909604f (evals 2026-10-22 10:53:58 +0200  208)                 "or a collection of callables."
+^909604f (evals 2026-10-22 10:53:58 +0200  209)             )
+^909604f (evals 2026-10-22 10:53:58 +0200  210) 
+^909604f (evals 2026-10-22 10:53:58 +0200  211)         # If allow_none is None and load_default is None
+^909604f (evals 2026-10-22 10:53:58 +0200  212)         # None should be considered valid by default
+^909604f (evals 2026-10-22 10:53:58 +0200  213)         self.allow_none = load_default is None if allow_none is None else allow_none
+^909604f (evals 2026-10-22 10:53:58 +0200  214)         self.load_only = load_only
+^909604f (evals 2026-10-22 10:53:58 +0200  215)         self.dump_only = dump_only
+^909604f (evals 2026-10-22 10:53:58 +0200  216)         if required is True and load_default is not missing_:
+^909604f (evals 2026-10-22 10:53:58 +0200  217)             raise ValueError("'load_default' must not be set for required fields.")
+^909604f (evals 2026-10-22 10:53:58 +0200  218)         self.required = required
+^909604f (evals 2026-10-22 10:53:58 +0200  219) 
+^909604f (evals 2026-10-22 10:53:58 +0200  220)         metadata = metadata or {}
+^909604f (evals 2026-10-22 10:53:58 +0200  221)         self.metadata = metadata
+^909604f (evals 2026-10-22 10:53:58 +0200  222)         # Collect default error message from self and parent classes
+^909604f (evals 2026-10-22 10:53:58 +0200  223)         messages: dict[str, str] = {}
+^909604f (evals 2026-10-22 10:53:58 +0200  224)         for cls in reversed(self.__class__.__mro__):
+^909604f (evals 2026-10-22 10:53:58 +0200  225)             messages.update(getattr(cls, "default_error_messages", {}))
+^909604f (evals 2026-10-22 10:53:58 +0200  226)         messages.update(error_messages or {})
+^909604f (evals 2026-10-22 10:53:58 +0200  227)         self.error_messages = messages
+^909604f (evals 2026-10-22 10:53:58 +0200  228) 
+^909604f (evals 2026-10-22 10:53:58 +0200  229)         self.parent: Field | Schema | None = None
+^909604f (evals 2026-10-22 10:53:58 +0200  230)         self.name: str | None = None
+^909604f (evals 2026-10-22 10:53:58 +0200  231)         self.root: Schema | None = None
+^909604f (evals 2026-10-22 10:53:58 +0200  232) 
+^909604f (evals 2026-10-22 10:53:58 +0200  233)     def __repr__(self) -> str:
+^909604f (evals 2026-10-22 10:53:58 +0200  234)         return (
+^909604f (evals 2026-10-22 10:53:58 +0200  235)             f"<fields.{self.__class__.__name__}(dump_default={self.dump_default!r}, "
+^909604f (evals 2026-10-22 10:53:58 +0200  236)             f"attribute={self.attribute!r}, "
+^909604f (evals 2026-10-22 10:53:58 +0200  237)             f"validate={self.validate}, required={self.required}, "
+^909604f (evals 2026-10-22 10:53:58 +0200  238)             f"load_only={self.load_only}, dump_only={self.dump_only}, "
+^909604f (evals 2026-10-22 10:53:58 +0200  239)             f"load_default={self.load_default}, allow_none={self.allow_none}, "
+^909604f (evals 2026-10-22 10:53:58 +0200  240)             f"error_messages={self.error_messages})>"
+^909604f (evals 2026-10-22 10:53:58 +0200  241)         )
+^909604f (evals 2026-10-22 10:53:58 +0200  242) 
+^909604f (evals 2026-10-22 10:53:58 +0200  243)     def __deepcopy__(self, memo):
+^909604f (evals 2026-10-22 10:53:58 +0200  244)         return copy.copy(self)
+^909604f (evals 2026-10-22 10:53:58 +0200  245) 
+^909604f (evals 2026-10-22 10:53:58 +0200  246)     def get_value(
+^909604f (evals 2026-10-22 10:53:58 +0200  247)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  248)         obj: typing.Any,
+^909604f (evals 2026-10-22 10:53:58 +0200  249)         attr: str,
+^909604f (evals 2026-10-22 10:53:58 +0200  250)         accessor: (
+^909604f (evals 2026-10-22 10:53:58 +0200  251)             typing.Callable[[typing.Any, str, typing.Any], typing.Any] | None
+^909604f (evals 2026-10-22 10:53:58 +0200  252)         ) = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  253)         default: typing.Any = missing_,
+^909604f (evals 2026-10-22 10:53:58 +0200  254)     ) -> _InternalT:
+^909604f (evals 2026-10-22 10:53:58 +0200  255)         """Return the value for a given key from an object.
+^909604f (evals 2026-10-22 10:53:58 +0200  256) 
+^909604f (evals 2026-10-22 10:53:58 +0200  257)         :param obj: The object to get the value from.
+^909604f (evals 2026-10-22 10:53:58 +0200  258)         :param attr: The attribute/key in `obj` to get the value from.
+^909604f (evals 2026-10-22 10:53:58 +0200  259)         :param accessor: A callable used to retrieve the value of `attr` from
+^909604f (evals 2026-10-22 10:53:58 +0200  260)             the object `obj`. Defaults to `marshmallow.utils.get_value`.
+^909604f (evals 2026-10-22 10:53:58 +0200  261)         """
+^909604f (evals 2026-10-22 10:53:58 +0200  262)         accessor_func = accessor or utils.get_value
+^909604f (evals 2026-10-22 10:53:58 +0200  263)         check_key = attr if self.attribute is None else self.attribute
+^909604f (evals 2026-10-22 10:53:58 +0200  264)         return accessor_func(obj, check_key, default)
+^909604f (evals 2026-10-22 10:53:58 +0200  265) 
+^909604f (evals 2026-10-22 10:53:58 +0200  266)     def _validate(self, value: typing.Any) -> None:
+^909604f (evals 2026-10-22 10:53:58 +0200  267)         """Perform validation on ``value``. Raise a :exc:`ValidationError` if validation
+^909604f (evals 2026-10-22 10:53:58 +0200  268)         does not succeed.
+^909604f (evals 2026-10-22 10:53:58 +0200  269)         """
+^909604f (evals 2026-10-22 10:53:58 +0200  270)         self._validate_all(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  271) 
+^909604f (evals 2026-10-22 10:53:58 +0200  272)     @property
+^909604f (evals 2026-10-22 10:53:58 +0200  273)     def _validate_all(self) -> typing.Callable[[typing.Any], None]:
+^909604f (evals 2026-10-22 10:53:58 +0200  274)         return And(*self.validators)
+^909604f (evals 2026-10-22 10:53:58 +0200  275) 
+^909604f (evals 2026-10-22 10:53:58 +0200  276)     def make_error(self, key: str, **kwargs) -> ValidationError:
+^909604f (evals 2026-10-22 10:53:58 +0200  277)         """Helper method to make a `ValidationError` with an error message
+^909604f (evals 2026-10-22 10:53:58 +0200  278)         from ``self.error_messages``.
+^909604f (evals 2026-10-22 10:53:58 +0200  279)         """
+^909604f (evals 2026-10-22 10:53:58 +0200  280)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200  281)             msg = self.error_messages[key]
+^909604f (evals 2026-10-22 10:53:58 +0200  282)         except KeyError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200  283)             class_name = self.__class__.__name__
+^909604f (evals 2026-10-22 10:53:58 +0200  284)             message = (
+^909604f (evals 2026-10-22 10:53:58 +0200  285)                 f"ValidationError raised by `{class_name}`, but error key `{key}` does "
+^909604f (evals 2026-10-22 10:53:58 +0200  286)                 "not exist in the `error_messages` dictionary."
+^909604f (evals 2026-10-22 10:53:58 +0200  287)             )
+^909604f (evals 2026-10-22 10:53:58 +0200  288)             raise AssertionError(message) from error
+^909604f (evals 2026-10-22 10:53:58 +0200  289)         if isinstance(msg, (str, bytes)):
+^909604f (evals 2026-10-22 10:53:58 +0200  290)             msg = msg.format(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200  291)         return ValidationError(msg)
+^909604f (evals 2026-10-22 10:53:58 +0200  292) 
+^909604f (evals 2026-10-22 10:53:58 +0200  293)     def _validate_missing(self, value: typing.Any) -> None:
+^909604f (evals 2026-10-22 10:53:58 +0200  294)         """Validate missing values. Raise a :exc:`ValidationError` if
+^909604f (evals 2026-10-22 10:53:58 +0200  295)         `value` should be considered missing.
+^909604f (evals 2026-10-22 10:53:58 +0200  296)         """
+^909604f (evals 2026-10-22 10:53:58 +0200  297)         if value is missing_ and self.required:
+^909604f (evals 2026-10-22 10:53:58 +0200  298)             raise self.make_error("required")
+^909604f (evals 2026-10-22 10:53:58 +0200  299)         if value is None and not self.allow_none:
+^909604f (evals 2026-10-22 10:53:58 +0200  300)             raise self.make_error("null")
+^909604f (evals 2026-10-22 10:53:58 +0200  301) 
+^909604f (evals 2026-10-22 10:53:58 +0200  302)     def serialize(
+^909604f (evals 2026-10-22 10:53:58 +0200  303)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  304)         attr: str,
+^909604f (evals 2026-10-22 10:53:58 +0200  305)         obj: typing.Any,
+^909604f (evals 2026-10-22 10:53:58 +0200  306)         accessor: (
+^909604f (evals 2026-10-22 10:53:58 +0200  307)             typing.Callable[[typing.Any, str, typing.Any], typing.Any] | None
+^909604f (evals 2026-10-22 10:53:58 +0200  308)         ) = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  309)         **kwargs,
+^909604f (evals 2026-10-22 10:53:58 +0200  310)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200  311)         """Pulls the value for the given key from the object, applies the
+^909604f (evals 2026-10-22 10:53:58 +0200  312)         field's formatting and returns the result.
+^909604f (evals 2026-10-22 10:53:58 +0200  313) 
+^909604f (evals 2026-10-22 10:53:58 +0200  314)         :param attr: The attribute/key to get from the object.
+^909604f (evals 2026-10-22 10:53:58 +0200  315)         :param obj: The object to access the attribute/key from.
+^909604f (evals 2026-10-22 10:53:58 +0200  316)         :param accessor: Function used to access values from ``obj``.
+^909604f (evals 2026-10-22 10:53:58 +0200  317)         :param kwargs: Field-specific keyword arguments.
+^909604f (evals 2026-10-22 10:53:58 +0200  318)         """
+^909604f (evals 2026-10-22 10:53:58 +0200  319)         if self._CHECK_ATTRIBUTE:
+^909604f (evals 2026-10-22 10:53:58 +0200  320)             value = self.get_value(obj, attr, accessor=accessor)
+^909604f (evals 2026-10-22 10:53:58 +0200  321)             if value is missing_:
+^909604f (evals 2026-10-22 10:53:58 +0200  322)                 default = self.dump_default
+^909604f (evals 2026-10-22 10:53:58 +0200  323)                 value = default() if callable(default) else default
+^909604f (evals 2026-10-22 10:53:58 +0200  324)             if value is missing_:
+^909604f (evals 2026-10-22 10:53:58 +0200  325)                 return value
+^909604f (evals 2026-10-22 10:53:58 +0200  326)         else:
+^909604f (evals 2026-10-22 10:53:58 +0200  327)             value = None
+^909604f (evals 2026-10-22 10:53:58 +0200  328)         return self._serialize(value, attr, obj, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200  329) 
+^909604f (evals 2026-10-22 10:53:58 +0200  330)     # If value is None, None may be returned
+^909604f (evals 2026-10-22 10:53:58 +0200  331)     @typing.overload
+^909604f (evals 2026-10-22 10:53:58 +0200  332)     def deserialize(
+^909604f (evals 2026-10-22 10:53:58 +0200  333)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  334)         value: None,
+^909604f (evals 2026-10-22 10:53:58 +0200  335)         attr: str | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  336)         data: typing.Mapping[str, typing.Any] | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  337)         **kwargs,
+^909604f (evals 2026-10-22 10:53:58 +0200  338)     ) -> _InternalT | None: ...
+^909604f (evals 2026-10-22 10:53:58 +0200  339) 
+^909604f (evals 2026-10-22 10:53:58 +0200  340)     # If value is not None, internal type is returned
+^909604f (evals 2026-10-22 10:53:58 +0200  341)     @typing.overload
+^909604f (evals 2026-10-22 10:53:58 +0200  342)     def deserialize(
+^909604f (evals 2026-10-22 10:53:58 +0200  343)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  344)         value: typing.Any,
+^909604f (evals 2026-10-22 10:53:58 +0200  345)         attr: str | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  346)         data: typing.Mapping[str, typing.Any] | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  347)         **kwargs,
+^909604f (evals 2026-10-22 10:53:58 +0200  348)     ) -> _InternalT: ...
+^909604f (evals 2026-10-22 10:53:58 +0200  349) 
+^909604f (evals 2026-10-22 10:53:58 +0200  350)     def deserialize(
+^909604f (evals 2026-10-22 10:53:58 +0200  351)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  352)         value: typing.Any,
+^909604f (evals 2026-10-22 10:53:58 +0200  353)         attr: str | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  354)         data: typing.Mapping[str, typing.Any] | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  355)         **kwargs,
+^909604f (evals 2026-10-22 10:53:58 +0200  356)     ) -> _InternalT | None:
+^909604f (evals 2026-10-22 10:53:58 +0200  357)         """Deserialize ``value``.
+^909604f (evals 2026-10-22 10:53:58 +0200  358) 
+^909604f (evals 2026-10-22 10:53:58 +0200  359)         :param value: The value to deserialize.
+^909604f (evals 2026-10-22 10:53:58 +0200  360)         :param attr: The attribute/key in `data` to deserialize.
+^909604f (evals 2026-10-22 10:53:58 +0200  361)         :param data: The raw input data passed to `Schema.load <marshmallow.Schema.load>`.
+^909604f (evals 2026-10-22 10:53:58 +0200  362)         :param kwargs: Field-specific keyword arguments.
+^909604f (evals 2026-10-22 10:53:58 +0200  363)         :raise ValidationError: If an invalid value is passed or if a required value
+^909604f (evals 2026-10-22 10:53:58 +0200  364)             is missing.
+^909604f (evals 2026-10-22 10:53:58 +0200  365)         """
+^909604f (evals 2026-10-22 10:53:58 +0200  366)         # Validate required fields, deserialize, then validate
+^909604f (evals 2026-10-22 10:53:58 +0200  367)         # deserialized value
+^909604f (evals 2026-10-22 10:53:58 +0200  368)         self._validate_missing(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  369)         if value is missing_:
+^909604f (evals 2026-10-22 10:53:58 +0200  370)             _miss = self.load_default
+^909604f (evals 2026-10-22 10:53:58 +0200  371)             return _miss() if callable(_miss) else _miss
+^909604f (evals 2026-10-22 10:53:58 +0200  372)         if self.allow_none and value is None:
+^909604f (evals 2026-10-22 10:53:58 +0200  373)             return None
+^909604f (evals 2026-10-22 10:53:58 +0200  374)         output = self._deserialize(value, attr, data, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200  375)         self._validate(output)
+^909604f (evals 2026-10-22 10:53:58 +0200  376)         return output
+^909604f (evals 2026-10-22 10:53:58 +0200  377) 
+^909604f (evals 2026-10-22 10:53:58 +0200  378)     # Methods for concrete classes to override.
+^909604f (evals 2026-10-22 10:53:58 +0200  379) 
+^909604f (evals 2026-10-22 10:53:58 +0200  380)     def _bind_to_schema(self, field_name: str, parent: Schema | Field) -> None:
+^909604f (evals 2026-10-22 10:53:58 +0200  381)         """Update field with values from its parent schema. Called by
+^909604f (evals 2026-10-22 10:53:58 +0200  382)                 `Schema._bind_field <marshmallow.Schema._bind_field>`.
+^909604f (evals 2026-10-22 10:53:58 +0200  383) 
+^909604f (evals 2026-10-22 10:53:58 +0200  384)         :param field_name: Field name set in schema.
+^909604f (evals 2026-10-22 10:53:58 +0200  385)         :param parent: Parent object.
+^909604f (evals 2026-10-22 10:53:58 +0200  386)         """
+^909604f (evals 2026-10-22 10:53:58 +0200  387)         self.parent = self.parent or parent
+^909604f (evals 2026-10-22 10:53:58 +0200  388)         self.name = self.name or field_name
+^909604f (evals 2026-10-22 10:53:58 +0200  389)         self.root = self.root or (
+^909604f (evals 2026-10-22 10:53:58 +0200  390)             self.parent.root if isinstance(self.parent, Field) else self.parent
+^909604f (evals 2026-10-22 10:53:58 +0200  391)         )
+^909604f (evals 2026-10-22 10:53:58 +0200  392) 
+^909604f (evals 2026-10-22 10:53:58 +0200  393)     def _serialize(
+^909604f (evals 2026-10-22 10:53:58 +0200  394)         self, value: _InternalT | None, attr: str | None, obj: typing.Any, **kwargs
+^909604f (evals 2026-10-22 10:53:58 +0200  395)     ) -> typing.Any:
+^909604f (evals 2026-10-22 10:53:58 +0200  396)         """Serializes ``value`` to a basic Python datatype. Noop by default.
+^909604f (evals 2026-10-22 10:53:58 +0200  397)         Concrete :class:`Field` classes should implement this method.
+^909604f (evals 2026-10-22 10:53:58 +0200  398) 
+^909604f (evals 2026-10-22 10:53:58 +0200  399)         Example: ::
+^909604f (evals 2026-10-22 10:53:58 +0200  400) 
+^909604f (evals 2026-10-22 10:53:58 +0200  401)             class TitleCase(Field):
+^909604f (evals 2026-10-22 10:53:58 +0200  402)                 def _serialize(self, value, attr, obj, **kwargs):
+^909604f (evals 2026-10-22 10:53:58 +0200  403)                     if not value:
+^909604f (evals 2026-10-22 10:53:58 +0200  404)                         return ""
+^909604f (evals 2026-10-22 10:53:58 +0200  405)                     return str(value).title()
+^909604f (evals 2026-10-22 10:53:58 +0200  406) 
+^909604f (evals 2026-10-22 10:53:58 +0200  407)         :param value: The value to be serialized.
+^909604f (evals 2026-10-22 10:53:58 +0200  408)         :param attr: The attribute or key on the object to be serialized.
+^909604f (evals 2026-10-22 10:53:58 +0200  409)         :param obj: The object the value was pulled from.
+^909604f (evals 2026-10-22 10:53:58 +0200  410)         :param kwargs: Field-specific keyword arguments.
+^909604f (evals 2026-10-22 10:53:58 +0200  411)         :return: The serialized value
+^909604f (evals 2026-10-22 10:53:58 +0200  412)         """
+^909604f (evals 2026-10-22 10:53:58 +0200  413)         return value
+^909604f (evals 2026-10-22 10:53:58 +0200  414) 
+^909604f (evals 2026-10-22 10:53:58 +0200  415)     def _deserialize(
+^909604f (evals 2026-10-22 10:53:58 +0200  416)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  417)         value: typing.Any,
+^909604f (evals 2026-10-22 10:53:58 +0200  418)         attr: str | None,
+^909604f (evals 2026-10-22 10:53:58 +0200  419)         data: typing.Mapping[str, typing.Any] | None,
+^909604f (evals 2026-10-22 10:53:58 +0200  420)         **kwargs,
+^909604f (evals 2026-10-22 10:53:58 +0200  421)     ) -> _InternalT:
+^909604f (evals 2026-10-22 10:53:58 +0200  422)         """Deserialize value. Concrete :class:`Field` classes should implement this method.
+^909604f (evals 2026-10-22 10:53:58 +0200  423) 
+^909604f (evals 2026-10-22 10:53:58 +0200  424)         :param value: The value to be deserialized.
+^909604f (evals 2026-10-22 10:53:58 +0200  425)         :param attr: The attribute/key in `data` to be deserialized.
+^909604f (evals 2026-10-22 10:53:58 +0200  426)         :param data: The raw input data passed to the `Schema.load <marshmallow.Schema.load>`.
+^909604f (evals 2026-10-22 10:53:58 +0200  427)         :param kwargs: Field-specific keyword arguments.
+^909604f (evals 2026-10-22 10:53:58 +0200  428)         :raise ValidationError: In case of formatting or validation failure.
+^909604f (evals 2026-10-22 10:53:58 +0200  429)         :return: The deserialized value.
+^909604f (evals 2026-10-22 10:53:58 +0200  430) 
+^909604f (evals 2026-10-22 10:53:58 +0200  431)         .. versionchanged:: 3.0.0
+^909604f (evals 2026-10-22 10:53:58 +0200  432)             Added ``**kwargs`` to signature.
+^909604f (evals 2026-10-22 10:53:58 +0200  433)         """
+^909604f (evals 2026-10-22 10:53:58 +0200  434)         return value
+^909604f (evals 2026-10-22 10:53:58 +0200  435) 
+^909604f (evals 2026-10-22 10:53:58 +0200  436) 
+^909604f (evals 2026-10-22 10:53:58 +0200  437) class Raw(Field[typing.Any]):
+^909604f (evals 2026-10-22 10:53:58 +0200  438)     """Field that applies no formatting."""
+^909604f (evals 2026-10-22 10:53:58 +0200  439) 
+^909604f (evals 2026-10-22 10:53:58 +0200  440) 
+^909604f (evals 2026-10-22 10:53:58 +0200  441) class Nested(Field):
+^909604f (evals 2026-10-22 10:53:58 +0200  442)     """Allows you to nest a :class:`Schema <marshmallow.Schema>`
+^909604f (evals 2026-10-22 10:53:58 +0200  443)     inside a field.
+^909604f (evals 2026-10-22 10:53:58 +0200  444) 
+^909604f (evals 2026-10-22 10:53:58 +0200  445)     Examples: ::
+^909604f (evals 2026-10-22 10:53:58 +0200  446) 
+^909604f (evals 2026-10-22 10:53:58 +0200  447)         class ChildSchema(Schema):
+^909604f (evals 2026-10-22 10:53:58 +0200  448)             id = fields.Str()
+^909604f (evals 2026-10-22 10:53:58 +0200  449)             name = fields.Str()
+^909604f (evals 2026-10-22 10:53:58 +0200  450)             # Use lambda functions when you need two-way nesting or self-nesting
+^909604f (evals 2026-10-22 10:53:58 +0200  451)             parent = fields.Nested(lambda: ParentSchema(only=("id",)), dump_only=True)
+^909604f (evals 2026-10-22 10:53:58 +0200  452)             siblings = fields.List(
+^909604f (evals 2026-10-22 10:53:58 +0200  453)                 fields.Nested(lambda: ChildSchema(only=("id", "name")))
+^909604f (evals 2026-10-22 10:53:58 +0200  454)             )
+^909604f (evals 2026-10-22 10:53:58 +0200  455) 
+^909604f (evals 2026-10-22 10:53:58 +0200  456) 
+^909604f (evals 2026-10-22 10:53:58 +0200  457)         class ParentSchema(Schema):
+^909604f (evals 2026-10-22 10:53:58 +0200  458)             id = fields.Str()
+^909604f (evals 2026-10-22 10:53:58 +0200  459)             children = fields.List(
+^909604f (evals 2026-10-22 10:53:58 +0200  460)                 fields.Nested(ChildSchema(only=("id", "parent", "siblings")))
+^909604f (evals 2026-10-22 10:53:58 +0200  461)             )
+^909604f (evals 2026-10-22 10:53:58 +0200  462)             spouse = fields.Nested(lambda: ParentSchema(only=("id",)))
+^909604f (evals 2026-10-22 10:53:58 +0200  463) 
+^909604f (evals 2026-10-22 10:53:58 +0200  464)     When passing a `Schema <marshmallow.Schema>` instance as the first argument,
+^909604f (evals 2026-10-22 10:53:58 +0200  465)     the instance's ``exclude``, ``only``, and ``many`` attributes will be respected.
+^909604f (evals 2026-10-22 10:53:58 +0200  466) 
+^909604f (evals 2026-10-22 10:53:58 +0200  467)     Therefore, when passing the ``exclude``, ``only``, or ``many`` arguments to `fields.Nested`,
+^909604f (evals 2026-10-22 10:53:58 +0200  468)     you should pass a `Schema <marshmallow.Schema>` class (not an instance) as the first argument.
+^909604f (evals 2026-10-22 10:53:58 +0200  469) 
+^909604f (evals 2026-10-22 10:53:58 +0200  470)     ::
+^909604f (evals 2026-10-22 10:53:58 +0200  471) 
+^909604f (evals 2026-10-22 10:53:58 +0200  472)         # Yes
+^909604f (evals 2026-10-22 10:53:58 +0200  473)         author = fields.Nested(UserSchema, only=("id", "name"))
+^909604f (evals 2026-10-22 10:53:58 +0200  474) 
+^909604f (evals 2026-10-22 10:53:58 +0200  475)         # No
+^909604f (evals 2026-10-22 10:53:58 +0200  476)         author = fields.Nested(UserSchema(), only=("id", "name"))
+^909604f (evals 2026-10-22 10:53:58 +0200  477) 
+^909604f (evals 2026-10-22 10:53:58 +0200  478)     :param nested: `Schema <marshmallow.Schema>` instance, class, class name (string), dictionary, or callable that
+^909604f (evals 2026-10-22 10:53:58 +0200  479)         returns a `Schema <marshmallow.Schema>` or dictionary.
+^909604f (evals 2026-10-22 10:53:58 +0200  480)         Dictionaries are converted with `Schema.from_dict <marshmallow.Schema.from_dict>`.
+^909604f (evals 2026-10-22 10:53:58 +0200  481)     :param exclude: A list or tuple of fields to exclude.
+^909604f (evals 2026-10-22 10:53:58 +0200  482)     :param only: A list or tuple of fields to marshal. If `None`, all fields are marshalled.
+^909604f (evals 2026-10-22 10:53:58 +0200  483)         This parameter takes precedence over ``exclude``.
+^909604f (evals 2026-10-22 10:53:58 +0200  484)     :param many: Whether the field is a collection of objects.
+^909604f (evals 2026-10-22 10:53:58 +0200  485)         If `None` (default), and nested `Schema` instance is provided, ``many`` is not overridden.
+^909604f (evals 2026-10-22 10:53:58 +0200  486)         If `None` (default), and `Schema` subclass is provided, schema instance sets ``many`` as False.
+^909604f (evals 2026-10-22 10:53:58 +0200  487)         If `True | False` nested `[nested_field].schema.many` is overridden.
+^909604f (evals 2026-10-22 10:53:58 +0200  488)     :param unknown: Whether to exclude, include, or raise an error for unknown
+^909604f (evals 2026-10-22 10:53:58 +0200  489)         fields in the data. Use `EXCLUDE`, `INCLUDE` or `RAISE`.
+^909604f (evals 2026-10-22 10:53:58 +0200  490)     :param kwargs: The same keyword arguments that :class:`Field` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200  491)     """
+^909604f (evals 2026-10-22 10:53:58 +0200  492) 
+^909604f (evals 2026-10-22 10:53:58 +0200  493)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200  494)     default_error_messages = {"type": "Invalid type."}
+^909604f (evals 2026-10-22 10:53:58 +0200  495) 
+^909604f (evals 2026-10-22 10:53:58 +0200  496)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200  497)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  498)         nested: (
+^909604f (evals 2026-10-22 10:53:58 +0200  499)             Schema
+^909604f (evals 2026-10-22 10:53:58 +0200  500)             | SchemaMeta
+^909604f (evals 2026-10-22 10:53:58 +0200  501)             | str
+^909604f (evals 2026-10-22 10:53:58 +0200  502)             | dict[str, Field]
+^909604f (evals 2026-10-22 10:53:58 +0200  503)             | typing.Callable[[], Schema | SchemaMeta | dict[str, Field]]
+^909604f (evals 2026-10-22 10:53:58 +0200  504)         ),
+^909604f (evals 2026-10-22 10:53:58 +0200  505)         *,
+^909604f (evals 2026-10-22 10:53:58 +0200  506)         only: types.StrSequenceOrSet | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  507)         exclude: types.StrSequenceOrSet = (),
+^909604f (evals 2026-10-22 10:53:58 +0200  508)         many: bool | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  509)         unknown: types.UnknownOption | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  510)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200  511)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200  512)         # Raise error if only or exclude is passed as string, not list of strings
+^909604f (evals 2026-10-22 10:53:58 +0200  513)         if only is not None and not utils.is_sequence_but_not_string(only):
+^909604f (evals 2026-10-22 10:53:58 +0200  514)             raise StringNotCollectionError('"only" should be a collection of strings.')
+^909604f (evals 2026-10-22 10:53:58 +0200  515)         if not utils.is_sequence_but_not_string(exclude):
+^909604f (evals 2026-10-22 10:53:58 +0200  516)             raise StringNotCollectionError(
+^909604f (evals 2026-10-22 10:53:58 +0200  517)                 '"exclude" should be a collection of strings.'
+^909604f (evals 2026-10-22 10:53:58 +0200  518)             )
+^909604f (evals 2026-10-22 10:53:58 +0200  519)         self.nested = nested
+^909604f (evals 2026-10-22 10:53:58 +0200  520)         self.only = only
+^909604f (evals 2026-10-22 10:53:58 +0200  521)         self.exclude = exclude
+^909604f (evals 2026-10-22 10:53:58 +0200  522)         self.many = many
+^909604f (evals 2026-10-22 10:53:58 +0200  523)         self.unknown = unknown
+^909604f (evals 2026-10-22 10:53:58 +0200  524)         self._schema: Schema | None = None  # Cached Schema instance
+^909604f (evals 2026-10-22 10:53:58 +0200  525)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200  526) 
+^909604f (evals 2026-10-22 10:53:58 +0200  527)     @property
+^909604f (evals 2026-10-22 10:53:58 +0200  528)     def schema(self) -> Schema:
+^909604f (evals 2026-10-22 10:53:58 +0200  529)         """The nested Schema object."""
+^909604f (evals 2026-10-22 10:53:58 +0200  530)         if not self._schema:
+^909604f (evals 2026-10-22 10:53:58 +0200  531)             if callable(self.nested) and not isinstance(self.nested, type):
+^909604f (evals 2026-10-22 10:53:58 +0200  532)                 nested = self.nested()
+^909604f (evals 2026-10-22 10:53:58 +0200  533)             else:
+^909604f (evals 2026-10-22 10:53:58 +0200  534)                 nested = typing.cast("Schema", self.nested)
+^909604f (evals 2026-10-22 10:53:58 +0200  535)             # defer the import of `marshmallow.schema` to avoid circular imports
+^909604f (evals 2026-10-22 10:53:58 +0200  536)             from marshmallow.schema import Schema  # noqa: PLC0415
+^909604f (evals 2026-10-22 10:53:58 +0200  537) 
+^909604f (evals 2026-10-22 10:53:58 +0200  538)             if isinstance(nested, dict):
+^909604f (evals 2026-10-22 10:53:58 +0200  539)                 nested = Schema.from_dict(nested)
+^909604f (evals 2026-10-22 10:53:58 +0200  540) 
+^909604f (evals 2026-10-22 10:53:58 +0200  541)             if isinstance(nested, Schema):
+^909604f (evals 2026-10-22 10:53:58 +0200  542)                 self._schema = copy.copy(nested)
+^909604f (evals 2026-10-22 10:53:58 +0200  543)                 # Respect only and exclude and many passed from parent and re-initialize fields
+^909604f (evals 2026-10-22 10:53:58 +0200  544)                 set_class = typing.cast("type[set]", self._schema.set_class)
+^909604f (evals 2026-10-22 10:53:58 +0200  545)                 if self.only is not None:
+^909604f (evals 2026-10-22 10:53:58 +0200  546)                     if self._schema.only is not None:
+^909604f (evals 2026-10-22 10:53:58 +0200  547)                         original = self._schema.only
+^909604f (evals 2026-10-22 10:53:58 +0200  548)                     else:  # only=None -> all fields
+^909604f (evals 2026-10-22 10:53:58 +0200  549)                         original = self._schema.fields.keys()
+^909604f (evals 2026-10-22 10:53:58 +0200  550)                     self._schema.only = set_class(self.only) & set_class(original)
+^909604f (evals 2026-10-22 10:53:58 +0200  551)                 if self.exclude:
+^909604f (evals 2026-10-22 10:53:58 +0200  552)                     original = self._schema.exclude
+^909604f (evals 2026-10-22 10:53:58 +0200  553)                     self._schema.exclude = set_class(self.exclude) | set_class(original)
+^909604f (evals 2026-10-22 10:53:58 +0200  554)                 if self.many is not None:
+^909604f (evals 2026-10-22 10:53:58 +0200  555)                     self._schema.many = self.many
+^909604f (evals 2026-10-22 10:53:58 +0200  556)                 self._schema._init_fields()
+^909604f (evals 2026-10-22 10:53:58 +0200  557)             else:
+^909604f (evals 2026-10-22 10:53:58 +0200  558)                 if isinstance(nested, type) and issubclass(nested, Schema):
+^909604f (evals 2026-10-22 10:53:58 +0200  559)                     schema_class: type[Schema] = nested
+^909604f (evals 2026-10-22 10:53:58 +0200  560)                 elif not isinstance(nested, (str, bytes)):
+^909604f (evals 2026-10-22 10:53:58 +0200  561)                     raise ValueError(
+^909604f (evals 2026-10-22 10:53:58 +0200  562)                         "`Nested` fields must be passed a "
+^909604f (evals 2026-10-22 10:53:58 +0200  563)                         f"`Schema`, not {nested.__class__}."
+^909604f (evals 2026-10-22 10:53:58 +0200  564)                     )
+^909604f (evals 2026-10-22 10:53:58 +0200  565)                 else:
+^909604f (evals 2026-10-22 10:53:58 +0200  566)                     schema_class = class_registry.get_class(nested, all=False)
+^909604f (evals 2026-10-22 10:53:58 +0200  567)                 self._schema = schema_class(
+^909604f (evals 2026-10-22 10:53:58 +0200  568)                     many=bool(self.many),
+^909604f (evals 2026-10-22 10:53:58 +0200  569)                     only=self.only,
+^909604f (evals 2026-10-22 10:53:58 +0200  570)                     exclude=self.exclude,
+^909604f (evals 2026-10-22 10:53:58 +0200  571)                     load_only=self._nested_normalized_option("load_only"),
+^909604f (evals 2026-10-22 10:53:58 +0200  572)                     dump_only=self._nested_normalized_option("dump_only"),
+^909604f (evals 2026-10-22 10:53:58 +0200  573)                 )
+^909604f (evals 2026-10-22 10:53:58 +0200  574)         return self._schema
+^909604f (evals 2026-10-22 10:53:58 +0200  575) 
+^909604f (evals 2026-10-22 10:53:58 +0200  576)     def _nested_normalized_option(self, option_name: str) -> list[str]:
+^909604f (evals 2026-10-22 10:53:58 +0200  577)         nested_field = f"{self.name}."
+^909604f (evals 2026-10-22 10:53:58 +0200  578)         return [
+^909604f (evals 2026-10-22 10:53:58 +0200  579)             field.split(nested_field, 1)[1]
+^909604f (evals 2026-10-22 10:53:58 +0200  580)             for field in getattr(self.root, option_name, set())
+^909604f (evals 2026-10-22 10:53:58 +0200  581)             if field.startswith(nested_field)
+^909604f (evals 2026-10-22 10:53:58 +0200  582)         ]
+^909604f (evals 2026-10-22 10:53:58 +0200  583) 
+^909604f (evals 2026-10-22 10:53:58 +0200  584)     def _serialize(self, nested_obj, attr, obj, **kwargs):
+^909604f (evals 2026-10-22 10:53:58 +0200  585)         # Load up the schema first. This allows a RegistryError to be raised
+^909604f (evals 2026-10-22 10:53:58 +0200  586)         # if an invalid schema name was passed
+^909604f (evals 2026-10-22 10:53:58 +0200  587)         schema = self.schema
+^909604f (evals 2026-10-22 10:53:58 +0200  588)         if nested_obj is None:
+^909604f (evals 2026-10-22 10:53:58 +0200  589)             return None
+^909604f (evals 2026-10-22 10:53:58 +0200  590)         many = schema.many or self.many
+^909604f (evals 2026-10-22 10:53:58 +0200  591)         return schema.dump(nested_obj, many=many)
+^909604f (evals 2026-10-22 10:53:58 +0200  592) 
+^909604f (evals 2026-10-22 10:53:58 +0200  593)     def _test_collection(self, value: typing.Any) -> None:
+^909604f (evals 2026-10-22 10:53:58 +0200  594)         many = self.schema.many or self.many
+^909604f (evals 2026-10-22 10:53:58 +0200  595)         if many and not utils.is_collection(value):
+^909604f (evals 2026-10-22 10:53:58 +0200  596)             raise self.make_error("type", input=value, type=value.__class__.__name__)
+^909604f (evals 2026-10-22 10:53:58 +0200  597) 
+^909604f (evals 2026-10-22 10:53:58 +0200  598)     def _load(
+^909604f (evals 2026-10-22 10:53:58 +0200  599)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  600)         value: typing.Any,
+^909604f (evals 2026-10-22 10:53:58 +0200  601)         partial: bool | types.StrSequenceOrSet | None = None,  # noqa: FBT001
+^909604f (evals 2026-10-22 10:53:58 +0200  602)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200  603)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200  604)             valid_data = self.schema.load(value, unknown=self.unknown, partial=partial)
+^909604f (evals 2026-10-22 10:53:58 +0200  605)         except ValidationError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200  606)             raise ValidationError(
+^909604f (evals 2026-10-22 10:53:58 +0200  607)                 error.messages, valid_data=error.valid_data
+^909604f (evals 2026-10-22 10:53:58 +0200  608)             ) from error
+^909604f (evals 2026-10-22 10:53:58 +0200  609)         return valid_data
+^909604f (evals 2026-10-22 10:53:58 +0200  610) 
+^909604f (evals 2026-10-22 10:53:58 +0200  611)     def _deserialize(
+^909604f (evals 2026-10-22 10:53:58 +0200  612)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  613)         value: typing.Any,
+^909604f (evals 2026-10-22 10:53:58 +0200  614)         attr: str | None,
+^909604f (evals 2026-10-22 10:53:58 +0200  615)         data: typing.Mapping[str, typing.Any] | None,
+^909604f (evals 2026-10-22 10:53:58 +0200  616)         partial: bool | types.StrSequenceOrSet | None = None,  # noqa: FBT001
+^909604f (evals 2026-10-22 10:53:58 +0200  617)         **kwargs,
+^909604f (evals 2026-10-22 10:53:58 +0200  618)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200  619)         """Same as :meth:`Field._deserialize` with additional ``partial`` argument.
+^909604f (evals 2026-10-22 10:53:58 +0200  620) 
+^909604f (evals 2026-10-22 10:53:58 +0200  621)         :param partial: For nested schemas, the ``partial``
+^909604f (evals 2026-10-22 10:53:58 +0200  622)             parameter passed to `marshmallow.Schema.load`.
+^909604f (evals 2026-10-22 10:53:58 +0200  623) 
+^909604f (evals 2026-10-22 10:53:58 +0200  624)         .. versionchanged:: 3.0.0
+^909604f (evals 2026-10-22 10:53:58 +0200  625)             Add ``partial`` parameter.
+^909604f (evals 2026-10-22 10:53:58 +0200  626)         """
+^909604f (evals 2026-10-22 10:53:58 +0200  627)         self._test_collection(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  628)         return self._load(value, partial=partial)
+^909604f (evals 2026-10-22 10:53:58 +0200  629) 
+^909604f (evals 2026-10-22 10:53:58 +0200  630) 
+^909604f (evals 2026-10-22 10:53:58 +0200  631) class Pluck(Nested):
+^909604f (evals 2026-10-22 10:53:58 +0200  632)     """Allows you to replace nested data with one of the data's fields.
+^909604f (evals 2026-10-22 10:53:58 +0200  633) 
+^909604f (evals 2026-10-22 10:53:58 +0200  634)     Example: ::
+^909604f (evals 2026-10-22 10:53:58 +0200  635) 
+^909604f (evals 2026-10-22 10:53:58 +0200  636)         from marshmallow import Schema, fields
+^909604f (evals 2026-10-22 10:53:58 +0200  637) 
+^909604f (evals 2026-10-22 10:53:58 +0200  638) 
+^909604f (evals 2026-10-22 10:53:58 +0200  639)         class ArtistSchema(Schema):
+^909604f (evals 2026-10-22 10:53:58 +0200  640)             id = fields.Int()
+^909604f (evals 2026-10-22 10:53:58 +0200  641)             name = fields.Str()
+^909604f (evals 2026-10-22 10:53:58 +0200  642) 
+^909604f (evals 2026-10-22 10:53:58 +0200  643) 
+^909604f (evals 2026-10-22 10:53:58 +0200  644)         class AlbumSchema(Schema):
+^909604f (evals 2026-10-22 10:53:58 +0200  645)             artist = fields.Pluck(ArtistSchema, "id")
+^909604f (evals 2026-10-22 10:53:58 +0200  646) 
+^909604f (evals 2026-10-22 10:53:58 +0200  647) 
+^909604f (evals 2026-10-22 10:53:58 +0200  648)         in_data = {"artist": 42}
+^909604f (evals 2026-10-22 10:53:58 +0200  649)         loaded = AlbumSchema().load(in_data)  # => {'artist': {'id': 42}}
+^909604f (evals 2026-10-22 10:53:58 +0200  650)         dumped = AlbumSchema().dump(loaded)  # => {'artist': 42}
+^909604f (evals 2026-10-22 10:53:58 +0200  651) 
+^909604f (evals 2026-10-22 10:53:58 +0200  652)     :param nested: The Schema class or class name (string) to nest
+^909604f (evals 2026-10-22 10:53:58 +0200  653)     :param str field_name: The key to pluck a value from.
+^909604f (evals 2026-10-22 10:53:58 +0200  654)     :param kwargs: The same keyword arguments that :class:`Nested` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200  655)     """
+^909604f (evals 2026-10-22 10:53:58 +0200  656) 
+^909604f (evals 2026-10-22 10:53:58 +0200  657)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200  658)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  659)         nested: Schema | SchemaMeta | str | typing.Callable[[], Schema],
+^909604f (evals 2026-10-22 10:53:58 +0200  660)         field_name: str,
+^909604f (evals 2026-10-22 10:53:58 +0200  661)         *,
+^909604f (evals 2026-10-22 10:53:58 +0200  662)         many: bool = False,
+^909604f (evals 2026-10-22 10:53:58 +0200  663)         unknown: types.UnknownOption | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200  664)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200  665)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200  666)         super().__init__(
+^909604f (evals 2026-10-22 10:53:58 +0200  667)             nested, only=(field_name,), many=many, unknown=unknown, **kwargs
+^909604f (evals 2026-10-22 10:53:58 +0200  668)         )
+^909604f (evals 2026-10-22 10:53:58 +0200  669)         self.field_name = field_name
+^909604f (evals 2026-10-22 10:53:58 +0200  670) 
+^909604f (evals 2026-10-22 10:53:58 +0200  671)     @property
+^909604f (evals 2026-10-22 10:53:58 +0200  672)     def _field_data_key(self) -> str:
+^909604f (evals 2026-10-22 10:53:58 +0200  673)         only_field = self.schema.fields[self.field_name]
+^909604f (evals 2026-10-22 10:53:58 +0200  674)         return only_field.data_key or self.field_name
+^909604f (evals 2026-10-22 10:53:58 +0200  675) 
+^909604f (evals 2026-10-22 10:53:58 +0200  676)     def _serialize(self, nested_obj, attr, obj, **kwargs):
+^909604f (evals 2026-10-22 10:53:58 +0200  677)         ret = super()._serialize(nested_obj, attr, obj, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200  678)         if ret is None:
+^909604f (evals 2026-10-22 10:53:58 +0200  679)             return None
+^909604f (evals 2026-10-22 10:53:58 +0200  680)         if self.many:
+^909604f (evals 2026-10-22 10:53:58 +0200  681)             return utils.pluck(ret, key=self._field_data_key)
+^909604f (evals 2026-10-22 10:53:58 +0200  682)         return ret[self._field_data_key]
+^909604f (evals 2026-10-22 10:53:58 +0200  683) 
+^909604f (evals 2026-10-22 10:53:58 +0200  684)     def _deserialize(self, value, attr, data, partial=None, **kwargs):
+^909604f (evals 2026-10-22 10:53:58 +0200  685)         self._test_collection(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  686)         if self.many:
+^909604f (evals 2026-10-22 10:53:58 +0200  687)             value = [{self._field_data_key: v} for v in value]
+^909604f (evals 2026-10-22 10:53:58 +0200  688)         else:
+^909604f (evals 2026-10-22 10:53:58 +0200  689)             value = {self._field_data_key: value}
+^909604f (evals 2026-10-22 10:53:58 +0200  690)         return self._load(value, partial=partial)
+^909604f (evals 2026-10-22 10:53:58 +0200  691) 
+^909604f (evals 2026-10-22 10:53:58 +0200  692) 
+^909604f (evals 2026-10-22 10:53:58 +0200  693) class List(Field[list[_InternalT | None]]):
+^909604f (evals 2026-10-22 10:53:58 +0200  694)     """A list field, composed with another `Field` class or
+^909604f (evals 2026-10-22 10:53:58 +0200  695)     instance.
+^909604f (evals 2026-10-22 10:53:58 +0200  696) 
+^909604f (evals 2026-10-22 10:53:58 +0200  697)     Example: ::
+^909604f (evals 2026-10-22 10:53:58 +0200  698) 
+^909604f (evals 2026-10-22 10:53:58 +0200  699)         numbers = fields.List(fields.Float())
+^909604f (evals 2026-10-22 10:53:58 +0200  700) 
+^909604f (evals 2026-10-22 10:53:58 +0200  701)     :param cls_or_instance: A field class or instance.
+^909604f (evals 2026-10-22 10:53:58 +0200  702)     :param kwargs: The same keyword arguments that :class:`Field` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200  703) 
+^909604f (evals 2026-10-22 10:53:58 +0200  704)     .. versionchanged:: 3.0.0rc9
+^909604f (evals 2026-10-22 10:53:58 +0200  705)         Does not serialize scalar values to single-item lists.
+^909604f (evals 2026-10-22 10:53:58 +0200  706)     """
+^909604f (evals 2026-10-22 10:53:58 +0200  707) 
+^909604f (evals 2026-10-22 10:53:58 +0200  708)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200  709)     default_error_messages = {"invalid": "Not a valid list."}
+^909604f (evals 2026-10-22 10:53:58 +0200  710) 
+^909604f (evals 2026-10-22 10:53:58 +0200  711)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200  712)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  713)         cls_or_instance: Field[_InternalT] | type[Field[_InternalT]],
+^909604f (evals 2026-10-22 10:53:58 +0200  714)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200  715)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200  716)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200  717)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200  718)             self.inner: Field[_InternalT] = _resolve_field_instance(cls_or_instance)
+^909604f (evals 2026-10-22 10:53:58 +0200  719)         except _FieldInstanceResolutionError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200  720)             raise ValueError(
+^909604f (evals 2026-10-22 10:53:58 +0200  721)                 "The list elements must be a subclass or instance of "
+^909604f (evals 2026-10-22 10:53:58 +0200  722)                 "marshmallow.fields.Field."
+^909604f (evals 2026-10-22 10:53:58 +0200  723)             ) from error
+^909604f (evals 2026-10-22 10:53:58 +0200  724)         if isinstance(self.inner, Nested):
+^909604f (evals 2026-10-22 10:53:58 +0200  725)             self.only = self.inner.only
+^909604f (evals 2026-10-22 10:53:58 +0200  726)             self.exclude = self.inner.exclude
+^909604f (evals 2026-10-22 10:53:58 +0200  727) 
+^909604f (evals 2026-10-22 10:53:58 +0200  728)     def _bind_to_schema(self, field_name: str, parent: Schema | Field) -> None:
+^909604f (evals 2026-10-22 10:53:58 +0200  729)         super()._bind_to_schema(field_name, parent)
+^909604f (evals 2026-10-22 10:53:58 +0200  730)         self.inner = copy.deepcopy(self.inner)
+^909604f (evals 2026-10-22 10:53:58 +0200  731)         self.inner._bind_to_schema(field_name, self)
+^909604f (evals 2026-10-22 10:53:58 +0200  732)         if isinstance(self.inner, Nested):
+^909604f (evals 2026-10-22 10:53:58 +0200  733)             self.inner.only = self.only
+^909604f (evals 2026-10-22 10:53:58 +0200  734)             self.inner.exclude = self.exclude
+^909604f (evals 2026-10-22 10:53:58 +0200  735) 
+^909604f (evals 2026-10-22 10:53:58 +0200  736)     def _serialize(self, value, attr, obj, **kwargs) -> list[_InternalT] | None:
+^909604f (evals 2026-10-22 10:53:58 +0200  737)         if value is None:
+^909604f (evals 2026-10-22 10:53:58 +0200  738)             return None
+^909604f (evals 2026-10-22 10:53:58 +0200  739)         return [self.inner._serialize(each, attr, obj, **kwargs) for each in value]
+^909604f (evals 2026-10-22 10:53:58 +0200  740) 
+^909604f (evals 2026-10-22 10:53:58 +0200  741)     def _deserialize(self, value, attr, data, **kwargs) -> list[_InternalT | None]:
+^909604f (evals 2026-10-22 10:53:58 +0200  742)         if not utils.is_collection(value):
+^909604f (evals 2026-10-22 10:53:58 +0200  743)             raise self.make_error("invalid")
+^909604f (evals 2026-10-22 10:53:58 +0200  744) 
+^909604f (evals 2026-10-22 10:53:58 +0200  745)         result = []
+^909604f (evals 2026-10-22 10:53:58 +0200  746)         errors = {}
+^909604f (evals 2026-10-22 10:53:58 +0200  747)         for idx, each in enumerate(value):
+^909604f (evals 2026-10-22 10:53:58 +0200  748)             try:
+^909604f (evals 2026-10-22 10:53:58 +0200  749)                 result.append(self.inner.deserialize(each, **kwargs))
+^909604f (evals 2026-10-22 10:53:58 +0200  750)             except ValidationError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200  751)                 if error.valid_data is not None:
+^909604f (evals 2026-10-22 10:53:58 +0200  752)                     result.append(typing.cast("_InternalT", error.valid_data))
+^909604f (evals 2026-10-22 10:53:58 +0200  753)                 errors.update({idx: error.messages})
+^909604f (evals 2026-10-22 10:53:58 +0200  754)         if errors:
+^909604f (evals 2026-10-22 10:53:58 +0200  755)             raise ValidationError(errors, valid_data=result)
+^909604f (evals 2026-10-22 10:53:58 +0200  756)         return result
+^909604f (evals 2026-10-22 10:53:58 +0200  757) 
+^909604f (evals 2026-10-22 10:53:58 +0200  758) 
+^909604f (evals 2026-10-22 10:53:58 +0200  759) class Tuple(Field[tuple]):
+^909604f (evals 2026-10-22 10:53:58 +0200  760)     """A tuple field, composed of a fixed number of other `Field` classes or
+^909604f (evals 2026-10-22 10:53:58 +0200  761)     instances
+^909604f (evals 2026-10-22 10:53:58 +0200  762) 
+^909604f (evals 2026-10-22 10:53:58 +0200  763)     Example: ::
+^909604f (evals 2026-10-22 10:53:58 +0200  764) 
+^909604f (evals 2026-10-22 10:53:58 +0200  765)         row = Tuple((fields.String(), fields.Integer(), fields.Float()))
+^909604f (evals 2026-10-22 10:53:58 +0200  766) 
+^909604f (evals 2026-10-22 10:53:58 +0200  767)     .. note::
+^909604f (evals 2026-10-22 10:53:58 +0200  768)         Because of the structured nature of `collections.namedtuple` and
+^909604f (evals 2026-10-22 10:53:58 +0200  769)         `typing.NamedTuple`, using a Schema within a Nested field for them is
+^909604f (evals 2026-10-22 10:53:58 +0200  770)         more appropriate than using a `Tuple` field.
+^909604f (evals 2026-10-22 10:53:58 +0200  771) 
+^909604f (evals 2026-10-22 10:53:58 +0200  772)     :param tuple_fields: An iterable of field classes or
+^909604f (evals 2026-10-22 10:53:58 +0200  773)         instances.
+^909604f (evals 2026-10-22 10:53:58 +0200  774)     :param kwargs: The same keyword arguments that :class:`Field` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200  775) 
+^909604f (evals 2026-10-22 10:53:58 +0200  776)     .. versionadded:: 3.0.0rc4
+^909604f (evals 2026-10-22 10:53:58 +0200  777)     """
+^909604f (evals 2026-10-22 10:53:58 +0200  778) 
+^909604f (evals 2026-10-22 10:53:58 +0200  779)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200  780)     default_error_messages = {"invalid": "Not a valid tuple."}
+^909604f (evals 2026-10-22 10:53:58 +0200  781) 
+^909604f (evals 2026-10-22 10:53:58 +0200  782)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200  783)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  784)         tuple_fields: typing.Iterable[Field | type[Field]],
+^909604f (evals 2026-10-22 10:53:58 +0200  785)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200  786)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200  787)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200  788)         if not utils.is_collection(tuple_fields):
+^909604f (evals 2026-10-22 10:53:58 +0200  789)             raise ValueError(
+^909604f (evals 2026-10-22 10:53:58 +0200  790)                 "tuple_fields must be an iterable of Field classes or instances."
+^909604f (evals 2026-10-22 10:53:58 +0200  791)             )
+^909604f (evals 2026-10-22 10:53:58 +0200  792) 
+^909604f (evals 2026-10-22 10:53:58 +0200  793)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200  794)             self.tuple_fields = [
+^909604f (evals 2026-10-22 10:53:58 +0200  795)                 _resolve_field_instance(cls_or_instance)
+^909604f (evals 2026-10-22 10:53:58 +0200  796)                 for cls_or_instance in tuple_fields
+^909604f (evals 2026-10-22 10:53:58 +0200  797)             ]
+^909604f (evals 2026-10-22 10:53:58 +0200  798)         except _FieldInstanceResolutionError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200  799)             raise ValueError(
+^909604f (evals 2026-10-22 10:53:58 +0200  800)                 'Elements of "tuple_fields" must be subclasses or '
+^909604f (evals 2026-10-22 10:53:58 +0200  801)                 "instances of marshmallow.fields.Field."
+^909604f (evals 2026-10-22 10:53:58 +0200  802)             ) from error
+^909604f (evals 2026-10-22 10:53:58 +0200  803) 
+^909604f (evals 2026-10-22 10:53:58 +0200  804)         self.validate_length = Length(equal=len(self.tuple_fields))
+^909604f (evals 2026-10-22 10:53:58 +0200  805) 
+^909604f (evals 2026-10-22 10:53:58 +0200  806)     def _bind_to_schema(self, field_name: str, parent: Schema | Field) -> None:
+^909604f (evals 2026-10-22 10:53:58 +0200  807)         super()._bind_to_schema(field_name, parent)
+^909604f (evals 2026-10-22 10:53:58 +0200  808)         new_tuple_fields = []
+^909604f (evals 2026-10-22 10:53:58 +0200  809)         for field in self.tuple_fields:
+^909604f (evals 2026-10-22 10:53:58 +0200  810)             new_field = copy.deepcopy(field)
+^909604f (evals 2026-10-22 10:53:58 +0200  811)             new_field._bind_to_schema(field_name, self)
+^909604f (evals 2026-10-22 10:53:58 +0200  812)             new_tuple_fields.append(new_field)
+^909604f (evals 2026-10-22 10:53:58 +0200  813) 
+^909604f (evals 2026-10-22 10:53:58 +0200  814)         self.tuple_fields = new_tuple_fields
+^909604f (evals 2026-10-22 10:53:58 +0200  815) 
+^909604f (evals 2026-10-22 10:53:58 +0200  816)     def _serialize(
+^909604f (evals 2026-10-22 10:53:58 +0200  817)         self, value: tuple | None, attr: str | None, obj: typing.Any, **kwargs
+^909604f (evals 2026-10-22 10:53:58 +0200  818)     ) -> tuple | None:
+^909604f (evals 2026-10-22 10:53:58 +0200  819)         if value is None:
+^909604f (evals 2026-10-22 10:53:58 +0200  820)             return None
+^909604f (evals 2026-10-22 10:53:58 +0200  821) 
+^909604f (evals 2026-10-22 10:53:58 +0200  822)         return tuple(
+^909604f (evals 2026-10-22 10:53:58 +0200  823)             field._serialize(each, attr, obj, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200  824)             for field, each in zip(self.tuple_fields, value, strict=True)
+^909604f (evals 2026-10-22 10:53:58 +0200  825)         )
+^909604f (evals 2026-10-22 10:53:58 +0200  826) 
+^909604f (evals 2026-10-22 10:53:58 +0200  827)     def _deserialize(
+^909604f (evals 2026-10-22 10:53:58 +0200  828)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  829)         value: typing.Any,
+^909604f (evals 2026-10-22 10:53:58 +0200  830)         attr: str | None,
+^909604f (evals 2026-10-22 10:53:58 +0200  831)         data: typing.Mapping[str, typing.Any] | None,
+^909604f (evals 2026-10-22 10:53:58 +0200  832)         **kwargs,
+^909604f (evals 2026-10-22 10:53:58 +0200  833)     ) -> tuple:
+^909604f (evals 2026-10-22 10:53:58 +0200  834)         if not utils.is_sequence_but_not_string(value):
+^909604f (evals 2026-10-22 10:53:58 +0200  835)             raise self.make_error("invalid")
+^909604f (evals 2026-10-22 10:53:58 +0200  836) 
+^909604f (evals 2026-10-22 10:53:58 +0200  837)         self.validate_length(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  838) 
+^909604f (evals 2026-10-22 10:53:58 +0200  839)         result = []
+^909604f (evals 2026-10-22 10:53:58 +0200  840)         errors = {}
+^909604f (evals 2026-10-22 10:53:58 +0200  841) 
+^909604f (evals 2026-10-22 10:53:58 +0200  842)         for idx, (field, each) in enumerate(zip(self.tuple_fields, value, strict=True)):
+^909604f (evals 2026-10-22 10:53:58 +0200  843)             try:
+^909604f (evals 2026-10-22 10:53:58 +0200  844)                 result.append(field.deserialize(each, **kwargs))
+^909604f (evals 2026-10-22 10:53:58 +0200  845)             except ValidationError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200  846)                 if error.valid_data is not None:
+^909604f (evals 2026-10-22 10:53:58 +0200  847)                     result.append(error.valid_data)
+^909604f (evals 2026-10-22 10:53:58 +0200  848)                 errors.update({idx: error.messages})
+^909604f (evals 2026-10-22 10:53:58 +0200  849)         if errors:
+^909604f (evals 2026-10-22 10:53:58 +0200  850)             raise ValidationError(errors, valid_data=result)
+^909604f (evals 2026-10-22 10:53:58 +0200  851) 
+^909604f (evals 2026-10-22 10:53:58 +0200  852)         return tuple(result)
+^909604f (evals 2026-10-22 10:53:58 +0200  853) 
+^909604f (evals 2026-10-22 10:53:58 +0200  854) 
+^909604f (evals 2026-10-22 10:53:58 +0200  855) class String(Field[str]):
+^909604f (evals 2026-10-22 10:53:58 +0200  856)     """A string field.
+^909604f (evals 2026-10-22 10:53:58 +0200  857) 
+^909604f (evals 2026-10-22 10:53:58 +0200  858)     :param kwargs: The same keyword arguments that :class:`Field` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200  859)     """
+^909604f (evals 2026-10-22 10:53:58 +0200  860) 
+^909604f (evals 2026-10-22 10:53:58 +0200  861)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200  862)     default_error_messages = {
+^909604f (evals 2026-10-22 10:53:58 +0200  863)         "invalid": "Not a valid string.",
+^909604f (evals 2026-10-22 10:53:58 +0200  864)         "invalid_utf8": "Not a valid utf-8 string.",
+^909604f (evals 2026-10-22 10:53:58 +0200  865)     }
+^909604f (evals 2026-10-22 10:53:58 +0200  866) 
+^909604f (evals 2026-10-22 10:53:58 +0200  867)     def _serialize(self, value, attr, obj, **kwargs) -> str | None:
+^909604f (evals 2026-10-22 10:53:58 +0200  868)         if value is None:
+^909604f (evals 2026-10-22 10:53:58 +0200  869)             return None
+^909604f (evals 2026-10-22 10:53:58 +0200  870)         return utils.ensure_text_type(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  871) 
+^909604f (evals 2026-10-22 10:53:58 +0200  872)     def _deserialize(self, value, attr, data, **kwargs) -> str:
+^909604f (evals 2026-10-22 10:53:58 +0200  873)         if not isinstance(value, (str, bytes)):
+^909604f (evals 2026-10-22 10:53:58 +0200  874)             raise self.make_error("invalid")
+^909604f (evals 2026-10-22 10:53:58 +0200  875)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200  876)             return utils.ensure_text_type(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  877)         except UnicodeDecodeError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200  878)             raise self.make_error("invalid_utf8") from error
+^909604f (evals 2026-10-22 10:53:58 +0200  879) 
+^909604f (evals 2026-10-22 10:53:58 +0200  880) 
+^909604f (evals 2026-10-22 10:53:58 +0200  881) class UUID(Field[uuid.UUID]):
+^909604f (evals 2026-10-22 10:53:58 +0200  882)     """A UUID field."""
+^909604f (evals 2026-10-22 10:53:58 +0200  883) 
+^909604f (evals 2026-10-22 10:53:58 +0200  884)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200  885)     default_error_messages = {"invalid_uuid": "Not a valid UUID."}
+^909604f (evals 2026-10-22 10:53:58 +0200  886) 
+^909604f (evals 2026-10-22 10:53:58 +0200  887)     def _validated(self, value) -> uuid.UUID:
+^909604f (evals 2026-10-22 10:53:58 +0200  888)         """Format the value or raise a :exc:`ValidationError` if an error occurs."""
+^909604f (evals 2026-10-22 10:53:58 +0200  889)         if isinstance(value, uuid.UUID):
+^909604f (evals 2026-10-22 10:53:58 +0200  890)             return value
+^909604f (evals 2026-10-22 10:53:58 +0200  891)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200  892)             if isinstance(value, bytes) and len(value) == 16:
+^909604f (evals 2026-10-22 10:53:58 +0200  893)                 return uuid.UUID(bytes=value)
+^909604f (evals 2026-10-22 10:53:58 +0200  894)             return uuid.UUID(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  895)         except (ValueError, AttributeError, TypeError) as error:
+^909604f (evals 2026-10-22 10:53:58 +0200  896)             raise self.make_error("invalid_uuid") from error
+^909604f (evals 2026-10-22 10:53:58 +0200  897) 
+^909604f (evals 2026-10-22 10:53:58 +0200  898)     def _serialize(self, value, attr, obj, **kwargs) -> str | None:
+^909604f (evals 2026-10-22 10:53:58 +0200  899)         if value is None:
+^909604f (evals 2026-10-22 10:53:58 +0200  900)             return None
+^909604f (evals 2026-10-22 10:53:58 +0200  901)         return str(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  902) 
+^909604f (evals 2026-10-22 10:53:58 +0200  903)     def _deserialize(self, value, attr, data, **kwargs) -> uuid.UUID:
+^909604f (evals 2026-10-22 10:53:58 +0200  904)         return self._validated(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  905) 
+^909604f (evals 2026-10-22 10:53:58 +0200  906) 
+^909604f (evals 2026-10-22 10:53:58 +0200  907) _NumT = typing.TypeVar("_NumT")
+^909604f (evals 2026-10-22 10:53:58 +0200  908) 
+^909604f (evals 2026-10-22 10:53:58 +0200  909) 
+^909604f (evals 2026-10-22 10:53:58 +0200  910) class Number(Field[_NumT], metaclass=abc.ABCMeta):
+^909604f (evals 2026-10-22 10:53:58 +0200  911)     """Abstract base class for number fields.
+^909604f (evals 2026-10-22 10:53:58 +0200  912) 
+^909604f (evals 2026-10-22 10:53:58 +0200  913)     Use `Integer <marshmallow.fields.Integer>`, `Float <marshmallow.fields.Float>`,
+^909604f (evals 2026-10-22 10:53:58 +0200  914)     or `Decimal <marshmallow.fields.Decimal>` within schemas.
+^909604f (evals 2026-10-22 10:53:58 +0200  915) 
+^909604f (evals 2026-10-22 10:53:58 +0200  916)     :param as_string: If `True`, format the serialized value as a string.
+^909604f (evals 2026-10-22 10:53:58 +0200  917)     :param kwargs: The same keyword arguments that :class:`Field` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200  918) 
+^909604f (evals 2026-10-22 10:53:58 +0200  919)     .. versionchanged:: 3.24.0
+^909604f (evals 2026-10-22 10:53:58 +0200  920)         `Number <marshmallow.fields.Number>` should no longer be used as a field within a `Schema <marshmallow.Schema>`.
+^909604f (evals 2026-10-22 10:53:58 +0200  921)         Use `Integer <marshmallow.fields.Integer>`, `Float <marshmallow.fields.Float>`, or `Decimal <marshmallow.fields.Decimal>` instead.
+^909604f (evals 2026-10-22 10:53:58 +0200  922)     """
+^909604f (evals 2026-10-22 10:53:58 +0200  923) 
+^909604f (evals 2026-10-22 10:53:58 +0200  924)     @property
+^909604f (evals 2026-10-22 10:53:58 +0200  925)     @abc.abstractmethod
+^909604f (evals 2026-10-22 10:53:58 +0200  926)     def num_type(self) -> type[_NumT]: ...
+^909604f (evals 2026-10-22 10:53:58 +0200  927) 
+^909604f (evals 2026-10-22 10:53:58 +0200  928)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200  929)     default_error_messages = {
+^909604f (evals 2026-10-22 10:53:58 +0200  930)         "invalid": "Not a valid number.",
+^909604f (evals 2026-10-22 10:53:58 +0200  931)         "too_large": "Number too large.",
+^909604f (evals 2026-10-22 10:53:58 +0200  932)     }
+^909604f (evals 2026-10-22 10:53:58 +0200  933) 
+^909604f (evals 2026-10-22 10:53:58 +0200  934)     def __init__(self, *, as_string: bool = False, **kwargs: Unpack[_BaseFieldKwargs]):
+^909604f (evals 2026-10-22 10:53:58 +0200  935)         self.as_string = as_string
+^909604f (evals 2026-10-22 10:53:58 +0200  936)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200  937) 
+^909604f (evals 2026-10-22 10:53:58 +0200  938)     def _format_num(self, value) -> _NumT:
+^909604f (evals 2026-10-22 10:53:58 +0200  939)         """Return the number value for value, given this field's `num_type`."""
+^909604f (evals 2026-10-22 10:53:58 +0200  940)         return self.num_type(value)  # type: ignore[call-arg]
+^909604f (evals 2026-10-22 10:53:58 +0200  941) 
+^909604f (evals 2026-10-22 10:53:58 +0200  942)     def _validated(self, value: typing.Any) -> _NumT:
+^909604f (evals 2026-10-22 10:53:58 +0200  943)         """Format the value or raise a :exc:`ValidationError` if an error occurs."""
+^909604f (evals 2026-10-22 10:53:58 +0200  944)         # (value is True or value is False) is ~5x faster than isinstance(value, bool)
+^909604f (evals 2026-10-22 10:53:58 +0200  945)         if value is True or value is False:
+^909604f (evals 2026-10-22 10:53:58 +0200  946)             raise self.make_error("invalid", input=value)
+^909604f (evals 2026-10-22 10:53:58 +0200  947)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200  948)             return self._format_num(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  949)         except (TypeError, ValueError) as error:
+^909604f (evals 2026-10-22 10:53:58 +0200  950)             raise self.make_error("invalid", input=value) from error
+^909604f (evals 2026-10-22 10:53:58 +0200  951)         except OverflowError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200  952)             raise self.make_error("too_large", input=value) from error
+^909604f (evals 2026-10-22 10:53:58 +0200  953) 
+^909604f (evals 2026-10-22 10:53:58 +0200  954)     def _to_string(self, value: _NumT) -> str:
+^909604f (evals 2026-10-22 10:53:58 +0200  955)         return str(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  956) 
+^909604f (evals 2026-10-22 10:53:58 +0200  957)     def _serialize(self, value, attr, obj, **kwargs) -> str | _NumT | None:
+^909604f (evals 2026-10-22 10:53:58 +0200  958)         """Return a string if `self.as_string=True`, otherwise return this field's `num_type`."""
+^909604f (evals 2026-10-22 10:53:58 +0200  959)         if value is None:
+^909604f (evals 2026-10-22 10:53:58 +0200  960)             return None
+^909604f (evals 2026-10-22 10:53:58 +0200  961)         ret: _NumT = self._format_num(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  962)         return self._to_string(ret) if self.as_string else ret
+^909604f (evals 2026-10-22 10:53:58 +0200  963) 
+^909604f (evals 2026-10-22 10:53:58 +0200  964)     def _deserialize(self, value, attr, data, **kwargs) -> _NumT:
+^909604f (evals 2026-10-22 10:53:58 +0200  965)         return self._validated(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  966) 
+^909604f (evals 2026-10-22 10:53:58 +0200  967) 
+^909604f (evals 2026-10-22 10:53:58 +0200  968) class Integer(Number[int]):
+^909604f (evals 2026-10-22 10:53:58 +0200  969)     """An integer field.
+^909604f (evals 2026-10-22 10:53:58 +0200  970) 
+^909604f (evals 2026-10-22 10:53:58 +0200  971)     :param strict: If `True`, only integer types are valid.
+^909604f (evals 2026-10-22 10:53:58 +0200  972)         Otherwise, any value castable to `int` is valid.
+^909604f (evals 2026-10-22 10:53:58 +0200  973)     :param kwargs: The same keyword arguments that :class:`Number` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200  974)     """
+^909604f (evals 2026-10-22 10:53:58 +0200  975) 
+^909604f (evals 2026-10-22 10:53:58 +0200  976)     num_type = int
+^909604f (evals 2026-10-22 10:53:58 +0200  977) 
+^909604f (evals 2026-10-22 10:53:58 +0200  978)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200  979)     default_error_messages = {"invalid": "Not a valid integer."}
+^909604f (evals 2026-10-22 10:53:58 +0200  980) 
+^909604f (evals 2026-10-22 10:53:58 +0200  981)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200  982)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200  983)         *,
+^909604f (evals 2026-10-22 10:53:58 +0200  984)         strict: bool = False,
+^909604f (evals 2026-10-22 10:53:58 +0200  985)         as_string: bool = False,
+^909604f (evals 2026-10-22 10:53:58 +0200  986)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200  987)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200  988)         self.strict = strict
+^909604f (evals 2026-10-22 10:53:58 +0200  989)         super().__init__(as_string=as_string, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200  990) 
+^909604f (evals 2026-10-22 10:53:58 +0200  991)     # override Number
+^909604f (evals 2026-10-22 10:53:58 +0200  992)     def _validated(self, value: typing.Any) -> int:
+^909604f (evals 2026-10-22 10:53:58 +0200  993)         if self.strict and not isinstance(value, numbers.Integral):
+^909604f (evals 2026-10-22 10:53:58 +0200  994)             raise self.make_error("invalid", input=value)
+^909604f (evals 2026-10-22 10:53:58 +0200  995)         return super()._validated(value)
+^909604f (evals 2026-10-22 10:53:58 +0200  996) 
+^909604f (evals 2026-10-22 10:53:58 +0200  997) 
+^909604f (evals 2026-10-22 10:53:58 +0200  998) class Float(Number[float]):
+^909604f (evals 2026-10-22 10:53:58 +0200  999)     """A double as an IEEE-754 double precision string.
+^909604f (evals 2026-10-22 10:53:58 +0200 1000) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1001)     :param allow_nan: If `True`, `NaN`, `Infinity` and `-Infinity` are allowed,
+^909604f (evals 2026-10-22 10:53:58 +0200 1002)         even though they are illegal according to the JSON specification.
+^909604f (evals 2026-10-22 10:53:58 +0200 1003)     :param as_string: If `True`, format the value as a string.
+^909604f (evals 2026-10-22 10:53:58 +0200 1004)     :param kwargs: The same keyword arguments that :class:`Number` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200 1005)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1006) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1007)     num_type = float
+^909604f (evals 2026-10-22 10:53:58 +0200 1008) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1009)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200 1010)     default_error_messages = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1011)         "special": "Special numeric values (nan or infinity) are not permitted."
+^909604f (evals 2026-10-22 10:53:58 +0200 1012)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1013) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1014)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200 1015)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200 1016)         *,
+^909604f (evals 2026-10-22 10:53:58 +0200 1017)         allow_nan: bool = False,
+^909604f (evals 2026-10-22 10:53:58 +0200 1018)         as_string: bool = False,
+^909604f (evals 2026-10-22 10:53:58 +0200 1019)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200 1020)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200 1021)         self.allow_nan = allow_nan
+^909604f (evals 2026-10-22 10:53:58 +0200 1022)         super().__init__(as_string=as_string, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1023) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1024)     def _validated(self, value: typing.Any) -> float:
+^909604f (evals 2026-10-22 10:53:58 +0200 1025)         num = super()._validated(value)
+^909604f (evals 2026-10-22 10:53:58 +0200 1026)         if self.allow_nan is False:
+^909604f (evals 2026-10-22 10:53:58 +0200 1027)             if math.isnan(num) or num == float("inf") or num == float("-inf"):
+^909604f (evals 2026-10-22 10:53:58 +0200 1028)                 raise self.make_error("special")
+^909604f (evals 2026-10-22 10:53:58 +0200 1029)         return num
+^909604f (evals 2026-10-22 10:53:58 +0200 1030) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1031) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1032) class Decimal(Number[decimal.Decimal]):
+^909604f (evals 2026-10-22 10:53:58 +0200 1033)     """A field that (de)serializes to the Python ``decimal.Decimal`` type.
+^909604f (evals 2026-10-22 10:53:58 +0200 1034)     It's safe to use when dealing with money values, percentages, ratios
+^909604f (evals 2026-10-22 10:53:58 +0200 1035)     or other numbers where precision is critical.
+^909604f (evals 2026-10-22 10:53:58 +0200 1036) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1037)     .. warning::
+^909604f (evals 2026-10-22 10:53:58 +0200 1038) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1039)         This field serializes to a `decimal.Decimal` object by default. If you need
+^909604f (evals 2026-10-22 10:53:58 +0200 1040)         to render your data as JSON, keep in mind that the `json` module from the
+^909604f (evals 2026-10-22 10:53:58 +0200 1041)         standard library does not encode `decimal.Decimal`. Therefore, you must use
+^909604f (evals 2026-10-22 10:53:58 +0200 1042)         a JSON library that can handle decimals, such as `simplejson`, or serialize
+^909604f (evals 2026-10-22 10:53:58 +0200 1043)         to a string by passing ``as_string=True``.
+^909604f (evals 2026-10-22 10:53:58 +0200 1044) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1045)     .. warning::
+^909604f (evals 2026-10-22 10:53:58 +0200 1046) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1047)         If a JSON `float` value is passed to this field for deserialization it will
+^909604f (evals 2026-10-22 10:53:58 +0200 1048)         first be cast to its corresponding `string` value before being deserialized
+^909604f (evals 2026-10-22 10:53:58 +0200 1049)         to a `decimal.Decimal` object. The default `__str__` implementation of the
+^909604f (evals 2026-10-22 10:53:58 +0200 1050)         built-in Python `float` type may apply a destructive transformation upon
+^909604f (evals 2026-10-22 10:53:58 +0200 1051)         its input data and therefore cannot be relied upon to preserve precision.
+^909604f (evals 2026-10-22 10:53:58 +0200 1052)         To avoid this, you can instead pass a JSON `string` to be deserialized
+^909604f (evals 2026-10-22 10:53:58 +0200 1053)         directly.
+^909604f (evals 2026-10-22 10:53:58 +0200 1054) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1055)     :param places: How many decimal places to quantize the value. If `None`, does
+^909604f (evals 2026-10-22 10:53:58 +0200 1056)         not quantize the value.
+^909604f (evals 2026-10-22 10:53:58 +0200 1057)     :param rounding: How to round the value during quantize, for example
+^909604f (evals 2026-10-22 10:53:58 +0200 1058)         `decimal.ROUND_UP`. If `None`, uses the rounding value from
+^909604f (evals 2026-10-22 10:53:58 +0200 1059)         the current thread's context.
+^909604f (evals 2026-10-22 10:53:58 +0200 1060)     :param allow_nan: If `True`, `NaN`, `Infinity` and `-Infinity` are allowed,
+^909604f (evals 2026-10-22 10:53:58 +0200 1061)         even though they are illegal according to the JSON specification.
+^909604f (evals 2026-10-22 10:53:58 +0200 1062)     :param as_string: If `True`, serialize to a string instead of a Python
+^909604f (evals 2026-10-22 10:53:58 +0200 1063)         `decimal.Decimal` type.
+^909604f (evals 2026-10-22 10:53:58 +0200 1064)     :param kwargs: The same keyword arguments that :class:`Number` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200 1065)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1066) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1067)     num_type = decimal.Decimal
+^909604f (evals 2026-10-22 10:53:58 +0200 1068) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1069)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200 1070)     default_error_messages = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1071)         "special": "Special numeric values (nan or infinity) are not permitted."
+^909604f (evals 2026-10-22 10:53:58 +0200 1072)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1073) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1074)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200 1075)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200 1076)         places: int | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200 1077)         rounding: str | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200 1078)         *,
+^909604f (evals 2026-10-22 10:53:58 +0200 1079)         allow_nan: bool = False,
+^909604f (evals 2026-10-22 10:53:58 +0200 1080)         as_string: bool = False,
+^909604f (evals 2026-10-22 10:53:58 +0200 1081)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200 1082)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200 1083)         self.places = (
+^909604f (evals 2026-10-22 10:53:58 +0200 1084)             decimal.Decimal((0, (1,), -places)) if places is not None else None
+^909604f (evals 2026-10-22 10:53:58 +0200 1085)         )
+^909604f (evals 2026-10-22 10:53:58 +0200 1086)         self.rounding = rounding
+^909604f (evals 2026-10-22 10:53:58 +0200 1087)         self.allow_nan = allow_nan
+^909604f (evals 2026-10-22 10:53:58 +0200 1088)         super().__init__(as_string=as_string, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1089) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1090)     # override Number
+^909604f (evals 2026-10-22 10:53:58 +0200 1091)     def _format_num(self, value):
+^909604f (evals 2026-10-22 10:53:58 +0200 1092)         num = decimal.Decimal(str(value))
+^909604f (evals 2026-10-22 10:53:58 +0200 1093)         if self.allow_nan:
+^909604f (evals 2026-10-22 10:53:58 +0200 1094)             if num.is_nan():
+^909604f (evals 2026-10-22 10:53:58 +0200 1095)                 return decimal.Decimal("NaN")  # avoid sNaN, -sNaN and -NaN
+^909604f (evals 2026-10-22 10:53:58 +0200 1096)         if self.places is not None and num.is_finite():
+^909604f (evals 2026-10-22 10:53:58 +0200 1097)             num = num.quantize(self.places, rounding=self.rounding)
+^909604f (evals 2026-10-22 10:53:58 +0200 1098)         return num
+^909604f (evals 2026-10-22 10:53:58 +0200 1099) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1100)     # override Number
+^909604f (evals 2026-10-22 10:53:58 +0200 1101)     def _validated(self, value: typing.Any) -> decimal.Decimal:
+^909604f (evals 2026-10-22 10:53:58 +0200 1102)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200 1103)             num = super()._validated(value)
+^909604f (evals 2026-10-22 10:53:58 +0200 1104)         except decimal.InvalidOperation as error:
+^909604f (evals 2026-10-22 10:53:58 +0200 1105)             raise self.make_error("invalid") from error
+^909604f (evals 2026-10-22 10:53:58 +0200 1106)         if not self.allow_nan and (num.is_nan() or num.is_infinite()):
+^909604f (evals 2026-10-22 10:53:58 +0200 1107)             raise self.make_error("special")
+^909604f (evals 2026-10-22 10:53:58 +0200 1108)         return num
+^909604f (evals 2026-10-22 10:53:58 +0200 1109) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1110)     # override Number
+^909604f (evals 2026-10-22 10:53:58 +0200 1111)     def _to_string(self, value: decimal.Decimal) -> str:
+^909604f (evals 2026-10-22 10:53:58 +0200 1112)         return format(value, "f")
+^909604f (evals 2026-10-22 10:53:58 +0200 1113) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1114) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1115) class Boolean(Field[bool]):
+^909604f (evals 2026-10-22 10:53:58 +0200 1116)     """A boolean field.
+^909604f (evals 2026-10-22 10:53:58 +0200 1117) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1118)     :param truthy: Values that will (de)serialize to `True`. If an empty
+^909604f (evals 2026-10-22 10:53:58 +0200 1119)         set, any non-falsy value will deserialize to `True`. If `None`,
+^909604f (evals 2026-10-22 10:53:58 +0200 1120)         `marshmallow.fields.Boolean.truthy` will be used.
+^909604f (evals 2026-10-22 10:53:58 +0200 1121)     :param falsy: Values that will (de)serialize to `False`. If `None`,
+^909604f (evals 2026-10-22 10:53:58 +0200 1122)         `marshmallow.fields.Boolean.falsy` will be used.
+^909604f (evals 2026-10-22 10:53:58 +0200 1123)     :param kwargs: The same keyword arguments that :class:`Field` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200 1124)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1125) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1126)     #: Default truthy values.
+^909604f (evals 2026-10-22 10:53:58 +0200 1127)     truthy = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1128)         "t",
+^909604f (evals 2026-10-22 10:53:58 +0200 1129)         "T",
+^909604f (evals 2026-10-22 10:53:58 +0200 1130)         "true",
+^909604f (evals 2026-10-22 10:53:58 +0200 1131)         "True",
+^909604f (evals 2026-10-22 10:53:58 +0200 1132)         "TRUE",
+^909604f (evals 2026-10-22 10:53:58 +0200 1133)         "on",
+^909604f (evals 2026-10-22 10:53:58 +0200 1134)         "On",
+^909604f (evals 2026-10-22 10:53:58 +0200 1135)         "ON",
+^909604f (evals 2026-10-22 10:53:58 +0200 1136)         "y",
+^909604f (evals 2026-10-22 10:53:58 +0200 1137)         "Y",
+^909604f (evals 2026-10-22 10:53:58 +0200 1138)         "yes",
+^909604f (evals 2026-10-22 10:53:58 +0200 1139)         "Yes",
+^909604f (evals 2026-10-22 10:53:58 +0200 1140)         "YES",
+^909604f (evals 2026-10-22 10:53:58 +0200 1141)         "1",
+^909604f (evals 2026-10-22 10:53:58 +0200 1142)         1,
+^909604f (evals 2026-10-22 10:53:58 +0200 1143)         # Equal to 1
+^909604f (evals 2026-10-22 10:53:58 +0200 1144)         # True,
+^909604f (evals 2026-10-22 10:53:58 +0200 1145)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1146)     #: Default falsy values.
+^909604f (evals 2026-10-22 10:53:58 +0200 1147)     falsy = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1148)         "f",
+^909604f (evals 2026-10-22 10:53:58 +0200 1149)         "F",
+^909604f (evals 2026-10-22 10:53:58 +0200 1150)         "false",
+^909604f (evals 2026-10-22 10:53:58 +0200 1151)         "False",
+^909604f (evals 2026-10-22 10:53:58 +0200 1152)         "FALSE",
+^909604f (evals 2026-10-22 10:53:58 +0200 1153)         "off",
+^909604f (evals 2026-10-22 10:53:58 +0200 1154)         "Off",
+^909604f (evals 2026-10-22 10:53:58 +0200 1155)         "OFF",
+^909604f (evals 2026-10-22 10:53:58 +0200 1156)         "n",
+^909604f (evals 2026-10-22 10:53:58 +0200 1157)         "N",
+^909604f (evals 2026-10-22 10:53:58 +0200 1158)         "no",
+^909604f (evals 2026-10-22 10:53:58 +0200 1159)         "No",
+^909604f (evals 2026-10-22 10:53:58 +0200 1160)         "NO",
+^909604f (evals 2026-10-22 10:53:58 +0200 1161)         "0",
+^909604f (evals 2026-10-22 10:53:58 +0200 1162)         0,
+^909604f (evals 2026-10-22 10:53:58 +0200 1163)         # Equal to 0
+^909604f (evals 2026-10-22 10:53:58 +0200 1164)         # 0.0,
+^909604f (evals 2026-10-22 10:53:58 +0200 1165)         # False,
+^909604f (evals 2026-10-22 10:53:58 +0200 1166)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1167) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1168)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200 1169)     default_error_messages = {"invalid": "Not a valid boolean."}
+^909604f (evals 2026-10-22 10:53:58 +0200 1170) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1171)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200 1172)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200 1173)         *,
+^909604f (evals 2026-10-22 10:53:58 +0200 1174)         truthy: typing.Iterable | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200 1175)         falsy: typing.Iterable | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200 1176)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200 1177)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200 1178)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1179) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1180)         if truthy is not None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1181)             self.truthy = set(truthy)
+^909604f (evals 2026-10-22 10:53:58 +0200 1182)         if falsy is not None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1183)             self.falsy = set(falsy)
+^909604f (evals 2026-10-22 10:53:58 +0200 1184) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1185)     def _deserialize(
+^909604f (evals 2026-10-22 10:53:58 +0200 1186)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200 1187)         value: typing.Any,
+^909604f (evals 2026-10-22 10:53:58 +0200 1188)         attr: str | None,
+^909604f (evals 2026-10-22 10:53:58 +0200 1189)         data: typing.Mapping[str, typing.Any] | None,
+^909604f (evals 2026-10-22 10:53:58 +0200 1190)         **kwargs,
+^909604f (evals 2026-10-22 10:53:58 +0200 1191)     ) -> bool:
+^909604f (evals 2026-10-22 10:53:58 +0200 1192)         if not self.truthy:
+^909604f (evals 2026-10-22 10:53:58 +0200 1193)             return bool(value)
+^909604f (evals 2026-10-22 10:53:58 +0200 1194)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200 1195)             if value in self.truthy:
+^909604f (evals 2026-10-22 10:53:58 +0200 1196)                 return True
+^909604f (evals 2026-10-22 10:53:58 +0200 1197)             if value in self.falsy:
+^909604f (evals 2026-10-22 10:53:58 +0200 1198)                 return False
+^909604f (evals 2026-10-22 10:53:58 +0200 1199)         except TypeError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200 1200)             raise self.make_error("invalid", input=value) from error
+^909604f (evals 2026-10-22 10:53:58 +0200 1201)         raise self.make_error("invalid", input=value)
+^909604f (evals 2026-10-22 10:53:58 +0200 1202) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1203) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1204) _D = typing.TypeVar("_D", dt.datetime, dt.date, dt.time)
+^909604f (evals 2026-10-22 10:53:58 +0200 1205) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1206) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1207) class _TemporalField(Field[_D], metaclass=abc.ABCMeta):
+^909604f (evals 2026-10-22 10:53:58 +0200 1208)     """Base field for date and time related fields including common (de)serialization logic."""
+^909604f (evals 2026-10-22 10:53:58 +0200 1209) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1210)     # Subclasses should define each of these class constants
+^909604f (evals 2026-10-22 10:53:58 +0200 1211)     SERIALIZATION_FUNCS: dict[str, typing.Callable[[_D], str | float]]
+^909604f (evals 2026-10-22 10:53:58 +0200 1212)     DESERIALIZATION_FUNCS: dict[str, typing.Callable[[str], _D]]
+^909604f (evals 2026-10-22 10:53:58 +0200 1213)     DEFAULT_FORMAT: str
+^909604f (evals 2026-10-22 10:53:58 +0200 1214)     OBJ_TYPE: str
+^909604f (evals 2026-10-22 10:53:58 +0200 1215)     SCHEMA_OPTS_VAR_NAME: str
+^909604f (evals 2026-10-22 10:53:58 +0200 1216) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1217)     default_error_messages = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1218)         "invalid": "Not a valid {obj_type}.",
+^909604f (evals 2026-10-22 10:53:58 +0200 1219)         "invalid_awareness": "Not a valid {awareness} {obj_type}.",
+^909604f (evals 2026-10-22 10:53:58 +0200 1220)         "format": '"{input}" cannot be formatted as a {obj_type}.',
+^909604f (evals 2026-10-22 10:53:58 +0200 1221)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1222) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1223)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200 1224)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200 1225)         format: str | None = None,  # noqa: A002
+^909604f (evals 2026-10-22 10:53:58 +0200 1226)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200 1227)     ) -> None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1228)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1229)         # Allow this to be None. It may be set later in the ``_serialize``
+^909604f (evals 2026-10-22 10:53:58 +0200 1230)         # or ``_deserialize`` methods. This allows a Schema to dynamically set the
+^909604f (evals 2026-10-22 10:53:58 +0200 1231)         # format, e.g. from a Meta option
+^909604f (evals 2026-10-22 10:53:58 +0200 1232)         self.format = format
+^909604f (evals 2026-10-22 10:53:58 +0200 1233) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1234)     def _bind_to_schema(self, field_name, parent):
+^909604f (evals 2026-10-22 10:53:58 +0200 1235)         super()._bind_to_schema(field_name, parent)
+^909604f (evals 2026-10-22 10:53:58 +0200 1236)         self.format = (
+^909604f (evals 2026-10-22 10:53:58 +0200 1237)             self.format
+^909604f (evals 2026-10-22 10:53:58 +0200 1238)             or getattr(self.root.opts, self.SCHEMA_OPTS_VAR_NAME)
+^909604f (evals 2026-10-22 10:53:58 +0200 1239)             or self.DEFAULT_FORMAT
+^909604f (evals 2026-10-22 10:53:58 +0200 1240)         )
+^909604f (evals 2026-10-22 10:53:58 +0200 1241) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1242)     def _serialize(self, value: _D | None, attr, obj, **kwargs) -> str | float | None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1243)         if value is None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1244)             return None
+^909604f (evals 2026-10-22 10:53:58 +0200 1245)         data_format = self.format or self.DEFAULT_FORMAT
+^909604f (evals 2026-10-22 10:53:58 +0200 1246)         format_func = self.SERIALIZATION_FUNCS.get(data_format)
+^909604f (evals 2026-10-22 10:53:58 +0200 1247)         if format_func:
+^909604f (evals 2026-10-22 10:53:58 +0200 1248)             return format_func(value)
+^909604f (evals 2026-10-22 10:53:58 +0200 1249)         return value.strftime(data_format)
+^909604f (evals 2026-10-22 10:53:58 +0200 1250) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1251)     def _deserialize(self, value, attr, data, **kwargs) -> _D:
+^909604f (evals 2026-10-22 10:53:58 +0200 1252)         internal_type: type[_D] = getattr(dt, self.OBJ_TYPE)
+^909604f (evals 2026-10-22 10:53:58 +0200 1253)         if isinstance(value, internal_type):
+^909604f (evals 2026-10-22 10:53:58 +0200 1254)             return value
+^909604f (evals 2026-10-22 10:53:58 +0200 1255)         data_format = self.format or self.DEFAULT_FORMAT
+^909604f (evals 2026-10-22 10:53:58 +0200 1256)         func = self.DESERIALIZATION_FUNCS.get(data_format)
+^909604f (evals 2026-10-22 10:53:58 +0200 1257)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200 1258)             if func:
+^909604f (evals 2026-10-22 10:53:58 +0200 1259)                 return func(value)
+^909604f (evals 2026-10-22 10:53:58 +0200 1260)             return self._make_object_from_format(value, data_format)
+^909604f (evals 2026-10-22 10:53:58 +0200 1261)         except (TypeError, AttributeError, ValueError) as error:
+^909604f (evals 2026-10-22 10:53:58 +0200 1262)             raise self.make_error(
+^909604f (evals 2026-10-22 10:53:58 +0200 1263)                 "invalid", input=value, obj_type=self.OBJ_TYPE
+^909604f (evals 2026-10-22 10:53:58 +0200 1264)             ) from error
+^909604f (evals 2026-10-22 10:53:58 +0200 1265) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1266)     @staticmethod
+^909604f (evals 2026-10-22 10:53:58 +0200 1267)     @abc.abstractmethod
+^909604f (evals 2026-10-22 10:53:58 +0200 1268)     def _make_object_from_format(value: typing.Any, data_format: str) -> _D: ...
+^909604f (evals 2026-10-22 10:53:58 +0200 1269) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1270) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1271) class DateTime(_TemporalField[dt.datetime]):
+^909604f (evals 2026-10-22 10:53:58 +0200 1272)     """A formatted datetime string.
+^909604f (evals 2026-10-22 10:53:58 +0200 1273) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1274)     Example: ``'2014-12-22T03:12:58.019077+00:00'``
+^909604f (evals 2026-10-22 10:53:58 +0200 1275) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1276)     :param format: Either ``"rfc"`` (for RFC822), ``"iso"`` (for ISO8601),
+^909604f (evals 2026-10-22 10:53:58 +0200 1277)         ``"timestamp"``, ``"timestamp_ms"`` (for a POSIX timestamp) or a date format string.
+^909604f (evals 2026-10-22 10:53:58 +0200 1278)         If `None`, defaults to "iso".
+^909604f (evals 2026-10-22 10:53:58 +0200 1279)     :param kwargs: The same keyword arguments that :class:`Field` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200 1280) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1281)     .. versionchanged:: 3.0.0rc9
+^909604f (evals 2026-10-22 10:53:58 +0200 1282)         Does not modify timezone information on (de)serialization.
+^909604f (evals 2026-10-22 10:53:58 +0200 1283)     .. versionchanged:: 3.19
+^909604f (evals 2026-10-22 10:53:58 +0200 1284)         Add timestamp as a format.
+^909604f (evals 2026-10-22 10:53:58 +0200 1285)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1286) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1287)     SERIALIZATION_FUNCS: dict[str, typing.Callable[[dt.datetime], str | float]] = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1288)         "iso": dt.datetime.isoformat,
+^909604f (evals 2026-10-22 10:53:58 +0200 1289)         "iso8601": dt.datetime.isoformat,
+^909604f (evals 2026-10-22 10:53:58 +0200 1290)         "rfc": email.utils.format_datetime,
+^909604f (evals 2026-10-22 10:53:58 +0200 1291)         "rfc822": email.utils.format_datetime,
+^909604f (evals 2026-10-22 10:53:58 +0200 1292)         "timestamp": utils.timestamp,
+^909604f (evals 2026-10-22 10:53:58 +0200 1293)         "timestamp_ms": utils.timestamp_ms,
+^909604f (evals 2026-10-22 10:53:58 +0200 1294)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1295) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1296)     DESERIALIZATION_FUNCS: dict[str, typing.Callable[[str], dt.datetime]] = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1297)         "iso": dt.datetime.fromisoformat,
+^909604f (evals 2026-10-22 10:53:58 +0200 1298)         "iso8601": dt.datetime.fromisoformat,
+^909604f (evals 2026-10-22 10:53:58 +0200 1299)         "rfc": email.utils.parsedate_to_datetime,
+^909604f (evals 2026-10-22 10:53:58 +0200 1300)         "rfc822": email.utils.parsedate_to_datetime,
+^909604f (evals 2026-10-22 10:53:58 +0200 1301)         "timestamp": utils.from_timestamp,
+^909604f (evals 2026-10-22 10:53:58 +0200 1302)         "timestamp_ms": utils.from_timestamp_ms,
+^909604f (evals 2026-10-22 10:53:58 +0200 1303)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1304) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1305)     DEFAULT_FORMAT = "iso"
+^909604f (evals 2026-10-22 10:53:58 +0200 1306) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1307)     OBJ_TYPE = "datetime"
+^909604f (evals 2026-10-22 10:53:58 +0200 1308) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1309)     SCHEMA_OPTS_VAR_NAME = "datetimeformat"
+^909604f (evals 2026-10-22 10:53:58 +0200 1310) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1311)     @staticmethod
+^909604f (evals 2026-10-22 10:53:58 +0200 1312)     def _make_object_from_format(value, data_format) -> dt.datetime:
+^909604f (evals 2026-10-22 10:53:58 +0200 1313)         return dt.datetime.strptime(value, data_format)
+^909604f (evals 2026-10-22 10:53:58 +0200 1314) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1315) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1316) class NaiveDateTime(DateTime):
+^909604f (evals 2026-10-22 10:53:58 +0200 1317)     """A formatted naive datetime string.
+^909604f (evals 2026-10-22 10:53:58 +0200 1318) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1319)     :param format: See :class:`DateTime`.
+^909604f (evals 2026-10-22 10:53:58 +0200 1320)     :param timezone: Used on deserialization. If `None`,
+^909604f (evals 2026-10-22 10:53:58 +0200 1321)         aware datetimes are rejected. If not `None`, aware datetimes are
+^909604f (evals 2026-10-22 10:53:58 +0200 1322)         converted to this timezone before their timezone information is
+^909604f (evals 2026-10-22 10:53:58 +0200 1323)         removed.
+^909604f (evals 2026-10-22 10:53:58 +0200 1324)     :param kwargs: The same keyword arguments that :class:`Field` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200 1325) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1326)     .. versionadded:: 3.0.0rc9
+^909604f (evals 2026-10-22 10:53:58 +0200 1327)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1328) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1329)     AWARENESS = "naive"
+^909604f (evals 2026-10-22 10:53:58 +0200 1330) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1331)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200 1332)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200 1333)         format: str | None = None,  # noqa: A002
+^909604f (evals 2026-10-22 10:53:58 +0200 1334)         *,
+^909604f (evals 2026-10-22 10:53:58 +0200 1335)         timezone: dt.timezone | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200 1336)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200 1337)     ) -> None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1338)         super().__init__(format=format, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1339)         self.timezone = timezone
+^909604f (evals 2026-10-22 10:53:58 +0200 1340) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1341)     def _deserialize(self, value, attr, data, **kwargs) -> dt.datetime:
+^909604f (evals 2026-10-22 10:53:58 +0200 1342)         ret = super()._deserialize(value, attr, data, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1343)         if utils.is_aware(ret):
+^909604f (evals 2026-10-22 10:53:58 +0200 1344)             if self.timezone is None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1345)                 raise self.make_error(
+^909604f (evals 2026-10-22 10:53:58 +0200 1346)                     "invalid_awareness",
+^909604f (evals 2026-10-22 10:53:58 +0200 1347)                     awareness=self.AWARENESS,
+^909604f (evals 2026-10-22 10:53:58 +0200 1348)                     obj_type=self.OBJ_TYPE,
+^909604f (evals 2026-10-22 10:53:58 +0200 1349)                 )
+^909604f (evals 2026-10-22 10:53:58 +0200 1350)             ret = ret.astimezone(self.timezone).replace(tzinfo=None)
+^909604f (evals 2026-10-22 10:53:58 +0200 1351)         return ret
+^909604f (evals 2026-10-22 10:53:58 +0200 1352) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1353) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1354) class AwareDateTime(DateTime):
+^909604f (evals 2026-10-22 10:53:58 +0200 1355)     """A formatted aware datetime string.
+^909604f (evals 2026-10-22 10:53:58 +0200 1356) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1357)     :param format: See :class:`DateTime`.
+^909604f (evals 2026-10-22 10:53:58 +0200 1358)     :param default_timezone: Used on deserialization. If `None`, naive
+^909604f (evals 2026-10-22 10:53:58 +0200 1359)         datetimes are rejected. If not `None`, naive datetimes are set this
+^909604f (evals 2026-10-22 10:53:58 +0200 1360)         timezone.
+^909604f (evals 2026-10-22 10:53:58 +0200 1361)     :param kwargs: The same keyword arguments that :class:`Field` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200 1362) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1363)     .. versionadded:: 3.0.0rc9
+^909604f (evals 2026-10-22 10:53:58 +0200 1364)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1365) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1366)     AWARENESS = "aware"
+^909604f (evals 2026-10-22 10:53:58 +0200 1367) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1368)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200 1369)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200 1370)         format: str | None = None,  # noqa: A002
+^909604f (evals 2026-10-22 10:53:58 +0200 1371)         *,
+^909604f (evals 2026-10-22 10:53:58 +0200 1372)         default_timezone: dt.tzinfo | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200 1373)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200 1374)     ) -> None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1375)         super().__init__(format=format, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1376)         self.default_timezone = default_timezone
+^909604f (evals 2026-10-22 10:53:58 +0200 1377) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1378)     def _deserialize(self, value, attr, data, **kwargs) -> dt.datetime:
+^909604f (evals 2026-10-22 10:53:58 +0200 1379)         ret = super()._deserialize(value, attr, data, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1380)         if not utils.is_aware(ret):
+^909604f (evals 2026-10-22 10:53:58 +0200 1381)             if self.default_timezone is None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1382)                 raise self.make_error(
+^909604f (evals 2026-10-22 10:53:58 +0200 1383)                     "invalid_awareness",
+^909604f (evals 2026-10-22 10:53:58 +0200 1384)                     awareness=self.AWARENESS,
+^909604f (evals 2026-10-22 10:53:58 +0200 1385)                     obj_type=self.OBJ_TYPE,
+^909604f (evals 2026-10-22 10:53:58 +0200 1386)                 )
+^909604f (evals 2026-10-22 10:53:58 +0200 1387)             ret = ret.replace(tzinfo=self.default_timezone)
+^909604f (evals 2026-10-22 10:53:58 +0200 1388)         return ret
+^909604f (evals 2026-10-22 10:53:58 +0200 1389) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1390) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1391) class Time(_TemporalField[dt.time]):
+^909604f (evals 2026-10-22 10:53:58 +0200 1392)     """A formatted time string.
+^909604f (evals 2026-10-22 10:53:58 +0200 1393) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1394)     Example: ``'03:12:58.019077'``
+^909604f (evals 2026-10-22 10:53:58 +0200 1395) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1396)     :param format: Either ``"iso"`` (for ISO8601) or a date format string.
+^909604f (evals 2026-10-22 10:53:58 +0200 1397)         If `None`, defaults to "iso".
+^909604f (evals 2026-10-22 10:53:58 +0200 1398)     :param kwargs: The same keyword arguments that :class:`Field` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200 1399)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1400) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1401)     SERIALIZATION_FUNCS = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1402)         "iso": dt.time.isoformat,
+^909604f (evals 2026-10-22 10:53:58 +0200 1403)         "iso8601": dt.time.isoformat,
+^909604f (evals 2026-10-22 10:53:58 +0200 1404)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1405) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1406)     DESERIALIZATION_FUNCS = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1407)         "iso": dt.time.fromisoformat,
+^909604f (evals 2026-10-22 10:53:58 +0200 1408)         "iso8601": dt.time.fromisoformat,
+^909604f (evals 2026-10-22 10:53:58 +0200 1409)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1410) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1411)     DEFAULT_FORMAT = "iso"
+^909604f (evals 2026-10-22 10:53:58 +0200 1412) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1413)     OBJ_TYPE = "time"
+^909604f (evals 2026-10-22 10:53:58 +0200 1414) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1415)     SCHEMA_OPTS_VAR_NAME = "timeformat"
+^909604f (evals 2026-10-22 10:53:58 +0200 1416) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1417)     @staticmethod
+^909604f (evals 2026-10-22 10:53:58 +0200 1418)     def _make_object_from_format(value, data_format):
+^909604f (evals 2026-10-22 10:53:58 +0200 1419)         return dt.datetime.strptime(value, data_format).time()
+^909604f (evals 2026-10-22 10:53:58 +0200 1420) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1421) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1422) class Date(_TemporalField[dt.date]):
+^909604f (evals 2026-10-22 10:53:58 +0200 1423)     """ISO8601-formatted date string.
+^909604f (evals 2026-10-22 10:53:58 +0200 1424) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1425)     :param format: Either ``"iso"`` (for ISO8601) or a date format string.
+^909604f (evals 2026-10-22 10:53:58 +0200 1426)         If `None`, defaults to "iso".
+^909604f (evals 2026-10-22 10:53:58 +0200 1427)     :param kwargs: The same keyword arguments that :class:`Field` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200 1428)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1429) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1430)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200 1431)     default_error_messages = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1432)         "invalid": "Not a valid date.",
+^909604f (evals 2026-10-22 10:53:58 +0200 1433)         "format": '"{input}" cannot be formatted as a date.',
+^909604f (evals 2026-10-22 10:53:58 +0200 1434)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1435) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1436)     SERIALIZATION_FUNCS = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1437)         "iso": dt.date.isoformat,
+^909604f (evals 2026-10-22 10:53:58 +0200 1438)         "iso8601": dt.date.isoformat,
+^909604f (evals 2026-10-22 10:53:58 +0200 1439)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1440) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1441)     DESERIALIZATION_FUNCS = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1442)         "iso": dt.date.fromisoformat,
+^909604f (evals 2026-10-22 10:53:58 +0200 1443)         "iso8601": dt.date.fromisoformat,
+^909604f (evals 2026-10-22 10:53:58 +0200 1444)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1445) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1446)     DEFAULT_FORMAT = "iso"
+^909604f (evals 2026-10-22 10:53:58 +0200 1447) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1448)     OBJ_TYPE = "date"
+^909604f (evals 2026-10-22 10:53:58 +0200 1449) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1450)     SCHEMA_OPTS_VAR_NAME = "dateformat"
+^909604f (evals 2026-10-22 10:53:58 +0200 1451) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1452)     @staticmethod
+^909604f (evals 2026-10-22 10:53:58 +0200 1453)     def _make_object_from_format(value, data_format):
+^909604f (evals 2026-10-22 10:53:58 +0200 1454)         return dt.datetime.strptime(value, data_format).date()
+^909604f (evals 2026-10-22 10:53:58 +0200 1455) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1456) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1457) class TimeDelta(Field[dt.timedelta]):
+^909604f (evals 2026-10-22 10:53:58 +0200 1458)     """A field that (de)serializes a :class:`datetime.timedelta` object to a `float`.
+^909604f (evals 2026-10-22 10:53:58 +0200 1459)     The `float` can represent any time unit that the :class:`datetime.timedelta` constructor
+^909604f (evals 2026-10-22 10:53:58 +0200 1460)     supports.
+^909604f (evals 2026-10-22 10:53:58 +0200 1461) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1462)     :param precision: The time unit used for (de)serialization. Must be one of 'weeks',
+^909604f (evals 2026-10-22 10:53:58 +0200 1463)         'days', 'hours', 'minutes', 'seconds', 'milliseconds' or 'microseconds'.
+^909604f (evals 2026-10-22 10:53:58 +0200 1464)     :param kwargs: The same keyword arguments that :class:`Field` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200 1465) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1466)     Float Caveats
+^909604f (evals 2026-10-22 10:53:58 +0200 1467)     -------------
+^909604f (evals 2026-10-22 10:53:58 +0200 1468)     Precision loss may occur when serializing a highly precise :class:`datetime.timedelta`
+^909604f (evals 2026-10-22 10:53:58 +0200 1469)     object using a big ``precision`` unit due to floating point arithmetics.
+^909604f (evals 2026-10-22 10:53:58 +0200 1470) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1471)     When necessary, the :class:`datetime.timedelta` constructor rounds `float` inputs
+^909604f (evals 2026-10-22 10:53:58 +0200 1472)     to whole microseconds during initialization of the object. As a result, deserializing
+^909604f (evals 2026-10-22 10:53:58 +0200 1473)     a `float` might be subject to rounding, regardless of `precision`. For example,
+^909604f (evals 2026-10-22 10:53:58 +0200 1474)     ``TimeDelta().deserialize("1.1234567") == timedelta(seconds=1, microseconds=123457)``.
+^909604f (evals 2026-10-22 10:53:58 +0200 1475) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1476)     .. versionchanged:: 3.17.0
+^909604f (evals 2026-10-22 10:53:58 +0200 1477)         Allow serialization to `float` through use of a new `serialization_type` parameter.
+^909604f (evals 2026-10-22 10:53:58 +0200 1478)         Defaults to `int` for backwards compatibility. Also affects deserialization.
+^909604f (evals 2026-10-22 10:53:58 +0200 1479)     .. versionchanged:: 4.0.0
+^909604f (evals 2026-10-22 10:53:58 +0200 1480)         Remove `serialization_type` parameter and always serialize to float.
+^909604f (evals 2026-10-22 10:53:58 +0200 1481)         Value is cast to a `float` upon deserialization.
+^909604f (evals 2026-10-22 10:53:58 +0200 1482)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1483) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1484)     WEEKS = "weeks"
+^909604f (evals 2026-10-22 10:53:58 +0200 1485)     DAYS = "days"
+^909604f (evals 2026-10-22 10:53:58 +0200 1486)     HOURS = "hours"
+^909604f (evals 2026-10-22 10:53:58 +0200 1487)     MINUTES = "minutes"
+^909604f (evals 2026-10-22 10:53:58 +0200 1488)     SECONDS = "seconds"
+^909604f (evals 2026-10-22 10:53:58 +0200 1489)     MILLISECONDS = "milliseconds"
+^909604f (evals 2026-10-22 10:53:58 +0200 1490)     MICROSECONDS = "microseconds"
+^909604f (evals 2026-10-22 10:53:58 +0200 1491) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1492)     # cache this mapping on class level for performance
+^909604f (evals 2026-10-22 10:53:58 +0200 1493)     _unit_to_microseconds_mapping = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1494)         WEEKS: 1000000 * 60 * 60 * 24 * 7,
+^909604f (evals 2026-10-22 10:53:58 +0200 1495)         DAYS: 1000000 * 60 * 60 * 24,
+^909604f (evals 2026-10-22 10:53:58 +0200 1496)         HOURS: 1000000 * 60 * 60,
+^909604f (evals 2026-10-22 10:53:58 +0200 1497)         MINUTES: 1000000 * 60,
+^909604f (evals 2026-10-22 10:53:58 +0200 1498)         SECONDS: 1000000,
+^909604f (evals 2026-10-22 10:53:58 +0200 1499)         MILLISECONDS: 1000,
+^909604f (evals 2026-10-22 10:53:58 +0200 1500)         MICROSECONDS: 1,
+^909604f (evals 2026-10-22 10:53:58 +0200 1501)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1502) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1503)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200 1504)     default_error_messages = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1505)         "invalid": "Not a valid period of time.",
+^909604f (evals 2026-10-22 10:53:58 +0200 1506)         "format": "{input!r} cannot be formatted as a timedelta.",
+^909604f (evals 2026-10-22 10:53:58 +0200 1507)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1508) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1509)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200 1510)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200 1511)         precision: str = SECONDS,
+^909604f (evals 2026-10-22 10:53:58 +0200 1512)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200 1513)     ) -> None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1514)         precision = precision.lower()
+^909604f (evals 2026-10-22 10:53:58 +0200 1515) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1516)         if precision not in self._unit_to_microseconds_mapping:
+^909604f (evals 2026-10-22 10:53:58 +0200 1517)             units = ", ".join(self._unit_to_microseconds_mapping)
+^909604f (evals 2026-10-22 10:53:58 +0200 1518)             msg = f"The precision must be one of: {units}."
+^909604f (evals 2026-10-22 10:53:58 +0200 1519)             raise ValueError(msg)
+^909604f (evals 2026-10-22 10:53:58 +0200 1520) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1521)         self.precision = precision
+^909604f (evals 2026-10-22 10:53:58 +0200 1522)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1523) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1524)     def _serialize(self, value, attr, obj, **kwargs) -> float | None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1525)         if value is None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1526)             return None
+^909604f (evals 2026-10-22 10:53:58 +0200 1527) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1528)         # limit float arithmetics to a single division to minimize precision loss
+^909604f (evals 2026-10-22 10:53:58 +0200 1529)         microseconds: int = utils.timedelta_to_microseconds(value)
+^909604f (evals 2026-10-22 10:53:58 +0200 1530)         microseconds_per_unit: int = self._unit_to_microseconds_mapping[self.precision]
+^909604f (evals 2026-10-22 10:53:58 +0200 1531)         return microseconds / microseconds_per_unit
+^909604f (evals 2026-10-22 10:53:58 +0200 1532) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1533)     def _deserialize(self, value, attr, data, **kwargs) -> dt.timedelta:
+^909604f (evals 2026-10-22 10:53:58 +0200 1534)         if isinstance(value, dt.timedelta):
+^909604f (evals 2026-10-22 10:53:58 +0200 1535)             return value
+^909604f (evals 2026-10-22 10:53:58 +0200 1536)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200 1537)             value = float(value)
+^909604f (evals 2026-10-22 10:53:58 +0200 1538)         except (TypeError, ValueError) as error:
+^909604f (evals 2026-10-22 10:53:58 +0200 1539)             raise self.make_error("invalid") from error
+^909604f (evals 2026-10-22 10:53:58 +0200 1540) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1541)         kwargs = {self.precision: value}
+^909604f (evals 2026-10-22 10:53:58 +0200 1542) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1543)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200 1544)             return dt.timedelta(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1545)         except OverflowError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200 1546)             raise self.make_error("invalid") from error
+^909604f (evals 2026-10-22 10:53:58 +0200 1547) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1548) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1549) _MappingT = typing.TypeVar("_MappingT", bound=_Mapping)
+^909604f (evals 2026-10-22 10:53:58 +0200 1550) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1551) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1552) class Mapping(Field[_MappingT], metaclass=abc.ABCMeta):
+^909604f (evals 2026-10-22 10:53:58 +0200 1553)     """Abstract base class for objects with key-value pairs.
+^909604f (evals 2026-10-22 10:53:58 +0200 1554) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1555)     Use `Dict <marshmallow.fields.Dict>` within schemas.
+^909604f (evals 2026-10-22 10:53:58 +0200 1556) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1557)     :param keys: A field class or instance for dict keys.
+^909604f (evals 2026-10-22 10:53:58 +0200 1558)     :param values: A field class or instance for dict values.
+^909604f (evals 2026-10-22 10:53:58 +0200 1559)     :param kwargs: The same keyword arguments that :class:`Field` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200 1560) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1561)     .. note::
+^909604f (evals 2026-10-22 10:53:58 +0200 1562)         When the structure of nested data is not known, you may omit the
+^909604f (evals 2026-10-22 10:53:58 +0200 1563)         `keys` and `values` arguments to prevent content validation.
+^909604f (evals 2026-10-22 10:53:58 +0200 1564) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1565)     .. versionadded:: 3.0.0rc4
+^909604f (evals 2026-10-22 10:53:58 +0200 1566)     .. versionchanged:: 3.24.0
+^909604f (evals 2026-10-22 10:53:58 +0200 1567)         `Mapping <marshmallow.fields.Mapping>` should no longer be used as a field within a `Schema <marshmallow.Schema>`.
+^909604f (evals 2026-10-22 10:53:58 +0200 1568)         Use `Dict <marshmallow.fields.Dict>` instead.
+^909604f (evals 2026-10-22 10:53:58 +0200 1569)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1570) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1571)     @property
+^909604f (evals 2026-10-22 10:53:58 +0200 1572)     @abc.abstractmethod
+^909604f (evals 2026-10-22 10:53:58 +0200 1573)     def mapping_type(self) -> type[_MappingT]: ...
+^909604f (evals 2026-10-22 10:53:58 +0200 1574) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1575)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200 1576)     default_error_messages = {"invalid": "Not a valid mapping type."}
+^909604f (evals 2026-10-22 10:53:58 +0200 1577) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1578)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200 1579)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200 1580)         keys: Field | type[Field] | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200 1581)         values: Field | type[Field] | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200 1582)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200 1583)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200 1584)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1585)         if keys is None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1586)             self.key_field = None
+^909604f (evals 2026-10-22 10:53:58 +0200 1587)         else:
+^909604f (evals 2026-10-22 10:53:58 +0200 1588)             try:
+^909604f (evals 2026-10-22 10:53:58 +0200 1589)                 self.key_field = _resolve_field_instance(keys)
+^909604f (evals 2026-10-22 10:53:58 +0200 1590)             except _FieldInstanceResolutionError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200 1591)                 raise ValueError(
+^909604f (evals 2026-10-22 10:53:58 +0200 1592)                     '"keys" must be a subclass or instance of marshmallow.fields.Field.'
+^909604f (evals 2026-10-22 10:53:58 +0200 1593)                 ) from error
+^909604f (evals 2026-10-22 10:53:58 +0200 1594) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1595)         if values is None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1596)             self.value_field = None
+^909604f (evals 2026-10-22 10:53:58 +0200 1597)         else:
+^909604f (evals 2026-10-22 10:53:58 +0200 1598)             try:
+^909604f (evals 2026-10-22 10:53:58 +0200 1599)                 self.value_field = _resolve_field_instance(values)
+^909604f (evals 2026-10-22 10:53:58 +0200 1600)             except _FieldInstanceResolutionError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200 1601)                 raise ValueError(
+^909604f (evals 2026-10-22 10:53:58 +0200 1602)                     '"values" must be a subclass or instance of '
+^909604f (evals 2026-10-22 10:53:58 +0200 1603)                     "marshmallow.fields.Field."
+^909604f (evals 2026-10-22 10:53:58 +0200 1604)                 ) from error
+^909604f (evals 2026-10-22 10:53:58 +0200 1605)             if isinstance(self.value_field, Nested):
+^909604f (evals 2026-10-22 10:53:58 +0200 1606)                 self.only = self.value_field.only
+^909604f (evals 2026-10-22 10:53:58 +0200 1607)                 self.exclude = self.value_field.exclude
+^909604f (evals 2026-10-22 10:53:58 +0200 1608) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1609)     def _bind_to_schema(self, field_name, parent):
+^909604f (evals 2026-10-22 10:53:58 +0200 1610)         super()._bind_to_schema(field_name, parent)
+^909604f (evals 2026-10-22 10:53:58 +0200 1611)         if self.value_field:
+^909604f (evals 2026-10-22 10:53:58 +0200 1612)             self.value_field = copy.deepcopy(self.value_field)
+^909604f (evals 2026-10-22 10:53:58 +0200 1613)             self.value_field._bind_to_schema(field_name, self)
+^909604f (evals 2026-10-22 10:53:58 +0200 1614)         if isinstance(self.value_field, Nested):
+^909604f (evals 2026-10-22 10:53:58 +0200 1615)             self.value_field.only = self.only
+^909604f (evals 2026-10-22 10:53:58 +0200 1616)             self.value_field.exclude = self.exclude
+^909604f (evals 2026-10-22 10:53:58 +0200 1617)         if self.key_field:
+^909604f (evals 2026-10-22 10:53:58 +0200 1618)             self.key_field = copy.deepcopy(self.key_field)
+^909604f (evals 2026-10-22 10:53:58 +0200 1619)             self.key_field._bind_to_schema(field_name, self)
+^909604f (evals 2026-10-22 10:53:58 +0200 1620) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1621)     def _serialize(self, value, attr, obj, **kwargs):
+^909604f (evals 2026-10-22 10:53:58 +0200 1622)         if value is None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1623)             return None
+^909604f (evals 2026-10-22 10:53:58 +0200 1624)         if not self.value_field and not self.key_field:
+^909604f (evals 2026-10-22 10:53:58 +0200 1625)             return self.mapping_type(value)
+^909604f (evals 2026-10-22 10:53:58 +0200 1626) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1627)         # Serialize keys
+^909604f (evals 2026-10-22 10:53:58 +0200 1628)         if self.key_field is None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1629)             keys = {k: k for k in value}
+^909604f (evals 2026-10-22 10:53:58 +0200 1630)         else:
+^909604f (evals 2026-10-22 10:53:58 +0200 1631)             keys = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1632)                 k: self.key_field._serialize(k, None, None, **kwargs) for k in value
+^909604f (evals 2026-10-22 10:53:58 +0200 1633)             }
+^909604f (evals 2026-10-22 10:53:58 +0200 1634) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1635)         # Serialize values
+^909604f (evals 2026-10-22 10:53:58 +0200 1636)         result = self.mapping_type()
+^909604f (evals 2026-10-22 10:53:58 +0200 1637)         if self.value_field is None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1638)             for k, v in value.items():
+^909604f (evals 2026-10-22 10:53:58 +0200 1639)                 if k in keys:
+^909604f (evals 2026-10-22 10:53:58 +0200 1640)                     result[keys[k]] = v
+^909604f (evals 2026-10-22 10:53:58 +0200 1641)         else:
+^909604f (evals 2026-10-22 10:53:58 +0200 1642)             for k, v in value.items():
+^909604f (evals 2026-10-22 10:53:58 +0200 1643)                 result[keys[k]] = self.value_field._serialize(v, None, None, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1644) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1645)         return result
+^909604f (evals 2026-10-22 10:53:58 +0200 1646) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1647)     def _deserialize(self, value, attr, data, **kwargs):
+^909604f (evals 2026-10-22 10:53:58 +0200 1648)         if not isinstance(value, _Mapping):
+^909604f (evals 2026-10-22 10:53:58 +0200 1649)             raise self.make_error("invalid")
+^909604f (evals 2026-10-22 10:53:58 +0200 1650)         if not self.value_field and not self.key_field:
+^909604f (evals 2026-10-22 10:53:58 +0200 1651)             return self.mapping_type(value)
+^909604f (evals 2026-10-22 10:53:58 +0200 1652) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1653)         errors = collections.defaultdict(dict)
+^909604f (evals 2026-10-22 10:53:58 +0200 1654) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1655)         # Deserialize keys
+^909604f (evals 2026-10-22 10:53:58 +0200 1656)         if self.key_field is None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1657)             keys = {k: k for k in value}
+^909604f (evals 2026-10-22 10:53:58 +0200 1658)         else:
+^909604f (evals 2026-10-22 10:53:58 +0200 1659)             keys = {}
+^909604f (evals 2026-10-22 10:53:58 +0200 1660)             for key in value:
+^909604f (evals 2026-10-22 10:53:58 +0200 1661)                 try:
+^909604f (evals 2026-10-22 10:53:58 +0200 1662)                     keys[key] = self.key_field.deserialize(key, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1663)                 except ValidationError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200 1664)                     errors[key]["key"] = error.messages
+^909604f (evals 2026-10-22 10:53:58 +0200 1665) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1666)         # Deserialize values
+^909604f (evals 2026-10-22 10:53:58 +0200 1667)         result = self.mapping_type()
+^909604f (evals 2026-10-22 10:53:58 +0200 1668)         if self.value_field is None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1669)             for k, v in value.items():
+^909604f (evals 2026-10-22 10:53:58 +0200 1670)                 if k in keys:
+^909604f (evals 2026-10-22 10:53:58 +0200 1671)                     result[keys[k]] = v
+^909604f (evals 2026-10-22 10:53:58 +0200 1672)         else:
+^909604f (evals 2026-10-22 10:53:58 +0200 1673)             for key, val in value.items():
+^909604f (evals 2026-10-22 10:53:58 +0200 1674)                 try:
+^909604f (evals 2026-10-22 10:53:58 +0200 1675)                     deser_val = self.value_field.deserialize(val, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1676)                 except ValidationError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200 1677)                     errors[key]["value"] = error.messages
+^909604f (evals 2026-10-22 10:53:58 +0200 1678)                     if error.valid_data is not None and key in keys:
+^909604f (evals 2026-10-22 10:53:58 +0200 1679)                         result[keys[key]] = error.valid_data
+^909604f (evals 2026-10-22 10:53:58 +0200 1680)                 else:
+^909604f (evals 2026-10-22 10:53:58 +0200 1681)                     if key in keys:
+^909604f (evals 2026-10-22 10:53:58 +0200 1682)                         result[keys[key]] = deser_val
+^909604f (evals 2026-10-22 10:53:58 +0200 1683) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1684)         if errors:
+^909604f (evals 2026-10-22 10:53:58 +0200 1685)             raise ValidationError(errors, valid_data=result)
+^909604f (evals 2026-10-22 10:53:58 +0200 1686) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1687)         return result
+^909604f (evals 2026-10-22 10:53:58 +0200 1688) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1689) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1690) class Dict(Mapping[dict]):
+^909604f (evals 2026-10-22 10:53:58 +0200 1691)     """A dict field. Supports dicts and dict-like objects
+^909604f (evals 2026-10-22 10:53:58 +0200 1692) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1693)     Example: ::
+^909604f (evals 2026-10-22 10:53:58 +0200 1694) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1695)         numbers = fields.Dict(keys=fields.Str(), values=fields.Float())
+^909604f (evals 2026-10-22 10:53:58 +0200 1696) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1697)     :param kwargs: The same keyword arguments that :class:`Mapping` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200 1698) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1699)     .. versionadded:: 2.1.0
+^909604f (evals 2026-10-22 10:53:58 +0200 1700)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1701) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1702)     mapping_type = dict
+^909604f (evals 2026-10-22 10:53:58 +0200 1703) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1704) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1705) class Url(String):
+^909604f (evals 2026-10-22 10:53:58 +0200 1706)     """An URL field.
+^909604f (evals 2026-10-22 10:53:58 +0200 1707) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1708)     :param default: Default value for the field if the attribute is not set.
+^909604f (evals 2026-10-22 10:53:58 +0200 1709)     :param relative: Whether to allow relative URLs.
+^909604f (evals 2026-10-22 10:53:58 +0200 1710)     :param absolute: Whether to allow absolute URLs.
+^909604f (evals 2026-10-22 10:53:58 +0200 1711)     :param require_tld: Whether to reject non-FQDN hostnames.
+^909604f (evals 2026-10-22 10:53:58 +0200 1712)     :param schemes: Valid schemes. By default, ``http``, ``https``,
+^909604f (evals 2026-10-22 10:53:58 +0200 1713)         ``ftp``, and ``ftps`` are allowed.
+^909604f (evals 2026-10-22 10:53:58 +0200 1714)     :param kwargs: The same keyword arguments that :class:`String` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200 1715)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1716) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1717)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200 1718)     default_error_messages = {"invalid": "Not a valid URL."}
+^909604f (evals 2026-10-22 10:53:58 +0200 1719) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1720)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200 1721)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200 1722)         *,
+^909604f (evals 2026-10-22 10:53:58 +0200 1723)         relative: bool = False,
+^909604f (evals 2026-10-22 10:53:58 +0200 1724)         absolute: bool = True,
+^909604f (evals 2026-10-22 10:53:58 +0200 1725)         schemes: types.StrSequenceOrSet | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200 1726)         require_tld: bool = True,
+^909604f (evals 2026-10-22 10:53:58 +0200 1727)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200 1728)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200 1729)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1730) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1731)         self.relative = relative
+^909604f (evals 2026-10-22 10:53:58 +0200 1732)         self.absolute = absolute
+^909604f (evals 2026-10-22 10:53:58 +0200 1733)         self.require_tld = require_tld
+^909604f (evals 2026-10-22 10:53:58 +0200 1734)         # Insert validation into self.validators so that multiple errors can be stored.
+^909604f (evals 2026-10-22 10:53:58 +0200 1735)         validator = validate.URL(
+^909604f (evals 2026-10-22 10:53:58 +0200 1736)             relative=self.relative,
+^909604f (evals 2026-10-22 10:53:58 +0200 1737)             absolute=self.absolute,
+^909604f (evals 2026-10-22 10:53:58 +0200 1738)             schemes=schemes,
+^909604f (evals 2026-10-22 10:53:58 +0200 1739)             require_tld=self.require_tld,
+^909604f (evals 2026-10-22 10:53:58 +0200 1740)             error=self.error_messages["invalid"],
+^909604f (evals 2026-10-22 10:53:58 +0200 1741)         )
+^909604f (evals 2026-10-22 10:53:58 +0200 1742)         self.validators.insert(0, validator)
+^909604f (evals 2026-10-22 10:53:58 +0200 1743) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1744) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1745) class Email(String):
+^909604f (evals 2026-10-22 10:53:58 +0200 1746)     """An email field.
+^909604f (evals 2026-10-22 10:53:58 +0200 1747) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1748)     :param args: The same positional arguments that :class:`String` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200 1749)     :param kwargs: The same keyword arguments that :class:`String` receives.
+^909604f (evals 2026-10-22 10:53:58 +0200 1750)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1751) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1752)     #: Default error messages.
+^909604f (evals 2026-10-22 10:53:58 +0200 1753)     default_error_messages = {"invalid": "Not a valid email address."}
+^909604f (evals 2026-10-22 10:53:58 +0200 1754) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1755)     def __init__(self, **kwargs: Unpack[_BaseFieldKwargs]) -> None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1756)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1757)         # Insert validation into self.validators so that multiple errors can be stored.
+^909604f (evals 2026-10-22 10:53:58 +0200 1758)         validator = validate.Email(error=self.error_messages["invalid"])
+^909604f (evals 2026-10-22 10:53:58 +0200 1759)         self.validators.insert(0, validator)
+^909604f (evals 2026-10-22 10:53:58 +0200 1760) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1761) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1762) class IP(Field[ipaddress.IPv4Address | ipaddress.IPv6Address]):
+^909604f (evals 2026-10-22 10:53:58 +0200 1763)     """A IP address field.
+^909604f (evals 2026-10-22 10:53:58 +0200 1764) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1765)     :param exploded: If `True`, serialize ipv6 address in long form, ie. with groups
+^909604f (evals 2026-10-22 10:53:58 +0200 1766)         consisting entirely of zeros included.
+^909604f (evals 2026-10-22 10:53:58 +0200 1767) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1768)     .. versionadded:: 3.8.0
+^909604f (evals 2026-10-22 10:53:58 +0200 1769)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1770) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1771)     default_error_messages = {"invalid_ip": "Not a valid IP address."}
+^909604f (evals 2026-10-22 10:53:58 +0200 1772) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1773)     DESERIALIZATION_CLASS: type | None = None
+^909604f (evals 2026-10-22 10:53:58 +0200 1774) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1775)     def __init__(self, *, exploded: bool = False, **kwargs: Unpack[_BaseFieldKwargs]):
+^909604f (evals 2026-10-22 10:53:58 +0200 1776)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1777)         self.exploded = exploded
+^909604f (evals 2026-10-22 10:53:58 +0200 1778) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1779)     def _serialize(self, value, attr, obj, **kwargs) -> str | None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1780)         if value is None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1781)             return None
+^909604f (evals 2026-10-22 10:53:58 +0200 1782)         if self.exploded:
+^909604f (evals 2026-10-22 10:53:58 +0200 1783)             return value.exploded
+^909604f (evals 2026-10-22 10:53:58 +0200 1784)         return value.compressed
+^909604f (evals 2026-10-22 10:53:58 +0200 1785) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1786)     def _deserialize(
+^909604f (evals 2026-10-22 10:53:58 +0200 1787)         self, value, attr, data, **kwargs
+^909604f (evals 2026-10-22 10:53:58 +0200 1788)     ) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+^909604f (evals 2026-10-22 10:53:58 +0200 1789)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200 1790)             return (self.DESERIALIZATION_CLASS or ipaddress.ip_address)(
+^909604f (evals 2026-10-22 10:53:58 +0200 1791)                 utils.ensure_text_type(value)
+^909604f (evals 2026-10-22 10:53:58 +0200 1792)             )
+^909604f (evals 2026-10-22 10:53:58 +0200 1793)         except (ValueError, TypeError) as error:
+^909604f (evals 2026-10-22 10:53:58 +0200 1794)             raise self.make_error("invalid_ip") from error
+^909604f (evals 2026-10-22 10:53:58 +0200 1795) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1796) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1797) class IPv4(IP):
+^909604f (evals 2026-10-22 10:53:58 +0200 1798)     """A IPv4 address field.
+^909604f (evals 2026-10-22 10:53:58 +0200 1799) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1800)     .. versionadded:: 3.8.0
+^909604f (evals 2026-10-22 10:53:58 +0200 1801)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1802) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1803)     default_error_messages = {"invalid_ip": "Not a valid IPv4 address."}
+^909604f (evals 2026-10-22 10:53:58 +0200 1804) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1805)     DESERIALIZATION_CLASS = ipaddress.IPv4Address
+^909604f (evals 2026-10-22 10:53:58 +0200 1806) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1807) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1808) class IPv6(IP):
+^909604f (evals 2026-10-22 10:53:58 +0200 1809)     """A IPv6 address field.
+^909604f (evals 2026-10-22 10:53:58 +0200 1810) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1811)     .. versionadded:: 3.8.0
+^909604f (evals 2026-10-22 10:53:58 +0200 1812)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1813) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1814)     default_error_messages = {"invalid_ip": "Not a valid IPv6 address."}
+^909604f (evals 2026-10-22 10:53:58 +0200 1815) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1816)     DESERIALIZATION_CLASS = ipaddress.IPv6Address
+^909604f (evals 2026-10-22 10:53:58 +0200 1817) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1818) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1819) class IPInterface(Field[ipaddress.IPv4Interface | ipaddress.IPv6Interface]):
+^909604f (evals 2026-10-22 10:53:58 +0200 1820)     """A IPInterface field.
+^909604f (evals 2026-10-22 10:53:58 +0200 1821) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1822)     IP interface is the non-strict form of the IPNetwork type where arbitrary host
+^909604f (evals 2026-10-22 10:53:58 +0200 1823)     addresses are always accepted.
+^909604f (evals 2026-10-22 10:53:58 +0200 1824) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1825)     IPAddress and mask e.g. '192.168.0.2/24' or '192.168.0.2/255.255.255.0'
+^909604f (evals 2026-10-22 10:53:58 +0200 1826) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1827)     see https://python.readthedocs.io/en/latest/library/ipaddress.html#interface-objects
+^909604f (evals 2026-10-22 10:53:58 +0200 1828) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1829)     :param exploded: If `True`, serialize ipv6 interface in long form, ie. with groups
+^909604f (evals 2026-10-22 10:53:58 +0200 1830)         consisting entirely of zeros included.
+^909604f (evals 2026-10-22 10:53:58 +0200 1831)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1832) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1833)     default_error_messages = {"invalid_ip_interface": "Not a valid IP interface."}
+^909604f (evals 2026-10-22 10:53:58 +0200 1834) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1835)     DESERIALIZATION_CLASS: type | None = None
+^909604f (evals 2026-10-22 10:53:58 +0200 1836) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1837)     def __init__(self, *, exploded: bool = False, **kwargs: Unpack[_BaseFieldKwargs]):
+^909604f (evals 2026-10-22 10:53:58 +0200 1838)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1839)         self.exploded = exploded
+^909604f (evals 2026-10-22 10:53:58 +0200 1840) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1841)     def _serialize(self, value, attr, obj, **kwargs) -> str | None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1842)         if value is None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1843)             return None
+^909604f (evals 2026-10-22 10:53:58 +0200 1844)         if self.exploded:
+^909604f (evals 2026-10-22 10:53:58 +0200 1845)             return value.exploded
+^909604f (evals 2026-10-22 10:53:58 +0200 1846)         return value.compressed
+^909604f (evals 2026-10-22 10:53:58 +0200 1847) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1848)     def _deserialize(
+^909604f (evals 2026-10-22 10:53:58 +0200 1849)         self, value, attr, data, **kwargs
+^909604f (evals 2026-10-22 10:53:58 +0200 1850)     ) -> ipaddress.IPv4Interface | ipaddress.IPv6Interface:
+^909604f (evals 2026-10-22 10:53:58 +0200 1851)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200 1852)             return (self.DESERIALIZATION_CLASS or ipaddress.ip_interface)(
+^909604f (evals 2026-10-22 10:53:58 +0200 1853)                 utils.ensure_text_type(value)
+^909604f (evals 2026-10-22 10:53:58 +0200 1854)             )
+^909604f (evals 2026-10-22 10:53:58 +0200 1855)         except (ValueError, TypeError) as error:
+^909604f (evals 2026-10-22 10:53:58 +0200 1856)             raise self.make_error("invalid_ip_interface") from error
+^909604f (evals 2026-10-22 10:53:58 +0200 1857) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1858) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1859) class IPv4Interface(IPInterface):
+^909604f (evals 2026-10-22 10:53:58 +0200 1860)     """A IPv4 Network Interface field."""
+^909604f (evals 2026-10-22 10:53:58 +0200 1861) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1862)     default_error_messages = {"invalid_ip_interface": "Not a valid IPv4 interface."}
+^909604f (evals 2026-10-22 10:53:58 +0200 1863) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1864)     DESERIALIZATION_CLASS = ipaddress.IPv4Interface
+^909604f (evals 2026-10-22 10:53:58 +0200 1865) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1866) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1867) class IPv6Interface(IPInterface):
+^909604f (evals 2026-10-22 10:53:58 +0200 1868)     """A IPv6 Network Interface field."""
+^909604f (evals 2026-10-22 10:53:58 +0200 1869) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1870)     default_error_messages = {"invalid_ip_interface": "Not a valid IPv6 interface."}
+^909604f (evals 2026-10-22 10:53:58 +0200 1871) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1872)     DESERIALIZATION_CLASS = ipaddress.IPv6Interface
+^909604f (evals 2026-10-22 10:53:58 +0200 1873) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1874) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1875) _EnumT = typing.TypeVar("_EnumT", bound=EnumType)
+^909604f (evals 2026-10-22 10:53:58 +0200 1876) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1877) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1878) class Enum(Field[_EnumT]):
+^909604f (evals 2026-10-22 10:53:58 +0200 1879)     """An Enum field (de)serializing enum members by symbol (name) or by value.
+^909604f (evals 2026-10-22 10:53:58 +0200 1880) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1881)     :param enum: Enum class
+^909604f (evals 2026-10-22 10:53:58 +0200 1882)     :param by_value: Whether to (de)serialize by value or by name,
+^909604f (evals 2026-10-22 10:53:58 +0200 1883)         or Field class or instance to use to (de)serialize by value. Defaults to False.
+^909604f (evals 2026-10-22 10:53:58 +0200 1884) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1885)     If `by_value` is `False` (default), enum members are (de)serialized by symbol (name).
+^909604f (evals 2026-10-22 10:53:58 +0200 1886)     If it is `True`, they are (de)serialized by value using `marshmallow.fields.Raw`.
+^909604f (evals 2026-10-22 10:53:58 +0200 1887)     If it is a field instance or class, they are (de)serialized by value using this field.
+^909604f (evals 2026-10-22 10:53:58 +0200 1888) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1889)     .. versionadded:: 3.18.0
+^909604f (evals 2026-10-22 10:53:58 +0200 1890)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1891) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1892)     default_error_messages = {
+^909604f (evals 2026-10-22 10:53:58 +0200 1893)         "unknown": "Must be one of: {choices}.",
+^909604f (evals 2026-10-22 10:53:58 +0200 1894)     }
+^909604f (evals 2026-10-22 10:53:58 +0200 1895) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1896)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200 1897)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200 1898)         enum: type[_EnumT],
+^909604f (evals 2026-10-22 10:53:58 +0200 1899)         *,
+^909604f (evals 2026-10-22 10:53:58 +0200 1900)         by_value: bool | Field | type[Field] = False,
+^909604f (evals 2026-10-22 10:53:58 +0200 1901)         **kwargs: Unpack[_BaseFieldKwargs],
+^909604f (evals 2026-10-22 10:53:58 +0200 1902)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200 1903)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1904)         self.enum = enum
+^909604f (evals 2026-10-22 10:53:58 +0200 1905)         self.by_value = by_value
+^909604f (evals 2026-10-22 10:53:58 +0200 1906) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1907)         # Serialization by name
+^909604f (evals 2026-10-22 10:53:58 +0200 1908)         if by_value is False:
+^909604f (evals 2026-10-22 10:53:58 +0200 1909)             self.field: Field = String()
+^909604f (evals 2026-10-22 10:53:58 +0200 1910)             self.choices_text = ", ".join(
+^909604f (evals 2026-10-22 10:53:58 +0200 1911)                 str(self.field._serialize(m, None, None)) for m in enum.__members__
+^909604f (evals 2026-10-22 10:53:58 +0200 1912)             )
+^909604f (evals 2026-10-22 10:53:58 +0200 1913)         # Serialization by value
+^909604f (evals 2026-10-22 10:53:58 +0200 1914)         else:
+^909604f (evals 2026-10-22 10:53:58 +0200 1915)             if by_value is True:
+^909604f (evals 2026-10-22 10:53:58 +0200 1916)                 self.field = Raw()
+^909604f (evals 2026-10-22 10:53:58 +0200 1917)             else:
+^909604f (evals 2026-10-22 10:53:58 +0200 1918)                 try:
+^909604f (evals 2026-10-22 10:53:58 +0200 1919)                     self.field = _resolve_field_instance(by_value)
+^909604f (evals 2026-10-22 10:53:58 +0200 1920)                 except _FieldInstanceResolutionError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200 1921)                     raise ValueError(
+^909604f (evals 2026-10-22 10:53:58 +0200 1922)                         '"by_value" must be either a bool or a subclass or instance of '
+^909604f (evals 2026-10-22 10:53:58 +0200 1923)                         "marshmallow.fields.Field."
+^909604f (evals 2026-10-22 10:53:58 +0200 1924)                     ) from error
+^909604f (evals 2026-10-22 10:53:58 +0200 1925)             self.choices_text = ", ".join(
+^909604f (evals 2026-10-22 10:53:58 +0200 1926)                 str(self.field._serialize(m.value, None, None)) for m in enum
+^909604f (evals 2026-10-22 10:53:58 +0200 1927)             )
+^909604f (evals 2026-10-22 10:53:58 +0200 1928) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1929)     def _serialize(
+^909604f (evals 2026-10-22 10:53:58 +0200 1930)         self, value: _EnumT | None, attr: str | None, obj: typing.Any, **kwargs
+^909604f (evals 2026-10-22 10:53:58 +0200 1931)     ) -> typing.Any | None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1932)         if value is None:
+^909604f (evals 2026-10-22 10:53:58 +0200 1933)             return None
+^909604f (evals 2026-10-22 10:53:58 +0200 1934)         if self.by_value:
+^909604f (evals 2026-10-22 10:53:58 +0200 1935)             val = value.value
+^909604f (evals 2026-10-22 10:53:58 +0200 1936)         else:
+^909604f (evals 2026-10-22 10:53:58 +0200 1937)             val = value.name
+^909604f (evals 2026-10-22 10:53:58 +0200 1938)         return self.field._serialize(val, attr, obj, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1939) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1940)     def _deserialize(self, value, attr, data, **kwargs) -> _EnumT:
+^909604f (evals 2026-10-22 10:53:58 +0200 1941)         if isinstance(value, self.enum):
+^909604f (evals 2026-10-22 10:53:58 +0200 1942)             return value
+^909604f (evals 2026-10-22 10:53:58 +0200 1943)         val = self.field._deserialize(value, attr, data, **kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1944)         if self.by_value:
+^909604f (evals 2026-10-22 10:53:58 +0200 1945)             try:
+^909604f (evals 2026-10-22 10:53:58 +0200 1946)                 return self.enum(val)
+^909604f (evals 2026-10-22 10:53:58 +0200 1947)             except ValueError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200 1948)                 raise self.make_error("unknown", choices=self.choices_text) from error
+^909604f (evals 2026-10-22 10:53:58 +0200 1949)         try:
+^909604f (evals 2026-10-22 10:53:58 +0200 1950)             return getattr(self.enum, val)
+^909604f (evals 2026-10-22 10:53:58 +0200 1951)         except AttributeError as error:
+^909604f (evals 2026-10-22 10:53:58 +0200 1952)             raise self.make_error("unknown", choices=self.choices_text) from error
+^909604f (evals 2026-10-22 10:53:58 +0200 1953) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1954) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1955) class Method(Field):
+^909604f (evals 2026-10-22 10:53:58 +0200 1956)     """A field that takes the value returned by a `Schema <marshmallow.Schema>` method.
+^909604f (evals 2026-10-22 10:53:58 +0200 1957) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1958)     :param serialize: The name of the Schema method from which
+^909604f (evals 2026-10-22 10:53:58 +0200 1959)         to retrieve the value. The method must take an argument ``obj``
+^909604f (evals 2026-10-22 10:53:58 +0200 1960)         (in addition to self) that is the object to be serialized.
+^909604f (evals 2026-10-22 10:53:58 +0200 1961)     :param deserialize: Optional name of the Schema method for deserializing
+^909604f (evals 2026-10-22 10:53:58 +0200 1962)         a value The method must take a single argument ``value``, which is the
+^909604f (evals 2026-10-22 10:53:58 +0200 1963)         value to deserialize.
+^909604f (evals 2026-10-22 10:53:58 +0200 1964) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1965)     .. versionchanged:: 3.0.0
+^909604f (evals 2026-10-22 10:53:58 +0200 1966)         Removed ``method_name`` parameter.
+^909604f (evals 2026-10-22 10:53:58 +0200 1967)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 1968) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1969)     _CHECK_ATTRIBUTE = False
+^909604f (evals 2026-10-22 10:53:58 +0200 1970) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1971)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200 1972)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200 1973)         serialize: str | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200 1974)         deserialize: str | None = None,
+^909604f (evals 2026-10-22 10:53:58 +0200 1975)         **kwargs: Unpack[_BaseFieldKwargs],  # FIXME: Omit dump_only and load_only
+^909604f (evals 2026-10-22 10:53:58 +0200 1976)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200 1977)         # Set dump_only and load_only based on arguments
+^909604f (evals 2026-10-22 10:53:58 +0200 1978)         kwargs["dump_only"] = bool(serialize) and not bool(deserialize)
+^909604f (evals 2026-10-22 10:53:58 +0200 1979)         kwargs["load_only"] = bool(deserialize) and not bool(serialize)
+^909604f (evals 2026-10-22 10:53:58 +0200 1980)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 1981)         self.serialize_method_name = serialize
+^909604f (evals 2026-10-22 10:53:58 +0200 1982)         self.deserialize_method_name = deserialize
+^909604f (evals 2026-10-22 10:53:58 +0200 1983)         self._serialize_method = None
+^909604f (evals 2026-10-22 10:53:58 +0200 1984)         self._deserialize_method = None
+^909604f (evals 2026-10-22 10:53:58 +0200 1985) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1986)     def _bind_to_schema(self, field_name, parent):
+^909604f (evals 2026-10-22 10:53:58 +0200 1987)         if self.serialize_method_name:
+^909604f (evals 2026-10-22 10:53:58 +0200 1988)             self._serialize_method = utils.callable_or_raise(
+^909604f (evals 2026-10-22 10:53:58 +0200 1989)                 getattr(parent, self.serialize_method_name)
+^909604f (evals 2026-10-22 10:53:58 +0200 1990)             )
+^909604f (evals 2026-10-22 10:53:58 +0200 1991) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1992)         if self.deserialize_method_name:
+^909604f (evals 2026-10-22 10:53:58 +0200 1993)             self._deserialize_method = utils.callable_or_raise(
+^909604f (evals 2026-10-22 10:53:58 +0200 1994)                 getattr(parent, self.deserialize_method_name)
+^909604f (evals 2026-10-22 10:53:58 +0200 1995)             )
+^909604f (evals 2026-10-22 10:53:58 +0200 1996) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1997)         super()._bind_to_schema(field_name, parent)
+^909604f (evals 2026-10-22 10:53:58 +0200 1998) 
+^909604f (evals 2026-10-22 10:53:58 +0200 1999)     def _serialize(self, value, attr, obj, **kwargs):
+^909604f (evals 2026-10-22 10:53:58 +0200 2000)         if self._serialize_method is not None:
+^909604f (evals 2026-10-22 10:53:58 +0200 2001)             return self._serialize_method(obj)
+^909604f (evals 2026-10-22 10:53:58 +0200 2002)         return missing_
+^909604f (evals 2026-10-22 10:53:58 +0200 2003) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2004)     def _deserialize(self, value, attr, data, **kwargs):
+^909604f (evals 2026-10-22 10:53:58 +0200 2005)         if self._deserialize_method is not None:
+^909604f (evals 2026-10-22 10:53:58 +0200 2006)             return self._deserialize_method(value)
+^909604f (evals 2026-10-22 10:53:58 +0200 2007)         return value
+^909604f (evals 2026-10-22 10:53:58 +0200 2008) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2009) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2010) class Function(Field):
+^909604f (evals 2026-10-22 10:53:58 +0200 2011)     """A field that takes the value returned by a function.
+^909604f (evals 2026-10-22 10:53:58 +0200 2012) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2013)     :param serialize: A callable from which to retrieve the value.
+^909604f (evals 2026-10-22 10:53:58 +0200 2014)         The function must take a single argument ``obj`` which is the object
+^909604f (evals 2026-10-22 10:53:58 +0200 2015)         to be serialized.
+^909604f (evals 2026-10-22 10:53:58 +0200 2016)         If no callable is provided then the ```load_only``` flag will be set
+^909604f (evals 2026-10-22 10:53:58 +0200 2017)         to True.
+^909604f (evals 2026-10-22 10:53:58 +0200 2018)     :param deserialize: A callable from which to retrieve the value.
+^909604f (evals 2026-10-22 10:53:58 +0200 2019)         The function must take a single argument ``value`` which is the value
+^909604f (evals 2026-10-22 10:53:58 +0200 2020)         to be deserialized.
+^909604f (evals 2026-10-22 10:53:58 +0200 2021)         If no callable is provided then ```value``` will be passed through
+^909604f (evals 2026-10-22 10:53:58 +0200 2022)         unchanged.
+^909604f (evals 2026-10-22 10:53:58 +0200 2023) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2024)     .. versionchanged:: 3.0.0a1
+^909604f (evals 2026-10-22 10:53:58 +0200 2025)         Removed ``func`` parameter.
+^909604f (evals 2026-10-22 10:53:58 +0200 2026) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2027)     .. versionchanged:: 4.0.0
+^909604f (evals 2026-10-22 10:53:58 +0200 2028)         Don't pass context to serialization and deserialization functions.
+^909604f (evals 2026-10-22 10:53:58 +0200 2029)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 2030) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2031)     _CHECK_ATTRIBUTE = False
+^909604f (evals 2026-10-22 10:53:58 +0200 2032) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2033)     def __init__(
+^909604f (evals 2026-10-22 10:53:58 +0200 2034)         self,
+^909604f (evals 2026-10-22 10:53:58 +0200 2035)         serialize: (
+^909604f (evals 2026-10-22 10:53:58 +0200 2036)             typing.Callable[[typing.Any], typing.Any]
+^909604f (evals 2026-10-22 10:53:58 +0200 2037)             | typing.Callable[[typing.Any, dict], typing.Any]
+^909604f (evals 2026-10-22 10:53:58 +0200 2038)             | None
+^909604f (evals 2026-10-22 10:53:58 +0200 2039)         ) = None,
+^909604f (evals 2026-10-22 10:53:58 +0200 2040)         deserialize: (
+^909604f (evals 2026-10-22 10:53:58 +0200 2041)             typing.Callable[[typing.Any], typing.Any]
+^909604f (evals 2026-10-22 10:53:58 +0200 2042)             | typing.Callable[[typing.Any, dict], typing.Any]
+^909604f (evals 2026-10-22 10:53:58 +0200 2043)             | None
+^909604f (evals 2026-10-22 10:53:58 +0200 2044)         ) = None,
+^909604f (evals 2026-10-22 10:53:58 +0200 2045)         **kwargs: Unpack[_BaseFieldKwargs],  # FIXME: Omit dump_only and load_only
+^909604f (evals 2026-10-22 10:53:58 +0200 2046)     ):
+^909604f (evals 2026-10-22 10:53:58 +0200 2047)         # Set dump_only and load_only based on arguments
+^909604f (evals 2026-10-22 10:53:58 +0200 2048)         kwargs["dump_only"] = bool(serialize) and not bool(deserialize)
+^909604f (evals 2026-10-22 10:53:58 +0200 2049)         kwargs["load_only"] = bool(deserialize) and not bool(serialize)
+^909604f (evals 2026-10-22 10:53:58 +0200 2050)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 2051)         self.serialize_func = serialize and utils.callable_or_raise(serialize)
+^909604f (evals 2026-10-22 10:53:58 +0200 2052)         self.deserialize_func = deserialize and utils.callable_or_raise(deserialize)
+^909604f (evals 2026-10-22 10:53:58 +0200 2053) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2054)     def _serialize(self, value, attr, obj, **kwargs):
+^909604f (evals 2026-10-22 10:53:58 +0200 2055)         return self.serialize_func(obj)
+^909604f (evals 2026-10-22 10:53:58 +0200 2056) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2057)     def _deserialize(self, value, attr, data, **kwargs):
+^909604f (evals 2026-10-22 10:53:58 +0200 2058)         if self.deserialize_func:
+^909604f (evals 2026-10-22 10:53:58 +0200 2059)             return self.deserialize_func(value)
+^909604f (evals 2026-10-22 10:53:58 +0200 2060)         return value
+^909604f (evals 2026-10-22 10:53:58 +0200 2061) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2062) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2063) _ContantT = typing.TypeVar("_ContantT")
+^909604f (evals 2026-10-22 10:53:58 +0200 2064) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2065) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2066) class Constant(Field[_ContantT]):
+^909604f (evals 2026-10-22 10:53:58 +0200 2067)     """A field that (de)serializes to a preset constant.  If you only want the
+^909604f (evals 2026-10-22 10:53:58 +0200 2068)     constant added for serialization or deserialization, you should use
+^909604f (evals 2026-10-22 10:53:58 +0200 2069)     ``dump_only=True`` or ``load_only=True`` respectively.
+^909604f (evals 2026-10-22 10:53:58 +0200 2070) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2071)     :param constant: The constant to return for the field attribute.
+^909604f (evals 2026-10-22 10:53:58 +0200 2072)     """
+^909604f (evals 2026-10-22 10:53:58 +0200 2073) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2074)     _CHECK_ATTRIBUTE = False
+^909604f (evals 2026-10-22 10:53:58 +0200 2075) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2076)     def __init__(self, constant: _ContantT, **kwargs: Unpack[_BaseFieldKwargs]):
+^909604f (evals 2026-10-22 10:53:58 +0200 2077)         kwargs["load_default"] = constant
+^909604f (evals 2026-10-22 10:53:58 +0200 2078)         kwargs["dump_default"] = constant
+^909604f (evals 2026-10-22 10:53:58 +0200 2079)         super().__init__(**kwargs)
+^909604f (evals 2026-10-22 10:53:58 +0200 2080)         self.constant = constant
+^909604f (evals 2026-10-22 10:53:58 +0200 2081) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2082)     def _serialize(self, value, *args, **kwargs) -> _ContantT:
+^909604f (evals 2026-10-22 10:53:58 +0200 2083)         return self.constant
+^909604f (evals 2026-10-22 10:53:58 +0200 2084) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2085)     def _deserialize(self, value, *args, **kwargs) -> _ContantT:
+^909604f (evals 2026-10-22 10:53:58 +0200 2086)         return self.constant
+^909604f (evals 2026-10-22 10:53:58 +0200 2087) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2088) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2089) # Aliases
+^909604f (evals 2026-10-22 10:53:58 +0200 2090) URL = Url
+^909604f (evals 2026-10-22 10:53:58 +0200 2091) 
+^909604f (evals 2026-10-22 10:53:58 +0200 2092) Str = String
+^909604f (evals 2026-10-22 10:53:58 +0200 2093) Bool = Boolean
+^909604f (evals 2026-10-22 10:53:58 +0200 2094) Int = Integer

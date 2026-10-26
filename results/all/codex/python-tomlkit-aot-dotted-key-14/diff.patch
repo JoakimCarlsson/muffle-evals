@@ -1,0 +1,58 @@
+diff --git a/tests/test_toml_document.py b/tests/test_toml_document.py
+index 0e950cb..7d1b3ce 100644
+--- a/tests/test_toml_document.py
++++ b/tests/test_toml_document.py
+@@ -1170,6 +1170,31 @@ x = 9
+     assert parse(doc.as_string()) == {"c": {"d": 2}, "a": {"x": 9}}
+ 
+ 
++@pytest.mark.parametrize("prefix", ["", "[parent]\n"])
++@pytest.mark.parametrize("key", ["a", "a2"])
++@pytest.mark.parametrize("count", [1, 2])
++@pytest.mark.parametrize("suffix", ["", "c.d = 2\nz = 3\n[other]\ny = 4\n"])
++def test_replace_dotted_key_with_aot_keeps_following_siblings(
++    prefix: str, key: str, count: int, suffix: str
++) -> None:
++    doc = parse(f"{prefix}{key}.b = 1\n{suffix}")
++    target = doc["parent"] if prefix else doc
++    value = tomlkit.aot()
++    for x in range(9, 9 + count):
++        value.append(tomlkit.table().add("x", x))
++    target[key] = value
++
++    expected: dict[str, Any] = {key: [{"x": x} for x in range(9, 9 + count)]}
++    if suffix:
++        expected.update({"c": {"d": 2}, "z": 3})
++    if prefix:
++        expected = {"parent": expected}
++    if suffix:
++        expected["other"] = {"y": 4}
++    assert doc == expected
++    assert parse(tomlkit.dumps(doc)) == expected
++
++
+ def test_replace_value_with_table_keeps_following_dotted_sibling() -> None:
+     # A plain value turning into a table must likewise clear the inline region
+     # (including dotted keys) before emitting its header.
+diff --git a/tomlkit/container.py b/tomlkit/container.py
+index e3ee4fd..da796f8 100644
+--- a/tomlkit/container.py
++++ b/tomlkit/container.py
+@@ -860,11 +860,15 @@ class Container(_CustomDict):  # type: ignore[type-arg]
+         assert k is not None
+         # A dotted key renders its value inline (e.g. ``a.b = 1``), which is only
+         # consistent with a super table. When the replacement value renders with
+-        # its own ``[header]`` instead (a non-super table), keeping the dotted key
++        # its own header instead (a non-super table or AoT), keeping the dotted key
+         # duplicates the prefix onto the header (#524). Drop the dotted key so the
+         # replacement renders as a plain table.
+         dotted_to_header = (
+-            k.is_dotted() and isinstance(value, Table) and not value.is_super_table()
++            k.is_dotted()
++            and (
++                isinstance(value, AoT)
++                or (isinstance(value, Table) and not value.is_super_table())
++            )
+         )
+         # That new header also captures every sibling that renders inline -- plain
+         # values and dotted keys -- if any still follow it (#513), so it must be

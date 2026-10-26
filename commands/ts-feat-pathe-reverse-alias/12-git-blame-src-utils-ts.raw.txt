@@ -1,0 +1,110 @@
+$ git blame src/utils.ts
+^e028782 (evals 2026-10-22 12:37:02 +0200   1) import { join } from "./path";
+^e028782 (evals 2026-10-22 12:37:02 +0200   2) import { normalizeWindowsPath } from "./_internal";
+^e028782 (evals 2026-10-22 12:37:02 +0200   3) 
+^e028782 (evals 2026-10-22 12:37:02 +0200   4) const pathSeparators = new Set(["/", "\\", undefined]);
+^e028782 (evals 2026-10-22 12:37:02 +0200   5) 
+^e028782 (evals 2026-10-22 12:37:02 +0200   6) const normalizedAliasSymbol = Symbol.for("pathe:normalizedAlias");
+^e028782 (evals 2026-10-22 12:37:02 +0200   7) 
+^e028782 (evals 2026-10-22 12:37:02 +0200   8) const SLASH_RE = /[/\\]/;
+^e028782 (evals 2026-10-22 12:37:02 +0200   9) 
+^e028782 (evals 2026-10-22 12:37:02 +0200  10) /**
+^e028782 (evals 2026-10-22 12:37:02 +0200  11)  * Normalises alias mappings, ensuring that more specific aliases are resolved before less specific ones.
+^e028782 (evals 2026-10-22 12:37:02 +0200  12)  * This function also ensures that aliases do not resolve to themselves cyclically.
+^e028782 (evals 2026-10-22 12:37:02 +0200  13)  *
+^e028782 (evals 2026-10-22 12:37:02 +0200  14)  * @param _aliases - A set of alias mappings where each key is an alias and its value is the actual path it points to.
+^e028782 (evals 2026-10-22 12:37:02 +0200  15)  * @returns a set of normalised alias mappings.
+^e028782 (evals 2026-10-22 12:37:02 +0200  16)  */
+^e028782 (evals 2026-10-22 12:37:02 +0200  17) export function normalizeAliases(_aliases: Record<string, string>) {
+^e028782 (evals 2026-10-22 12:37:02 +0200  18)   if ((_aliases as any)[normalizedAliasSymbol]) {
+^e028782 (evals 2026-10-22 12:37:02 +0200  19)     return _aliases;
+^e028782 (evals 2026-10-22 12:37:02 +0200  20)   }
+^e028782 (evals 2026-10-22 12:37:02 +0200  21) 
+^e028782 (evals 2026-10-22 12:37:02 +0200  22)   // Sort aliases from specific to general (ie. fs/promises before fs)
+^e028782 (evals 2026-10-22 12:37:02 +0200  23)   const aliases = Object.fromEntries(
+^e028782 (evals 2026-10-22 12:37:02 +0200  24)     Object.entries(_aliases).sort(([a], [b]) => _compareAliases(a, b)),
+^e028782 (evals 2026-10-22 12:37:02 +0200  25)   );
+^e028782 (evals 2026-10-22 12:37:02 +0200  26) 
+^e028782 (evals 2026-10-22 12:37:02 +0200  27)   // Resolve alias values in relation to each other
+^e028782 (evals 2026-10-22 12:37:02 +0200  28)   for (const key in aliases) {
+^e028782 (evals 2026-10-22 12:37:02 +0200  29)     for (const alias in aliases) {
+^e028782 (evals 2026-10-22 12:37:02 +0200  30)       // don't resolve a more specific alias with regard to a less specific one
+^e028782 (evals 2026-10-22 12:37:02 +0200  31)       if (alias === key || key.startsWith(alias)) {
+^e028782 (evals 2026-10-22 12:37:02 +0200  32)         continue;
+^e028782 (evals 2026-10-22 12:37:02 +0200  33)       }
+^e028782 (evals 2026-10-22 12:37:02 +0200  34) 
+^e028782 (evals 2026-10-22 12:37:02 +0200  35)       if (
+^e028782 (evals 2026-10-22 12:37:02 +0200  36)         aliases[key].startsWith(alias) &&
+^e028782 (evals 2026-10-22 12:37:02 +0200  37)         pathSeparators.has(aliases[key][alias.length])
+^e028782 (evals 2026-10-22 12:37:02 +0200  38)       ) {
+^e028782 (evals 2026-10-22 12:37:02 +0200  39)         aliases[key] = aliases[alias] + aliases[key].slice(alias.length);
+^e028782 (evals 2026-10-22 12:37:02 +0200  40)       }
+^e028782 (evals 2026-10-22 12:37:02 +0200  41)     }
+^e028782 (evals 2026-10-22 12:37:02 +0200  42)   }
+^e028782 (evals 2026-10-22 12:37:02 +0200  43) 
+^e028782 (evals 2026-10-22 12:37:02 +0200  44)   Object.defineProperty(aliases, normalizedAliasSymbol, {
+^e028782 (evals 2026-10-22 12:37:02 +0200  45)     value: true,
+^e028782 (evals 2026-10-22 12:37:02 +0200  46)     enumerable: false,
+^e028782 (evals 2026-10-22 12:37:02 +0200  47)   });
+^e028782 (evals 2026-10-22 12:37:02 +0200  48)   return aliases;
+^e028782 (evals 2026-10-22 12:37:02 +0200  49) }
+^e028782 (evals 2026-10-22 12:37:02 +0200  50) 
+^e028782 (evals 2026-10-22 12:37:02 +0200  51) /**
+^e028782 (evals 2026-10-22 12:37:02 +0200  52)  * Resolves a path string to its alias if applicable, otherwise returns the original path.
+^e028782 (evals 2026-10-22 12:37:02 +0200  53)  * This function normalises the path, resolves the alias and then joins it to the alias target if necessary.
+^e028782 (evals 2026-10-22 12:37:02 +0200  54)  *
+^e028782 (evals 2026-10-22 12:37:02 +0200  55)  * @param path - The path string to resolve.
+^e028782 (evals 2026-10-22 12:37:02 +0200  56)  * @param aliases - A set of alias mappings to use for resolution.
+^e028782 (evals 2026-10-22 12:37:02 +0200  57)  * @returns the resolved path as a string.
+^e028782 (evals 2026-10-22 12:37:02 +0200  58)  */
+^e028782 (evals 2026-10-22 12:37:02 +0200  59) export function resolveAlias(path: string, aliases: Record<string, string>) {
+^e028782 (evals 2026-10-22 12:37:02 +0200  60)   const _path = normalizeWindowsPath(path);
+^e028782 (evals 2026-10-22 12:37:02 +0200  61)   aliases = normalizeAliases(aliases);
+^e028782 (evals 2026-10-22 12:37:02 +0200  62)   for (const [alias, to] of Object.entries(aliases)) {
+^e028782 (evals 2026-10-22 12:37:02 +0200  63)     if (!_path.startsWith(alias)) {
+^e028782 (evals 2026-10-22 12:37:02 +0200  64)       continue;
+^e028782 (evals 2026-10-22 12:37:02 +0200  65)     }
+^e028782 (evals 2026-10-22 12:37:02 +0200  66) 
+^e028782 (evals 2026-10-22 12:37:02 +0200  67)     // Strip trailing slash from alias for check
+^e028782 (evals 2026-10-22 12:37:02 +0200  68)     const _alias = hasTrailingSlash(alias) ? alias.slice(0, -1) : alias;
+^e028782 (evals 2026-10-22 12:37:02 +0200  69) 
+^e028782 (evals 2026-10-22 12:37:02 +0200  70)     if (hasTrailingSlash(_path[_alias.length])) {
+^e028782 (evals 2026-10-22 12:37:02 +0200  71)       return join(to, _path.slice(alias.length));
+^e028782 (evals 2026-10-22 12:37:02 +0200  72)     }
+^e028782 (evals 2026-10-22 12:37:02 +0200  73)   }
+^e028782 (evals 2026-10-22 12:37:02 +0200  74)   return _path;
+^e028782 (evals 2026-10-22 12:37:02 +0200  75) }
+^e028782 (evals 2026-10-22 12:37:02 +0200  76) 
+^e028782 (evals 2026-10-22 12:37:02 +0200  77) /**
+^e028782 (evals 2026-10-22 12:37:02 +0200  78)  * Extracts the filename from a given path, excluding any directory paths and the file extension.
+^e028782 (evals 2026-10-22 12:37:02 +0200  79)  *
+^e028782 (evals 2026-10-22 12:37:02 +0200  80)  * @param path - The full path of the file from which to extract the filename.
+^e028782 (evals 2026-10-22 12:37:02 +0200  81)  * @returns the filename without the extension, or `undefined` if the filename cannot be extracted.
+^e028782 (evals 2026-10-22 12:37:02 +0200  82)  */
+^e028782 (evals 2026-10-22 12:37:02 +0200  83) export function filename(path: string) {
+^e028782 (evals 2026-10-22 12:37:02 +0200  84)   const base = path.split(SLASH_RE).pop();
+^e028782 (evals 2026-10-22 12:37:02 +0200  85) 
+^e028782 (evals 2026-10-22 12:37:02 +0200  86)   if (!base) {
+^e028782 (evals 2026-10-22 12:37:02 +0200  87)     return undefined;
+^e028782 (evals 2026-10-22 12:37:02 +0200  88)   }
+^e028782 (evals 2026-10-22 12:37:02 +0200  89) 
+^e028782 (evals 2026-10-22 12:37:02 +0200  90)   const separatorIndex = base.lastIndexOf(".");
+^e028782 (evals 2026-10-22 12:37:02 +0200  91) 
+^e028782 (evals 2026-10-22 12:37:02 +0200  92)   if (separatorIndex <= 0) {
+^e028782 (evals 2026-10-22 12:37:02 +0200  93)     return base;
+^e028782 (evals 2026-10-22 12:37:02 +0200  94)   }
+^e028782 (evals 2026-10-22 12:37:02 +0200  95) 
+^e028782 (evals 2026-10-22 12:37:02 +0200  96)   return base.slice(0, separatorIndex);
+^e028782 (evals 2026-10-22 12:37:02 +0200  97) }
+^e028782 (evals 2026-10-22 12:37:02 +0200  98) 
+^e028782 (evals 2026-10-22 12:37:02 +0200  99) // --- internals ---
+^e028782 (evals 2026-10-22 12:37:02 +0200 100) 
+^e028782 (evals 2026-10-22 12:37:02 +0200 101) function _compareAliases(a: string, b: string) {
+^e028782 (evals 2026-10-22 12:37:02 +0200 102)   return b.split("/").length - a.split("/").length;
+^e028782 (evals 2026-10-22 12:37:02 +0200 103) }
+^e028782 (evals 2026-10-22 12:37:02 +0200 104) 
+^e028782 (evals 2026-10-22 12:37:02 +0200 105) // Returns true if path ends with a slash or **is empty**
+^e028782 (evals 2026-10-22 12:37:02 +0200 106) function hasTrailingSlash(path = "/") {
+^e028782 (evals 2026-10-22 12:37:02 +0200 107)   const lastChar = path[path.length - 1];
+^e028782 (evals 2026-10-22 12:37:02 +0200 108)   return lastChar === "/" || lastChar === "\\";
+^e028782 (evals 2026-10-22 12:37:02 +0200 109) }

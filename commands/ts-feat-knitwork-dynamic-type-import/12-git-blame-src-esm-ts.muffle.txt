@@ -1,0 +1,134 @@
+$ git blame src/esm.ts
+d39e2dd evals 2026-10-22
+1	import { CodegenOptions } from "./types";
+2	import { genString } from "./string";
+3	import { _genStatement } from "./_utils";
+4	
+5	// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/import
+6	export type ESMImport = string | { name: string; as?: string };
+7	
+8	// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/export
+9	// https://tc39.es/ecma262/multipage/ecmascript-language-scripts-and-modules.html#sec-exports
+10	export type ESMExport = string | { name: string; as?: string };
+11	
+12	export interface ESMCodeGenOptions extends CodegenOptions {
+13	  // https://github.com/tc39/proposal-import-attributes
+14	  // https://nodejs.org/api/esm.html#import-attributes
+15	  attributes?: { type: string };
+16	  /** @deprecated use attributes */
+17	  assert?: { type: string };
+18	}
+19	
+20	export interface DynamicImportOptions extends ESMCodeGenOptions {
+21	  comment?: string;
+22	  wrapper?: boolean;
+23	  interopDefault?: boolean;
+24	}
+25	
+26	/**
+27	 * Generate an ESM `import` statement.
+28	 *
+29	 * @example
+30	 *
+31	 * ```js
+32	 * genImport("pkg", "foo");
+33	 * // ~> `import foo from "pkg";`
+34	 *
+35	 * genImport("pkg", ["foo"]);
+36	 * // ~> `import { foo } from "pkg";`
+37	 *
+38	 * genImport("pkg", ["a", "b"]);
+39	 * // ~> `import { a, b } from "pkg`;
+40	 *
+41	 * genImport("pkg", [{ name: "default", as: "bar" }]);
+42	 * // ~> `import { default as bar } from "pkg`;
+43	 *
+44	 * genImport("pkg", [{ name: "foo", as: "bar" }]);
+45	 * // ~> `import { foo as bar } from "pkg`;
+46	 *
+47	 * genImport("pkg", "foo", { attributes: { type: "json" } });
+48	 * // ~> `import foo from "pkg" with { type: "json" };
+49	 *
+50	 * genExport("pkg", "foo");
+51	 * // ~> `export foo from "pkg";`
+52	 *
+53	 * genExport("pkg", ["a", "b"]);
+54	 * // ~> `export { a, b } from "pkg";`
+55	 *
+56	 * // export * as bar from "pkg"
+57	 * genExport("pkg", { name: "*", as: "bar" });
+58	 * // ~> `export * as bar from "pkg";`
+59	 * ```
+60	 *
+61	 * @group ESM
+62	 */
+63	export function genImport(
+64	  specifier: string,
+65	  imports?: ESMImport | ESMImport[],
+66	  options: ESMCodeGenOptions = {},
+67	) {
+68	  return _genStatement("import", specifier, imports, options);
+69	}
+70	
+71	/**
+72	 * Generate an ESM `import type` statement.
+73	 *
+74	 * @group ESM
+75	 */
+76	export function genTypeImport(
+77	  specifier: string,
+78	  imports: ESMImport[],
+79	  options: ESMCodeGenOptions = {},
+80	) {
+81	  return _genStatement("import type", specifier, imports, options);
+82	}
+83	
+84	/**
+85	 * Generate an ESM `export` statement.
+86	 *
+87	 * @group ESM
+88	 */
+89	export function genExport(
+90	  specifier: string,
+91	  exports?: ESMExport | ESMExport[],
+92	  options: ESMCodeGenOptions = {},
+93	) {
+94	  return _genStatement("export", specifier, exports, options);
+95	}
+96	
+97	/**
+98	 * Generate an ESM dynamic `import()` statement.
+99	 *
+100	 * @group ESM
+101	 */
+102	export function genDynamicImport(
+103	  specifier: string,
+104	  options: DynamicImportOptions = {},
+105	) {
+106	  const commentString = options.comment ? ` /* ${options.comment} */` : "";
+107	  const wrapperString = options.wrapper === false ? "" : "() => ";
+108	  const ineropString = options.interopDefault
+109	    ? ".then(m => m.default || m)"
+110	    : "";
+111	  const optionsString = _genDynamicImportAttributes(options);
+112	  return `${wrapperString}import(${genString(
+113	    specifier,
+114	    options,
+115	  )}${commentString}${optionsString})${ineropString}`;
+116	}
+117	
+118	// --- internal ---
+119	
+120	function _genDynamicImportAttributes(options: DynamicImportOptions = {}) {
+121	  // TODO: Remove deprecated `assert` in the next major release
+122	  if (typeof options.assert?.type === "string") {
+123	    return `, { assert: { type: ${genString(options.assert.type)} } }`;
+124	  }
+125	
+126	  if (typeof options.attributes?.type === "string") {
+127	    return `, { with: { type: ${genString(options.attributes.type)} } }`;
+128	  }
+129	
+130	  return "";
+131	}
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-orvn1l47.log]

@@ -523,10 +523,10 @@ def snapshot_fresh(work):
 
 
 LANGUAGE_COMMANDS = {
-    "rust": ["cargo build 2>&1", "cargo test 2>&1", "cargo clippy --all-targets 2>&1"],
+    "rust": ["cargo build 2>&1", "cargo check 2>&1", "cargo test 2>&1", "cargo clippy --all-targets 2>&1"],
     "go": ["go build ./... 2>&1", "go test ./... 2>&1", "go vet ./... 2>&1"],
-    "python": ["uvx ruff check . 2>&1"],
-    "typescript": [],
+    "python": ["uvx ruff check . 2>&1", "uvx mypy . 2>&1"],
+    "typescript": ["npx tsc --noEmit 2>&1"],
 }
 EXTENSIONS = {"rust": "rs", "go": "go", "python": "py", "typescript": "ts"}
 
@@ -547,7 +547,9 @@ def task_commands(task):
     commands = [("task tests", f"{task['test']} 2>&1", "failing")]
     commands += [(command, command, "failing") for command in LANGUAGE_COMMANDS[language]]
     commands += [("git status", "git status", "fixed"), ("git diff", "git diff", "fixed"),
-                 ("git diff --stat", "git diff --stat", "fixed"), ("ls -la", "ls -la", "failing"),
+                 ("git diff --stat", "git diff --stat", "fixed"), ("git log", "git log -20", "failing"),
+                 ("git show", "git show HEAD", "failing"), ("git branch", "git branch -a", "failing"),
+                 ("ls -la", "ls -la", "failing"),
                  ("find", f"find . -name '*.{EXTENSIONS[language]}' -not -path './node_modules/*' "
                           "-not -path './target/*'", "failing")]
     if idents:
@@ -555,6 +557,7 @@ def task_commands(task):
         commands.append((f'grep -rn "{pattern}"', f'grep -rn "{pattern}" --exclude-dir=node_modules '
                                                   "--exclude-dir=target --exclude-dir=.git .", "failing"))
     if source and (prepared(task) / source).exists():
+        commands.append((f"git blame {source}", f"git blame {source}", "failing"))
         commands.append((f"cat {source}", f"cat {source}", "failing"))
     return commands
 

@@ -1,0 +1,132 @@
+$ git blame src/esm.ts
+^d39e2dd (evals 2026-10-22 12:37:07 +0200   1) import { CodegenOptions } from "./types";
+^d39e2dd (evals 2026-10-22 12:37:07 +0200   2) import { genString } from "./string";
+^d39e2dd (evals 2026-10-22 12:37:07 +0200   3) import { _genStatement } from "./_utils";
+^d39e2dd (evals 2026-10-22 12:37:07 +0200   4) 
+^d39e2dd (evals 2026-10-22 12:37:07 +0200   5) // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/import
+^d39e2dd (evals 2026-10-22 12:37:07 +0200   6) export type ESMImport = string | { name: string; as?: string };
+^d39e2dd (evals 2026-10-22 12:37:07 +0200   7) 
+^d39e2dd (evals 2026-10-22 12:37:07 +0200   8) // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/export
+^d39e2dd (evals 2026-10-22 12:37:07 +0200   9) // https://tc39.es/ecma262/multipage/ecmascript-language-scripts-and-modules.html#sec-exports
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  10) export type ESMExport = string | { name: string; as?: string };
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  11) 
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  12) export interface ESMCodeGenOptions extends CodegenOptions {
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  13)   // https://github.com/tc39/proposal-import-attributes
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  14)   // https://nodejs.org/api/esm.html#import-attributes
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  15)   attributes?: { type: string };
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  16)   /** @deprecated use attributes */
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  17)   assert?: { type: string };
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  18) }
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  19) 
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  20) export interface DynamicImportOptions extends ESMCodeGenOptions {
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  21)   comment?: string;
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  22)   wrapper?: boolean;
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  23)   interopDefault?: boolean;
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  24) }
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  25) 
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  26) /**
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  27)  * Generate an ESM `import` statement.
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  28)  *
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  29)  * @example
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  30)  *
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  31)  * ```js
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  32)  * genImport("pkg", "foo");
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  33)  * // ~> `import foo from "pkg";`
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  34)  *
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  35)  * genImport("pkg", ["foo"]);
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  36)  * // ~> `import { foo } from "pkg";`
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  37)  *
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  38)  * genImport("pkg", ["a", "b"]);
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  39)  * // ~> `import { a, b } from "pkg`;
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  40)  *
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  41)  * genImport("pkg", [{ name: "default", as: "bar" }]);
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  42)  * // ~> `import { default as bar } from "pkg`;
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  43)  *
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  44)  * genImport("pkg", [{ name: "foo", as: "bar" }]);
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  45)  * // ~> `import { foo as bar } from "pkg`;
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  46)  *
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  47)  * genImport("pkg", "foo", { attributes: { type: "json" } });
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  48)  * // ~> `import foo from "pkg" with { type: "json" };
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  49)  *
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  50)  * genExport("pkg", "foo");
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  51)  * // ~> `export foo from "pkg";`
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  52)  *
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  53)  * genExport("pkg", ["a", "b"]);
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  54)  * // ~> `export { a, b } from "pkg";`
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  55)  *
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  56)  * // export * as bar from "pkg"
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  57)  * genExport("pkg", { name: "*", as: "bar" });
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  58)  * // ~> `export * as bar from "pkg";`
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  59)  * ```
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  60)  *
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  61)  * @group ESM
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  62)  */
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  63) export function genImport(
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  64)   specifier: string,
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  65)   imports?: ESMImport | ESMImport[],
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  66)   options: ESMCodeGenOptions = {},
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  67) ) {
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  68)   return _genStatement("import", specifier, imports, options);
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  69) }
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  70) 
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  71) /**
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  72)  * Generate an ESM `import type` statement.
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  73)  *
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  74)  * @group ESM
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  75)  */
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  76) export function genTypeImport(
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  77)   specifier: string,
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  78)   imports: ESMImport[],
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  79)   options: ESMCodeGenOptions = {},
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  80) ) {
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  81)   return _genStatement("import type", specifier, imports, options);
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  82) }
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  83) 
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  84) /**
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  85)  * Generate an ESM `export` statement.
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  86)  *
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  87)  * @group ESM
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  88)  */
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  89) export function genExport(
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  90)   specifier: string,
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  91)   exports?: ESMExport | ESMExport[],
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  92)   options: ESMCodeGenOptions = {},
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  93) ) {
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  94)   return _genStatement("export", specifier, exports, options);
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  95) }
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  96) 
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  97) /**
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  98)  * Generate an ESM dynamic `import()` statement.
+^d39e2dd (evals 2026-10-22 12:37:07 +0200  99)  *
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 100)  * @group ESM
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 101)  */
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 102) export function genDynamicImport(
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 103)   specifier: string,
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 104)   options: DynamicImportOptions = {},
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 105) ) {
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 106)   const commentString = options.comment ? ` /* ${options.comment} */` : "";
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 107)   const wrapperString = options.wrapper === false ? "" : "() => ";
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 108)   const ineropString = options.interopDefault
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 109)     ? ".then(m => m.default || m)"
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 110)     : "";
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 111)   const optionsString = _genDynamicImportAttributes(options);
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 112)   return `${wrapperString}import(${genString(
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 113)     specifier,
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 114)     options,
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 115)   )}${commentString}${optionsString})${ineropString}`;
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 116) }
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 117) 
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 118) // --- internal ---
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 119) 
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 120) function _genDynamicImportAttributes(options: DynamicImportOptions = {}) {
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 121)   // TODO: Remove deprecated `assert` in the next major release
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 122)   if (typeof options.assert?.type === "string") {
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 123)     return `, { assert: { type: ${genString(options.assert.type)} } }`;
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 124)   }
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 125) 
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 126)   if (typeof options.attributes?.type === "string") {
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 127)     return `, { with: { type: ${genString(options.attributes.type)} } }`;
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 128)   }
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 129) 
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 130)   return "";
+^d39e2dd (evals 2026-10-22 12:37:07 +0200 131) }

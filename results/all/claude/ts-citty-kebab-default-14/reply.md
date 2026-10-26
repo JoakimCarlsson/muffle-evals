@@ -1,0 +1,1 @@
+Done. In `src/_parser.ts`, defaults now apply after alias propagation instead of going through `node:util`'s `parseArgs`. `--foo-bar one` now gives `fooBar: "one"` and `"foo-bar": "one"`. I added a test in `test/args.test.ts`, and all 64 tests pass.

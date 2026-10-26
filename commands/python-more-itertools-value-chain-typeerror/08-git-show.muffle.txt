@@ -1,0 +1,482 @@
+$ git show HEAD
+f46f9be3 2026-10-22 evals: base
+=== .gitattributes
+new file mode 100644
+@@ -0,0 +1,2 @@
++more_itertools/more.py merge=union
++more_itertools/tests/test_more.py merge=union
+=== .github/ISSUE_TEMPLATE/other-issues.md
+new file mode 100644
+@@ -0,0 +1,10 @@
++---
++name: Other issues
++about: Any other issue
++title: ''
++labels: ''
++assignees: ''
++
++---
++
++
+=== .github/ISSUE_TEMPLATE/propose-a-new-itertool.md
+new file mode 100644
+@@ -0,0 +1,20 @@
++---
++name: Propose a new itertool
++about: Suggest a new itertool for the library
++title: ''
++labels: ''
++assignees: ''
++
++---
++
++### Description
++<!-- Explain what your proposed itertools does here -->
++
++### References
++<!-- Link to a discussion on, e.g. Stack Overflow, showing where the new tool would have been useful -->
++<!-- Or link to a GitHub issue in another repository -->
++<!-- Or a discussion on the python-ideas mailing list -->
++<!-- Alternatively, describe a real problem you had to solve with this itertool -->
++
++### Examples
++<!-- Provide a code sample showing how your itertool works -->
+=== .github/PULL_REQUEST_TEMPLATE.md
+new file mode 100644
+@@ -0,0 +1,12 @@
++### Issue reference
++<!-- If you're adding a new feature, please make an issue first -->
++<!-- If you're fixing a trivial bug (e.g. a typo) you need not make an issue first -->
++<!-- If you're fixing a non-trivial bug, please go ahead and make an issue first -->
++<!-- Not all proposals for new functionality will be accepted, so please save yourself some work by checking first with an issue -->
++more-itertools/more-itertools#XXXX
++
++### Changes
++<!-- Describe what your PR adds, fixes, or changes here -->
++
++### Checks and tests
++<!-- Please create and activate a virtual environment and then run `make all-checks` to ensure sure your branch meets the standards enforced by GitHub Actions. -->
+=== .github/workflows/python-app.yml
+new file mode 100644
+@@ -0,0 +1,36 @@
++name: Python package
++
++on: [push, pull_request]
++
++jobs:
++  build:
++
++    runs-on: ubuntu-latest
++    strategy:
++      matrix:
++        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "pypy-3.10"]
++
++    steps:
++    - uses: actions/checkout@v7
++    - name: Set up Python ${{ matrix.python-version }}
++      uses: actions/setup-python@v6
++      with:
++        python-version: ${{ matrix.python-version }}
++        allow-prereleases: true
++    - name: Run tests
++      run: make coverage
++    - name: Static checks
++      if: "matrix.python-version == '3.10'"
++      run: make requirements check
++    - name: Build docs with sphinx
++      if: "matrix.python-version == '3.10'"
++      run: make docs
++    - name: Build packages
++      if: "matrix.python-version == '3.10'"
++      run: make package
++    - name: Upload packages
++      if: "matrix.python-version == '3.10'"
++      uses: actions/upload-artifact@v7
++      with:
++        name: more-itertools-packages
++        path: dist/*
+=== .gitignore
+new file mode 100644
+@@ -0,0 +1,47 @@
++*.py[co]
++
++# Packages
++*.egg
++*.eggs
++*.egg-info
++dist
++build
++eggs
++parts
++bin
++var
++sdist
++develop-eggs
++.installed.cfg
++
++# Installer logs
++pip-log.txt
++
++# Unit test / coverage reports
++.coverage
++.tox
++.noseids
++htmlcov/
++coverage.xml
++.pytest_cache
++
++# Docs by Sphinx
++_build
++
++# Environment
++.env/
++.venv/
++env/
++venv/
++
++# IDE files
++.idea
++.vscode
++.DS_Store
++
++# Mypy
++.mypy_cache
++.dmypy.json
++
++# Ruff
++.ruff_cache/
+=== .readthedocs.yaml
+new file mode 100644
+@@ -0,0 +1,15 @@
++version: 2
++
++build:
++  os: ubuntu-22.04
++  tools:
++    python: "3.13"
++
++sphinx:
++   configuration: docs/conf.py
++
++python:
++  install:
++    - requirements: docs/requirements.txt
++    - method: pip
++      path: .
+=== LICENSE
+new file mode 100644
+@@ -0,0 +1,19 @@
++Copyright (c) 2012 Erik Rose
++
++Permission is hereby granted, free of charge, to any person obtaining a copy of
++this software and associated documentation files (the "Software"), to deal in
++the Software without restriction, including without limitation the rights to
++use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
++of the Software, and to permit persons to whom the Software is furnished to do
++so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+=== MANIFEST.in
+new file mode 100644
+@@ -0,0 +1,9 @@
++include README.rst
++include LICENSE
++include docs/*.rst
++include docs/Makefile
++include docs/make.bat
++include docs/conf.py
++include docs/_static/*
++include tox.ini
++include tests/*.py
+=== Makefile
+new file mode 100644
+@@ -0,0 +1,38 @@
++.PHONY: all-checks
++all-checks: requirements coverage check docs package
++
++.PHONY: requirements
++requirements:
++	python -m pip install --upgrade -r requirements/development.txt
++	python -m pip install --editable .
++
++.PHONY: check
++check:
++	ruff format --check .
++	ruff check more_itertools tests
++	stubtest more_itertools.more more_itertools.recipes
++
++.PHONY: format
++format:
++	ruff format .
++
++.PHONY: coverage
++coverage:
++	python -m pip install --upgrade -r requirements/testing.txt
++	coverage run --include="more_itertools/*.py" -m unittest
++	coverage report --show-missing --fail-under=99
++
++.PHONY: test
++test:
++	python -m unittest -v ${tests}
++
++.PHONY: docs
++docs:
++	python -m pip install --upgrade -r docs/requirements.txt
++	sphinx-build -W -b html docs docs/_build/html
++
++.PHONY: package
++package:
++	python -m pip install --upgrade -r requirements/packaging.txt
++	flit build
++	twine check dist/*
+=== README.rst
+new file mode 100644
+@@ -0,0 +1,267 @@
++==============
++More Itertools
++==============
++
++.. image:: https://readthedocs.org/projects/more-itertools/badge/?version=latest
++  :target: https://more-itertools.readthedocs.io/en/stable/
++
++Python's ``itertools`` library is a gem - you can compose elegant solutions
++for a variety of problems with the functions it provides. In ``more-itertools``
++we collect additional building blocks, recipes, and routines for working with
++Python iterables.
++
+++------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++| Grouping               | `chunked <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.chunked>`_,                                                                               |
++|                        | `ichunked <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.ichunked>`_,                                                                             |
++|                        | `chunked_even <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.chunked_even>`_,                                                                     |
++|                        | `sliced <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.sliced>`_,                                                                                 |
++|                        | `constrained_batches <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.constrained_batches>`_,                                                       |
++|                        | `distribute <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.distribute>`_,                                                                         |
++|                        | `divide <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.divide>`_,                                                                                 |
++|                        | `split_at <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.split_at>`_,                                                                             |
++|                        | `split_before <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.split_before>`_,                                                                     |
++|                        | `split_after <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.split_after>`_,                                                                       |
++|                        | `split_into <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.split_into>`_,                                                                         |
++|                        | `split_when <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.split_when>`_,                                                                         |
++|                        | `bucket <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.bucket>`_,                                                                                 |
++|                        | `unzip <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.unzip>`_,                                                                                   |
++|                        | `batched <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.batched>`_,                                                                               |
++|                        | `grouper <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.grouper>`_,                                                                               |
++|                        | `partition <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.partition>`_                                                                            |
+++------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++| Lookahead and lookback | `spy <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.spy>`_,                                                                                       |
++|                        | `peekable <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.peekable>`_,                                                                             |
++|                        | `seekable <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.seekable>`_                                                                              |
+++------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++| Windowing              | `windowed <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.windowed>`_,                                                                             |
++|                        | `substrings <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.substrings>`_,                                                                         |
++|                        | `substrings_indexes <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.substrings_indexes>`_,                                                         |
++|                        | `stagger <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.stagger>`_,                                                                               |
++|                        | `windowed_complete <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.windowed_complete>`_,                                                           |
++|                        | `pairwise <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.pairwise>`_,                                                                             |
++|                        | `triplewise <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.triplewise>`_,                                                                         |
++|                        | `sliding_window <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.sliding_window>`_,                                                                 |
++|                        | `subslices <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.subslices>`_                                                                            |
+++------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++| Augmenting             | `count_cycle <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.count_cycle>`_,                                                                       |
++|                        | `intersperse <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.intersperse>`_,                                                                       |
++|                        | `padded <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.padded>`_,                                                                                 |
++|                        | `repeat_each <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.repeat_each>`_,                                                                       |
++|                        | `mark_ends <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.mark_ends>`_,                                                                           |
++|                        | `repeat_last <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.repeat_last>`_,                                                                       |
++|                        | `adjacent <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.adjacent>`_,                                                                             |
++|                        | `groupby_transform <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.groupby_transform>`_,                                                           |
++|                        | `pad_none <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.pad_none>`_,                                                                             |
++|                        | `ncycles <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.ncycles>`_                                                                                |
+++------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++| Combining              | `collapse <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.collapse>`_,                                                                             |
++|                        | `sort_together <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.sort_together>`_,                                                                   |
++|                        | `interleave <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.interleave>`_,                                                                         |
++|                        | `interleave_longest <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.interleave_longest>`_,                                                         |
++|                        | `interleave_evenly <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.interleave_evenly>`_,                                                           |
++|                        | `interleave_randomly <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.interleave_randomly>`_,                                                       |
++|                        | `zip_offset <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.zip_offset>`_,                                                                         |
++|                        | `zip_broadcast <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.zip_broadcast>`_,                                                                   |
++|                        | `flatten <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.flatten>`_,                                                                               |
++|                        | `roundrobin <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.roundrobin>`_,                                                                         |
++|                        | `prepend <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.prepend>`_,                                                                               |
++|                        | `value_chain <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.value_chain>`_,                                                                       |
++|                        | `partial_product <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.partial_product>`_                                                                |
+++------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++| Concurrency            | `concurrent_tee <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.concurrent_tee>`_,                                                                 |
++|                        | `serialize <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.serialize>`_,                                                                           |
++|                        | `synchronized <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.synchronized>`_                                                                      |
+++------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++| Summarizing            | `ilen <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.ilen>`_,                                                                                     |
++|                        | `unique_to_each <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.unique_to_each>`_,                                                                 |
++|                        | `sample <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.sample>`_,                                                                                 |
++|                        | `consecutive_groups <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.consecutive_groups>`_,                                                         |
++|                        | `run_length <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.run_length>`_,                                                                         |
++|                        | `map_reduce <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.map_reduce>`_,                                                                         |
++|                        | `join_mappings <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.join_mappings>`_,                                                                   |
++|                        | `exactly_n <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.exactly_n>`_,                                                                           |
++|                        | `is_sorted <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.is_sorted>`_,                                                                           |
++|                        | `all_equal <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.all_equal>`_,                                                                           |
++|                        | `all_unique <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.all_unique>`_,                                                                         |
++|                        | `argmin <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.argmin>`_,                                                                                 |
++|                        | `argmax <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.argmax>`_,                                                                                 |
++|                        | `minmax <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.minmax>`_,                                                                                 |
++|                        | `first_true <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.first_true>`_,                                                                         |
++|                        | `quantify <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.quantify>`_,                                                                             |
++|                        | `iequals <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.iequals>`_                                                                                |
+++------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++| Selecting              | `islice_extended <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.islice_extended>`_,                                                               |
++|                        | `first <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.first>`_,                                                                                   |
++|                        | `last <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.last>`_,                                                                                     |
++|                        | `one <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.one>`_,                                                                                       |
++|                        | `only <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.only>`_,                                                                                     |
++|                        | `strictly_n <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.strictly_n>`_,                                                                         |
++|                        | `strip <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.strip>`_,                                                                                   |
++|                        | `lstrip <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.lstrip>`_,                                                                                 |
++|                        | `rstrip <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.rstrip>`_,                                                                                 |
++|                        | `filter_except <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.filter_except>`_,                                                                   |
++|                        | `map_except <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.map_except>`_,                                                                         |
++|                        | `filter_map <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.filter_map>`_,                                                                         |
++|                        | `iter_suppress <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.iter_suppress>`_,                                                                   |
++|                        | `nth_or_last <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.nth_or_last>`_,                                                                       |
++|                        | `extract <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.extract>`_,                                                                               |
++|                        | `unique_in_window <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.unique_in_window>`_,                                                             |
++|                        | `before_and_after <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.before_and_after>`_,                                                             |
++|                        | `nth <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.nth>`_,                                                                                       |
++|                        | `take <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.take>`_,                                                                                     |
++|                        | `tail <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.tail>`_,                                                                                     |
++|                        | `unique_everseen <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.unique_everseen>`_,                                                               |
++|                        | `unique_justseen <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.unique_justseen>`_,                                                               |
++|                        | `unique <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.unique>`_,                                                                                 |
++|                        | `duplicates_everseen <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.duplicates_everseen>`_,                                                       |
++|                        | `duplicates_justseen <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.duplicates_justseen>`_,                                                       |
++|                        | `classify_unique <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.classify_unique>`_,                                                               |
++|                        | `longest_common_prefix <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.longest_common_prefix>`_,                                                   |
++|                        | `takewhile_inclusive <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.takewhile_inclusive>`_                                                        |
+++------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++| Math                   | `dft <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.dft>`_,                                                                                       |
++|                        | `idft <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.idft>`_,                                                                                     |
++|                        | `convolve <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.convolve>`_,                                                                             |
++|                        | `dotproduct <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.dotproduct>`_,                                                                         |
++|                        | `matmul <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.matmul>`_,                                                                                 |
++|                        | `polynomial_from_roots <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.polynomial_from_roots>`_,                                                   |
++|                        | `polynomial_derivative <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.polynomial_derivative>`_,                                                   |
++|                        | `polynomial_eval <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.polynomial_eval>`_,                                                               |
++|                        | `reshape <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.reshape>`_,                                                                               |
++|                        | `sum_of_squares <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.sum_of_squares>`_,                                                                 |
++|                        | `transpose <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.transpose>`_                                                                            |
+++------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++| Integer math           | `factor <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.factor>`_,                                                                                 |
++|                        | `is_prime <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.is_prime>`_,                                                                             |
++|                        | `multinomial <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.multinomial>`_,                                                                       |
++|                        | `nth_prime <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.nth_prime>`_,                                                                           |
++|                        | `sieve <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.sieve>`_,                                                                                   |
++|                        | `subfactorial <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.subfactorial>`_,                                                                     |
++|                        | `totient <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.totient>`_                                                                                |
+++------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++| Statistics             | `running_min <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.running_min>`_,                                                                       |
++|                        | `running_max <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.running_max>`_,                                                                       |
++|                        | `running_mean <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.running_mean>`_,                                                                     |
++|                        | `running_median <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.running_median>`_,                                                                 |
++|                        | `running_statistics <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.running_statistics>`_                                                          |
+++------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++| Combinatorics          | `circular_shifts <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.circular_shifts>`_,                                                               |
++|                        | `derangements <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.derangements>`_,                                                                     |
++|                        | `gray_product  <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.gray_product>`_,                                                                    |
++|                        | `outer_product  <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.outer_product>`_,                                                                  |
++|                        | `partitions <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.partitions>`_,                                                                         |
++|                        | `set_partitions <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.set_partitions>`_,                                                                 |
++|                        | `powerset <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.powerset>`_,                                                                             |
++|                        | `powerset_of_sets <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.powerset_of_sets>`_                                                              |
++|                        +-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++|                        | `distinct_combinations <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.distinct_combinations>`_,                                                   |
++|                        | `distinct_permutations <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.distinct_permutations>`_                                                    |
++|                        +-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++|                        | `combination_index <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.combination_index>`_,                                                           |
++|                        | `combination_with_replacement_index <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.combination_with_replacement_index>`_,                         |
++|                        | `permutation_index <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.permutation_index>`_,                                                           |
++|                        | `product_index <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.product_index>`_                                                                    |
++|                        +-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++|                        | `nth_combination <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.nth_combination>`_,                                                               |
++|                        | `nth_combination_with_replacement <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.nth_combination_with_replacement>`_,                             |
++|                        | `nth_permutation <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.nth_permutation>`_,                                                               |
++|                        | `nth_product <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.nth_product>`_                                                                        |
++|                        +-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++|                        | `random_combination <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.random_combination>`_,                                                         |
++|                        | `random_combination_with_replacement <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.random_combination_with_replacement>`_,                       |
++|                        | `random_derangement <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.random_derangement>`_,                                                         |
++|                        | `random_permutation <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.random_permutation>`_,                                                         |
++|                        | `random_product <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.random_product>`_                                                                  |
+++------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
++| Wrapping               | `always_iterable <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.always_iterable>`_,                                                               |
++|                        | `always_reversible <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.always_reversible>`_,                                                           |
++|                        | `countable <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.countable>`_,                                                                           |
++|                        | `consumer <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.consumer>`_,                                                                             |
++|                        | `iter_except <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.iter_except>`_,                                                                       |
++|                        | `sized_iterator <https://more-itertools.readthedocs.io/en/stable/api.html#more_itertools.sized_iterator>`_                                                                  |
+[+86 more diff lines]
+=== docs/Makefile +153 -0
+new file mode 100644
+=== docs/_static/theme_overrides.css +14 -0
+new file mode 100644
+=== docs/api.rst +382 -0
+new file mode 100644
+=== docs/conf.py +286 -0
+new file mode 100644
+=== docs/index.rst +1 -0
+new file mode 100644
+=== docs/license.rst +16 -0
+new file mode 100644
+=== docs/make.bat +190 -0
+new file mode 100644
+=== docs/requirements.txt +2 -0
+new file mode 100644
+=== docs/testing.rst +19 -0
+new file mode 100644
+=== docs/toctree.rst +15 -0
+new file mode 100644
+=== docs/versions.rst +907 -0
+new file mode 100644
+=== more_itertools/__init__.py +6 -0
+new file mode 100644
+=== more_itertools/__init__.pyi +2 -0
+new file mode 100644
+=== more_itertools/more.py +5590 -0
+new file mode 100755
+=== more_itertools/more.pyi +1020 -0
+new file mode 100644
+=== more_itertools/py.typed
+new file mode 100644
+=== more_itertools/recipes.py +1621 -0
+new file mode 100644
+=== more_itertools/recipes.pyi +232 -0
+new file mode 100644
+=== pyproject.toml +60 -0
+new file mode 100644
+=== requirements/development.txt +4 -0
+new file mode 100644
+=== requirements/packaging.txt +5 -0
+new file mode 100644
+=== requirements/testing.txt +2 -0
+new file mode 100644
+=== requirements/typechecks.txt +1 -0
+new file mode 100644
+=== setup.cfg +26 -0
+new file mode 100644
+=== tests/__init__.py
+new file mode 100644
+=== tests/test_more.py +7140 -0
+new file mode 100644
+=== tests/test_recipes.py +1711 -0
+new file mode 100644
+=== tox.ini +6 -0
+new file mode 100644
+[raw: ~/.cache/muffle-evals/commands/muffle-cache/muffle/git-npj2dct5.log]

@@ -1,0 +1,53 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index f3ee402..d024610 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,10 @@
+ 
+ ## [unreleased]
+ 
++### Fixed
++
++- Fix assigning an array of tables over a dotted key capturing the keys that follow it.
++
+ ### Changed
+ 
+ - Speed up membership tests (`key in ...`) on `Container`, `Table` and `InlineTable` with native `__contains__` implementations, avoiding the inherited `MutableMapping` round-trip through `__getitem__` (which resolves the value and builds an exception on every absent key). ([#483](https://github.com/python-poetry/tomlkit/issues/483))
+diff --git a/tests/test_toml_document.py b/tests/test_toml_document.py
+index 0e950cb..80b7b13 100644
+--- a/tests/test_toml_document.py
++++ b/tests/test_toml_document.py
+@@ -1152,6 +1152,17 @@ c.d = 2
+     assert parse(doc.as_string()) == {"c": {"d": 2}, "a": {}}
+ 
+ 
++def test_replace_dotted_key_with_aot_keeps_following_sibling() -> None:
++    doc = parse("a.b = 1\nc.d = 2\n")
++    aot = tomlkit.aot()
++    t = tomlkit.table()
++    t["x"] = 9
++    aot.append(t)
++    doc["a"] = aot
++    # ``[[a]]`` must not swallow the following ``c.d`` dotted key.
++    assert parse(doc.as_string()) == {"c": {"d": 2}, "a": [{"x": 9}]}
++
++
+ def test_replace_dotted_key_with_table_keeps_following_sibling() -> None:
+     # https://github.com/python-poetry/tomlkit/issues/513
+     content = """a.b = 1
+diff --git a/tomlkit/container.py b/tomlkit/container.py
+index e3ee4fd..b8747a4 100644
+--- a/tomlkit/container.py
++++ b/tomlkit/container.py
+@@ -863,8 +863,9 @@ class Container(_CustomDict):  # type: ignore[type-arg]
+         # its own ``[header]`` instead (a non-super table), keeping the dotted key
+         # duplicates the prefix onto the header (#524). Drop the dotted key so the
+         # replacement renders as a plain table.
+-        dotted_to_header = (
+-            k.is_dotted() and isinstance(value, Table) and not value.is_super_table()
++        dotted_to_header = k.is_dotted() and (
++            isinstance(value, AoT)
++            or (isinstance(value, Table) and not value.is_super_table())
+         )
+         # That new header also captures every sibling that renders inline -- plain
+         # values and dotted keys -- if any still follow it (#513), so it must be
