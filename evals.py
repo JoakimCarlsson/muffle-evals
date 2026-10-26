@@ -326,6 +326,7 @@ def run(setup, agent, task, n):
     (result / "reply.md").write_text(reply + "\n")
     (result / "score.json").write_text(json.dumps(score, indent=2) + "\n")
     shutil.copy(raw / "test.log", result / "test.log")
+    shutil.copy(raw / "out.jsonl", result / "transcript.jsonl")
     for path in (work, tmp, raw / "go", raw / "config" / "plugins", raw / "config" / "cache"):
         shutil.rmtree(path, ignore_errors=True)
     print(f"{setup} {agent} {name}: {'pass' if score['passed'] else 'FAIL'} in {seconds}s, "
@@ -355,18 +356,56 @@ def text_of(content):
     return ""
 
 
+SUBCOMMAND_PROGRAMS = {"git", "cargo", "npm", "pnpm", "yarn", "bun", "go", "docker", "gh", "uv", "pip", "poetry", "npx"}
+
+
+def command_key(command):
+    """Return the program of the shell ``command``, with its subcommand for programs that have them."""
+    words = command.split()
+    while words and ("=" in words[0] or words[0] in ("cd", "&&", "env", "time")):
+        words = words[words.index("&&") + 1:] if "&&" in words else words[1:]
+    if not words:
+        return ""
+    if words[0] in SUBCOMMAND_PROGRAMS and len(words) > 1 and not words[1].startswith("-"):
+        return " ".join(words[:2])
+    return words[0]
+
+
+def add_command(commands, command, shown):
+    """Count one run of ``command`` and the bytes and lossy marker of its output ``shown`` in ``commands``."""
+    entry = commands.setdefault(command_key(command), {"calls": 0, "bytes": 0, "lossy": 0})
+    entry["calls"] += 1
+    entry["bytes"] += len(shown.encode())
+    entry["lossy"] += "[raw:" in shown
+
+
 def parse(agent, path):
     """Return the token and byte counts and the reply text of one run's raw output."""
     m = collections.Counter()
     reply = []
+    turn_ids = set()
+    commands = {}
+    calls = {}
     for e in events(path):
         kind = e.get("type")
         if agent == "claude":
-            content = (e.get("message") or {}).get("content")
+            message = e.get("message") or {}
+            content = message.get("content")
+            if kind == "assistant" and message.get("id") not in turn_ids:
+                turn_ids.add(message.get("id"))
+                m["turns"] += 1
             if kind in ("assistant", "user") and isinstance(content, list):
                 for block in content:
-                    if block.get("type") == "tool_result":
-                        m["tool_bytes"] += len(text_of(block.get("content")).encode())
+                    if block.get("type") == "tool_use":
+                        m["tool_calls"] += 1
+                        if block.get("name") == "Bash":
+                            calls[block.get("id")] = (block.get("input") or {}).get("command", "")
+                    elif block.get("type") == "tool_result":
+                        shown = text_of(block.get("content"))
+                        m["tool_bytes"] += len(shown.encode())
+                        m["raw_reads"] += "[raw:" in shown
+                        if block.get("tool_use_id") in calls:
+                            add_command(commands, calls[block["tool_use_id"]], shown)
                     elif block.get("type") == "text" and kind == "assistant":
                         reply.append(block["text"])
             if kind == "result":
@@ -380,6 +419,9 @@ def parse(agent, path):
             item = e.get("item") or {}
             if kind == "item.completed":
                 if item.get("type") == "command_execution":
+                    m["tool_calls"] += 1
+                    m["raw_reads"] += "[raw:" in (item.get("aggregated_output") or "")
+                    add_command(commands, item.get("command") or "", item.get("aggregated_output") or "")
                     m["tool_bytes"] += len((item.get("aggregated_output") or "").encode())
                 elif item.get("type") == "agent_message":
                     reply.append(item.get("text", ""))
@@ -392,7 +434,7 @@ def parse(agent, path):
                 m["input_cached"] += cached
                 m["output"] += u.get("output_tokens", 0)
     m["reply_words"] = sum(len(text.split()) for text in reply)
-    return dict(m), "\n\n".join(reply)
+    return {**m, "commands": commands}, "\n\n".join(reply)
 
 
 def matrix(setups, agents, runs, tasks):
@@ -409,11 +451,26 @@ def matrix(setups, agents, runs, tasks):
                 print(f"run failed: {future.exception()!r}", flush=True)
 
 
+def write_commands_report(scores):
+    """Write results/commands.md: the shell commands the agents ran, by output bytes, to show which need a filter."""
+    totals = collections.defaultdict(lambda: {"calls": 0, "bytes": 0, "lossy": 0})
+    for score in scores:
+        for key, entry in (score.get("commands") or {}).items():
+            for field, value in entry.items():
+                totals[key][field] += value
+    lines = ["# Commands", "", "Shell commands the agents ran, over every scored run, by bytes of output they were shown "
+             "(after muffle, where it ran). Lossy is the number of outputs that ended in a `[raw:]` line.", "",
+             "| command | calls | bytes shown | mean bytes | lossy |", "|---|---:|---:|---:|---:|"]
+    for key, t in sorted(totals.items(), key=lambda item: -item[1]["bytes"])[:60]:
+        lines.append(f"| `{key}` | {t['calls']:,} | {t['bytes']:,} | {t['bytes'] // t['calls']:,} | {t['lossy']:,} |")
+    (ROOT / "results" / "commands.md").write_text("\n".join(lines) + "\n")
+
+
 def report():
     """Write results/README.md: per agent, each setup's pass rate and mean costs, against the base setup."""
     scores = [json.loads(Path(path).read_text()) for path in glob.glob(str(ROOT / "results/*/*/*/score.json"))]
     scores = [s for s in scores if not s.get("error")]
-    fields = ("cost_usd", "input_uncached", "input_cached", "output", "tool_bytes", "reply_words", "lines_added",
+    fields = ("cost_usd", "turns", "tool_calls", "raw_reads", "input_uncached", "input_cached", "output", "tool_bytes", "reply_words", "lines_added",
               "lines_removed", "lint_new", "seconds")
     lines = ["# Results", "", "Means per run over the tasks every setup of the agent ran. Runs the agent's API failed "
              "are left out.", ""]
@@ -440,6 +497,7 @@ def report():
                    f"{sum(1 for s in mine if s['task'] == task and s['setup'] == setup)}" for setup in setups]
             lines.append(f"| {task} | " + " | ".join(row) + " |")
         lines.append("")
+    write_commands_report(scores)
     lines += ["## Per task", "", "Each page shows the bug report, the upstream change and every agent's diff:", ""]
     for task_id in sorted({s["task"] for s in scores}):
         write_task_page(task_id, [s for s in scores if s["task"] == task_id])

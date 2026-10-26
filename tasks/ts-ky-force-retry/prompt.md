@@ -1,0 +1,9 @@
+Sometimes an API answers `200` with an error in the body (`{error: {code: 'RATE_LIMIT', retryAfter: 2}}`), and there is no way to make ky retry that. Please let an `afterResponse` hook force a retry by returning `ky.retry()`.
+
+- `ky.retry(options?)` is a new function on the ky instance (also on instances from `ky.extend()`/`ky.create()`, and typed on `KyInstance`). The hook may return it from `afterResponse`, sync or async, and the `AfterResponseHook` type has to accept it.
+- Options: `delay` (ms; used as is, bypassing jitter and `backoffLimit`, `0` retries instantly; without it the normal retry delay is used), `code` (a machine-readable string), `cause` (an `Error`, kept as the `cause`; non-Errors are wrapped), and `request` (a custom `Request` to send for the retry, e.g. another URL, other headers, method or body; ky's own timeout and the user's abort signal still apply to it).
+- A forced retry counts against `retry.limit` like any retry, skips `retry.methods` (so POST can be retried) and `retry.shouldRetry` (never called for it), and stops the remaining `afterResponse` hooks for that response. The response bodies must be cancelled so nothing leaks.
+- `beforeRetry` hooks run for it as usual, with `error` being a new `ForceRetryError` (exported from `ky`, `name` `'ForceRetryError'`, message `Forced retry: <code>` or just `Forced retry`, with the `code` available as `error.code`) and the right `retryCount`. Add and export a type guard `isForceRetryError(error)` next to `isHTTPError`. If `request` was given it is the request used before the `beforeRetry` hooks run, so a `beforeRetry` hook can still modify or replace it.
+- With `onUploadProgress`, every request that is actually sent, including a custom request from `ky.retry({request})` and one returned from a `beforeRetry` hook, reports upload progress, and `totalBytes` for it is the real body size.
+
+Please add this.

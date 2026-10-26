@@ -14,7 +14,7 @@ A task is a bug that was fixed upstream in an open-source project, in `tasks/<id
 
 ## Feature tasks
 
-A task with `kind = "feature"` in `task.toml` is a small feature added upstream instead of a bug fix: a new option,
+A task with `kind = "long"` is a larger upstream change (about 150 to 600 lines of non-test code across several files) that takes an agent many turns; it is written like a feature task and reported in its own section. A task with `kind = "feature"` in `task.toml` is a small feature added upstream instead of a bug fix: a new option,
 function or behaviour that an agent could build small or big. They measure how much code each setup writes when it
 picks the scope itself.
 
@@ -30,7 +30,7 @@ picks the scope itself.
 
 ```toml
 language = "rust"                         # rust, python, typescript or go
-kind = "bug"                              # bug (the default) or feature
+kind = "bug"                              # bug (the default), feature or long
 repo = "https://github.com/owner/name"
 base = "<full sha of the parent of the fix>"
 fix = "<full sha of the fix>"
