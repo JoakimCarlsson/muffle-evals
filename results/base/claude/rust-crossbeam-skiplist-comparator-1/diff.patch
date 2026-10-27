@@ -1,0 +1,2149 @@
+diff --git a/crossbeam-skiplist/src/base.rs b/crossbeam-skiplist/src/base.rs
+index a73ee8a..4e7955e 100644
+--- a/crossbeam-skiplist/src/base.rs
++++ b/crossbeam-skiplist/src/base.rs
+@@ -15,8 +15,8 @@ use core::{
+ use crossbeam_epoch::{self as epoch, Atomic, Collector, Guard, Shared};
+ use crossbeam_utils::CachePadded;
+ 
+-use super::equivalent::Comparable;
+ use crate::alloc_helper::Global;
++use crate::comparator::{BasicComparator, Comparator};
+ 
+ /// Number of bits needed to store height.
+ const HEIGHT_BITS: usize = 5;
+@@ -304,7 +304,7 @@ impl<'a, K, V> NodeRef<'a, K, V> {
+     /// Decrements the reference count of a node, pinning the thread and destroying the node
+     /// if the count become zero.
+     #[inline]
+-    unsafe fn decrement_with_pin<F>(self, parent: &SkipList<K, V>, pin: F)
++    unsafe fn decrement_with_pin<C, F>(self, parent: &SkipList<K, V, C>, pin: F)
+     where
+         F: FnOnce() -> Guard,
+     {
+@@ -451,7 +451,7 @@ struct HotData {
+ }
+ 
+ /// A lock-free skip list.
+-// TODO(stjepang): Embed a custom `epoch::Collector` inside `SkipList<K, V>`. Instead of adding
++// TODO(stjepang): Embed a custom `epoch::Collector` inside `SkipList<K, V, C>`. Instead of adding
+ // garbage to the default global collector, we should add it to a local collector tied to the
+ // particular skip list instance.
+ //
+@@ -463,26 +463,37 @@ struct HotData {
+ // As a further future optimization, if `!mem::needs_drop::<K>() && !mem::needs_drop::<V>()`
+ // (neither key nor the value have destructors), there's no point in creating a new local
+ // collector, so we should simply use the global one.
+-pub struct SkipList<K, V> {
++pub struct SkipList<K, V, C = BasicComparator> {
+     /// The head of the skip list (just a dummy node, not a real entry).
+     head: Head<K, V>,
+ 
+     /// The `Collector` associated with this skip list.
+     collector: Collector,
+ 
++    /// The comparator that defines the ordering of keys.
++    comparator: C,
++
+     /// Hot data associated with the skip list, stored in a dedicated cache line.
+     hot_data: CachePadded<HotData>,
+ }
+ 
+-unsafe impl<K: Send + Sync, V: Send + Sync> Send for SkipList<K, V> {}
+-unsafe impl<K: Send + Sync, V: Send + Sync> Sync for SkipList<K, V> {}
++unsafe impl<K: Send + Sync, V: Send + Sync, C> Send for SkipList<K, V, C> {}
++unsafe impl<K: Send + Sync, V: Send + Sync, C> Sync for SkipList<K, V, C> {}
+ 
+-impl<K, V> SkipList<K, V> {
+-    /// Returns a new, empty skip list.
++impl<K, V> SkipList<K, V, BasicComparator> {
++    /// Returns a new, empty skip list ordered by the keys' `Ord` implementation.
+     pub fn new(collector: Collector) -> Self {
++        Self::with_comparator(collector, BasicComparator)
++    }
++}
++
++impl<K, V, C> SkipList<K, V, C> {
++    /// Returns a new, empty skip list that orders its keys with `comparator`.
++    pub fn with_comparator(collector: Collector, comparator: C) -> Self {
+         Self {
+             head: Head::new(),
+             collector,
++            comparator,
+             hot_data: CachePadded::new(HotData {
+                 seed: AtomicUsize::new(1),
+                 len: AtomicUsize::new(0),
+@@ -517,12 +528,12 @@ impl<K, V> SkipList<K, V> {
+     }
+ }
+ 
+-impl<K, V> SkipList<K, V>
++impl<K, V, C> SkipList<K, V, C>
+ where
+-    K: Ord,
++    C: Comparator<K>,
+ {
+     /// Returns the entry with the smallest key.
+-    pub fn front<'a: 'g, 'g>(&'a self, guard: &'g Guard) -> Option<Entry<'a, 'g, K, V>> {
++    pub fn front<'a: 'g, 'g>(&'a self, guard: &'g Guard) -> Option<Entry<'a, 'g, K, V, C>> {
+         self.check_guard(guard);
+         let n = self.next_node(self.head.as_tower(), Bound::Unbounded, guard)?;
+         Some(Entry {
+@@ -533,7 +544,7 @@ where
+     }
+ 
+     /// Returns the entry with the largest key.
+-    pub fn back<'a: 'g, 'g>(&'a self, guard: &'g Guard) -> Option<Entry<'a, 'g, K, V>> {
++    pub fn back<'a: 'g, 'g>(&'a self, guard: &'g Guard) -> Option<Entry<'a, 'g, K, V, C>> {
+         self.check_guard(guard);
+         let n = self.search_bound::<K>(Bound::Unbounded, true, guard)?;
+         Some(Entry {
+@@ -546,21 +557,21 @@ where
+     /// Returns `true` if the map contains a value for the specified key.
+     pub fn contains_key<Q>(&self, key: &Q, guard: &Guard) -> bool
+     where
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         Q: ?Sized,
+     {
+         self.get(key, guard).is_some()
+     }
+ 
+     /// Returns an entry with the specified `key`.
+-    pub fn get<'a: 'g, 'g, Q>(&'a self, key: &Q, guard: &'g Guard) -> Option<Entry<'a, 'g, K, V>>
++    pub fn get<'a: 'g, 'g, Q>(&'a self, key: &Q, guard: &'g Guard) -> Option<Entry<'a, 'g, K, V, C>>
+     where
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         Q: ?Sized,
+     {
+         self.check_guard(guard);
+         let n = self.search_bound(Bound::Included(key), false, guard)?;
+-        if !n.key.equivalent(key) {
++        if !self.comparator.equivalent(&n.key, key) {
+             return None;
+         }
+ 
+@@ -578,9 +589,9 @@ where
+         &'a self,
+         bound: Bound<&Q>,
+         guard: &'g Guard,
+-    ) -> Option<Entry<'a, 'g, K, V>>
++    ) -> Option<Entry<'a, 'g, K, V, C>>
+     where
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         Q: ?Sized,
+     {
+         self.check_guard(guard);
+@@ -599,9 +610,9 @@ where
+         &'a self,
+         bound: Bound<&Q>,
+         guard: &'g Guard,
+-    ) -> Option<Entry<'a, 'g, K, V>>
++    ) -> Option<Entry<'a, 'g, K, V, C>>
+     where
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         Q: ?Sized,
+     {
+         self.check_guard(guard);
+@@ -614,7 +625,7 @@ where
+     }
+ 
+     /// Finds an entry with the specified key, or inserts a new `key`-`value` pair if none exist.
+-    pub fn get_or_insert(&self, key: K, value: V, guard: &Guard) -> RefEntry<'_, K, V> {
++    pub fn get_or_insert(&self, key: K, value: V, guard: &Guard) -> RefEntry<'_, K, V, C> {
+         self.insert_internal(key, || value, |_| false, guard)
+     }
+ 
+@@ -626,7 +637,7 @@ where
+     /// discarded. If closure is modifying some other state (such as shared counters or shared
+     /// objects), it may lead to <u>undesired behaviour</u> such as counters being changed without
+     /// result of closure inserted
+-    pub fn get_or_insert_with<F>(&self, key: K, value: F, guard: &Guard) -> RefEntry<'_, K, V>
++    pub fn get_or_insert_with<F>(&self, key: K, value: F, guard: &Guard) -> RefEntry<'_, K, V, C>
+     where
+         F: FnOnce() -> V,
+     {
+@@ -634,7 +645,7 @@ where
+     }
+ 
+     /// Returns an iterator over all entries in the skip list.
+-    pub fn iter<'a: 'g, 'g>(&'a self, guard: &'g Guard) -> Iter<'a, 'g, K, V> {
++    pub fn iter<'a: 'g, 'g>(&'a self, guard: &'g Guard) -> Iter<'a, 'g, K, V, C> {
+         self.check_guard(guard);
+         Iter {
+             parent: self,
+@@ -645,7 +656,7 @@ where
+     }
+ 
+     /// Returns an iterator over all entries in the skip list.
+-    pub fn ref_iter(&self) -> RefIter<'_, K, V> {
++    pub fn ref_iter(&self) -> RefIter<'_, K, V, C> {
+         RefIter {
+             parent: self,
+             head: None,
+@@ -658,9 +669,9 @@ where
+         &'a self,
+         range: R,
+         guard: &'g Guard,
+-    ) -> Range<'a, 'g, Q, R, K, V>
++    ) -> Range<'a, 'g, Q, R, K, V, C>
+     where
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         R: RangeBounds<Q>,
+         Q: ?Sized,
+     {
+@@ -677,9 +688,9 @@ where
+ 
+     /// Returns an iterator over a subset of entries in the skip list.
+     #[allow(clippy::needless_lifetimes)]
+-    pub fn ref_range<'a, Q, R>(&'a self, range: R) -> RefRange<'a, Q, R, K, V>
++    pub fn ref_range<'a, Q, R>(&'a self, range: R) -> RefRange<'a, Q, R, K, V, C>
+     where
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         R: RangeBounds<Q>,
+         Q: ?Sized,
+     {
+@@ -825,7 +836,7 @@ where
+         guard: &'a Guard,
+     ) -> Option<NodeRef<'a, K, V>>
+     where
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         Q: ?Sized,
+     {
+         unsafe {
+@@ -887,11 +898,11 @@ where
+                         // bound, we return the last node before the condition became true. For the
+                         // lower bound, we return the first node after the condition became true.
+                         if upper_bound {
+-                            if !below_upper_bound(&bound, &c.key) {
++                            if !below_upper_bound(&self.comparator, &bound, &c.key) {
+                                 break;
+                             }
+                             result = Some(c);
+-                        } else if above_lower_bound(&bound, &c.key) {
++                        } else if above_lower_bound(&self.comparator, &bound, &c.key) {
+                             result = Some(c);
+                             break;
+                         }
+@@ -910,7 +921,7 @@ where
+     /// Searches for a key in the skip list and returns a list of all adjacent nodes.
+     fn search_position<'a, Q>(&'a self, key: &Q, guard: &'a Guard) -> Position<'a, K, V>
+     where
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         Q: ?Sized,
+     {
+         unsafe {
+@@ -971,7 +982,7 @@ where
+ 
+                         // If `curr` contains a key that is greater than or equal to `key`, we're
+                         // done with this level.
+-                        match c.key.compare(key) {
++                        match self.comparator.compare(&c.key, key) {
+                             cmp::Ordering::Greater => break,
+                             cmp::Ordering::Equal => {
+                                 result.found = Some(c);
+@@ -1004,7 +1015,7 @@ where
+         value: F,
+         replace: CompareF,
+         guard: &Guard,
+-    ) -> RefEntry<'_, K, V>
++    ) -> RefEntry<'_, K, V, C>
+     where
+         F: FnOnce() -> V,
+         CompareF: Fn(&V) -> bool,
+@@ -1155,7 +1166,10 @@ where
+                     // the tower without breaking any invariants. Note that building higher levels
+                     // is completely optional. Only the lowest level really matters, and all the
+                     // higher levels are there just to make searching faster.
+-                    if succ.as_ref().map(|s| &s.key) == Some(&n.key) {
++                    if succ
++                        .as_ref()
++                        .is_some_and(|s| self.comparator.equivalent(&s.key, &n.key))
++                    {
+                         search = self.search_position(&n.key, guard);
+                         continue;
+                     }
+@@ -1218,16 +1232,17 @@ where
+     }
+ }
+ 
+-impl<K, V> SkipList<K, V>
++impl<K, V, C> SkipList<K, V, C>
+ where
+-    K: Ord + Send + 'static,
++    K: Send + 'static,
++    C: Comparator<K>,
+     V: Send + 'static,
+ {
+     /// Inserts a `key`-`value` pair into the skip list and returns the new entry.
+     ///
+     /// If there is an existing entry with this key, it will be removed before inserting the new
+     /// one.
+-    pub fn insert(&self, key: K, value: V, guard: &Guard) -> RefEntry<'_, K, V> {
++    pub fn insert(&self, key: K, value: V, guard: &Guard) -> RefEntry<'_, K, V, C> {
+         self.insert_internal(key, || value, |_| true, guard)
+     }
+ 
+@@ -1242,7 +1257,7 @@ where
+         value: V,
+         compare_fn: F,
+         guard: &Guard,
+-    ) -> RefEntry<'_, K, V>
++    ) -> RefEntry<'_, K, V, C>
+     where
+         F: Fn(&V) -> bool,
+     {
+@@ -1250,9 +1265,9 @@ where
+     }
+ 
+     /// Removes an entry with the specified `key` from the map and returns it.
+-    pub fn remove<Q>(&self, key: &Q, guard: &Guard) -> Option<RefEntry<'_, K, V>>
++    pub fn remove<Q>(&self, key: &Q, guard: &Guard) -> Option<RefEntry<'_, K, V, C>>
+     where
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         Q: ?Sized,
+     {
+         self.check_guard(guard);
+@@ -1320,7 +1335,7 @@ where
+     }
+ 
+     /// Removes an entry from the front of the skip list.
+-    pub fn pop_front(&self, guard: &Guard) -> Option<RefEntry<'_, K, V>> {
++    pub fn pop_front(&self, guard: &Guard) -> Option<RefEntry<'_, K, V, C>> {
+         self.check_guard(guard);
+         loop {
+             let e = self.front(guard)?;
+@@ -1335,7 +1350,7 @@ where
+     }
+ 
+     /// Removes an entry from the back of the skip list.
+-    pub fn pop_back(&self, guard: &Guard) -> Option<RefEntry<'_, K, V>> {
++    pub fn pop_back(&self, guard: &Guard) -> Option<RefEntry<'_, K, V, C>> {
+         self.check_guard(guard);
+         loop {
+             let e = self.back(guard)?;
+@@ -1393,7 +1408,7 @@ where
+     }
+ }
+ 
+-impl<K, V> Drop for SkipList<K, V> {
++impl<K, V, C> Drop for SkipList<K, V, C> {
+     fn drop(&mut self) {
+         unsafe {
+             let mut node = NodeRef::from_shared(
+@@ -1419,9 +1434,9 @@ impl<K, V> Drop for SkipList<K, V> {
+     }
+ }
+ 
+-impl<K, V> fmt::Debug for SkipList<K, V>
++impl<K, V, C> fmt::Debug for SkipList<K, V, C>
+ where
+-    K: Ord + fmt::Debug,
++    K: fmt::Debug,
+     V: fmt::Debug,
+ {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+@@ -1429,7 +1444,7 @@ where
+     }
+ }
+ 
+-impl<K, V> IntoIterator for SkipList<K, V> {
++impl<K, V, C> IntoIterator for SkipList<K, V, C> {
+     type Item = (K, V);
+     type IntoIter = IntoIter<K, V>;
+ 
+@@ -1464,13 +1479,13 @@ impl<K, V> IntoIterator for SkipList<K, V> {
+ /// The lifetimes of the key and value are the same as that of the `Guard`
+ /// used when creating the `Entry` (`'g`). This lifetime is also constrained to
+ /// not outlive the `SkipList`.
+-pub struct Entry<'a: 'g, 'g, K, V> {
+-    parent: &'a SkipList<K, V>,
++pub struct Entry<'a: 'g, 'g, K, V, C = BasicComparator> {
++    parent: &'a SkipList<K, V, C>,
+     node: NodeRef<'g, K, V>,
+     guard: &'g Guard,
+ }
+ 
+-impl<'a: 'g, 'g, K: 'a, V: 'a> Entry<'a, 'g, K, V> {
++impl<'a: 'g, 'g, K: 'a, V: 'a, C> Entry<'a, 'g, K, V, C> {
+     /// Returns `true` if the entry is removed from the skip list.
+     pub fn is_removed(&self) -> bool {
+         self.node.is_removed()
+@@ -1487,7 +1502,7 @@ impl<'a: 'g, 'g, K: 'a, V: 'a> Entry<'a, 'g, K, V> {
+     }
+ 
+     /// Returns a reference to the parent `SkipList`
+-    pub fn skiplist(&self) -> &'a SkipList<K, V> {
++    pub fn skiplist(&self) -> &'a SkipList<K, V, C> {
+         self.parent
+     }
+ 
+@@ -1496,14 +1511,15 @@ impl<'a: 'g, 'g, K: 'a, V: 'a> Entry<'a, 'g, K, V> {
+     ///
+     /// This method may return `None` if the reference count is already 0 and
+     /// the node has been queued for deletion.
+-    pub fn pin(&self) -> Option<RefEntry<'a, K, V>> {
++    pub fn pin(&self) -> Option<RefEntry<'a, K, V, C>> {
+         unsafe { RefEntry::try_acquire(self.parent, self.node) }
+     }
+ }
+ 
+-impl<K, V> Entry<'_, '_, K, V>
++impl<K, V, C> Entry<'_, '_, K, V, C>
+ where
+-    K: Ord + Send + 'static,
++    K: Send + 'static,
++    C: Comparator<K>,
+     V: Send + 'static,
+ {
+     /// Removes the entry from the skip list.
+@@ -1526,7 +1542,7 @@ where
+     }
+ }
+ 
+-impl<K, V> Clone for Entry<'_, '_, K, V> {
++impl<K, V, C> Clone for Entry<'_, '_, K, V, C> {
+     fn clone(&self) -> Self {
+         Self {
+             parent: self.parent,
+@@ -1536,7 +1552,7 @@ impl<K, V> Clone for Entry<'_, '_, K, V> {
+     }
+ }
+ 
+-impl<K, V> fmt::Debug for Entry<'_, '_, K, V>
++impl<K, V, C> fmt::Debug for Entry<'_, '_, K, V, C>
+ where
+     K: fmt::Debug,
+     V: fmt::Debug,
+@@ -1549,9 +1565,9 @@ where
+     }
+ }
+ 
+-impl<'a: 'g, 'g, K, V> Entry<'a, 'g, K, V>
++impl<'a: 'g, 'g, K, V, C> Entry<'a, 'g, K, V, C>
+ where
+-    K: Ord,
++    C: Comparator<K>,
+ {
+     /// Moves to the next entry in the skip list.
+     pub fn move_next(&mut self) -> bool {
+@@ -1565,7 +1581,7 @@ where
+     }
+ 
+     /// Returns the next entry in the skip list.
+-    pub fn next(&self) -> Option<Entry<'a, 'g, K, V>> {
++    pub fn next(&self) -> Option<Entry<'a, 'g, K, V, C>> {
+         let n = self.parent.next_node(
+             self.node.as_tower(),
+             Bound::Excluded(&self.node.key),
+@@ -1590,7 +1606,7 @@ where
+     }
+ 
+     /// Returns the previous entry in the skip list.
+-    pub fn prev(&self) -> Option<Entry<'a, 'g, K, V>> {
++    pub fn prev(&self) -> Option<Entry<'a, 'g, K, V, C>> {
+         let n = self
+             .parent
+             .search_bound(Bound::Excluded(&self.node.key), true, self.guard)?;
+@@ -1606,12 +1622,12 @@ where
+ ///
+ /// You *must* call `release` to free this type, otherwise the node will be
+ /// leaked. This is because releasing the entry requires a `Guard`.
+-pub struct RefEntry<'a, K, V> {
+-    parent: &'a SkipList<K, V>,
++pub struct RefEntry<'a, K, V, C = BasicComparator> {
++    parent: &'a SkipList<K, V, C>,
+     node: NodeRef<'a, K, V>,
+ }
+ 
+-impl<'a, K: 'a, V: 'a> RefEntry<'a, K, V> {
++impl<'a, K: 'a, V: 'a, C> RefEntry<'a, K, V, C> {
+     /// Returns `true` if the entry is removed from the skip list.
+     pub fn is_removed(&self) -> bool {
+         self.node.is_removed()
+@@ -1628,7 +1644,7 @@ impl<'a, K: 'a, V: 'a> RefEntry<'a, K, V> {
+     }
+ 
+     /// Returns a reference to the parent `SkipList`
+-    pub fn skiplist(&self) -> &'a SkipList<K, V> {
++    pub fn skiplist(&self) -> &'a SkipList<K, V, C> {
+         self.parent
+     }
+ 
+@@ -1650,9 +1666,9 @@ impl<'a, K: 'a, V: 'a> RefEntry<'a, K, V> {
+     /// Tries to create a new `RefEntry` by incrementing the reference count of
+     /// a node.
+     unsafe fn try_acquire(
+-        parent: &'a SkipList<K, V>,
++        parent: &'a SkipList<K, V, C>,
+         node: NodeRef<'_, K, V>,
+-    ) -> Option<RefEntry<'a, K, V>> {
++    ) -> Option<RefEntry<'a, K, V, C>> {
+         if unsafe { node.try_increment() } {
+             Some(RefEntry {
+                 parent,
+@@ -1667,9 +1683,10 @@ impl<'a, K: 'a, V: 'a> RefEntry<'a, K, V> {
+     }
+ }
+ 
+-impl<K, V> RefEntry<'_, K, V>
++impl<K, V, C> RefEntry<'_, K, V, C>
+ where
+-    K: Ord + Send + 'static,
++    K: Send + 'static,
++    C: Comparator<K>,
+     V: Send + 'static,
+ {
+     /// Removes the entry from the skip list.
+@@ -1694,7 +1711,7 @@ where
+     }
+ }
+ 
+-impl<K, V> Clone for RefEntry<'_, K, V> {
++impl<K, V, C> Clone for RefEntry<'_, K, V, C> {
+     fn clone(&self) -> Self {
+         unsafe {
+             // Incrementing will always succeed since we're already holding a reference to the node.
+@@ -1707,7 +1724,7 @@ impl<K, V> Clone for RefEntry<'_, K, V> {
+     }
+ }
+ 
+-impl<K, V> fmt::Debug for RefEntry<'_, K, V>
++impl<K, V, C> fmt::Debug for RefEntry<'_, K, V, C>
+ where
+     K: fmt::Debug,
+     V: fmt::Debug,
+@@ -1720,9 +1737,9 @@ where
+     }
+ }
+ 
+-impl<'a, K, V> RefEntry<'a, K, V>
++impl<'a, K, V, C> RefEntry<'a, K, V, C>
+ where
+-    K: Ord,
++    C: Comparator<K>,
+ {
+     /// Moves to the next entry in the skip list.
+     pub fn move_next(&mut self, guard: &Guard) -> bool {
+@@ -1736,7 +1753,7 @@ where
+     }
+ 
+     /// Returns the next entry in the skip list.
+-    pub fn next(&self, guard: &Guard) -> Option<RefEntry<'a, K, V>> {
++    pub fn next(&self, guard: &Guard) -> Option<RefEntry<'a, K, V, C>> {
+         self.parent.check_guard(guard);
+         unsafe {
+             let mut n = self.node;
+@@ -1763,7 +1780,7 @@ where
+     }
+ 
+     /// Returns the previous entry in the skip list.
+-    pub fn prev(&self, guard: &Guard) -> Option<RefEntry<'a, K, V>> {
++    pub fn prev(&self, guard: &Guard) -> Option<RefEntry<'a, K, V, C>> {
+         self.parent.check_guard(guard);
+         unsafe {
+             let mut n = self.node;
+@@ -1780,20 +1797,20 @@ where
+ }
+ 
+ /// An iterator over the entries of a `SkipList`.
+-pub struct Iter<'a: 'g, 'g, K, V> {
+-    parent: &'a SkipList<K, V>,
++pub struct Iter<'a: 'g, 'g, K, V, C = BasicComparator> {
++    parent: &'a SkipList<K, V, C>,
+     head: Option<NodeRef<'g, K, V>>,
+     tail: Option<NodeRef<'g, K, V>>,
+     guard: &'g Guard,
+ }
+ 
+-impl<'a: 'g, 'g, K: 'a, V: 'a> Iterator for Iter<'a, 'g, K, V>
++impl<'a: 'g, 'g, K: 'a, V: 'a, C> Iterator for Iter<'a, 'g, K, V, C>
+ where
+-    K: Ord,
++    C: Comparator<K>,
+ {
+-    type Item = Entry<'a, 'g, K, V>;
++    type Item = Entry<'a, 'g, K, V, C>;
+ 
+-    fn next(&mut self) -> Option<Entry<'a, 'g, K, V>> {
++    fn next(&mut self) -> Option<Entry<'a, 'g, K, V, C>> {
+         self.head = match self.head {
+             Some(n) => self
+                 .parent
+@@ -1804,7 +1821,7 @@ where
+             }
+         };
+         if let (Some(h), Some(t)) = (self.head, self.tail) {
+-            if h.key >= t.key {
++            if self.parent.comparator.compare(&h.key, &t.key).is_ge() {
+                 self.head = None;
+                 self.tail = None;
+             }
+@@ -1817,11 +1834,11 @@ where
+     }
+ }
+ 
+-impl<'a: 'g, 'g, K: 'a, V: 'a> DoubleEndedIterator for Iter<'a, 'g, K, V>
++impl<'a: 'g, 'g, K: 'a, V: 'a, C> DoubleEndedIterator for Iter<'a, 'g, K, V, C>
+ where
+-    K: Ord,
++    C: Comparator<K>,
+ {
+-    fn next_back(&mut self) -> Option<Entry<'a, 'g, K, V>> {
++    fn next_back(&mut self) -> Option<Entry<'a, 'g, K, V, C>> {
+         self.tail = match self.tail {
+             Some(n) => self
+                 .parent
+@@ -1831,7 +1848,7 @@ where
+                 .search_bound::<K>(Bound::Unbounded, true, self.guard),
+         };
+         if let (Some(h), Some(t)) = (self.head, self.tail) {
+-            if h.key >= t.key {
++            if self.parent.comparator.compare(&h.key, &t.key).is_ge() {
+                 self.head = None;
+                 self.tail = None;
+             }
+@@ -1844,7 +1861,7 @@ where
+     }
+ }
+ 
+-impl<K, V> fmt::Debug for Iter<'_, '_, K, V>
++impl<K, V, C> fmt::Debug for Iter<'_, '_, K, V, C>
+ where
+     K: fmt::Debug,
+     V: fmt::Debug,
+@@ -1858,13 +1875,13 @@ where
+ }
+ 
+ /// An iterator over reference-counted entries of a `SkipList`.
+-pub struct RefIter<'a, K, V> {
+-    parent: &'a SkipList<K, V>,
+-    head: Option<RefEntry<'a, K, V>>,
+-    tail: Option<RefEntry<'a, K, V>>,
++pub struct RefIter<'a, K, V, C = BasicComparator> {
++    parent: &'a SkipList<K, V, C>,
++    head: Option<RefEntry<'a, K, V, C>>,
++    tail: Option<RefEntry<'a, K, V, C>>,
+ }
+ 
+-impl<K, V> fmt::Debug for RefIter<'_, K, V>
++impl<K, V, C> fmt::Debug for RefIter<'_, K, V, C>
+ where
+     K: fmt::Debug,
+     V: fmt::Debug,
+@@ -1883,12 +1900,12 @@ where
+     }
+ }
+ 
+-impl<'a, K: 'a, V: 'a> RefIter<'a, K, V>
++impl<'a, K: 'a, V: 'a, C> RefIter<'a, K, V, C>
+ where
+-    K: Ord,
++    C: Comparator<K>,
+ {
+     /// Advances the iterator and returns the next value.
+-    pub fn next(&mut self, guard: &Guard) -> Option<RefEntry<'a, K, V>> {
++    pub fn next(&mut self, guard: &Guard) -> Option<RefEntry<'a, K, V, C>> {
+         self.parent.check_guard(guard);
+         let next_head = match &self.head {
+             Some(e) => e.next(guard),
+@@ -1896,7 +1913,9 @@ where
+         };
+         match (&next_head, &self.tail) {
+             // The next key is larger than the latest tail key we observed with this iterator.
+-            (Some(ref next), Some(t)) if next.key() >= t.key() => {
++            (Some(ref next), Some(t))
++                if self.parent.comparator.compare(next.key(), t.key()).is_ge() =>
++            {
+                 unsafe {
+                     next.node.decrement(guard);
+                 }
+@@ -1915,7 +1934,7 @@ where
+     }
+ 
+     /// Removes and returns an element from the end of the iterator.
+-    pub fn next_back(&mut self, guard: &Guard) -> Option<RefEntry<'a, K, V>> {
++    pub fn next_back(&mut self, guard: &Guard) -> Option<RefEntry<'a, K, V, C>> {
+         self.parent.check_guard(guard);
+         let next_tail = match &self.tail {
+             Some(e) => e.prev(guard),
+@@ -1923,7 +1942,9 @@ where
+         };
+         match (&self.head, &next_tail) {
+             // The prev key is smaller than the latest head key we observed with this iterator.
+-            (Some(h), Some(next)) if h.key() >= next.key() => {
++            (Some(h), Some(next))
++                if self.parent.comparator.compare(h.key(), next.key()).is_ge() =>
++            {
+                 unsafe {
+                     next.node.decrement(guard);
+                 }
+@@ -1942,7 +1963,7 @@ where
+     }
+ }
+ 
+-impl<'a, K: 'a, V: 'a> RefIter<'a, K, V> {
++impl<'a, K: 'a, V: 'a, C> RefIter<'a, K, V, C> {
+     /// Decrements the reference count of `RefEntry` owned by the iterator.
+     pub fn drop_impl(&mut self, guard: &Guard) {
+         self.parent.check_guard(guard);
+@@ -1956,13 +1977,13 @@ impl<'a, K: 'a, V: 'a> RefIter<'a, K, V> {
+ }
+ 
+ /// An iterator over a subset of entries of a `SkipList`.
+-pub struct Range<'a: 'g, 'g, Q, R, K, V>
++pub struct Range<'a: 'g, 'g, Q, R, K, V, C = BasicComparator>
+ where
+-    K: Ord + Comparable<Q>,
++    C: Comparator<K> + Comparator<K, Q>,
+     R: RangeBounds<Q>,
+     Q: ?Sized,
+ {
+-    parent: &'a SkipList<K, V>,
++    parent: &'a SkipList<K, V, C>,
+     head: Option<NodeRef<'g, K, V>>,
+     tail: Option<NodeRef<'g, K, V>>,
+     range: R,
+@@ -1970,15 +1991,15 @@ where
+     _marker: PhantomData<fn() -> Q>, // covariant over `Q`
+ }
+ 
+-impl<'a: 'g, 'g, Q, R, K: 'a, V: 'a> Iterator for Range<'a, 'g, Q, R, K, V>
++impl<'a: 'g, 'g, Q, R, K: 'a, V: 'a, C> Iterator for Range<'a, 'g, Q, R, K, V, C>
+ where
+-    K: Ord + Comparable<Q>,
++    C: Comparator<K> + Comparator<K, Q>,
+     R: RangeBounds<Q>,
+     Q: ?Sized,
+ {
+-    type Item = Entry<'a, 'g, K, V>;
++    type Item = Entry<'a, 'g, K, V, C>;
+ 
+-    fn next(&mut self) -> Option<Entry<'a, 'g, K, V>> {
++    fn next(&mut self) -> Option<Entry<'a, 'g, K, V, C>> {
+         self.head = match self.head {
+             Some(n) => self
+                 .parent
+@@ -1991,14 +2012,14 @@ where
+             match self.tail {
+                 Some(t) => {
+                     let bound = Bound::Excluded(&t.as_ref().key);
+-                    if !below_upper_bound(&bound, &h.key) {
++                    if !below_upper_bound(&self.parent.comparator, &bound, &h.key) {
+                         self.head = None;
+                         self.tail = None;
+                     }
+                 }
+                 None => {
+                     let bound = self.range.end_bound();
+-                    if !below_upper_bound(&bound, &h.key) {
++                    if !below_upper_bound(&self.parent.comparator, &bound, &h.key) {
+                         self.head = None;
+                         self.tail = None;
+                     }
+@@ -2013,13 +2034,13 @@ where
+     }
+ }
+ 
+-impl<'a: 'g, 'g, Q, R, K: 'a, V: 'a> DoubleEndedIterator for Range<'a, 'g, Q, R, K, V>
++impl<'a: 'g, 'g, Q, R, K: 'a, V: 'a, C> DoubleEndedIterator for Range<'a, 'g, Q, R, K, V, C>
+ where
+-    K: Ord + Comparable<Q>,
++    C: Comparator<K> + Comparator<K, Q>,
+     R: RangeBounds<Q>,
+     Q: ?Sized,
+ {
+-    fn next_back(&mut self) -> Option<Entry<'a, 'g, K, V>> {
++    fn next_back(&mut self) -> Option<Entry<'a, 'g, K, V, C>> {
+         self.tail = match self.tail {
+             Some(n) => self
+                 .parent
+@@ -2032,14 +2053,14 @@ where
+             match self.head {
+                 Some(h) => {
+                     let bound = Bound::Excluded(&h.as_ref().key);
+-                    if !above_lower_bound(&bound, &t.key) {
++                    if !above_lower_bound(&self.parent.comparator, &bound, &t.key) {
+                         self.head = None;
+                         self.tail = None;
+                     }
+                 }
+                 None => {
+                     let bound = self.range.start_bound();
+-                    if !above_lower_bound(&bound, &t.key) {
++                    if !above_lower_bound(&self.parent.comparator, &bound, &t.key) {
+                         self.head = None;
+                         self.tail = None;
+                     }
+@@ -2054,9 +2075,10 @@ where
+     }
+ }
+ 
+-impl<Q, R, K, V> fmt::Debug for Range<'_, '_, Q, R, K, V>
++impl<Q, R, K, V, C> fmt::Debug for Range<'_, '_, Q, R, K, V, C>
+ where
+-    K: Ord + fmt::Debug + Comparable<Q>,
++    K: fmt::Debug,
++    C: Comparator<K> + Comparator<K, Q>,
+     V: fmt::Debug,
+     R: RangeBounds<Q> + fmt::Debug,
+     Q: ?Sized,
+@@ -2071,38 +2093,39 @@ where
+ }
+ 
+ /// An iterator over reference-counted subset of entries of a `SkipList`.
+-pub struct RefRange<'a, Q, R, K, V>
++pub struct RefRange<'a, Q, R, K, V, C = BasicComparator>
+ where
+-    K: Ord + Comparable<Q>,
++    C: Comparator<K> + Comparator<K, Q>,
+     R: RangeBounds<Q>,
+     Q: ?Sized,
+ {
+-    parent: &'a SkipList<K, V>,
+-    pub(crate) head: Option<RefEntry<'a, K, V>>,
+-    pub(crate) tail: Option<RefEntry<'a, K, V>>,
++    parent: &'a SkipList<K, V, C>,
++    pub(crate) head: Option<RefEntry<'a, K, V, C>>,
++    pub(crate) tail: Option<RefEntry<'a, K, V, C>>,
+     pub(crate) range: R,
+     _marker: PhantomData<fn() -> Q>, // covariant over `Q`
+ }
+ 
+-unsafe impl<Q, R, K, V> Send for RefRange<'_, Q, R, K, V>
++unsafe impl<Q, R, K, V, C> Send for RefRange<'_, Q, R, K, V, C>
+ where
+-    K: Ord + Comparable<Q>,
++    C: Comparator<K> + Comparator<K, Q>,
+     R: RangeBounds<Q>,
+     Q: ?Sized,
+ {
+ }
+ 
+-unsafe impl<Q, R, K, V> Sync for RefRange<'_, Q, R, K, V>
++unsafe impl<Q, R, K, V, C> Sync for RefRange<'_, Q, R, K, V, C>
+ where
+-    K: Ord + Comparable<Q>,
++    C: Comparator<K> + Comparator<K, Q>,
+     R: RangeBounds<Q>,
+     Q: ?Sized,
+ {
+ }
+ 
+-impl<Q, R, K, V> fmt::Debug for RefRange<'_, Q, R, K, V>
++impl<Q, R, K, V, C> fmt::Debug for RefRange<'_, Q, R, K, V, C>
+ where
+-    K: Ord + fmt::Debug + Comparable<Q>,
++    K: fmt::Debug,
++    C: Comparator<K> + Comparator<K, Q>,
+     V: fmt::Debug,
+     R: RangeBounds<Q> + fmt::Debug,
+     Q: ?Sized,
+@@ -2116,14 +2139,14 @@ where
+     }
+ }
+ 
+-impl<'a, Q, R, K: 'a, V: 'a> RefRange<'a, Q, R, K, V>
++impl<'a, Q, R, K: 'a, V: 'a, C> RefRange<'a, Q, R, K, V, C>
+ where
+-    K: Ord + Comparable<Q>,
++    C: Comparator<K> + Comparator<K, Q>,
+     R: RangeBounds<Q>,
+     Q: ?Sized,
+ {
+     /// Advances the iterator and returns the next value.
+-    pub fn next(&mut self, guard: &Guard) -> Option<RefEntry<'a, K, V>> {
++    pub fn next(&mut self, guard: &Guard) -> Option<RefEntry<'a, K, V, C>> {
+         self.parent.check_guard(guard);
+         let next_head = match self.head {
+             Some(ref e) => e.next(guard),
+@@ -2134,7 +2157,7 @@ where
+             match self.tail {
+                 Some(ref t) => {
+                     let bound = Bound::Excluded(t.key());
+-                    if below_upper_bound(&bound, h.key()) {
++                    if below_upper_bound(&self.parent.comparator, &bound, h.key()) {
+                         if let Some(e) = mem::replace(&mut self.head, next_head.clone()) {
+                             unsafe {
+                                 e.node.decrement(guard);
+@@ -2150,7 +2173,7 @@ where
+                 }
+                 None => {
+                     let bound = self.range.end_bound();
+-                    if below_upper_bound(&bound, h.key()) {
++                    if below_upper_bound(&self.parent.comparator, &bound, h.key()) {
+                         if let Some(e) = mem::replace(&mut self.head, next_head.clone()) {
+                             unsafe {
+                                 e.node.decrement(guard);
+@@ -2171,7 +2194,7 @@ where
+     }
+ 
+     /// Removes and returns an element from the end of the iterator.
+-    pub fn next_back(&mut self, guard: &Guard) -> Option<RefEntry<'a, K, V>> {
++    pub fn next_back(&mut self, guard: &Guard) -> Option<RefEntry<'a, K, V, C>> {
+         self.parent.check_guard(guard);
+         let next_tail = match self.tail {
+             Some(ref e) => e.prev(guard),
+@@ -2182,7 +2205,7 @@ where
+             match self.head {
+                 Some(ref h) => {
+                     let bound = Bound::Excluded(h.key());
+-                    if above_lower_bound(&bound, t.key()) {
++                    if above_lower_bound(&self.parent.comparator, &bound, t.key()) {
+                         if let Some(e) = mem::replace(&mut self.tail, next_tail.clone()) {
+                             unsafe {
+                                 e.node.decrement(guard);
+@@ -2198,7 +2221,7 @@ where
+                 }
+                 None => {
+                     let bound = self.range.start_bound();
+-                    if above_lower_bound(&bound, t.key()) {
++                    if above_lower_bound(&self.parent.comparator, &bound, t.key()) {
+                         if let Some(e) = mem::replace(&mut self.tail, next_tail.clone()) {
+                             unsafe {
+                                 e.node.decrement(guard);
+@@ -2307,9 +2330,9 @@ impl<K, V> fmt::Debug for IntoIter<K, V> {
+ 
+ /// Helper function to retry an operation until pinning succeeds or `None` is
+ /// returned.
+-pub(crate) fn try_pin_loop<'a: 'g, 'g, F, K, V>(mut f: F) -> Option<RefEntry<'a, K, V>>
++pub(crate) fn try_pin_loop<'a: 'g, 'g, F, K, V, C>(mut f: F) -> Option<RefEntry<'a, K, V, C>>
+ where
+-    F: FnMut() -> Option<Entry<'a, 'g, K, V>>,
++    F: FnMut() -> Option<Entry<'a, 'g, K, V, C>>,
+ {
+     loop {
+         if let Some(e) = f()?.pin() {
+@@ -2319,27 +2342,27 @@ where
+ }
+ 
+ /// Helper function to check if a value is above a lower bound
+-fn above_lower_bound<V, T>(bound: &Bound<&T>, other: &V) -> bool
++fn above_lower_bound<V, T, C>(comparator: &C, bound: &Bound<&T>, other: &V) -> bool
+ where
+     T: ?Sized,
+-    V: Comparable<T>,
++    C: Comparator<V, T>,
+ {
+     match *bound {
+         Bound::Unbounded => true,
+-        Bound::Included(key) => other.compare(key).is_ge(),
+-        Bound::Excluded(key) => other.compare(key).is_gt(),
++        Bound::Included(key) => comparator.compare(other, key).is_ge(),
++        Bound::Excluded(key) => comparator.compare(other, key).is_gt(),
+     }
+ }
+ 
+ /// Helper function to check if a value is below an upper bound
+-fn below_upper_bound<V, T>(bound: &Bound<&T>, other: &V) -> bool
++fn below_upper_bound<V, T, C>(comparator: &C, bound: &Bound<&T>, other: &V) -> bool
+ where
+     T: ?Sized,
+-    V: Comparable<T>,
++    C: Comparator<V, T>,
+ {
+     match *bound {
+         Bound::Unbounded => true,
+-        Bound::Included(key) => other.compare(key).is_le(),
+-        Bound::Excluded(key) => other.compare(key).is_lt(),
++        Bound::Included(key) => comparator.compare(other, key).is_le(),
++        Bound::Excluded(key) => comparator.compare(other, key).is_lt(),
+     }
+ }
+diff --git a/crossbeam-skiplist/src/comparator.rs b/crossbeam-skiplist/src/comparator.rs
+new file mode 100644
+index 0000000..e2cfa5e
+--- /dev/null
++++ b/crossbeam-skiplist/src/comparator.rs
+@@ -0,0 +1,53 @@
++//! Runtime-selectable key orderings for skip lists.
++//!
++//! By default a skip list orders its keys with their [`Ord`] implementation, through
++//! [`BasicComparator`]. Supplying a different [`Comparator`] (for instance one that ignores
++//! case, or one that wraps a boxed closure) lets the ordering be chosen at runtime.
++//!
++//! A comparator must define a total order that is consistent with its [`Equivalator`]
++//! implementation: `equivalent(a, b)` must hold exactly when `compare(a, b)` is
++//! [`Ordering::Equal`]. When the stored key type and the query type differ, comparisons in both
++//! directions must agree with the ordering on stored keys.
++
++use core::cmp::Ordering;
++
++use crate::equivalent::{Comparable, Equivalent};
++
++/// Decides whether two values are equivalent.
++pub trait Equivalator<L: ?Sized, R: ?Sized = L> {
++    /// Returns `true` if `lhs` and `rhs` are equivalent.
++    fn equivalent(&self, lhs: &L, rhs: &R) -> bool;
++}
++
++/// Defines a total order between two values.
++pub trait Comparator<L: ?Sized, R: ?Sized = L>: Equivalator<L, R> {
++    /// Compares `lhs` with `rhs`.
++    fn compare(&self, lhs: &L, rhs: &R) -> Ordering;
++}
++
++/// The comparator that orders keys by their [`Ord`] implementation.
++///
++/// This is the default comparator of skip lists. It is implemented through the crate's
++/// [`Equivalent`] and [`Comparable`] traits.
++#[derive(Clone, Copy, Debug, Default)]
++pub struct BasicComparator;
++
++impl<L: ?Sized, R: ?Sized> Equivalator<L, R> for BasicComparator
++where
++    L: Equivalent<R>,
++{
++    #[inline]
++    fn equivalent(&self, lhs: &L, rhs: &R) -> bool {
++        lhs.equivalent(rhs)
++    }
++}
++
++impl<L: ?Sized, R: ?Sized> Comparator<L, R> for BasicComparator
++where
++    L: Comparable<R>,
++{
++    #[inline]
++    fn compare(&self, lhs: &L, rhs: &R) -> Ordering {
++        lhs.compare(rhs)
++    }
++}
+diff --git a/crossbeam-skiplist/src/lib.rs b/crossbeam-skiplist/src/lib.rs
+index 5ff8e74..5337e3d 100644
+--- a/crossbeam-skiplist/src/lib.rs
++++ b/crossbeam-skiplist/src/lib.rs
+@@ -265,4 +265,5 @@ pub mod set;
+ #[doc(inline)]
+ pub use crate::{map::SkipMap, set::SkipSet};
+ 
++pub mod comparator;
+ pub mod equivalent;
+diff --git a/crossbeam-skiplist/src/map.rs b/crossbeam-skiplist/src/map.rs
+index c7c5408..bf685c4 100644
+--- a/crossbeam-skiplist/src/map.rs
++++ b/crossbeam-skiplist/src/map.rs
+@@ -11,7 +11,7 @@ use crossbeam_epoch as epoch;
+ 
+ use crate::{
+     base::{self, try_pin_loop},
+-    equivalent::Comparable,
++    comparator::{BasicComparator, Comparator},
+ };
+ 
+ /// An ordered map based on a lock-free skip list.
+@@ -20,12 +20,12 @@ use crate::{
+ /// concurrent access across multiple threads.
+ ///
+ /// [`BTreeMap`]: std::collections::BTreeMap
+-pub struct SkipMap<K, V> {
+-    inner: base::SkipList<K, V>,
++pub struct SkipMap<K, V, C = BasicComparator> {
++    inner: base::SkipList<K, V, C>,
+ }
+ 
+-impl<K, V> SkipMap<K, V> {
+-    /// Returns a new, empty map.
++impl<K, V> SkipMap<K, V, BasicComparator> {
++    /// Returns a new, empty map ordered by the keys' `Ord` implementation.
+     ///
+     /// # Example
+     ///
+@@ -35,8 +35,58 @@ impl<K, V> SkipMap<K, V> {
+     /// let map: SkipMap<i32, &str> = SkipMap::new();
+     /// ```
+     pub fn new() -> Self {
++        Self::with_comparator(BasicComparator)
++    }
++}
++
++impl<K, V, C> SkipMap<K, V, C> {
++    /// Returns a new, empty map that orders its keys with `comparator`.
++    ///
++    /// # Example
++    ///
++    /// ```
++    /// use std::cmp::Ordering;
++    /// use crossbeam_skiplist::{
++    ///     SkipMap,
++    ///     comparator::{Comparator, Equivalator},
++    /// };
++    ///
++    /// struct IgnoreCase;
++    ///
++    /// impl Equivalator<String, str> for IgnoreCase {
++    ///     fn equivalent(&self, lhs: &String, rhs: &str) -> bool {
++    ///         lhs.eq_ignore_ascii_case(rhs)
++    ///     }
++    /// }
++    ///
++    /// impl Comparator<String, str> for IgnoreCase {
++    ///     fn compare(&self, lhs: &String, rhs: &str) -> Ordering {
++    ///         let l = lhs.bytes().map(|b| b.to_ascii_lowercase());
++    ///         l.cmp(rhs.bytes().map(|b| b.to_ascii_lowercase()))
++    ///     }
++    /// }
++    ///
++    /// impl Equivalator<String> for IgnoreCase {
++    ///     fn equivalent(&self, lhs: &String, rhs: &String) -> bool {
++    ///         lhs.eq_ignore_ascii_case(rhs)
++    ///     }
++    /// }
++    ///
++    /// impl Comparator<String> for IgnoreCase {
++    ///     fn compare(&self, lhs: &String, rhs: &String) -> Ordering {
++    ///         self.compare(lhs, rhs.as_str())
++    ///     }
++    /// }
++    ///
++    /// let map = SkipMap::<String, u32, _>::with_comparator(IgnoreCase);
++    /// map.insert("abc".to_string(), 1);
++    /// map.insert("ABC".to_string(), 2);
++    /// assert_eq!(map.len(), 1);
++    /// assert_eq!(*map.get("aBc").unwrap().value(), 2);
++    /// ```
++    pub fn with_comparator(comparator: C) -> Self {
+         Self {
+-            inner: base::SkipList::new(epoch::default_collector().clone()),
++            inner: base::SkipList::with_comparator(epoch::default_collector().clone(), comparator),
+         }
+     }
+ 
+@@ -80,9 +130,9 @@ impl<K, V> SkipMap<K, V> {
+     }
+ }
+ 
+-impl<K, V> SkipMap<K, V>
++impl<K, V, C> SkipMap<K, V, C>
+ where
+-    K: Ord,
++    C: Comparator<K>,
+ {
+     /// Returns the entry with the smallest key.
+     ///
+@@ -99,7 +149,7 @@ where
+     /// numbers.insert(6, "six");
+     /// assert_eq!(*numbers.front().unwrap().value(), "five");
+     /// ```
+-    pub fn front(&self) -> Option<Entry<'_, K, V>> {
++    pub fn front(&self) -> Option<Entry<'_, K, V, C>> {
+         let guard = &epoch::pin();
+         try_pin_loop(|| self.inner.front(guard)).map(Entry::new)
+     }
+@@ -119,7 +169,7 @@ where
+     /// numbers.insert(6, "six");
+     /// assert_eq!(*numbers.back().unwrap().value(), "six");
+     /// ```
+-    pub fn back(&self) -> Option<Entry<'_, K, V>> {
++    pub fn back(&self) -> Option<Entry<'_, K, V, C>> {
+         let guard = &epoch::pin();
+         try_pin_loop(|| self.inner.back(guard)).map(Entry::new)
+     }
+@@ -138,7 +188,7 @@ where
+     /// ```
+     pub fn contains_key<Q>(&self, key: &Q) -> bool
+     where
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         Q: ?Sized,
+     {
+         let guard = &epoch::pin();
+@@ -160,9 +210,9 @@ where
+     /// numbers.insert("six", 6);
+     /// assert_eq!(*numbers.get("six").unwrap().value(), 6);
+     /// ```
+-    pub fn get<Q>(&self, key: &Q) -> Option<Entry<'_, K, V>>
++    pub fn get<Q>(&self, key: &Q) -> Option<Entry<'_, K, V, C>>
+     where
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         Q: ?Sized,
+     {
+         let guard = &epoch::pin();
+@@ -195,9 +245,9 @@ where
+     /// let greater_than_thirteen = numbers.lower_bound(Excluded(&13));
+     /// assert!(greater_than_thirteen.is_none());
+     /// ```
+-    pub fn lower_bound<'a, Q>(&'a self, bound: Bound<&Q>) -> Option<Entry<'a, K, V>>
++    pub fn lower_bound<'a, Q>(&'a self, bound: Bound<&Q>) -> Option<Entry<'a, K, V, C>>
+     where
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         Q: ?Sized,
+     {
+         let guard = &epoch::pin();
+@@ -227,9 +277,9 @@ where
+     /// let less_than_six = numbers.upper_bound(Excluded(&6));
+     /// assert!(less_than_six.is_none());
+     /// ```
+-    pub fn upper_bound<'a, Q>(&'a self, bound: Bound<&Q>) -> Option<Entry<'a, K, V>>
++    pub fn upper_bound<'a, Q>(&'a self, bound: Bound<&Q>) -> Option<Entry<'a, K, V, C>>
+     where
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         Q: ?Sized,
+     {
+         let guard = &epoch::pin();
+@@ -253,7 +303,7 @@ where
+     /// let jobs_age = ages.get_or_insert("Steve Jobs", -1);
+     /// assert_eq!(*jobs_age.value(), 65);
+     /// ```
+-    pub fn get_or_insert(&self, key: K, value: V) -> Entry<'_, K, V> {
++    pub fn get_or_insert(&self, key: K, value: V) -> Entry<'_, K, V, C> {
+         let guard = &epoch::pin();
+         Entry::new(self.inner.get_or_insert(key, value, guard))
+     }
+@@ -283,7 +333,7 @@ where
+     /// let jobs_age = ages.get_or_insert_with("Steve Jobs", || -1);
+     /// assert_eq!(*jobs_age.value(), 65);
+     /// ```
+-    pub fn get_or_insert_with<F>(&self, key: K, value_fn: F) -> Entry<'_, K, V>
++    pub fn get_or_insert_with<F>(&self, key: K, value_fn: F) -> Entry<'_, K, V, C>
+     where
+         F: FnOnce() -> V,
+     {
+@@ -313,7 +363,7 @@ where
+     ///     println!("{} is {}", number, number_str);
+     /// }
+     /// ```
+-    pub fn iter(&self) -> Iter<'_, K, V> {
++    pub fn iter(&self) -> Iter<'_, K, V, C> {
+         Iter {
+             inner: self.inner.ref_iter(),
+         }
+@@ -340,10 +390,10 @@ where
+     ///     println!("{} is {}", number, number_str);
+     /// }
+     /// ```
+-    pub fn range<Q, R>(&self, range: R) -> Range<'_, Q, R, K, V>
++    pub fn range<Q, R>(&self, range: R) -> Range<'_, Q, R, K, V, C>
+     where
+         R: RangeBounds<Q>,
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         Q: ?Sized,
+     {
+         Range {
+@@ -352,9 +402,10 @@ where
+     }
+ }
+ 
+-impl<K, V> SkipMap<K, V>
++impl<K, V, C> SkipMap<K, V, C>
+ where
+-    K: Ord + Send + 'static,
++    K: Send + 'static,
++    C: Comparator<K>,
+     V: Send + 'static,
+ {
+     /// Inserts a `key`-`value` pair into the map and returns the new entry.
+@@ -374,7 +425,7 @@ where
+     ///
+     /// assert_eq!(*map.get("key").unwrap().value(), "value");
+     /// ```
+-    pub fn insert(&self, key: K, value: V) -> Entry<'_, K, V> {
++    pub fn insert(&self, key: K, value: V) -> Entry<'_, K, V, C> {
+         let guard = &epoch::pin();
+         Entry::new(self.inner.insert(key, value, guard))
+     }
+@@ -401,7 +452,7 @@ where
+     /// map.compare_insert("absent_key", 0, |_| false);
+     /// assert_eq!(*map.get("absent_key").unwrap().value(), 0);
+     /// ```
+-    pub fn compare_insert<F>(&self, key: K, value: V, compare_fn: F) -> Entry<'_, K, V>
++    pub fn compare_insert<F>(&self, key: K, value: V, compare_fn: F) -> Entry<'_, K, V, C>
+     where
+         F: Fn(&V) -> bool,
+     {
+@@ -427,9 +478,9 @@ where
+     /// map.insert("key", "value");
+     /// assert_eq!(*map.remove("key").unwrap().value(), "value");
+     /// ```
+-    pub fn remove<Q>(&self, key: &Q) -> Option<Entry<'_, K, V>>
++    pub fn remove<Q>(&self, key: &Q) -> Option<Entry<'_, K, V, C>>
+     where
+-        K: Comparable<Q>,
++        C: Comparator<K, Q>,
+         Q: ?Sized,
+     {
+         let guard = &epoch::pin();
+@@ -458,7 +509,7 @@ where
+     /// // All entries have been removed now.
+     /// assert!(numbers.is_empty());
+     /// ```
+-    pub fn pop_front(&self) -> Option<Entry<'_, K, V>> {
++    pub fn pop_front(&self) -> Option<Entry<'_, K, V, C>> {
+         let guard = &epoch::pin();
+         self.inner.pop_front(guard).map(Entry::new)
+     }
+@@ -485,7 +536,7 @@ where
+     /// // All entries have been removed now.
+     /// assert!(numbers.is_empty());
+     /// ```
+-    pub fn pop_back(&self) -> Option<Entry<'_, K, V>> {
++    pub fn pop_back(&self) -> Option<Entry<'_, K, V, C>> {
+         let guard = &epoch::pin();
+         self.inner.pop_back(guard).map(Entry::new)
+     }
+@@ -509,15 +560,15 @@ where
+     }
+ }
+ 
+-impl<K, V> Default for SkipMap<K, V> {
++impl<K, V, C: Default> Default for SkipMap<K, V, C> {
+     fn default() -> Self {
+-        Self::new()
++        Self::with_comparator(C::default())
+     }
+ }
+ 
+-impl<K, V> fmt::Debug for SkipMap<K, V>
++impl<K, V, C> fmt::Debug for SkipMap<K, V, C>
+ where
+-    K: Ord + fmt::Debug,
++    K: fmt::Debug,
+     V: fmt::Debug,
+ {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+@@ -525,7 +576,7 @@ where
+     }
+ }
+ 
+-impl<K, V> IntoIterator for SkipMap<K, V> {
++impl<K, V, C> IntoIterator for SkipMap<K, V, C> {
+     type Item = (K, V);
+     type IntoIter = IntoIter<K, V>;
+ 
+@@ -536,27 +587,27 @@ impl<K, V> IntoIterator for SkipMap<K, V> {
+     }
+ }
+ 
+-impl<'a, K, V> IntoIterator for &'a SkipMap<K, V>
++impl<'a, K, V, C> IntoIterator for &'a SkipMap<K, V, C>
+ where
+-    K: Ord,
++    C: Comparator<K>,
+ {
+-    type Item = Entry<'a, K, V>;
+-    type IntoIter = Iter<'a, K, V>;
++    type Item = Entry<'a, K, V, C>;
++    type IntoIter = Iter<'a, K, V, C>;
+ 
+-    fn into_iter(self) -> Iter<'a, K, V> {
++    fn into_iter(self) -> Iter<'a, K, V, C> {
+         self.iter()
+     }
+ }
+ 
+-impl<K, V> FromIterator<(K, V)> for SkipMap<K, V>
++impl<K, V, C> FromIterator<(K, V)> for SkipMap<K, V, C>
+ where
+-    K: Ord,
++    C: Comparator<K> + Default,
+ {
+     fn from_iter<I>(iter: I) -> Self
+     where
+         I: IntoIterator<Item = (K, V)>,
+     {
+-        let s = Self::new();
++        let s = Self::with_comparator(C::default());
+         for (k, v) in iter {
+             s.get_or_insert(k, v);
+         }
+@@ -565,12 +616,12 @@ where
+ }
+ 
+ /// A reference-counted entry in a map.
+-pub struct Entry<'a, K, V> {
+-    inner: ManuallyDrop<base::RefEntry<'a, K, V>>,
++pub struct Entry<'a, K, V, C = BasicComparator> {
++    inner: ManuallyDrop<base::RefEntry<'a, K, V, C>>,
+ }
+ 
+-impl<'a, K, V> Entry<'a, K, V> {
+-    fn new(inner: base::RefEntry<'a, K, V>) -> Self {
++impl<'a, K, V, C> Entry<'a, K, V, C> {
++    fn new(inner: base::RefEntry<'a, K, V, C>) -> Self {
+         Self {
+             inner: ManuallyDrop::new(inner),
+         }
+@@ -592,7 +643,7 @@ impl<'a, K, V> Entry<'a, K, V> {
+     }
+ }
+ 
+-impl<K, V> Drop for Entry<'_, K, V> {
++impl<K, V, C> Drop for Entry<'_, K, V, C> {
+     fn drop(&mut self) {
+         unsafe {
+             ManuallyDrop::into_inner(ptr::read(&self.inner)).release_with_pin(epoch::pin);
+@@ -600,9 +651,9 @@ impl<K, V> Drop for Entry<'_, K, V> {
+     }
+ }
+ 
+-impl<'a, K, V> Entry<'a, K, V>
++impl<'a, K, V, C> Entry<'a, K, V, C>
+ where
+-    K: Ord,
++    C: Comparator<K>,
+ {
+     /// Moves to the next entry in the map.
+     pub fn move_next(&mut self) -> bool {
+@@ -617,21 +668,22 @@ where
+     }
+ 
+     /// Returns the next entry in the map.
+-    pub fn next(&self) -> Option<Entry<'a, K, V>> {
++    pub fn next(&self) -> Option<Entry<'a, K, V, C>> {
+         let guard = &epoch::pin();
+         self.inner.next(guard).map(Entry::new)
+     }
+ 
+     /// Returns the previous entry in the map.
+-    pub fn prev(&self) -> Option<Entry<'a, K, V>> {
++    pub fn prev(&self) -> Option<Entry<'a, K, V, C>> {
+         let guard = &epoch::pin();
+         self.inner.prev(guard).map(Entry::new)
+     }
+ }
+ 
+-impl<K, V> Entry<'_, K, V>
++impl<K, V, C> Entry<'_, K, V, C>
+ where
+-    K: Ord + Send + 'static,
++    K: Send + 'static,
++    C: Comparator<K>,
+     V: Send + 'static,
+ {
+     /// Removes the entry from the map.
+@@ -643,7 +695,7 @@ where
+     }
+ }
+ 
+-impl<K, V> Clone for Entry<'_, K, V> {
++impl<K, V, C> Clone for Entry<'_, K, V, C> {
+     fn clone(&self) -> Self {
+         Self {
+             inner: self.inner.clone(),
+@@ -651,7 +703,7 @@ impl<K, V> Clone for Entry<'_, K, V> {
+     }
+ }
+ 
+-impl<K, V> fmt::Debug for Entry<'_, K, V>
++impl<K, V, C> fmt::Debug for Entry<'_, K, V, C>
+ where
+     K: fmt::Debug,
+     V: fmt::Debug,
+@@ -684,39 +736,39 @@ impl<K, V> fmt::Debug for IntoIter<K, V> {
+ }
+ 
+ /// An iterator over the entries of a `SkipMap`.
+-pub struct Iter<'a, K, V> {
+-    inner: base::RefIter<'a, K, V>,
++pub struct Iter<'a, K, V, C = BasicComparator> {
++    inner: base::RefIter<'a, K, V, C>,
+ }
+ 
+-impl<'a, K, V> Iterator for Iter<'a, K, V>
++impl<'a, K, V, C> Iterator for Iter<'a, K, V, C>
+ where
+-    K: Ord,
++    C: Comparator<K>,
+ {
+-    type Item = Entry<'a, K, V>;
++    type Item = Entry<'a, K, V, C>;
+ 
+-    fn next(&mut self) -> Option<Entry<'a, K, V>> {
++    fn next(&mut self) -> Option<Entry<'a, K, V, C>> {
+         let guard = &epoch::pin();
+         self.inner.next(guard).map(Entry::new)
+     }
+ }
+ 
+-impl<'a, K, V> DoubleEndedIterator for Iter<'a, K, V>
++impl<'a, K, V, C> DoubleEndedIterator for Iter<'a, K, V, C>
+ where
+-    K: Ord,
++    C: Comparator<K>,
+ {
+-    fn next_back(&mut self) -> Option<Entry<'a, K, V>> {
++    fn next_back(&mut self) -> Option<Entry<'a, K, V, C>> {
+         let guard = &epoch::pin();
+         self.inner.next_back(guard).map(Entry::new)
+     }
+ }
+ 
+-impl<K, V> fmt::Debug for Iter<'_, K, V> {
++impl<K, V, C> fmt::Debug for Iter<'_, K, V, C> {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+         f.pad("Iter { .. }")
+     }
+ }
+ 
+-impl<K, V> Drop for Iter<'_, K, V> {
++impl<K, V, C> Drop for Iter<'_, K, V, C> {
+     fn drop(&mut self) {
+         let guard = &epoch::pin();
+         self.inner.drop_impl(guard);
+@@ -724,44 +776,45 @@ impl<K, V> Drop for Iter<'_, K, V> {
+ }
+ 
+ /// An iterator over a subset of entries of a `SkipMap`.
+-pub struct Range<'a, Q, R, K, V>
++pub struct Range<'a, Q, R, K, V, C = BasicComparator>
+ where
+-    K: Ord + Comparable<Q>,
++    C: Comparator<K> + Comparator<K, Q>,
+     R: RangeBounds<Q>,
+     Q: ?Sized,
+ {
+-    pub(crate) inner: base::RefRange<'a, Q, R, K, V>,
++    pub(crate) inner: base::RefRange<'a, Q, R, K, V, C>,
+ }
+ 
+-impl<'a, Q, R, K, V> Iterator for Range<'a, Q, R, K, V>
++impl<'a, Q, R, K, V, C> Iterator for Range<'a, Q, R, K, V, C>
+ where
+-    K: Ord + Comparable<Q>,
++    C: Comparator<K> + Comparator<K, Q>,
+     R: RangeBounds<Q>,
+     Q: ?Sized,
+ {
+-    type Item = Entry<'a, K, V>;
++    type Item = Entry<'a, K, V, C>;
+ 
+-    fn next(&mut self) -> Option<Entry<'a, K, V>> {
++    fn next(&mut self) -> Option<Entry<'a, K, V, C>> {
+         let guard = &epoch::pin();
+         self.inner.next(guard).map(Entry::new)
+     }
+ }
+ 
+-impl<'a, Q, R, K, V> DoubleEndedIterator for Range<'a, Q, R, K, V>
++impl<'a, Q, R, K, V, C> DoubleEndedIterator for Range<'a, Q, R, K, V, C>
+ where
+-    K: Ord + Comparable<Q>,
++    C: Comparator<K> + Comparator<K, Q>,
+     R: RangeBounds<Q>,
+     Q: ?Sized,
+ {
+-    fn next_back(&mut self) -> Option<Entry<'a, K, V>> {
++    fn next_back(&mut self) -> Option<Entry<'a, K, V, C>> {
+         let guard = &epoch::pin();
+         self.inner.next_back(guard).map(Entry::new)
+     }
+ }
+ 
+-impl<Q, R, K, V> fmt::Debug for Range<'_, Q, R, K, V>
++impl<Q, R, K, V, C> fmt::Debug for Range<'_, Q, R, K, V, C>
+ where
+-    K: Ord + fmt::Debug + Comparable<Q>,
++    K: fmt::Debug,
++    C: Comparator<K> + Comparator<K, Q>,
+     V: fmt::Debug,
+     R: RangeBounds<Q> + fmt::Debug,
+     Q: ?Sized,
+@@ -775,9 +828,9 @@ where
+     }
+ }
+ 
+-impl<Q, R, K, V> Drop for Range<'_, Q, R, K, V>
++impl<Q, R, K, V, C> Drop for Range<'_, Q, R, K, V, C>
+ where
+-    K: Ord + Comparable<Q>,
++    C: Comparator<K> + Comparator<K, Q>,
+     R: RangeBounds<Q>,
+     Q: ?Sized,
+ {
+diff --git a/crossbeam-skiplist/src/set.rs b/crossbeam-skiplist/src/set.rs
+index 4e91f6c..b4fa6c2 100644
+--- a/crossbeam-skiplist/src/set.rs
++++ b/crossbeam-skiplist/src/set.rs
+@@ -5,7 +5,10 @@ use core::{
+     ops::{Bound, Deref, RangeBounds},
+ };
+ 
+-use crate::{equivalent::Comparable, map};
++use crate::{
++    comparator::{BasicComparator, Comparator},
++    map,
++};
+ 
+ /// A set based on a lock-free skip list.
+ ///
+@@ -13,12 +16,12 @@ use crate::{equivalent::Comparable, map};
+ /// concurrent access across multiple threads.
+ ///
+ /// [`BTreeSet`]: std::collections::BTreeSet
+-pub struct SkipSet<T> {
+-    inner: map::SkipMap<T, ()>,
++pub struct SkipSet<T, C = BasicComparator> {
++    inner: map::SkipMap<T, (), C>,
+ }
+ 
+-impl<T> SkipSet<T> {
+-    /// Returns a new, empty set.
++impl<T> SkipSet<T, BasicComparator> {
++    /// Returns a new, empty set ordered by the elements' `Ord` implementation.
+     ///
+     /// # Example
+     ///
+@@ -28,8 +31,46 @@ impl<T> SkipSet<T> {
+     /// let set: SkipSet<i32> = SkipSet::new();
+     /// ```
+     pub fn new() -> Self {
++        Self::with_comparator(BasicComparator)
++    }
++}
++
++impl<T, C> SkipSet<T, C> {
++    /// Returns a new, empty set that orders its elements with `comparator`.
++    ///
++    /// # Example
++    ///
++    /// ```
++    /// use std::cmp::Ordering;
++    /// use crossbeam_skiplist::{
++    ///     SkipSet,
++    ///     comparator::{Comparator, Equivalator},
++    /// };
++    ///
++    /// struct Reverse;
++    ///
++    /// impl Equivalator<i32> for Reverse {
++    ///     fn equivalent(&self, lhs: &i32, rhs: &i32) -> bool {
++    ///         lhs == rhs
++    ///     }
++    /// }
++    ///
++    /// impl Comparator<i32> for Reverse {
++    ///     fn compare(&self, lhs: &i32, rhs: &i32) -> Ordering {
++    ///         rhs.cmp(lhs)
++    ///     }
++    /// }
++    ///
++    /// let set = SkipSet::with_comparator(Reverse);
++    /// set.insert(1);
++    /// set.insert(3);
++    /// set.insert(2);
++    /// let items: Vec<i32> = set.iter().map(|e| *e.value()).collect();
++    /// assert_eq!(items, [3, 2, 1]);
++    /// ```
++    pub fn with_comparator(comparator: C) -> Self {
+         Self {
+-            inner: map::SkipMap::new(),
++            inner: map::SkipMap::with_comparator(comparator),
+         }
+     }
+ 
+@@ -71,9 +112,9 @@ impl<T> SkipSet<T> {
+     }
+ }
+ 
+-impl<T> SkipSet<T>
++impl<T, C> SkipSet<T, C>
+ where
+-    T: Ord,
++    C: Comparator<T>,
+ {
+     /// Returns the entry with the smallest key.
+     ///
+@@ -88,7 +129,7 @@ where
+     /// set.insert(2);
+     /// assert_eq!(*set.front().unwrap(), 1);
+     /// ```
+-    pub fn front(&self) -> Option<Entry<'_, T>> {
++    pub fn front(&self) -> Option<Entry<'_, T, C>> {
+         self.inner.front().map(Entry::new)
+     }
+ 
+@@ -105,7 +146,7 @@ where
+     /// set.insert(2);
+     /// assert_eq!(*set.back().unwrap(), 2);
+     /// ```
+-    pub fn back(&self) -> Option<Entry<'_, T>> {
++    pub fn back(&self) -> Option<Entry<'_, T, C>> {
+         self.inner.back().map(Entry::new)
+     }
+ 
+@@ -122,7 +163,7 @@ where
+     /// ```
+     pub fn contains<Q>(&self, key: &Q) -> bool
+     where
+-        T: Comparable<Q>,
++        C: Comparator<T, Q>,
+         Q: ?Sized,
+     {
+         self.inner.contains_key(key)
+@@ -139,9 +180,9 @@ where
+     /// assert_eq!(*set.get(&3).unwrap(), 3);
+     /// assert!(set.get(&4).is_none());
+     /// ```
+-    pub fn get<Q>(&self, key: &Q) -> Option<Entry<'_, T>>
++    pub fn get<Q>(&self, key: &Q) -> Option<Entry<'_, T, C>>
+     where
+-        T: Comparable<Q>,
++        C: Comparator<T, Q>,
+         Q: ?Sized,
+     {
+         self.inner.get(key).map(Entry::new)
+@@ -171,9 +212,9 @@ where
+     /// let greater_than_thirteen = set.lower_bound(Excluded(&13));
+     /// assert!(greater_than_thirteen.is_none());
+     /// ```
+-    pub fn lower_bound<'a, Q>(&'a self, bound: Bound<&Q>) -> Option<Entry<'a, T>>
++    pub fn lower_bound<'a, Q>(&'a self, bound: Bound<&Q>) -> Option<Entry<'a, T, C>>
+     where
+-        T: Comparable<Q>,
++        C: Comparator<T, Q>,
+         Q: ?Sized,
+     {
+         self.inner.lower_bound(bound).map(Entry::new)
+@@ -200,9 +241,9 @@ where
+     /// let less_than_six = set.upper_bound(Excluded(&6));
+     /// assert!(less_than_six.is_none());
+     /// ```
+-    pub fn upper_bound<'a, Q>(&'a self, bound: Bound<&Q>) -> Option<Entry<'a, T>>
++    pub fn upper_bound<'a, Q>(&'a self, bound: Bound<&Q>) -> Option<Entry<'a, T, C>>
+     where
+-        T: Comparable<Q>,
++        C: Comparator<T, Q>,
+         Q: ?Sized,
+     {
+         self.inner.upper_bound(bound).map(Entry::new)
+@@ -219,7 +260,7 @@ where
+     /// let entry = set.get_or_insert(2);
+     /// assert_eq!(*entry, 2);
+     /// ```
+-    pub fn get_or_insert(&self, key: T) -> Entry<'_, T> {
++    pub fn get_or_insert(&self, key: T) -> Entry<'_, T, C> {
+         Entry::new(self.inner.get_or_insert(key, ()))
+     }
+ 
+@@ -241,7 +282,7 @@ where
+     /// assert_eq!(*set_iter.next().unwrap(), 12);
+     /// assert!(set_iter.next().is_none());
+     /// ```
+-    pub fn iter(&self) -> Iter<'_, T> {
++    pub fn iter(&self) -> Iter<'_, T, C> {
+         Iter {
+             inner: self.inner.iter(),
+         }
+@@ -264,10 +305,10 @@ where
+     /// assert_eq!(*set_range.next().unwrap(), 7);
+     /// assert!(set_range.next().is_none());
+     /// ```
+-    pub fn range<Q, R>(&self, range: R) -> Range<'_, Q, R, T>
++    pub fn range<Q, R>(&self, range: R) -> Range<'_, Q, R, T, C>
+     where
+         R: RangeBounds<Q>,
+-        T: Comparable<Q>,
++        C: Comparator<T, Q>,
+         Q: ?Sized,
+     {
+         Range {
+@@ -276,9 +317,10 @@ where
+     }
+ }
+ 
+-impl<T> SkipSet<T>
++impl<T, C> SkipSet<T, C>
+ where
+-    T: Ord + Send + 'static,
++    T: Send + 'static,
++    C: Comparator<T>,
+ {
+     /// Inserts a `key`-`value` pair into the set and returns the new entry.
+     ///
+@@ -294,7 +336,7 @@ where
+     /// set.insert(2);
+     /// assert_eq!(*set.get(&2).unwrap(), 2);
+     /// ```
+-    pub fn insert(&self, key: T) -> Entry<'_, T> {
++    pub fn insert(&self, key: T) -> Entry<'_, T, C> {
+         Entry::new(self.inner.insert(key, ()))
+     }
+ 
+@@ -313,9 +355,9 @@ where
+     /// assert_eq!(*set.remove(&2).unwrap(), 2);
+     /// assert!(set.remove(&2).is_none());
+     /// ```
+-    pub fn remove<Q>(&self, key: &Q) -> Option<Entry<'_, T>>
++    pub fn remove<Q>(&self, key: &Q) -> Option<Entry<'_, T, C>>
+     where
+-        T: Comparable<Q>,
++        C: Comparator<T, Q>,
+         Q: ?Sized,
+     {
+         self.inner.remove(key).map(Entry::new)
+@@ -342,7 +384,7 @@ where
+     /// // All entries have been removed now.
+     /// assert!(set.is_empty());
+     /// ```
+-    pub fn pop_front(&self) -> Option<Entry<'_, T>> {
++    pub fn pop_front(&self) -> Option<Entry<'_, T, C>> {
+         self.inner.pop_front().map(Entry::new)
+     }
+ 
+@@ -367,7 +409,7 @@ where
+     /// // All entries have been removed now.
+     /// assert!(set.is_empty());
+     /// ```
+-    pub fn pop_back(&self) -> Option<Entry<'_, T>> {
++    pub fn pop_back(&self) -> Option<Entry<'_, T, C>> {
+         self.inner.pop_back().map(Entry::new)
+     }
+ 
+@@ -390,22 +432,22 @@ where
+     }
+ }
+ 
+-impl<T> Default for SkipSet<T> {
++impl<T, C: Default> Default for SkipSet<T, C> {
+     fn default() -> Self {
+-        Self::new()
++        Self::with_comparator(C::default())
+     }
+ }
+ 
+-impl<T> fmt::Debug for SkipSet<T>
++impl<T, C> fmt::Debug for SkipSet<T, C>
+ where
+-    T: Ord + fmt::Debug,
++    T: fmt::Debug,
+ {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+         f.pad("SkipSet { .. }")
+     }
+ }
+ 
+-impl<T> IntoIterator for SkipSet<T> {
++impl<T, C> IntoIterator for SkipSet<T, C> {
+     type Item = T;
+     type IntoIter = IntoIter<T>;
+ 
+@@ -416,27 +458,27 @@ impl<T> IntoIterator for SkipSet<T> {
+     }
+ }
+ 
+-impl<'a, T> IntoIterator for &'a SkipSet<T>
++impl<'a, T, C> IntoIterator for &'a SkipSet<T, C>
+ where
+-    T: Ord,
++    C: Comparator<T>,
+ {
+-    type Item = Entry<'a, T>;
+-    type IntoIter = Iter<'a, T>;
++    type Item = Entry<'a, T, C>;
++    type IntoIter = Iter<'a, T, C>;
+ 
+-    fn into_iter(self) -> Iter<'a, T> {
++    fn into_iter(self) -> Iter<'a, T, C> {
+         self.iter()
+     }
+ }
+ 
+-impl<T> FromIterator<T> for SkipSet<T>
++impl<T, C> FromIterator<T> for SkipSet<T, C>
+ where
+-    T: Ord,
++    C: Comparator<T> + Default,
+ {
+     fn from_iter<I>(iter: I) -> Self
+     where
+         I: IntoIterator<Item = T>,
+     {
+-        let s = Self::new();
++        let s = Self::with_comparator(C::default());
+         for t in iter {
+             s.get_or_insert(t);
+         }
+@@ -445,12 +487,12 @@ where
+ }
+ 
+ /// A reference-counted entry in a set.
+-pub struct Entry<'a, T> {
+-    inner: map::Entry<'a, T, ()>,
++pub struct Entry<'a, T, C = BasicComparator> {
++    inner: map::Entry<'a, T, (), C>,
+ }
+ 
+-impl<'a, T> Entry<'a, T> {
+-    fn new(inner: map::Entry<'a, T, ()>) -> Self {
++impl<'a, T, C> Entry<'a, T, C> {
++    fn new(inner: map::Entry<'a, T, (), C>) -> Self {
+         Self { inner }
+     }
+ 
+@@ -465,9 +507,9 @@ impl<'a, T> Entry<'a, T> {
+     }
+ }
+ 
+-impl<'a, T> Entry<'a, T>
++impl<'a, T, C> Entry<'a, T, C>
+ where
+-    T: Ord,
++    C: Comparator<T>,
+ {
+     /// Moves to the next entry in the set.
+     pub fn move_next(&mut self) -> bool {
+@@ -480,19 +522,20 @@ where
+     }
+ 
+     /// Returns the next entry in the set.
+-    pub fn next(&self) -> Option<Entry<'a, T>> {
++    pub fn next(&self) -> Option<Entry<'a, T, C>> {
+         self.inner.next().map(Entry::new)
+     }
+ 
+     /// Returns the previous entry in the set.
+-    pub fn prev(&self) -> Option<Entry<'a, T>> {
++    pub fn prev(&self) -> Option<Entry<'a, T, C>> {
+         self.inner.prev().map(Entry::new)
+     }
+ }
+ 
+-impl<T> Entry<'_, T>
++impl<T, C> Entry<'_, T, C>
+ where
+-    T: Ord + Send + 'static,
++    T: Send + 'static,
++    C: Comparator<T>,
+ {
+     /// Removes the entry from the set.
+     ///
+@@ -502,7 +545,7 @@ where
+     }
+ }
+ 
+-impl<T> Clone for Entry<'_, T> {
++impl<T, C> Clone for Entry<'_, T, C> {
+     fn clone(&self) -> Self {
+         Self {
+             inner: self.inner.clone(),
+@@ -510,7 +553,7 @@ impl<T> Clone for Entry<'_, T> {
+     }
+ }
+ 
+-impl<T> fmt::Debug for Entry<'_, T>
++impl<T, C> fmt::Debug for Entry<'_, T, C>
+ where
+     T: fmt::Debug,
+ {
+@@ -521,7 +564,7 @@ where
+     }
+ }
+ 
+-impl<T> Deref for Entry<'_, T> {
++impl<T, C> Deref for Entry<'_, T, C> {
+     type Target = T;
+ 
+     fn deref(&self) -> &Self::Target {
+@@ -549,73 +592,74 @@ impl<T> fmt::Debug for IntoIter<T> {
+ }
+ 
+ /// An iterator over the entries of a `SkipSet`.
+-pub struct Iter<'a, T> {
+-    inner: map::Iter<'a, T, ()>,
++pub struct Iter<'a, T, C = BasicComparator> {
++    inner: map::Iter<'a, T, (), C>,
+ }
+ 
+-impl<'a, T> Iterator for Iter<'a, T>
++impl<'a, T, C> Iterator for Iter<'a, T, C>
+ where
+-    T: Ord,
++    C: Comparator<T>,
+ {
+-    type Item = Entry<'a, T>;
++    type Item = Entry<'a, T, C>;
+ 
+-    fn next(&mut self) -> Option<Entry<'a, T>> {
++    fn next(&mut self) -> Option<Entry<'a, T, C>> {
+         self.inner.next().map(Entry::new)
+     }
+ }
+ 
+-impl<'a, T> DoubleEndedIterator for Iter<'a, T>
++impl<'a, T, C> DoubleEndedIterator for Iter<'a, T, C>
+ where
+-    T: Ord,
++    C: Comparator<T>,
+ {
+-    fn next_back(&mut self) -> Option<Entry<'a, T>> {
++    fn next_back(&mut self) -> Option<Entry<'a, T, C>> {
+         self.inner.next_back().map(Entry::new)
+     }
+ }
+ 
+-impl<T> fmt::Debug for Iter<'_, T> {
++impl<T, C> fmt::Debug for Iter<'_, T, C> {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+         f.pad("Iter { .. }")
+     }
+ }
+ 
+ /// An iterator over a subset of entries of a `SkipSet`.
+-pub struct Range<'a, Q, R, T>
++pub struct Range<'a, Q, R, T, C = BasicComparator>
+ where
+-    T: Ord + Comparable<Q>,
++    C: Comparator<T> + Comparator<T, Q>,
+     R: RangeBounds<Q>,
+     Q: ?Sized,
+ {
+-    inner: map::Range<'a, Q, R, T, ()>,
++    inner: map::Range<'a, Q, R, T, (), C>,
+ }
+ 
+-impl<'a, Q, R, T> Iterator for Range<'a, Q, R, T>
++impl<'a, Q, R, T, C> Iterator for Range<'a, Q, R, T, C>
+ where
+-    T: Ord + Comparable<Q>,
++    C: Comparator<T> + Comparator<T, Q>,
+     R: RangeBounds<Q>,
+     Q: ?Sized,
+ {
+-    type Item = Entry<'a, T>;
++    type Item = Entry<'a, T, C>;
+ 
+-    fn next(&mut self) -> Option<Entry<'a, T>> {
++    fn next(&mut self) -> Option<Entry<'a, T, C>> {
+         self.inner.next().map(Entry::new)
+     }
+ }
+ 
+-impl<'a, Q, R, T> DoubleEndedIterator for Range<'a, Q, R, T>
++impl<'a, Q, R, T, C> DoubleEndedIterator for Range<'a, Q, R, T, C>
+ where
+-    T: Ord + Comparable<Q>,
++    C: Comparator<T> + Comparator<T, Q>,
+     R: RangeBounds<Q>,
+     Q: ?Sized,
+ {
+-    fn next_back(&mut self) -> Option<Entry<'a, T>> {
++    fn next_back(&mut self) -> Option<Entry<'a, T, C>> {
+         self.inner.next_back().map(Entry::new)
+     }
+ }
+ 
+-impl<Q, R, T> fmt::Debug for Range<'_, Q, R, T>
++impl<Q, R, T, C> fmt::Debug for Range<'_, Q, R, T, C>
+ where
+-    T: Ord + Comparable<Q> + fmt::Debug,
++    T: fmt::Debug,
++    C: Comparator<T> + Comparator<T, Q>,
+     R: RangeBounds<Q> + fmt::Debug,
+     Q: ?Sized,
+ {
+diff --git a/crossbeam-skiplist/tests/comparator.rs b/crossbeam-skiplist/tests/comparator.rs
+new file mode 100644
+index 0000000..8cff5c8
+--- /dev/null
++++ b/crossbeam-skiplist/tests/comparator.rs
+@@ -0,0 +1,98 @@
++use std::{cmp::Ordering, ops::Bound};
++
++use crossbeam_skiplist::{
++    SkipMap, SkipSet,
++    comparator::{BasicComparator, Comparator, Equivalator},
++};
++
++#[derive(Clone, Copy)]
++struct IgnoreCase;
++
++fn fold(s: &str) -> impl Iterator<Item = u8> + '_ {
++    s.bytes().map(|b| b.to_ascii_lowercase())
++}
++
++impl Equivalator<String, str> for IgnoreCase {
++    fn equivalent(&self, lhs: &String, rhs: &str) -> bool {
++        lhs.eq_ignore_ascii_case(rhs)
++    }
++}
++impl Comparator<String, str> for IgnoreCase {
++    fn compare(&self, lhs: &String, rhs: &str) -> Ordering {
++        fold(lhs).cmp(fold(rhs))
++    }
++}
++impl Equivalator<String> for IgnoreCase {
++    fn equivalent(&self, lhs: &String, rhs: &String) -> bool {
++        lhs.eq_ignore_ascii_case(rhs)
++    }
++}
++impl Comparator<String> for IgnoreCase {
++    fn compare(&self, lhs: &String, rhs: &String) -> Ordering {
++        fold(lhs).cmp(fold(rhs))
++    }
++}
++
++type CompareFn = Box<dyn Fn(&i32, &i32) -> Ordering + Send + Sync>;
++
++struct Boxed(CompareFn);
++
++impl Equivalator<i32> for Boxed {
++    fn equivalent(&self, lhs: &i32, rhs: &i32) -> bool {
++        (self.0)(lhs, rhs) == Ordering::Equal
++    }
++}
++impl Comparator<i32> for Boxed {
++    fn compare(&self, lhs: &i32, rhs: &i32) -> Ordering {
++        (self.0)(lhs, rhs)
++    }
++}
++
++#[test]
++fn case_insensitive_map() {
++    let map = SkipMap::<String, u32, _>::with_comparator(IgnoreCase);
++    map.insert("abc".to_string(), 1);
++    map.insert("ABC".to_string(), 2);
++    map.insert("b".to_string(), 3);
++    assert_eq!(map.len(), 2);
++    assert_eq!(*map.get("aBc").unwrap().value(), 2);
++    assert!(map.contains_key("B"));
++    assert_eq!(
++        map.range::<str, _>((Bound::Included("A"), Bound::Excluded("AZ")))
++            .count(),
++        1
++    );
++    assert_eq!(*map.remove("ABC").unwrap().value(), 2);
++    assert!(map.get("abc").is_none());
++}
++
++#[test]
++fn boxed_closure_set() {
++    let set = SkipSet::with_comparator(Boxed(Box::new(|a, b| b.cmp(a))));
++    for i in [3, 1, 2, 5, 4] {
++        set.insert(i);
++    }
++    let items: Vec<i32> = set.iter().map(|e| *e).collect();
++    assert_eq!(items, [5, 4, 3, 2, 1]);
++    let rev: Vec<i32> = set.iter().rev().map(|e| *e).collect();
++    assert_eq!(rev, [1, 2, 3, 4, 5]);
++    assert_eq!(*set.front().unwrap(), 5);
++    assert_eq!(*set.pop_back().unwrap(), 1);
++    assert_eq!(
++        set.range((Bound::Included(&4), Bound::Included(&2)))
++            .count(),
++        3
++    );
++}
++
++#[test]
++fn basic_comparator_matches_ord() {
++    let c = BasicComparator;
++    assert_eq!(c.compare(&1, &2), Ordering::Less);
++    assert!(c.equivalent("a", "a"));
++    let map: SkipMap<i32, i32> = SkipMap::new();
++    let map2 = SkipMap::<i32, i32, BasicComparator>::with_comparator(BasicComparator);
++    map.insert(1, 1);
++    map2.insert(1, 1);
++    assert_eq!(map.len(), map2.len());
++}

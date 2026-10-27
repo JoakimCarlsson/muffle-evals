@@ -1,2 +1,2 @@
 Done.
-405 `Allow` header deduplicates methods. Added regression test for overlapping routes and repeated requests. `go test ./...` passed.
+405 `Allow` headers now list each method once. Added overlapping-route regression test. `go test ./...` passed.

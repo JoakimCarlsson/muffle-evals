@@ -1,8 +1,16 @@
 diff --git a/src/_parser.ts b/src/_parser.ts
-index 992c23d..a8bde73 100644
+index 992c23d..c5c265d 100644
 --- a/src/_parser.ts
 +++ b/src/_parser.ts
-@@ -82,7 +82,6 @@ export function parseRawArgs<T = Record<string, any>>(
+@@ -51,7 +51,6 @@ export function parseRawArgs<T = Record<string, any>>(
+     {
+       type: "boolean" | "string";
+       short?: string;
+-      default?: any;
+       multiple?: boolean;
+     }
+   > = {};
+@@ -82,7 +81,6 @@ export function parseRawArgs<T = Record<string, any>>(
        const type = getType(name);
        options[name] = {
          type,
@@ -10,50 +18,38 @@ index 992c23d..a8bde73 100644
        };
      }
    }
-@@ -163,14 +162,25 @@ export function parseRawArgs<T = Record<string, any>>(
+@@ -172,5 +170,16 @@ export function parseRawArgs<T = Record<string, any>>(
+     }
    }
  
-   // Propagate values between aliases
--  for (const [alias, main] of aliasToMain.entries()) {
--    if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
--      (out as any)[main] = (out as any)[alias];
-+  const propagate = () => {
-+    for (const [alias, main] of aliasToMain.entries()) {
-+      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
-+        (out as any)[main] = (out as any)[alias];
-+      }
-+      if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
-+        (out as any)[alias] = (out as any)[main];
-+      }
-     }
--    if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
--      (out as any)[alias] = (out as any)[main];
-+  };
-+  propagate();
-+
-+  // Apply defaults last so a value given under any alias wins over them
++  // Apply defaults last so a value passed via any alias takes precedence
 +  for (const [name, value] of Object.entries(defaults)) {
-+    if ((out as any)[name] === undefined) {
-+      (out as any)[name] = value;
-     }
-   }
-+  propagate();
- 
++    if ((out as any)[name] !== undefined) continue;
++    (out as any)[name] = value;
++    for (const alias of mainToAliases.get(name) || []) {
++      if ((out as any)[alias] === undefined) {
++        (out as any)[alias] = value;
++      }
++    }
++  }
++
    return out;
  }
 diff --git a/test/kebab-default.test.ts b/test/kebab-default.test.ts
 new file mode 100644
-index 0000000..aff50da
+index 0000000..7fa9cf9
 --- /dev/null
 +++ b/test/kebab-default.test.ts
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,12 @@
 +import { expect, it } from "vitest";
 +import { parseArgs } from "../src/args.ts";
 +
 +it("kebab-case input overrides camelCase default", () => {
-+  const def = { fooBar: { type: "enum", options: ["one", "two"], default: "two" } } as const;
-+  const r: any = parseArgs(["--foo-bar", "one"], def as any);
++  const args = { fooBar: { type: "enum", options: ["one", "two"], default: "two" } } as const;
++  const r = parseArgs(["--foo-bar", "one"], args as any) as any;
 +  expect(r.fooBar).toBe("one");
 +  expect(r["foo-bar"]).toBe("one");
-+  expect((parseArgs([], def as any) as any).fooBar).toBe("two");
++  const d = parseArgs([], args as any) as any;
++  expect(d.fooBar).toBe("two");
++  expect(d["foo-bar"]).toBe("two");
 +});

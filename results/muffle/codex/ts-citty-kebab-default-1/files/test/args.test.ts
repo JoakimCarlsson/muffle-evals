@@ -100,46 +100,36 @@ describe("args", () => {
     expect(parsed._).toEqual([]);
   });
 
-  it.each(["--foo-bar", "--fooBar", "--value", "-f"])(
-    "should override an enum default with %s",
-    (flag) => {
-      const parsed = parseArgs([flag, "one"], {
-        fooBar: {
-          type: "enum",
-          options: ["one", "two"],
-          default: "two",
-          alias: ["value", "f"],
-        },
-      });
+  it.each(["string", "enum"] as const)(
+    "should override a camelCase %s default through any alias",
+    (type) => {
+      const definition: ArgsDef = {
+        fooBar: { type, options: ["one", "two"], default: "two", alias: "f" },
+      };
 
-      expect(parsed).toEqual({
+      for (const flag of ["--foo-bar", "--fooBar", "-f"]) {
+        expect(parseArgs([flag, "one"], definition)).toEqual({
+          _: [],
+          fooBar: "one",
+          "foo-bar": "one",
+          f: "one",
+        });
+      }
+
+      expect(parseArgs([], definition)).toEqual({
         _: [],
-        fooBar: "one",
-        "foo-bar": "one",
-        value: "one",
-        f: "one",
+        fooBar: "two",
+        "foo-bar": "two",
+        f: "two",
       });
     },
   );
 
-  it.each(["fooBar", "foo-bar"])("should resolve defaults and input for %s", (name) => {
-    const definition: ArgsDef = { [name]: { type: "string", default: "two" } };
-    expect(parseArgs([], definition)).toEqual({ _: [], fooBar: "two", "foo-bar": "two" });
-    expect(parseArgs(["--foo-bar", "one"], definition)).toEqual({
-      _: [],
-      fooBar: "one",
-      "foo-bar": "one",
-    });
-  });
-
-  it.each([
-    [false, "--foo-bar", true],
-    [true, "--no-foo-bar", false],
-  ] as const)("should override boolean default %s with %s", (value, flag, expected) => {
-    expect(parseArgs([flag], { fooBar: { type: "boolean", default: value } })).toEqual({
-      _: [],
-      fooBar: expected,
-      "foo-bar": expected,
-    });
+  it("should validate enum values supplied through kebab-case aliases", () => {
+    expect(() =>
+      parseArgs(["--foo-bar", "three"], {
+        fooBar: { type: "enum", options: ["one", "two"], default: "two" },
+      }),
+    ).toThrow("Invalid value for argument: --fooBar (three)");
   });
 });

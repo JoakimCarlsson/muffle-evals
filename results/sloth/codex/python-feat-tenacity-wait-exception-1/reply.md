@@ -1,9 +1,9 @@
-I’ll check the wait strategies, exports, and tests, then add `wait_exception` using the existing conventions.
+I’ll check how the existing wait strategies are implemented and tested, then add `wait_exception` and its public export.
 
-The change needs to reach `tenacity/wait.py`, the package import and `__all__`, and the existing wait tests. The API docs discover strategies automatically. I’ll use `wait_base` so composition works as usual, and raise `RuntimeError` when the state has no exception. No HTTP dependency or header parsing is needed; that stays in your callback.
+The strategy and export are in place. The focused tests pass for decorator and `Retrying` usage, exact callback delays, composition, and `RuntimeError` when no exception is available. I’ll now run the full suite and build the package. The literal HTTP example can’t run here because `requests` isn’t installed.
 
-The implementation and tests pass: 124 passed, 1 skipped. The tests cover callback delays, exception identity, retry integration, composition, and states without exceptions. I’m finishing formatting and packaging checks; the environment is missing both `build` and `pip`.
+Added and exported `tenacity.wait_exception(predicate)`. It passes the last exception to the callback, returns its exact delay, and raises `RuntimeError` when no exception exists.
 
-Added `tenacity.wait_exception(predicate)` with public export, strategy composition, and `RuntimeError` when no exception is available.
+Source build succeeded; tests: **126 passed, 1 skipped**.
 
-Tests: 124 passed, 1 skipped. Formatting passed after correction. Lint reports existing repository issues. Package build was blocked by missing build tooling (`build`, `pip`, and `setuptools_scm`).
+Left out HTTP-specific handling; that belongs in the callback. The literal HTTP example wasn’t run because `requests` isn’t installed. Ruff reported existing repository lint issues.

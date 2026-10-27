@@ -2321,7 +2321,8 @@ def _attrs_to_init_script(
 
         lines.append(f"BaseException.__init__(self, {vals})")
 
-    # Forward parameter values, without the defaults used in the signature.
+    # Defaults belong in the signature, but the pre-init call must forward
+    # the values of the arguments.
     pre_init_args = ", ".join(arg.split("=")[0] for arg in args)
     args = ", ".join(args)
     if kw_only_args:

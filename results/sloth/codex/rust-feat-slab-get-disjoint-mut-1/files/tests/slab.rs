@@ -125,47 +125,82 @@ fn slab_get_mut() {
     assert_eq!(slab[key], 3);
 }
 
-/// Check disjoint mutation, key order, and error precedence.
+/// Mutable references retain key order and can be used to swap values.
 #[test]
-fn slab_get_disjoint_mut() {
-    use GetDisjointMutError::*;
-
-    let mut slab = Slab::<i32>::with_capacity(10);
-    assert_eq!(slab.get_disjoint_mut([]), Ok([]));
-    assert_eq!(slab.get_disjoint_mut([0]), Err(IndexOutOfBounds));
-    for value in 0..5 {
-        slab.insert(value);
-    }
-    slab.remove(1);
-
-    let [x, y] = slab.get_disjoint_mut([0, 2]).unwrap();
-    std::mem::swap(x, y);
-    assert_eq!((slab[0], slab[2]), (2, 0));
-    let [x, y, z] = slab.get_disjoint_mut([4, 0, 3]).unwrap();
-    *x = 40;
-    *y = 20;
-    *z = 30;
-    assert_eq!((slab[4], slab[0], slab[3]), (40, 20, 30));
-    assert_eq!(slab.get_disjoint_mut([2]).map(|[x]| *x), Ok(0));
-    assert_eq!(slab.get_disjoint_mut([]), Ok([]));
-    assert_eq!(
-        slab.get_disjoint_mut([42, 2, 1, 2]),
-        Err(OverlappingIndices)
-    );
-    assert_eq!(slab.get_disjoint_mut([1, 1]), Err(OverlappingIndices));
-    assert_eq!(
-        slab.get_disjoint_mut([usize::MAX, usize::MAX]),
-        Err(OverlappingIndices)
-    );
-    assert_eq!(slab.get_disjoint_mut([1, 5]), Err(IndexVacant));
-    assert_eq!(slab.get_disjoint_mut([5, 1]), Err(IndexOutOfBounds));
-    assert_eq!(slab.get_disjoint_mut([usize::MAX]), Err(IndexOutOfBounds));
-    assert_eq!((slab.len(), slab[0], slab[4]), (4, 20, 40));
-
+fn get_disjoint_mut_values() {
     let mut slab = Slab::new();
-    slab.insert(());
-    slab.insert(());
-    assert!(slab.get_disjoint_mut([1, 0]).is_ok());
+    let a = slab.insert(1);
+    let b = slab.insert(2);
+    let [x, y] = slab.get_disjoint_mut([a, b]).unwrap();
+    std::mem::swap(x, y);
+    assert_eq!((slab[a], slab[b]), (2, 1));
+    slab.insert(3);
+    let [x, y, z] = slab.get_disjoint_mut([2, 0, 1]).unwrap();
+    assert_eq!((*x, *y, *z), (3, 2, 1));
+    *x = 30;
+    *y = 20;
+    *z = 10;
+    assert_eq!(
+        slab.iter().map(|(_, v)| *v).collect::<Vec<_>>(),
+        [20, 10, 30]
+    );
+}
+
+/// Overlap takes precedence over invalid slots, including repeated invalid keys.
+#[test]
+fn get_disjoint_mut_overlap() {
+    let mut slab: Slab<_> = (0..5).enumerate().collect();
+    slab.remove(1);
+    for keys in [[42, 2, 1, 2], [1, 2, 1, 3], [42, 2, 42, 3]] {
+        assert_eq!(
+            slab.get_disjoint_mut(keys),
+            Err(GetDisjointMutError::OverlappingIndices)
+        );
+    }
+}
+
+/// Invalid slots are reported in key order, using slot bounds rather than length.
+#[test]
+fn get_disjoint_mut_invalid_slots() {
+    let mut slab: Slab<_> = (0..5).enumerate().collect();
+    slab.remove(1);
+    assert_eq!(
+        slab.get_disjoint_mut([1, 5]),
+        Err(GetDisjointMutError::IndexVacant)
+    );
+    assert_eq!(
+        slab.get_disjoint_mut([5, 1]),
+        Err(GetDisjointMutError::IndexOutOfBounds)
+    );
+    assert_eq!(
+        slab.get_disjoint_mut([usize::MAX]),
+        Err(GetDisjointMutError::IndexOutOfBounds)
+    );
+    assert_eq!(slab.get_disjoint_mut([4]).unwrap(), [&mut 4]);
+    let mut empty = Slab::<i32>::with_capacity(5);
+    assert_eq!(
+        empty.get_disjoint_mut([0]),
+        Err(GetDisjointMutError::IndexOutOfBounds)
+    );
+}
+
+/// Empty requests succeed for both empty and occupied slabs.
+#[test]
+fn get_disjoint_mut_empty() {
+    let mut slab = Slab::<i32>::new();
+    let [] = slab.get_disjoint_mut([]).unwrap();
+    slab.insert(1);
+    let [] = slab.get_disjoint_mut([]).unwrap();
+}
+
+/// Distinct slots can hold zero-sized values.
+#[test]
+fn get_disjoint_mut_zero_sized() {
+    let mut slab: Slab<_> = [(), (), ()].iter().copied().enumerate().collect();
+    assert_eq!(
+        slab.get_disjoint_mut([2, 0, 1]).unwrap(),
+        [&mut (), &mut (), &mut ()]
+    );
 }
 
 #[test]

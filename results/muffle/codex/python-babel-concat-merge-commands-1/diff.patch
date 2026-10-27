@@ -1,0 +1,394 @@
+diff --git a/babel/messages/catalog.py b/babel/messages/catalog.py
+index e01fd56..51f9387 100644
+--- a/babel/messages/catalog.py
++++ b/babel/messages/catalog.py
+@@ -18,7 +18,7 @@ from difflib import SequenceMatcher
+ from email import message_from_string
+ from heapq import nlargest
+ from string import Formatter
+-from typing import TYPE_CHECKING
++from typing import TYPE_CHECKING, TypedDict
+ 
+ from babel import __version__ as VERSION
+ from babel.core import Locale, UnknownLocaleError
+@@ -35,6 +35,7 @@ __all__ = [
+     'DEFAULT_HEADER',
+     'PYTHON_FORMAT',
+     'Catalog',
++    'ConflictInfo',
+     'Message',
+     'TranslationError',
+ ]
+@@ -353,6 +354,13 @@ def _force_text(s: str | bytes, encoding: str = 'utf-8', errors: str = 'strict')
+     return str(s)
+ 
+ 
++class ConflictInfo(TypedDict):
++    message: Message
++    filename: str
++    project: str
++    version: str
++
++
+ class Catalog:
+     """Representation of a message catalog."""
+ 
+@@ -395,6 +403,7 @@ class Catalog:
+         self.domain = domain
+         self.locale = locale
+         self._header_comment = header_comment
++        self._conflicts: dict = {}
+         self._messages: dict[str | tuple[str, str], Message] = {}
+ 
+         self.project = project or 'PROJECT'
+@@ -778,6 +787,17 @@ class Catalog:
+                 )
+             self._messages[key] = message
+ 
++    def add_conflict(self, message: Message, filename: str, project: str, version: str) -> None:
++        """Record a source translation for a conflicted message."""
++        key = self._key_for(message.id, message.context)
++        self._conflicts.setdefault(key, []).append(ConflictInfo(
++            message=message, filename=filename, project=project, version=version,
++        ))
++
++    def get_conflicts(self, id: _MessageID, context: str | None = None) -> list[ConflictInfo]:
++        """Return the source translations recorded for a message."""
++        return self._conflicts.get(self._key_for(id, context), [])
++
+     def add(
+         self,
+         id: _MessageID,
+diff --git a/babel/messages/frontend.py b/babel/messages/frontend.py
+index 1df1e22..1b92287 100644
+--- a/babel/messages/frontend.py
++++ b/babel/messages/frontend.py
+@@ -887,6 +887,180 @@ class UpdateCatalog(CommandMixin):
+             return
+ 
+ 
++class _CatalogOutputCommand(CommandMixin):
++    as_args = 'input-files'
++    user_options = [
++        ('input-files=', None, 'input PO files'),
++        ('output-file=', 'o', 'output PO file'),
++        ('no-location', None, 'omit source locations'),
++        ('width=', 'w', 'output line width (default 76)'),
++        ('no-wrap', None, 'disable line wrapping'),
++        ('sort-output', 's', 'sort messages by id'),
++        ('sort-by-file', 'F', 'sort messages by source file'),
++    ]
++    boolean_options = ['no-location', 'no-wrap', 'sort-output', 'sort-by-file']
++
++    def initialize_options(self):
++        self.input_files = []
++        self.output_file = None
++        self.no_location = False
++        self.width = None
++        self.no_wrap = False
++        self.sort_output = False
++        self.sort_by_file = False
++
++    def finalize_options(self):
++        if self.no_wrap and self.width is not None:
++            raise OptionError('--no-wrap and --width are mutually exclusive')
++        try:
++            self.width = 0 if self.no_wrap else int(self.width if self.width is not None else 76)
++        except (TypeError, ValueError) as exc:
++            raise OptionError('width must be an integer') from exc
++
++    def _write(self, catalog, filename):
++        options = dict(width=self.width, no_location=self.no_location,
++                       sort_output=self.sort_output, sort_by_file=self.sort_by_file)
++        if not filename or filename == '-':
++            write_po(sys.stdout.buffer, catalog, **options)
++        else:
++            with open(filename, 'wb') as output:
++                write_po(output, catalog, **options)
++
++    @staticmethod
++    def _read(filename):
++        with open(filename, 'rb') as source:
++            return read_po(source, abort_invalid=True)
++
++
++class ConcatenateCatalog(_CatalogOutputCommand):
++    """Combine PO catalogs, retaining source translations for conflicts."""
++
++    description = 'concatenate message catalogs'
++    user_options = _CatalogOutputCommand.user_options + [
++        ('less-than=', None, 'keep messages appearing fewer than this many times'),
++        ('more-than=', None, 'keep messages appearing more than this many times'),
++        ('unique', 'u', 'keep messages appearing only once'),
++        ('use-first', None, 'use the first translation on conflicts'),
++    ]
++    boolean_options = _CatalogOutputCommand.boolean_options + ['unique', 'use-first']
++
++    def initialize_options(self):
++        super().initialize_options()
++        self.less_than = None
++        self.more_than = 0
++        self.unique = False
++        self.use_first = False
++
++    def finalize_options(self):
++        super().finalize_options()
++        if not self.input_files:
++            raise OptionError('you must specify at least one input file')
++        try:
++            self.more_than = int(self.more_than)
++            if self.less_than is not None:
++                self.less_than = int(self.less_than)
++        except (ValueError, TypeError) as exc:
++            raise OptionError('message counts must be integers') from exc
++        if self.unique:
++            if self.less_than is not None or self.more_than:
++                raise OptionError('--unique cannot be combined with message count options')
++            self.less_than = 2
++
++    def run(self):
++        from copy import deepcopy
++
++        sources = [(filename, self._read(filename)) for filename in self.input_files]
++        result = deepcopy(sources[0][1])
++        result._messages.clear()
++        result.obsolete.clear()
++        entries = {}
++        for filename, catalog in sources:
++            for message in catalog:
++                if message.id:
++                    key = catalog._key_for(message.id, message.context)
++                    entries.setdefault(key, []).append((message, filename, catalog))
++        for entries_for_id in entries.values():
++            count = len(entries_for_id)
++            if count <= self.more_than or (self.less_than is not None and count >= self.less_than):
++                continue
++            message = deepcopy(entries_for_id[0][0])
++            result[message.id] = message
++            for other, _, _ in entries_for_id[1:]:
++                result[other.id] = deepcopy(other)
++            if not self.use_first and any(other.string != message.string for other, _, _ in entries_for_id):
++                for other, filename, catalog in entries_for_id:
++                    result.add_conflict(deepcopy(other), filename, catalog.project, catalog.version)
++                message.flags.add('fuzzy')
++                message.string = tuple('' for _ in range(result.num_plurals)) if message.pluralizable else ''
++        result.fuzzy = any(message.fuzzy for message in result if message.id)
++        self._write(result, self.output_file)
++
++
++class MergeCatalog(_CatalogOutputCommand):
++    """Update a PO catalog from a template and optional compendia."""
++
++    description = 'merge a message catalog with a POT file'
++    user_options = _CatalogOutputCommand.user_options + [
++        ('update', 'U', 'update the input PO file'),
++        ('no-fuzzy-matching', 'N', 'disable fuzzy matching'),
++        ('compendium=', 'C', 'additional translation catalog (repeatable)'),
++        ('no-compendium-comment', None, 'omit compendium source comments'),
++        ('compendium-overwrite', None, 'replace existing translations from compendia'),
++        ('backup', None, 'back up the input before updating'),
++        ('suffix=', None, 'backup suffix (default ~)'),
++    ]
++    boolean_options = _CatalogOutputCommand.boolean_options + [
++        'update', 'no-fuzzy-matching', 'no-compendium-comment',
++        'compendium-overwrite', 'backup',
++    ]
++    multiple_value_options = ['compendium']
++
++    def initialize_options(self):
++        super().initialize_options()
++        self.update = False
++        self.no_fuzzy_matching = False
++        self.compendium = []
++        self.no_compendium_comment = False
++        self.compendium_overwrite = False
++        self.backup = False
++        self.suffix = '~'
++
++    def finalize_options(self):
++        super().finalize_options()
++        if len(self.input_files or []) != 2:
++            raise OptionError('exactly two input files are required: def.po ref.pot')
++        if not self.output_file and not self.update:
++            raise OptionError('you must specify an output file or --update')
++
++    def run(self):
++        from copy import deepcopy
++
++        catalog = self._read(self.input_files[0])
++        template = self._read(self.input_files[1])
++        catalog.update(template, no_fuzzy_matching=self.no_fuzzy_matching)
++        for filename in self.compendium or []:
++            compendium = self._read(filename)
++            for message in catalog:
++                if not message.id:
++                    continue
++                source = compendium.get(message.id, message.context)
++                if source is None or source.fuzzy or not source.string or not any(source.string):
++                    continue
++                translated = bool(message.string and any(message.string))
++                if translated and not message.fuzzy and not self.compendium_overwrite:
++                    continue
++                if translated and self.compendium_overwrite and message.string != source.string:
++                    catalog.obsolete[catalog._key_for(message.id, message.context)] = deepcopy(message)
++                message.string = deepcopy(source.string)
++                message.flags.discard('fuzzy')
++                if not self.no_compendium_comment and filename not in message.auto_comments:
++                    message.auto_comments.append(filename)
++        catalog.fuzzy = any(message.fuzzy for message in catalog if message.id)
++        if self.update and self.backup:
++            shutil.copyfile(self.input_files[0], self.input_files[0] + self.suffix)
++        self._write(catalog, self.output_file or self.input_files[0])
++
++
+ class CommandLineInterface:
+     """Command-line interface.
+ 
+@@ -897,6 +1071,8 @@ class CommandLineInterface:
+     usage = '%%prog %s [options] %s'
+     version = f'%prog {VERSION}'
+     commands = {
++        'concat': ConcatenateCatalog.description,
++        'merge': MergeCatalog.description,
+         'compile': 'compile message catalogs to MO files',
+         'extract': 'extract messages from source files and generate a POT file',
+         'init': 'create new message catalogs from a POT file',
+@@ -904,6 +1080,8 @@ class CommandLineInterface:
+     }
+ 
+     command_classes = {
++        'concat': ConcatenateCatalog,
++        'merge': MergeCatalog,
+         'compile': CompileCatalog,
+         'extract': ExtractMessages,
+         'init': InitCatalog,
+diff --git a/babel/messages/pofile.py b/babel/messages/pofile.py
+index b9678a9..32111cf 100644
+--- a/babel/messages/pofile.py
++++ b/babel/messages/pofile.py
+@@ -351,6 +351,8 @@ class PoFileParser:
+                 continue
+             if needs_decode:
+                 line = line.decode(self.catalog.charset)
++            if line.startswith('#-#-#-#-#'):
++                self._invalid_pofile(line, lineno, 'Unresolved catalog conflict')
+             if line[0] == '#':
+                 if line[:2] == '#~':
+                     self._process_message_line(lineno, line[2:].lstrip(), obsolete=True)
+@@ -666,6 +668,12 @@ def generate_po(
+             yield f"{prefix}msgstr {normalize(message.string or '', prefix=prefix, width=width)}\n"
+ 
+     for message in _sort_messages(catalog, sort_by=sort_by):
++        if catalog.get_conflicts(message.id, message.context):
++            from copy import copy
++
++            message = copy(message)
++            message.flags = message.flags | {'fuzzy'}
++            message.string = tuple('' for _ in range(catalog.num_plurals)) if message.pluralizable else ''
+         if not message.id:  # This is the header "message"
+             if omit_header:
+                 continue
+@@ -718,6 +726,14 @@ def generate_po(
+                 yield from _format_comment(f'msgid_plural {norm_previous_id}', prefix='|')
+ 
+         yield from _format_message(message)
++        for conflict in catalog.get_conflicts(message.id, message.context):
++            filename = os.path.basename(conflict['filename'])
++            yield f"#-#-#-#-#  {filename} ({conflict['project']} {conflict['version']})  #-#-#-#-#\n"
++            source = conflict['message']
++            strings = source.string if source.pluralizable else [source.string]
++            for idx, string in enumerate(strings):
++                keyword = f'msgstr[{idx}]' if source.pluralizable else 'msgstr'
++                yield f"{keyword} {normalize(string or '', width=width)}\n"
+         yield '\n'
+ 
+     if not ignore_obsolete:
+diff --git a/tests/messages/frontend/test_concat_merge.py b/tests/messages/frontend/test_concat_merge.py
+new file mode 100644
+index 0000000..66ff077
+--- /dev/null
++++ b/tests/messages/frontend/test_concat_merge.py
+@@ -0,0 +1,83 @@
++from io import BytesIO
++
++import pytest
++
++from babel.messages.catalog import Catalog
++from babel.messages.frontend import ConcatenateCatalog, MergeCatalog, OptionError
++from babel.messages.pofile import PoFileError, read_po, write_po
++
++
++def save(path, messages):
++    catalog = Catalog(project='Example', version='1.0')
++    for id, string in messages.items():
++        catalog.add(id, string)
++    with path.open('wb') as output:
++        write_po(output, catalog)
++    return str(path)
++
++
++def test_concat_conflict(tmp_path):
++    first = save(tmp_path / 'first.po', {'hello': 'one', 'same': 'equal'})
++    second = save(tmp_path / 'second.po', {'hello': 'two', 'same': 'equal'})
++    command = ConcatenateCatalog()
++    command.input_files = [first, second]
++    command.output_file = str(tmp_path / 'out.po')
++    command.ensure_finalized()
++    command.run()
++    data = (tmp_path / 'out.po').read_bytes()
++    assert b'#, fuzzy\nmsgid "hello"\nmsgstr ""' in data
++    assert b'#-#-#-#-#  first.po (Example 1.0)  #-#-#-#-#\nmsgstr "one"' in data
++    assert data.count(b'#-#-#-#-#') == 4
++    with pytest.raises(PoFileError, match='conflict'):
++        read_po(BytesIO(data), abort_invalid=True)
++
++
++def test_concat_unique_and_use_first(tmp_path):
++    first = save(tmp_path / 'first.po', {'hello': 'one', 'only': 'unique'})
++    second = save(tmp_path / 'second.po', {'hello': 'two'})
++    command = ConcatenateCatalog()
++    command.input_files = [first, second]
++    command.output_file = str(tmp_path / 'out.po')
++    command.unique = True
++    command.ensure_finalized()
++    command.run()
++    result = read_po((tmp_path / 'out.po').open('rb'))
++    assert result.get('hello') is None
++    assert result.get('only').string == 'unique'
++
++
++@pytest.mark.parametrize('command,options', [
++    (ConcatenateCatalog, {}),
++    (ConcatenateCatalog, {'input_files': ['a'], 'unique': True, 'more_than': 1}),
++    (ConcatenateCatalog, {'input_files': ['a'], 'width': 80, 'no_wrap': True}),
++    (MergeCatalog, {'input_files': ['a']}),
++    (MergeCatalog, {'input_files': ['a', 'b']}),
++])
++def test_invalid_options(command, options):
++    instance = command()
++    for key, value in options.items():
++        setattr(instance, key, value)
++    with pytest.raises(OptionError):
++        instance.ensure_finalized()
++
++
++def test_merge_compendium_and_backup(tmp_path):
++    definition = save(tmp_path / 'def.po', {'hello': 'old', 'empty': ''})
++    original = (tmp_path / 'def.po').read_bytes()
++    template = save(tmp_path / 'ref.pot', {'hello': '', 'empty': ''})
++    compendium = save(tmp_path / 'extra.po', {'hello': 'new', 'empty': 'filled', 'extra': 'ignored'})
++    command = MergeCatalog()
++    command.input_files = [definition, template]
++    command.update = command.backup = command.compendium_overwrite = True
++    command.compendium = [compendium]
++    command.ensure_finalized()
++    command.run()
++    assert (tmp_path / 'def.po~').read_bytes() == original
++    with open(definition, 'rb') as source:
++        result = read_po(source)
++    assert result.get('hello').string == 'new'
++    assert result.obsolete['hello'].string == 'old'
++    assert result.get('empty').string == 'filled'
++    assert result.get('extra') is None
++    assert compendium in result.get('hello').auto_comments
++    assert not result.fuzzy

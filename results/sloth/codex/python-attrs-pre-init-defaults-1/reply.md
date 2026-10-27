@@ -1,11 +1,9 @@
-I’ll check how attrs generates the pre-init call, fix the argument forwarding, and add a regression test.
+I’ll check how the generated initializer forwards arguments to `__attrs_pre_init__`, fix the shared code, and add regression coverage.
 
-The pre-init call reuses parameter declarations such as `val2=100`, so Python treats the defaults as keyword arguments. The fix is in the shared initializer generator, which serves both `__init__` and `__attrs_init__`; the existing test file is the only other place that needs changing. No signatures, exports, fixtures, or configuration need changes.
+The generator was reusing parameter declarations as call arguments, so default expressions replaced supplied values. I’ve changed it to forward parameter names and added tests for your example, positional arguments, and omitted defaults, including the factory sentinel behavior.
 
-I’ll test positional and keyword values, omitted defaults, factory fields, aliases, and keyword-only fields, preserving the existing behavior for omitted factory arguments.
+Fixed argument forwarding so `__attrs_pre_init__` receives supplied values for fields with defaults and factories.
 
-Fixed the shared initializer generator so `__attrs_pre_init__` receives supplied values instead of default expressions.
+Regression tests cover your example, positional arguments, and omitted defaults. Package build succeeded; tests: 363 passed, 1 skipped, 1 expected failure.
 
-Added regression coverage for positional and keyword arguments, omitted defaults, factories, aliases, and keyword-only fields.
-
-Validation: 1,343 tests passed, 5 skipped, 3 expected failures. Wheel build succeeded.
+No new options added. Full test suite was not run.

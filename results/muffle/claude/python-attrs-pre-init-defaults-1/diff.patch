@@ -1,25 +1,53 @@
 diff --git a/changelog.d/pre-init-defaults.change.md b/changelog.d/pre-init-defaults.change.md
 new file mode 100644
-index 0000000..a71987d
+index 0000000..432a29d
 --- /dev/null
 +++ b/changelog.d/pre-init-defaults.change.md
 @@ -0,0 +1 @@
-+Fixed `__attrs_pre_init__` receiving the default values instead of the passed values for positional attributes that have defaults.
++Passed values for non-keyword-only fields with defaults are now forwarded to `__attrs_pre_init__` instead of the defaults.
 diff --git a/src/attr/_make.py b/src/attr/_make.py
-index e84d979..9f79315 100644
+index e84d979..9900a2a 100644
 --- a/src/attr/_make.py
 +++ b/src/attr/_make.py
-@@ -2321,8 +2321,12 @@ def _attrs_to_init_script(
+@@ -2321,8 +2321,9 @@ def _attrs_to_init_script(
  
          lines.append(f"BaseException.__init__(self, {vals})")
  
-+    pre_init_args = ", ".join(
-+        # We need to remove the defaults from the positional args.
-+        arg.split("=")[0]
-+        for arg in args
-+    )
++    # Defaults must not leak into the arguments passed to pre-init.
++    pre_init_args = ", ".join(arg.split("=")[0] for arg in args)
      args = ", ".join(args)
 -    pre_init_args = args
      if kw_only_args:
          # leading comma & kw_only args
          args += f"{', ' if args else ''}*, {', '.join(kw_only_args)}"
+diff --git a/tests/test_make.py b/tests/test_make.py
+index 80c0066..137e65d 100644
+--- a/tests/test_make.py
++++ b/tests/test_make.py
+@@ -659,6 +659,26 @@ class TestAttributes:
+ 
+         assert 11 == getattr(c, "z", None)
+ 
++    def test_pre_init_passes_given_values_over_defaults(self):
++        """
++        Values passed to __init__ reach __attrs_pre_init__ even if the
++        attributes have defaults.
++        """
++        seen = []
++
++        @attr.s
++        class C:
++            x = attr.ib()
++            y = attr.ib(default=1)
++            z = attr.ib(factory=dict)
++
++            def __attrs_pre_init__(self2, x, y, z):
++                seen.append((x, y, z))
++
++        C(10, 20, {"a": 1})
++
++        assert [(10, 20, {"a": 1})] == seen
++
+     @pytest.mark.usefixtures("with_and_without_validation")
+     def test_pre_init_kwargs(self):
+         """

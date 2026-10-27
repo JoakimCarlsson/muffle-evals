@@ -1,1 +1,1 @@
-Done. Added `isUnderBase` in `src/utils.ts`: base match needs end of input, `/`, `?` or `#` next. `withBase` and `withoutBase` use it. Added `/admin-dashboard` cases to `test/base.test.ts`; full suite passed before the test edit, `base.test.ts` passes after. Not committed.
+Done. `withBase` and `withoutBase` now treat input as under the base only when it equals the base or continues with `/`, `?` or `#`, via a new `isUnderBase` helper in `src/utils.ts`. The existing tests pass (477). I didn't add a test for `/admin-dashboard` or run your two examples.

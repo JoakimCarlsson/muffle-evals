@@ -1,9 +1,7 @@
-Add a test after TestMethodNotAllowed.
+The 405 `Allow` header now lists each method once. Your example returns `Allow: POST` instead of `POST POST POST POST`, and `go test .` passes.
 
-The 405 `Allow` header now lists each method once. Your example returns `Allow: [POST]`, and `go test .` passes.
+The change is in `methodNotAllowedHandler` in `mux.go`. It skips any method it has already added. I fixed it there rather than in `tree.go` because two separate places in `tree.go` collect the allowed methods.
 
-The router collects allowed methods from every overlapping wildcard route it visits, so the same method gets added several times. I removed the duplicates where the header is written, in `methodNotAllowedHandler` in `mux.go`. I left the collection in `tree.go` alone.
+I added `TestMethodNotAllowedNoDuplicateAllow` to `mux_test.go`, using your four overlapping `POST` routes. I didn't run anything beyond the root package's tests.
 
-I added `TestMethodNotAllowedNoDuplicateAllow` in `mux_test.go`, which uses the four routes from your report. I ran only the root package tests, not the `middleware` package or the rest of the repo.
-
-I didn't commit anything.
+I haven't committed anything.

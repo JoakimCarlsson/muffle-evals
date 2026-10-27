@@ -59,6 +59,7 @@ from .stop import stop_when_event_set  # noqa
 # Import all built-in wait strategies for easier usage.
 from .wait import wait_chain  # noqa
 from .wait import wait_combine  # noqa
+from .wait import wait_exception  # noqa
 from .wait import wait_exponential  # noqa
 from .wait import wait_fixed  # noqa
 from .wait import wait_incrementing  # noqa
@@ -67,7 +68,6 @@ from .wait import wait_random  # noqa
 from .wait import wait_random_exponential  # noqa
 from .wait import wait_random_exponential as wait_full_jitter  # noqa
 from .wait import wait_exponential_jitter  # noqa
-from .wait import wait_exception  # noqa
 
 # Import all built-in before strategies for easier usage.
 from .before import before_log  # noqa
@@ -687,6 +687,7 @@ __all__ = [
     "stop_when_event_set",
     "wait_chain",
     "wait_combine",
+    "wait_exception",
     "wait_exponential",
     "wait_fixed",
     "wait_incrementing",
@@ -695,7 +696,6 @@ __all__ = [
     "wait_random_exponential",
     "wait_full_jitter",
     "wait_exponential_jitter",
-    "wait_exception",
     "before_log",
     "before_nothing",
     "after_log",

@@ -1361,17 +1361,6 @@ fn issue_864() {
 }
 
 #[test]
-fn path_percent_encodes_caret() {
-    let url = url::Url::parse("http://localhost/a^b").unwrap();
-    assert_eq!(url.as_str(), "http://localhost/a%5Eb");
-    let mut url = url::Url::parse("http://localhost/").unwrap();
-    url.set_path("/a^b");
-    assert_eq!(url.path(), "/a%5Eb");
-    url.path_segments_mut().unwrap().push("c^d");
-    assert_eq!(url.path(), "/a%5Eb/c%5Ed");
-}
-
-#[test]
 fn issue_974() {
     let mut url = url::Url::parse("http://example.com:8000").unwrap();
     let _ = url::quirks::set_port(&mut url, "\u{0000}9000");
@@ -1402,4 +1391,10 @@ fn test_parse_url_with_single_byte_control_host() {
     let url1 = Url::parse(input).unwrap();
     let url2 = Url::parse(url1.as_str()).unwrap();
     assert_eq!(url2, url1);
+}
+
+#[test]
+fn test_path_caret_is_percent_encoded() {
+    let url = Url::parse("http://localhost/a^b").unwrap();
+    assert_eq!(url.as_str(), "http://localhost/a%5Eb");
 }

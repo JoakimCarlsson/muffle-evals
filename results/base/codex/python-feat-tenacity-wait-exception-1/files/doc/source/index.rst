@@ -209,20 +209,16 @@ Sometimes it's necessary to build a chain of backoffs.
         print("Wait 3s for 3 attempts, 7s for the next 2 attempts and 9s for all attempts thereafter")
         raise Exception
 
-To choose the wait time from the exception raised by the last attempt, use
-``wait_exception``. The function receives the exception and returns seconds:
+To choose a delay from the exception raised by the last attempt, use
+``wait_exception``. Its callback receives the exception and returns the wait
+time in seconds. It raises ``RuntimeError`` if the last attempt has no exception,
+including when retrying a rejected result.
 
 .. testcode::
 
-    def wait_for_exception(exception: BaseException) -> float:
-        return 1.0 if isinstance(exception, TimeoutError) else 60.0
-
-    @retry(wait=wait_exception(wait_for_exception))
-    def request_with_exception_wait():
+    @retry(wait=wait_exception(lambda exc: 1.0 if isinstance(exc, TimeoutError) else 60.0))
+    def wait_for_exception():
         raise TimeoutError
-
-``wait_exception`` raises ``RuntimeError`` if there is no exception, including
-when retrying a rejected result with ``retry_if_result``.
 
 Whether to retry
 ~~~~~~~~~~~~~~~~

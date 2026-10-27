@@ -1,2 +1,2 @@
 Done.
-Fixed both iterators’ reverse bounds, exhaustion, lengths; added regression tests. Build/tests pass except 3 unrelated doctests failing deprecated `core::i32::MAX` warnings.
+Fixed shared bounds for day/week iterators; added regression tests. 292 unit tests and iterator doctests pass; three unrelated doctests fail on deprecated constants.

@@ -1855,25 +1855,6 @@ func TestQueryHTTPMethod(t *testing.T) {
 	}
 }
 
-func TestMethodNotAllowedNoDuplicateAllow(t *testing.T) {
-	r := NewRouter()
-	h := func(w http.ResponseWriter, r *http.Request) {}
-	r.Post("/article/1-2-3", h)
-	r.Post("/article/{a}", h)
-	r.Post("/article/{b}-{c}", h)
-	r.Post("/article/{b}-{c}-{d}", h)
-	ts := httptest.NewServer(r)
-	defer ts.Close()
-
-	resp, _ := testRequest(t, ts, "GET", "/article/1-2-3", nil)
-	if resp.StatusCode != 405 {
-		t.Fatal(resp.Status)
-	}
-	if got := resp.Header.Values("Allow"); len(got) != 1 || got[0] != "POST" {
-		t.Fatal("Allow header should contain only POST. Received: ", got)
-	}
-}
-
 func TestMuxMatch(t *testing.T) {
 	r := NewRouter()
 	r.Get("/hi", func(w http.ResponseWriter, r *http.Request) {
@@ -2137,5 +2118,23 @@ func BenchmarkMux(b *testing.B) {
 				mx.ServeHTTP(w, r)
 			}
 		})
+	}
+}
+
+func TestMuxMethodNotAllowedNoDuplicateAllow(t *testing.T) {
+	r := NewRouter()
+	h := func(w http.ResponseWriter, r *http.Request) {}
+	r.Post("/article/1-2-3", h)
+	r.Post("/article/{a}", h)
+	r.Post("/article/{b}-{c}", h)
+	r.Post("/article/{b}-{c}-{d}", h)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/article/1-2-3", nil))
+	if w.Code != 405 {
+		t.Fatalf("expected 405, got %d", w.Code)
+	}
+	if got := w.Header().Values("Allow"); len(got) != 1 || got[0] != "POST" {
+		t.Fatalf("expected Allow [POST], got %v", got)
 	}
 }

@@ -67,9 +67,9 @@ func WithJitterPercent(j uint64, next Backoff) Backoff {
 	})
 }
 
-// WithFullJitter wraps a backoff and returns a uniformly random duration in
-// [0, base), where base is the wrapped backoff's next duration. Non-positive
-// durations are returned unchanged. If the wrapped backoff stops, it stops too.
+// WithFullJitter wraps a backoff function and returns a random duration in
+// [0, base), where base is the wrapped backoff's next duration. Zero and
+// negative durations are returned unchanged.
 func WithFullJitter(next Backoff) Backoff {
 	return BackoffFunc(func() (time.Duration, bool) {
 		val, stop := next.Next()

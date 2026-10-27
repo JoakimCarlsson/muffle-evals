@@ -1,1 +1,0 @@
-Done. `value_chain` in `more_itertools/more.py` now calls `iter(value)` inside the `try`, so only non-iterables are emitted as single values. A `TypeError` raised mid-iteration now propagates. I added `test_error_while_iterating`, and the 6 `ValueChain` tests pass. I didn't run the rest of the suite.

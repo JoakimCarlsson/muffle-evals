@@ -1,59 +1,78 @@
 diff --git a/src/utils.ts b/src/utils.ts
-index db7c2c2..1a44b67 100644
+index db7c2c2..db16f20 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
-@@ -292,7 +292,7 @@ export function withBase(input: string, base: string) {
+@@ -292,7 +292,10 @@ export function withBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
 -  if (input.startsWith(_base)) {
-+  if (input.startsWith(_base) && /^([/?#]|$)/.test(input.slice(_base.length))) {
++  if (
++    input.startsWith(_base) &&
++    (!input[_base.length] || /[/?#]/.test(input[_base.length]))
++  ) {
      return input;
    }
    return joinURL(_base, input);
-@@ -316,7 +316,10 @@ export function withoutBase(input: string, base: string) {
+@@ -316,7 +319,10 @@ export function withoutBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
 -  if (!input.startsWith(_base)) {
 +  if (
 +    !input.startsWith(_base) ||
-+    !/^([/?#]|$)/.test(input.slice(_base.length))
++    (input[_base.length] && !/[/?#]/.test(input[_base.length]))
 +  ) {
      return input;
    }
    const trimmed = input.slice(_base.length);
 diff --git a/test/base.test.ts b/test/base.test.ts
-index ed684d1..241c664 100644
+index ed684d1..c9160b2 100644
 --- a/test/base.test.ts
 +++ b/test/base.test.ts
-@@ -1,6 +1,29 @@
- import { describe, expect, test } from "vitest";
- import { withBase, withoutBase } from "../src";
+@@ -3,6 +3,26 @@ import { withBase, withoutBase } from "../src";
  
-+test("base prefixes must end at a path boundary", () => {
-+  for (const base of ["/admin", "/admin/"]) {
-+    for (const input of [
-+      "/admin-dashboard",
-+      "/administrator",
-+      "/admin%2Fdashboard",
-+    ]) {
-+      expect(withoutBase(input, base)).toBe(input);
-+      expect(withBase(input, base)).toBe("/admin" + input);
-+    }
-+    for (const [input, output] of [
-+      ["/admin", "/"],
-+      ["/admin/", "/"],
-+      ["/admin/dashboard", "/dashboard"],
-+      ["/admin?x", "/?x"],
-+      ["/admin#x", "/#x"],
-+    ]) {
-+      expect(withoutBase(input, base)).toBe(output);
-+      expect(withBase(input, base)).toBe(input);
-+    }
-+  }
-+});
-+
  describe("withBase", () => {
    const tests = [
++    { base: "/admin/", input: "", out: "/admin" },
++    {
++      base: "/admin/",
++      input: "/admin-dashboard",
++      out: "/admin/admin-dashboard",
++    },
++    { base: "/admin/", input: "/admin", out: "/admin" },
++    { base: "/admin/", input: "/admin/dashboard", out: "/admin/dashboard" },
++    { base: "/admin/", input: "/admin?x", out: "/admin?x" },
++    { base: "/admin/", input: "/admin#x", out: "/admin#x" },
++    { base: "/admin", input: "", out: "/admin" },
++    {
++      base: "/admin",
++      input: "/admin-dashboard",
++      out: "/admin/admin-dashboard",
++    },
++    { base: "/admin", input: "/admin", out: "/admin" },
++    { base: "/admin", input: "/admin/dashboard", out: "/admin/dashboard" },
++    { base: "/admin", input: "/admin?x", out: "/admin?x" },
++    { base: "/admin", input: "/admin#x", out: "/admin#x" },
      { base: "/", input: "/", out: "/" },
+     { base: "/foo", input: "", out: "/foo" },
+     { base: "/foo/", input: "/", out: "/foo" },
+@@ -24,6 +44,18 @@ describe("withBase", () => {
+ 
+ describe("withoutBase", () => {
+   const tests = [
++    { base: "/admin/", input: "", out: "" },
++    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
++    { base: "/admin/", input: "/admin", out: "/" },
++    { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
++    { base: "/admin/", input: "/admin?x", out: "/?x" },
++    { base: "/admin/", input: "/admin#x", out: "/#x" },
++    { base: "/admin", input: "", out: "" },
++    { base: "/admin", input: "/admin-dashboard", out: "/admin-dashboard" },
++    { base: "/admin", input: "/admin", out: "/" },
++    { base: "/admin", input: "/admin/dashboard", out: "/dashboard" },
++    { base: "/admin", input: "/admin?x", out: "/?x" },
++    { base: "/admin", input: "/admin#x", out: "/#x" },
+     { base: "/", input: "/", out: "/" },
+     { base: "/foo", input: "/", out: "/" },
+     { base: "/foo/", input: "/", out: "/" },

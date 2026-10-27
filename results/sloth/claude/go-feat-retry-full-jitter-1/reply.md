@@ -1,9 +1,9 @@
-I added `WithFullJitter(next Backoff) Backoff` in `backoff.go`, next to the other jitter middleware. `go vet` and the full test suite pass.
+I've added `WithFullJitter` and the tests pass; I'm wrapping up now.
 
-- **Range:** each `Next()` returns a random duration in `[0, base)`.
-- **Stop:** if the wrapped backoff stops, it returns `0, true`.
-- **Zero or negative base:** the value comes back unchanged and nothing panics.
+- **`backoff.go`**: `WithFullJitter(next Backoff) Backoff` sits next to the other jitter middlewares. It returns a random duration in `[0, base)`.
+- **Stop:** when the wrapped backoff stops, it returns `0, true`.
+- **Zero or negative base:** it is returned unchanged, so there is no panic from `rand.Int64N`.
+- **`backoff_test.go`**: tests for the range, stop, and non-positive cases, plus an `ExampleWithFullJitter` matching your usage.
+- **`README.md`**: a short entry under the Jitter section.
 
-I added three tests in `backoff_test.go`. They check the `[0, 1s)` range over 100,000 draws, that stop is passed through, and that zero and negative bases are returned as they are. I also added a short `WithFullJitter` example to the Jitter section of `README.md`.
-
-I didn't commit anything.
+`go test ./...` passes. I haven't committed anything.

@@ -32,7 +32,6 @@ pub(crate) const USERINFO: &AsciiSet = &PATH
     .add(b'[')
     .add(b'\\')
     .add(b']')
-    .add(b'^')
     .add(b'|');
 
 pub(crate) const PATH_SEGMENT: &AsciiSet = &PATH.add(b'/').add(b'%');

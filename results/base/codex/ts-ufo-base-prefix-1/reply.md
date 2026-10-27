@@ -1,7 +1,7 @@
-I’ll check the base-path matching logic, add regression coverage, and run the tests.
+I’ll check the base-path matching logic and tests, then update it to respect path boundaries.
 
-Fixed both functions to match the base only at a path boundary: end of input, `/`, `?`, or `#`.
+Fixed both functions to require a boundary after the base: end of input, `/`, `?`, or `#`.
 
-Added regression tests for prefix collisions and valid base paths, with and without trailing slashes.
+`/admin-dashboard` now stays unchanged with `withoutBase` and becomes `/admin/admin-dashboard` with `withBase`. Existing base paths, queries, and fragments still work.
 
-Validation passed: all 497 tests, type checking, ESLint, and formatting.
+Added regression coverage for bases with and without trailing slashes. All 497 tests, type checks, lint, and formatting checks pass.

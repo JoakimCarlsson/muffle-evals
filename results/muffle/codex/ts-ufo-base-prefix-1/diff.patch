@@ -1,8 +1,8 @@
 diff --git a/src/utils.ts b/src/utils.ts
-index db7c2c2..c7b718c 100644
+index db7c2c2..33b69ff 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
-@@ -292,7 +292,7 @@ export function withBase(input: string, base: string) {
+@@ -292,12 +292,21 @@ export function withBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
@@ -11,7 +11,21 @@ index db7c2c2..c7b718c 100644
      return input;
    }
    return joinURL(_base, input);
-@@ -316,13 +316,21 @@ export function withoutBase(input: string, base: string) {
+ }
+ 
++// The base must match a complete path segment, allowing query and hash suffixes.
++function hasBase(input: string, base: string): boolean {
++  if (!input.startsWith(base)) {
++    return false;
++  }
++  const next = input[base.length];
++  return next === undefined || next === "/" || next === "?" || next === "#";
++}
++
+ /**
+  * Removes the base from the URL or pathname.
+  *
+@@ -316,7 +325,7 @@ export function withoutBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
@@ -20,41 +34,32 @@ index db7c2c2..c7b718c 100644
      return input;
    }
    const trimmed = input.slice(_base.length);
-   return trimmed[0] === "/" ? trimmed : "/" + trimmed;
- }
- 
-+function hasBase(input: string, base: string): boolean {
-+  if (!input.startsWith(base)) {
-+    return false;
-+  }
-+  const next = input[base.length];
-+  return !next || next === "/" || next === "?" || next === "#";
-+}
-+
- /**
-  * Add/Replace the query section of the URL.
-  *
 diff --git a/test/base.test.ts b/test/base.test.ts
-index ed684d1..970c79b 100644
+index ed684d1..ab08310 100644
 --- a/test/base.test.ts
 +++ b/test/base.test.ts
-@@ -1,6 +1,28 @@
- import { describe, expect, test } from "vitest";
- import { withBase, withoutBase } from "../src";
- 
-+describe("base boundaries", () => {
+@@ -46,3 +46,29 @@ describe("withoutBase", () => {
+     });
+   }
+ });
++
++describe("base path boundaries", () => {
 +  for (const base of ["/admin", "/admin/"]) {
-+    for (const suffix of ["-dashboard", "istrator", ".html", "%2Fdashboard"]) {
-+      const input = `/admin${suffix}`;
-+      test(`${base} does not match ${input}`, () => {
++    for (const input of [
++      "/admin-dashboard",
++      "/administrator",
++      "/admin.json",
++      "/admin%2Fdashboard",
++    ]) {
++      test(`${input} is outside ${base}`, () => {
 +        expect(withoutBase(input, base)).toBe(input);
 +        expect(withBase(input, base)).toBe(`/admin${input}`);
 +      });
 +    }
 +
-+    for (const suffix of ["", "/dashboard", "?x", "#section"]) {
++    for (const suffix of ["", "/dashboard", "?x", "#section", "?x#section"]) {
 +      const input = `/admin${suffix}`;
-+      test(`${base} matches ${input}`, () => {
++      test(`${input} is under ${base}`, () => {
 +        expect(withoutBase(input, base)).toBe(
 +          suffix.startsWith("/") ? suffix : `/${suffix}`,
 +        );
@@ -63,7 +68,3 @@ index ed684d1..970c79b 100644
 +    }
 +  }
 +});
-+
- describe("withBase", () => {
-   const tests = [
-     { base: "/", input: "/", out: "/" },

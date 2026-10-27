@@ -45,16 +45,15 @@ index 992c23d..77b5113 100644
 
 | agent | setup | hidden tests | lines +/- (code) | test lines | output tokens | cost |
 |---|---|---|---:|---:|---:|---:|
-| claude | base | pass | +16/-6 | 12 | 1,789 | $0.082 |
-| claude | muffle | pass | +16/-6 | 10 | 1,531 | $0.072 |
-| claude | hush | pass | +12/-1 | 10 | 1,169 | $0.073 |
-| claude | sloth | pass | +12/-2 | 5 | 1,875 | $0.088 |
-| claude | all | pass | +16/-6 | 12 | 1,697 | $0.088 |
-| codex | base | pass | +18/-8 | 43 | 1,636 | - |
-| codex | muffle | pass | +18/-8 | 43 | 1,632 | - |
-| codex | hush | pass | +8/-1 | 24 | 1,133 | - |
-| codex | sloth | pass | +11/-2 | 29 | 1,959 | - |
-| codex | all | pass | +11/-2 | 16 | 1,233 | - |
+| claude | base | pass | +22/-6 | 12 | 1,672 | $0.072 |
+| claude | muffle | pass | +11/-2 | 12 | 1,592 | $0.088 |
+| claude | sloth | pass | +16/-6 | 11 | 1,883 | $0.084 |
+| claude | all | pass | +16/-6 | 10 | 1,609 | $0.078 |
+| codex | base | pass | +11/-2 | 23 | 1,141 | - |
+| codex | muffle | pass | +8/-2 | 53 | 1,556 | - |
+| codex | hush | pass | +8/-1 | 21 | 1,154 | - |
+| codex | sloth | pass | +8/-2 | 12 | 1,075 | - |
+| codex | all | pass | +10/-2 | 12 | 1,210 | - |
 
 ### claude, base: pass
 
@@ -64,7 +63,7 @@ Files: [src/_parser.ts](../base/claude/ts-citty-kebab-default-1/files/src/_parse
 
 ```diff
 diff --git a/src/_parser.ts b/src/_parser.ts
-index 992c23d..b18212c 100644
+index 992c23d..6279134 100644
 --- a/src/_parser.ts
 +++ b/src/_parser.ts
 @@ -82,7 +82,6 @@ export function parseRawArgs<T = Record<string, any>>(
@@ -75,7 +74,7 @@ index 992c23d..b18212c 100644
        };
      }
    }
-@@ -163,14 +162,25 @@ export function parseRawArgs<T = Record<string, any>>(
+@@ -163,14 +162,31 @@ export function parseRawArgs<T = Record<string, any>>(
    }
  
    // Propagate values between aliases
@@ -84,10 +83,16 @@ index 992c23d..b18212c 100644
 -      (out as any)[main] = (out as any)[alias];
 +  const propagateAliases = () => {
 +    for (const [alias, main] of aliasToMain.entries()) {
-+      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
++      if (
++        (out as any)[alias] !== undefined &&
++        (out as any)[main] === undefined
++      ) {
 +        (out as any)[main] = (out as any)[alias];
 +      }
-+      if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
++      if (
++        (out as any)[main] !== undefined &&
++        (out as any)[alias] === undefined
++      ) {
 +        (out as any)[alias] = (out as any)[main];
 +      }
      }
@@ -96,7 +101,7 @@ index 992c23d..b18212c 100644
 +  };
 +  propagateAliases();
 +
-+  // Apply defaults last so a value passed via any alias (e.g. kebab-case) wins
++  // Apply defaults last so values passed via any alias take precedence
 +  for (const [name, value] of Object.entries(defaults)) {
 +    if ((out as any)[name] === undefined) {
 +      (out as any)[name] = value;
@@ -108,7 +113,7 @@ index 992c23d..b18212c 100644
  }
 diff --git a/test/kebab-default.test.ts b/test/kebab-default.test.ts
 new file mode 100644
-index 0000000..e42ff64
+index 0000000..d8b0f10
 --- /dev/null
 +++ b/test/kebab-default.test.ts
 @@ -0,0 +1,12 @@
@@ -119,9 +124,9 @@ index 0000000..e42ff64
 +  const args = {
 +    fooBar: { type: "enum", options: ["one", "two"], default: "two" },
 +  } as const;
-+  const r: any = parseArgs(["--foo-bar", "one"], args as any);
-+  expect(r.fooBar).toBe("one");
-+  expect(r["foo-bar"]).toBe("one");
++  const parsed = parseArgs(["--foo-bar", "one"], args as any) as any;
++  expect(parsed.fooBar).toBe("one");
++  expect(parsed["foo-bar"]).toBe("one");
 +  expect((parseArgs([], args as any) as any).fooBar).toBe("two");
 +});
 ```
@@ -130,15 +135,13 @@ index 0000000..e42ff64
 
 <details><summary>reply</summary>
 
-`--foo-bar one` now gives `fooBar: "one"` and `"foo-bar": "one"`. With no flag passed, `fooBar` is still `"two"`. The full test suite and `tsc` both pass.
+Passing `--foo-bar one` now overrides the default, so `fooBar` is `"one"` and `"foo-bar"` is `"one"`. With no flag, `fooBar` is still `"two"`. The full test suite passes (64 tests).
 
-**Cause:** `src/_parser.ts` handed the defaults to `node:util`'s `parseArgs`. `fooBar` was therefore already set to `"two"` before alias propagation ran. The propagation step only fills an alias that is still `undefined`, so it never copied `"foo-bar": "one"` over it.
+The cause was in `src/_parser.ts`. Defaults were handed to `node:util`'s `parseArgs`, so `fooBar` was already `"two"` before the aliases were merged. The merge only fills in a name that is `undefined`, so `"foo-bar": "one"` never replaced it.
 
-**Fix:** The defaults are now applied after parsing and alias propagation, and only to names that are still unset. Propagation then runs once more so every alias form carries the default. A value passed under any spelling (camelCase, kebab-case or an alias) now wins over the default.
+Now defaults are applied after parsing and alias merging, and only to names that are still unset. Aliases are merged once more afterwards so the default shows up under every name.
 
-I added a regression test in `test/kebab-default.test.ts`. It covers the kebab-case override and the default when nothing is passed.
-
-I didn't commit anything.
+I added a regression test in `test/kebab-default.test.ts`. I haven't committed anything.
 
 </details>
 
@@ -150,10 +153,18 @@ Files: [src/_parser.ts](../muffle/claude/ts-citty-kebab-default-1/files/src/_par
 
 ```diff
 diff --git a/src/_parser.ts b/src/_parser.ts
-index 992c23d..a8bde73 100644
+index 992c23d..c5c265d 100644
 --- a/src/_parser.ts
 +++ b/src/_parser.ts
-@@ -82,7 +82,6 @@ export function parseRawArgs<T = Record<string, any>>(
+@@ -51,7 +51,6 @@ export function parseRawArgs<T = Record<string, any>>(
+     {
+       type: "boolean" | "string";
+       short?: string;
+-      default?: any;
+       multiple?: boolean;
+     }
+   > = {};
+@@ -82,7 +81,6 @@ export function parseRawArgs<T = Record<string, any>>(
        const type = getType(name);
        options[name] = {
          type,
@@ -161,96 +172,11 @@ index 992c23d..a8bde73 100644
        };
      }
    }
-@@ -163,14 +162,25 @@ export function parseRawArgs<T = Record<string, any>>(
-   }
- 
-   // Propagate values between aliases
--  for (const [alias, main] of aliasToMain.entries()) {
--    if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
--      (out as any)[main] = (out as any)[alias];
-+  const propagate = () => {
-+    for (const [alias, main] of aliasToMain.entries()) {
-+      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
-+        (out as any)[main] = (out as any)[alias];
-+      }
-+      if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
-+        (out as any)[alias] = (out as any)[main];
-+      }
-     }
--    if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
--      (out as any)[alias] = (out as any)[main];
-+  };
-+  propagate();
-+
-+  // Apply defaults last so a value given under any alias wins over them
-+  for (const [name, value] of Object.entries(defaults)) {
-+    if ((out as any)[name] === undefined) {
-+      (out as any)[name] = value;
-     }
-   }
-+  propagate();
- 
-   return out;
- }
-diff --git a/test/kebab-default.test.ts b/test/kebab-default.test.ts
-new file mode 100644
-index 0000000..aff50da
---- /dev/null
-+++ b/test/kebab-default.test.ts
-@@ -0,0 +1,10 @@
-+import { expect, it } from "vitest";
-+import { parseArgs } from "../src/args.ts";
-+
-+it("kebab-case input overrides camelCase default", () => {
-+  const def = { fooBar: { type: "enum", options: ["one", "two"], default: "two" } } as const;
-+  const r: any = parseArgs(["--foo-bar", "one"], def as any);
-+  expect(r.fooBar).toBe("one");
-+  expect(r["foo-bar"]).toBe("one");
-+  expect((parseArgs([], def as any) as any).fooBar).toBe("two");
-+});
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-Fixed: `--foo-bar one` now gives `fooBar: "one"` and `"foo-bar": "one"`. The full suite passes (64 tests), including a new regression test.
-
-The default was handed to `node:util`'s `parseArgs` as a default on `fooBar`, so `fooBar` always had a value. The alias-propagation step only copies a value to an alias that is still undefined. The `"one"` that landed on `foo-bar` therefore never replaced `fooBar`'s default `"two"`.
-
-In `src/_parser.ts`, defaults are no longer passed to `node:util`. They are applied after parsing and alias propagation, only to keys that are still undefined, and then propagated once more so every alias gets the default. A value passed under any alias form now wins over the default.
-
-The regression test is `test/kebab-default.test.ts`. It also checks that the default `"two"` still applies when no flag is passed.
-
-I haven't committed anything.
-
-</details>
-
-### claude, hush: pass
-
-Files: [src/_parser.ts](../hush/claude/ts-citty-kebab-default-1/files/src/_parser.ts), [test/args.test.ts](../hush/claude/ts-citty-kebab-default-1/files/test/args.test.ts)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/src/_parser.ts b/src/_parser.ts
-index 992c23d..62006d7 100644
---- a/src/_parser.ts
-+++ b/src/_parser.ts
-@@ -82,7 +82,6 @@ export function parseRawArgs<T = Record<string, any>>(
-       const type = getType(name);
-       options[name] = {
-         type,
--        default: defaults[name],
-       };
-     }
-   }
-@@ -172,5 +171,17 @@ export function parseRawArgs<T = Record<string, any>>(
+@@ -172,5 +170,16 @@ export function parseRawArgs<T = Record<string, any>>(
      }
    }
  
-+  // Apply defaults only after alias propagation, so an explicit value passed
-+  // via one spelling is not shadowed by the default of another spelling
++  // Apply defaults last so a value passed via any alias takes precedence
 +  for (const [name, value] of Object.entries(defaults)) {
 +    if ((out as any)[name] !== undefined) continue;
 +    (out as any)[name] = value;
@@ -263,23 +189,23 @@ index 992c23d..62006d7 100644
 +
    return out;
  }
-diff --git a/test/args.test.ts b/test/args.test.ts
-index 732572c..2dcb8ae 100644
---- a/test/args.test.ts
-+++ b/test/args.test.ts
-@@ -100,3 +100,13 @@ describe("args", () => {
-     expect(parsed._).toEqual([]);
-   });
- });
+diff --git a/test/kebab-default.test.ts b/test/kebab-default.test.ts
+new file mode 100644
+index 0000000..7fa9cf9
+--- /dev/null
++++ b/test/kebab-default.test.ts
+@@ -0,0 +1,12 @@
++import { expect, it } from "vitest";
++import { parseArgs } from "../src/args.ts";
 +
-+describe("kebab-case input with camelCase default", () => {
-+  it("overrides default", () => {
-+    const parsed = parseArgs(["--foo-bar", "one"], {
-+      fooBar: { type: "enum", options: ["one", "two"], default: "two" },
-+    });
-+    expect(parsed.fooBar).toBe("one");
-+    expect(parsed["foo-bar"]).toBe("one");
-+  });
++it("kebab-case input overrides camelCase default", () => {
++  const args = { fooBar: { type: "enum", options: ["one", "two"], default: "two" } } as const;
++  const r = parseArgs(["--foo-bar", "one"], args as any) as any;
++  expect(r.fooBar).toBe("one");
++  expect(r["foo-bar"]).toBe("one");
++  const d = parseArgs([], args as any) as any;
++  expect(d.fooBar).toBe("two");
++  expect(d["foo-bar"]).toBe("two");
 +});
 ```
 
@@ -287,7 +213,17 @@ index 732572c..2dcb8ae 100644
 
 <details><summary>reply</summary>
 
-Done. `src/_parser.ts` now applies defaults after alias propagation, so `--foo-bar one` gives `fooBar: "one"` and `"foo-bar": "one"`. I added a test in `test/args.test.ts`, and all 64 tests pass.
+Let me see how the parser handles defaults and aliases.
+
+Node's `parseArgs` applies the default to `fooBar`, so the propagation step sees it as already set and never copies `foo-bar`'s value over. I'll apply defaults after alias propagation instead.
+
+`--foo-bar one` now gives `fooBar: "one"` and `"foo-bar": "one"`. The full suite passes (64 tests) and `tsc` reports no errors.
+
+**Cause:** `src/_parser.ts` passed defaults to Node's `parseArgs`, so `fooBar` was pre-filled with `"two"` while only `foo-bar` received `"one"`. The alias-propagation step only copies a value when the target is undefined, so it never overwrote the default.
+
+**Fix:** In `src/_parser.ts`, I removed the `default` option from the Node `parseArgs` call. Defaults are now applied at the end, after alias propagation, to any name still undefined, and mirrored to its aliases. So a value passed under any spelling beats the default, and with no input you still get `"two"` for both `fooBar` and `foo-bar`.
+
+I added `test/kebab-default.test.ts`, which covers both the override case and the default case. I haven't committed anything.
 
 </details>
 
@@ -299,82 +235,7 @@ Files: [src/_parser.ts](../sloth/claude/ts-citty-kebab-default-1/files/src/_pars
 
 ```diff
 diff --git a/src/_parser.ts b/src/_parser.ts
-index 992c23d..08a8bb9 100644
---- a/src/_parser.ts
-+++ b/src/_parser.ts
-@@ -51,7 +51,6 @@ export function parseRawArgs<T = Record<string, any>>(
-     {
-       type: "boolean" | "string";
-       short?: string;
--      default?: any;
-       multiple?: boolean;
-     }
-   > = {};
-@@ -82,7 +81,6 @@ export function parseRawArgs<T = Record<string, any>>(
-       const type = getType(name);
-       options[name] = {
-         type,
--        default: defaults[name],
-       };
-     }
-   }
-@@ -172,5 +170,17 @@ export function parseRawArgs<T = Record<string, any>>(
-     }
-   }
- 
-+  // Defaults apply after alias propagation so a value given via any alias wins
-+  for (const [name, value] of Object.entries(defaults)) {
-+    if ((out as any)[name] === undefined) {
-+      (out as any)[name] = value;
-+      for (const alias of mainToAliases.get(name) || []) {
-+        if ((out as any)[alias] === undefined) {
-+          (out as any)[alias] = value;
-+        }
-+      }
-+    }
-+  }
-+
-   return out;
- }
-diff --git a/test/args.test.ts b/test/args.test.ts
-index 732572c..d24c7be 100644
---- a/test/args.test.ts
-+++ b/test/args.test.ts
-@@ -11,6 +11,11 @@ describe("args", () => {
-     [["--name", "John"], { name: { type: "string" } }, { name: "John", _: [] }],
-     [[], { name: { type: "string", default: "John" } }, { name: "John", _: [] }],
-     [["--name", "Jane"], { name: { type: "string", default: "John" } }, { name: "Jane", _: [] }],
-+    [
-+      ["--foo-bar", "one"],
-+      { fooBar: { type: "enum", options: ["one", "two"], default: "two" } },
-+      { fooBar: "one", "foo-bar": "one", _: [] },
-+    ],
-     [["-n", "Jane"], { name: { type: "string", alias: "n" } }, { name: "Jane", n: "Jane", _: [] }],
-     /**
-      * Boolean
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-`--foo-bar one` now sets `fooBar` to `"one"`, and `"foo-bar"` is `"one"` too. I added a test for your exact case in `test/args.test.ts`. The full suite passes (64 tests) and there are no type errors.
-
-The default was being handed to `node:util`'s `parseArgs` under the camelCase name. `fooBar` therefore always had a value, and the later step that copies a value between the `fooBar` and `foo-bar` names saw `fooBar` as already set and skipped it. In `src/_parser.ts` I now apply defaults after that copy step, so a value passed under any spelling takes priority. The default is then copied to the other spellings only where they're still unset.
-
-I haven't committed anything.
-
-</details>
-
-### claude, all: pass
-
-Files: [src/_parser.ts](../all/claude/ts-citty-kebab-default-1/files/src/_parser.ts), [test/args.test.ts](../all/claude/ts-citty-kebab-default-1/files/test/args.test.ts)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/src/_parser.ts b/src/_parser.ts
-index 992c23d..5906954 100644
+index 992c23d..90c0748 100644
 --- a/src/_parser.ts
 +++ b/src/_parser.ts
 @@ -82,7 +82,6 @@ export function parseRawArgs<T = Record<string, any>>(
@@ -406,10 +267,10 @@ index 992c23d..5906954 100644
 +  };
 +  propagateAliases();
 +
-+  // Defaults apply only after aliases resolve, so an explicit alias value wins
-+  for (const [name, value] of Object.entries(defaults)) {
-+    if ((out as any)[name] === undefined) {
-+      (out as any)[name] = value;
++  // Defaults apply only after aliases resolve, so an aliased value is not shadowed by a default
++  for (const [key, value] of Object.entries(defaults)) {
++    if ((out as any)[key] === undefined) {
++      (out as any)[key] = value;
      }
    }
 +  propagateAliases();
@@ -417,14 +278,15 @@ index 992c23d..5906954 100644
    return out;
  }
 diff --git a/test/args.test.ts b/test/args.test.ts
-index 732572c..680d9e7 100644
+index 732572c..4452d3c 100644
 --- a/test/args.test.ts
 +++ b/test/args.test.ts
-@@ -88,6 +88,18 @@ describe("args", () => {
+@@ -99,4 +99,15 @@ describe("args", () => {
+     expect(parsed.userName).toBe("Jane");
      expect(parsed._).toEqual([]);
    });
- 
-+  it("should override camelCase default with kebab-case input", () => {
++
++  it("should let kebab-case input override camelCase default", () => {
 +    const definition: ArgsDef = {
 +      fooBar: { type: "enum", options: ["one", "two"], default: "two" },
 +    };
@@ -433,31 +295,107 @@ index 732572c..680d9e7 100644
 +
 +    expect(parsed.fooBar).toBe("one");
 +    expect(parsed["foo-bar"]).toBe("one");
-+    expect(parseArgs([], definition).fooBar).toBe("two");
 +  });
-+
-   it("should resolve kebab-case argument", () => {
-     const definition: ArgsDef = {
-       userName: { type: "string" },
+ });
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-Done. `src/_parser.ts` now applies defaults after alias propagation, so `--foo-bar one` gives `fooBar: "one"` and `"foo-bar": "one"`. I added a test in `test/args.test.ts`. All 64 tests pass. I didn't commit.
+`--foo-bar one` now overrides the default, so `fooBar` is `"one"` and `"foo-bar"` is `"one"`. The full suite passes (64 tests), including a new test for your example.
+
+**Cause:** the parser gave defaults to `node:util` `parseArgs`, so `fooBar` was already `"two"` before alias propagation ran. Propagation only copies a value when the target is undefined, so the `foo-bar` value never reached `fooBar`.
+
+**Fix:** in `src/_parser.ts`, defaults are now applied after the first alias propagation, only to keys still undefined, followed by a second propagation. The new test is in `test/args.test.ts`.
 
 </details>
 
-### codex, base: pass
+### claude, all: pass
 
-Files: [src/_parser.ts](../base/codex/ts-citty-kebab-default-1/files/src/_parser.ts), [test/args.test.ts](../base/codex/ts-citty-kebab-default-1/files/test/args.test.ts), [test/parser.test.ts](../base/codex/ts-citty-kebab-default-1/files/test/parser.test.ts)
+Files: [src/_parser.ts](../all/claude/ts-citty-kebab-default-1/files/src/_parser.ts), [test/kebab-default.test.ts](../all/claude/ts-citty-kebab-default-1/files/test/kebab-default.test.ts)
 
 <details><summary>diff</summary>
 
 ```diff
 diff --git a/src/_parser.ts b/src/_parser.ts
-index 992c23d..7bbdedb 100644
+index 992c23d..d82a3e8 100644
+--- a/src/_parser.ts
++++ b/src/_parser.ts
+@@ -82,7 +82,6 @@ export function parseRawArgs<T = Record<string, any>>(
+       const type = getType(name);
+       options[name] = {
+         type,
+-        default: defaults[name],
+       };
+     }
+   }
+@@ -163,14 +162,25 @@ export function parseRawArgs<T = Record<string, any>>(
+   }
+ 
+   // Propagate values between aliases
+-  for (const [alias, main] of aliasToMain.entries()) {
+-    if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
+-      (out as any)[main] = (out as any)[alias];
++  const propagateAliases = () => {
++    for (const [alias, main] of aliasToMain.entries()) {
++      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
++        (out as any)[main] = (out as any)[alias];
++      }
++      if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
++        (out as any)[alias] = (out as any)[main];
++      }
+     }
+-    if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
+-      (out as any)[alias] = (out as any)[main];
++  };
++  propagateAliases();
++
++  // Defaults apply only after aliases resolve, so an aliased CLI value wins
++  for (const [key, value] of Object.entries(defaults)) {
++    if ((out as any)[key] === undefined) {
++      (out as any)[key] = value;
+     }
+   }
++  propagateAliases();
+ 
+   return out;
+ }
+diff --git a/test/kebab-default.test.ts b/test/kebab-default.test.ts
+new file mode 100644
+index 0000000..352199d
+--- /dev/null
++++ b/test/kebab-default.test.ts
+@@ -0,0 +1,10 @@
++import { expect, it } from "vitest";
++import { parseArgs } from "../src/args.ts";
++
++it("kebab-case input overrides camelCase default", () => {
++  const args = { fooBar: { type: "enum", options: ["one", "two"], default: "two" } } as const;
++  const r = parseArgs(["--foo-bar", "one"], args as any) as any;
++  expect(r.fooBar).toBe("one");
++  expect(r["foo-bar"]).toBe("one");
++  expect((parseArgs([], args as any) as any).fooBar).toBe("two");
++});
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+Done. `src/_parser.ts` now applies defaults after alias resolution, so `--foo-bar one` gives `fooBar: "one"` and `"foo-bar": "one"`. I added `test/kebab-default.test.ts`, and all 64 tests pass.
+
+</details>
+
+### codex, base: pass
+
+Files: [src/_parser.ts](../base/codex/ts-citty-kebab-default-1/files/src/_parser.ts), [test/args.test.ts](../base/codex/ts-citty-kebab-default-1/files/test/args.test.ts)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/src/_parser.ts b/src/_parser.ts
+index 992c23d..82ac226 100644
 --- a/src/_parser.ts
 +++ b/src/_parser.ts
 @@ -51,7 +51,6 @@ export function parseRawArgs<T = Record<string, any>>(
@@ -476,57 +414,137 @@ index 992c23d..7bbdedb 100644
        };
      }
    }
-@@ -162,13 +160,25 @@ export function parseRawArgs<T = Record<string, any>>(
+@@ -162,6 +160,17 @@ export function parseRawArgs<T = Record<string, any>>(
      }
    }
  
--  // Propagate values between aliases
--  for (const [alias, main] of aliasToMain.entries()) {
--    if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
--      (out as any)[main] = (out as any)[alias];
-+  // Resolve explicit values before defaults so an alias can override a default.
-+  propagateAliases();
-+
++  // Apply defaults only when neither the option nor any alias was provided.
 +  for (const [name, value] of Object.entries(defaults)) {
-+    if ((out as any)[name] === undefined) {
++    const aliases = mainToAliases.get(name) || [];
++    if (
++      (out as any)[name] === undefined &&
++      aliases.every((alias) => (out as any)[alias] === undefined)
++    ) {
 +      (out as any)[name] = value;
-     }
--    if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
--      (out as any)[alias] = (out as any)[main];
++    }
 +  }
 +
-+  propagateAliases();
-+
-+  function propagateAliases() {
-+    for (const [alias, main] of aliasToMain.entries()) {
-+      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
-+        (out as any)[main] = (out as any)[alias];
-+      }
-+      if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
-+        (out as any)[alias] = (out as any)[main];
-+      }
-     }
-   }
- 
+   // Propagate values between aliases
+   for (const [alias, main] of aliasToMain.entries()) {
+     if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
 diff --git a/test/args.test.ts b/test/args.test.ts
-index 732572c..7c54d0d 100644
+index 732572c..5466a7d 100644
 --- a/test/args.test.ts
 +++ b/test/args.test.ts
-@@ -99,4 +99,33 @@ describe("args", () => {
+@@ -99,4 +99,27 @@ describe("args", () => {
      expect(parsed.userName).toBe("Jane");
      expect(parsed._).toEqual([]);
    });
 +
-+  it.each(["fooBar", "foo-bar"])(
-+    "should override defaults through either spelling of %s",
-+    (name) => {
++  it.each<ArgsDef[string]>([
++    { type: "enum", options: ["one", "two"], default: "two" },
++    { type: "string", default: "two" },
++    { type: "boolean", default: false },
++  ])("should override defaults through argument variants (%o)", (arg) => {
++    for (const name of ["fooBar", "foo-bar"]) {
++      const definition: ArgsDef = { [name]: { ...arg, alias: "f" } };
++      const value = arg.type === "boolean" ? true : "one";
++      for (const flag of ["--fooBar", "--foo-bar", "-f"]) {
++        const parsed = parseArgs(arg.type === "boolean" ? [flag] : [flag, "one"], definition);
++
++        expect(parsed).toEqual({ _: [], fooBar: value, "foo-bar": value, f: value });
++      }
++
++      expect(parseArgs([], definition)).toEqual({
++        _: [],
++        fooBar: arg.default,
++        "foo-bar": arg.default,
++        f: arg.default,
++      });
++    }
++  });
+ });
+```
+
+</details>
+
+<details><summary>reply</summary>
+
+I’ll check argument parsing, fix how defaults interact with kebab-case input, and add a regression test.
+
+Node’s parser applies the default before citty resolves aliases, so alias resolution sees `fooBar` as already set. I’ll apply defaults only when neither the argument nor an alias has an explicit value, with tests for enum, string, and boolean arguments.
+
+Fixed. Explicit kebab-case input now overrides the camelCase argument’s default and populates both `fooBar` and `"foo-bar"`.
+
+Added regression coverage for enums, strings, booleans, and aliases. All 66 tests pass, along with type, lint, and formatting checks.
+
+</details>
+
+### codex, muffle: pass
+
+Files: [src/_parser.ts](../muffle/codex/ts-citty-kebab-default-1/files/src/_parser.ts), [test/args.test.ts](../muffle/codex/ts-citty-kebab-default-1/files/test/args.test.ts), [test/parser.test.ts](../muffle/codex/ts-citty-kebab-default-1/files/test/parser.test.ts)
+
+<details><summary>diff</summary>
+
+```diff
+diff --git a/src/_parser.ts b/src/_parser.ts
+index 992c23d..ba6b11d 100644
+--- a/src/_parser.ts
++++ b/src/_parser.ts
+@@ -51,7 +51,6 @@ export function parseRawArgs<T = Record<string, any>>(
+     {
+       type: "boolean" | "string";
+       short?: string;
+-      default?: any;
+       multiple?: boolean;
+     }
+   > = {};
+@@ -82,7 +81,6 @@ export function parseRawArgs<T = Record<string, any>>(
+       const type = getType(name);
+       options[name] = {
+         type,
+-        default: defaults[name],
+       };
+     }
+   }
+@@ -162,6 +160,14 @@ export function parseRawArgs<T = Record<string, any>>(
+     }
+   }
+ 
++  // Apply defaults only when neither the option nor an alias was provided.
++  for (const [name, value] of Object.entries(defaults)) {
++    const names = [name, ...(mainToAliases.get(name) || [])];
++    if (names.every((key) => (out as any)[key] === undefined)) {
++      (out as any)[name] = value;
++    }
++  }
++
+   // Propagate values between aliases
+   for (const [alias, main] of aliasToMain.entries()) {
+     if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
+diff --git a/test/args.test.ts b/test/args.test.ts
+index 732572c..2f6225a 100644
+--- a/test/args.test.ts
++++ b/test/args.test.ts
+@@ -99,4 +99,37 @@ describe("args", () => {
+     expect(parsed.userName).toBe("Jane");
+     expect(parsed._).toEqual([]);
+   });
++
++  it.each(["string", "enum"] as const)(
++    "should override a camelCase %s default through any alias",
++    (type) => {
 +      const definition: ArgsDef = {
-+        [name]: { type: "enum", options: ["one", "two"], default: "two", alias: "f" },
++        fooBar: { type, options: ["one", "two"], default: "two", alias: "f" },
 +      };
 +
 +      for (const flag of ["--foo-bar", "--fooBar", "-f"]) {
-+        const parsed = parseArgs([flag, "one"], definition);
-+        expect(parsed).toEqual({ _: [], fooBar: "one", "foo-bar": "one", f: "one" });
++        expect(parseArgs([flag, "one"], definition)).toEqual({
++          _: [],
++          fooBar: "one",
++          "foo-bar": "one",
++          f: "one",
++        });
 +      }
 +
 +      expect(parseArgs([], definition)).toEqual({
@@ -538,182 +556,59 @@ index 732572c..7c54d0d 100644
 +    },
 +  );
 +
-+  it("should validate an enum value supplied through an alias over its default", () => {
++  it("should validate enum values supplied through kebab-case aliases", () => {
 +    expect(() =>
 +      parseArgs(["--foo-bar", "three"], {
 +        fooBar: { type: "enum", options: ["one", "two"], default: "two" },
 +      }),
-+    ).toThrow("Invalid value for argument: --fooBar (three).");
++    ).toThrow("Invalid value for argument: --fooBar (three)");
 +  });
  });
 diff --git a/test/parser.test.ts b/test/parser.test.ts
-index b1794c0..4d48c51 100644
+index b1794c0..e103d20 100644
 --- a/test/parser.test.ts
 +++ b/test/parser.test.ts
-@@ -24,6 +24,20 @@ describe("parseRawArgs", () => {
+@@ -34,6 +34,26 @@ describe("parseRawArgs", () => {
      });
    });
  
-+  it.each([
-+    { args: ["--foo-bar", ""], type: "string", fallback: "default", value: "" },
-+    { args: ["--foo-bar"], type: "boolean", fallback: false, value: true },
-+    { args: ["--no-foo-bar"], type: "boolean", fallback: true, value: false },
-+  ])("prefers explicit alias values over defaults: $args", ({ args, type, fallback, value }) => {
-+    const result = parseRawArgs(args, {
-+      [type]: ["fooBar"],
-+      alias: { fooBar: ["foo-bar"] },
-+      default: { fooBar: fallback },
++  it.each([true, false])("overrides a boolean default of %s through an alias", (value) => {
++    const result = parseRawArgs(["--enable-feature"], {
++      boolean: ["enableFeature"],
++      alias: { enableFeature: ["enable-feature"] },
++      default: { enableFeature: value },
 +    });
 +
-+    expect(result).toEqual({ _: [], fooBar: value, "foo-bar": value });
++    expect(result).toEqual({ _: [], enableFeature: true, "enable-feature": true });
 +  });
 +
-   it("handles aliases", () => {
-     const result = parseRawArgs(["-n", "John"], { alias: { n: ["name"] } });
++  it("overrides a kebab-case default through a camelCase alias", () => {
++    const result = parseRawArgs(["--fooBar", "one"], {
++      string: ["foo-bar"],
++      alias: { "foo-bar": ["fooBar"] },
++      default: { "foo-bar": "two" },
++    });
++
++    expect(result).toEqual({ _: [], "foo-bar": "one", fooBar: "one" });
++  });
++
+   it("handles boolean flags", () => {
+     const result = parseRawArgs(["--flag"], { boolean: ["flag"] });
 ```
 
 </details>
 
 <details><summary>reply</summary>
 
-I’ll check how defaults interact with argument aliases, fix the precedence issue, and add a regression test.
+I’ll check how defaults interact with kebab-case input, fix the precedence issue, and add a regression test.
 
-The parser applies defaults before resolving aliases, which leaves the default in `fooBar` even when `foo-bar` has an explicit value. The regression tests also show that this bypasses enum validation. I’ll resolve explicit values across aliases before applying defaults.
+Defaults are being applied before aliases are resolved, so the default blocks the value passed through `--foo-bar`. I’ve changed defaults to apply only when neither the argument nor an alias was supplied, and added regression coverage. I’ll run the checks using the installed tools; `pnpm` isn’t available here.
 
-Fixed: explicit CLI values now resolve across aliases before defaults are applied. `--foo-bar one` sets both `fooBar` and `"foo-bar"` to `"one"`.
+Fixed: `--foo-bar one` now overrides the `fooBar` default and sets both keys to `"one"`.
 
-Added regression coverage for both spellings, short aliases, enum validation, and boolean values.
+Defaults apply only when neither the argument nor an alias was supplied. Added regression tests covering enums, strings, booleans, aliases, and enum validation.
 
-All 69 tests, type checks, lint, and formatting checks pass.
-
-</details>
-
-### codex, muffle: pass
-
-Files: [src/_parser.ts](../muffle/codex/ts-citty-kebab-default-1/files/src/_parser.ts), [test/args.test.ts](../muffle/codex/ts-citty-kebab-default-1/files/test/args.test.ts)
-
-<details><summary>diff</summary>
-
-```diff
-diff --git a/src/_parser.ts b/src/_parser.ts
-index 992c23d..7bbdedb 100644
---- a/src/_parser.ts
-+++ b/src/_parser.ts
-@@ -51,7 +51,6 @@ export function parseRawArgs<T = Record<string, any>>(
-     {
-       type: "boolean" | "string";
-       short?: string;
--      default?: any;
-       multiple?: boolean;
-     }
-   > = {};
-@@ -82,7 +81,6 @@ export function parseRawArgs<T = Record<string, any>>(
-       const type = getType(name);
-       options[name] = {
-         type,
--        default: defaults[name],
-       };
-     }
-   }
-@@ -162,13 +160,25 @@ export function parseRawArgs<T = Record<string, any>>(
-     }
-   }
- 
--  // Propagate values between aliases
--  for (const [alias, main] of aliasToMain.entries()) {
--    if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
--      (out as any)[main] = (out as any)[alias];
-+  // Resolve explicit values before defaults so an alias can override a default.
-+  propagateAliases();
-+
-+  for (const [name, value] of Object.entries(defaults)) {
-+    if ((out as any)[name] === undefined) {
-+      (out as any)[name] = value;
-     }
--    if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
--      (out as any)[alias] = (out as any)[main];
-+  }
-+
-+  propagateAliases();
-+
-+  function propagateAliases() {
-+    for (const [alias, main] of aliasToMain.entries()) {
-+      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
-+        (out as any)[main] = (out as any)[alias];
-+      }
-+      if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
-+        (out as any)[alias] = (out as any)[main];
-+      }
-     }
-   }
- 
-diff --git a/test/args.test.ts b/test/args.test.ts
-index 732572c..cc1b25b 100644
---- a/test/args.test.ts
-+++ b/test/args.test.ts
-@@ -99,4 +99,47 @@ describe("args", () => {
-     expect(parsed.userName).toBe("Jane");
-     expect(parsed._).toEqual([]);
-   });
-+
-+  it.each(["--foo-bar", "--fooBar", "--value", "-f"])(
-+    "should override an enum default with %s",
-+    (flag) => {
-+      const parsed = parseArgs([flag, "one"], {
-+        fooBar: {
-+          type: "enum",
-+          options: ["one", "two"],
-+          default: "two",
-+          alias: ["value", "f"],
-+        },
-+      });
-+
-+      expect(parsed).toEqual({
-+        _: [],
-+        fooBar: "one",
-+        "foo-bar": "one",
-+        value: "one",
-+        f: "one",
-+      });
-+    },
-+  );
-+
-+  it.each(["fooBar", "foo-bar"])("should resolve defaults and input for %s", (name) => {
-+    const definition: ArgsDef = { [name]: { type: "string", default: "two" } };
-+    expect(parseArgs([], definition)).toEqual({ _: [], fooBar: "two", "foo-bar": "two" });
-+    expect(parseArgs(["--foo-bar", "one"], definition)).toEqual({
-+      _: [],
-+      fooBar: "one",
-+      "foo-bar": "one",
-+    });
-+  });
-+
-+  it.each([
-+    [false, "--foo-bar", true],
-+    [true, "--no-foo-bar", false],
-+  ] as const)("should override boolean default %s with %s", (value, flag, expected) => {
-+    expect(parseArgs([flag], { fooBar: { type: "boolean", default: value } })).toEqual({
-+      _: [],
-+      fooBar: expected,
-+      "foo-bar": expected,
-+    });
-+  });
- });
-```
-
-</details>
-
-<details><summary>reply</summary>
-
-I’ll check how argument names and defaults interact, fix the precedence issue, and add a regression test.
-
-The parser applies defaults before copying values between aliases, so the default blocks the value passed as `--foo-bar`. I’ll apply defaults after resolving explicit values and test both casing variants, declared aliases, and boolean defaults.
-
-Fixed default precedence: explicit CLI values now resolve across aliases before defaults are applied. `--foo-bar one` produces both `fooBar: "one"` and `"foo-bar": "one"`.
-
-Added regression coverage for casing variants, declared aliases, and boolean defaults.
-
-Validation passed: all 71 tests, type checking, lint, and formatting.
+All 69 tests pass, along with type, lint, and formatting checks.
 
 </details>
 
@@ -725,7 +620,7 @@ Files: [src/_parser.ts](../hush/codex/ts-citty-kebab-default-1/files/src/_parser
 
 ```diff
 diff --git a/src/_parser.ts b/src/_parser.ts
-index 992c23d..eea0fb3 100644
+index 992c23d..15ad4a3 100644
 --- a/src/_parser.ts
 +++ b/src/_parser.ts
 @@ -82,7 +82,6 @@ export function parseRawArgs<T = Record<string, any>>(
@@ -740,7 +635,7 @@ index 992c23d..eea0fb3 100644
      }
    }
  
-+  // Apply defaults only when neither the option nor its aliases were supplied.
++  // Apply defaults only when neither the option nor any alias was supplied.
 +  for (const [name, value] of Object.entries(defaults)) {
 +    const names = [name, ...(mainToAliases.get(name) || [])];
 +    if (names.every((key) => (out as any)[key] === undefined)) {
@@ -752,35 +647,32 @@ index 992c23d..eea0fb3 100644
    for (const [alias, main] of aliasToMain.entries()) {
      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
 diff --git a/test/args.test.ts b/test/args.test.ts
-index 732572c..8fc6f4b 100644
+index 732572c..b1e2d53 100644
 --- a/test/args.test.ts
 +++ b/test/args.test.ts
-@@ -3,6 +3,30 @@ import { parseArgs } from "../src/args.ts";
+@@ -3,6 +3,27 @@ import { parseArgs } from "../src/args.ts";
  import type { ArgsDef } from "../src/types.ts";
  
  describe("args", () => {
-+  it.each(["fooBar", "foo-bar", "f"])("lets --%s override an enum default", (name) => {
-+    const parsed = parseArgs([`--${name}`, "one"], {
-+      fooBar: { type: "enum", options: ["one", "two"], default: "two", alias: "f" },
-+    });
-+
-+    expect(parsed).toEqual({ _: [], fooBar: "one", "foo-bar": "one", f: "one" });
-+  });
-+
-+  it("propagates an omitted enum default to all aliases", () => {
-+    expect(
-+      parseArgs([], {
-+        fooBar: { type: "enum", options: ["one", "two"], default: "two", alias: "f" },
-+      }),
-+    ).toEqual({ _: [], fooBar: "two", "foo-bar": "two", f: "two" });
-+  });
-+
-+  it("validates an enum value supplied through a kebab-case alias", () => {
-+    expect(() =>
-+      parseArgs(["--foo-bar", "three"], {
-+        fooBar: { type: "enum", options: ["one", "two"], default: "two" },
-+      }),
-+    ).toThrow("Invalid value for argument: --fooBar (three).");
++  it.each<ArgsDef[string]>([
++    { type: "enum", options: ["one", "two"], default: "two" },
++    { type: "string", default: "two" },
++    { type: "boolean", default: false },
++  ])("lets case variants and aliases override defaults: %o", (arg) => {
++    for (const name of ["fooBar", "foo-bar"]) {
++      const definition: ArgsDef = { [name]: { ...arg, alias: "f" } };
++      const value = arg.type === "boolean" ? true : "one";
++      for (const flag of ["--fooBar", "--foo-bar", "-f"]) {
++        const parsed = parseArgs(arg.type === "boolean" ? [flag] : [flag, "one"], definition);
++        expect(parsed).toEqual({ _: [], fooBar: value, "foo-bar": value, f: value });
++      }
++      expect(parseArgs([], definition)).toEqual({
++        _: [],
++        fooBar: arg.default,
++        "foo-bar": arg.default,
++        f: arg.default,
++      });
++    }
 +  });
 +
    it.each([
@@ -793,7 +685,7 @@ index 732572c..8fc6f4b 100644
 <details><summary>reply</summary>
 
 Done.
-Aliases override defaults; added regression tests. All 68 tests, lint, formatting, type checks pass.
+Defaults now respect kebab-case input and aliases. Added regression coverage; 66 tests, type checks, lint, formatting passed.
 
 </details>
 
@@ -805,14 +697,14 @@ Files: [src/_parser.ts](../sloth/codex/ts-citty-kebab-default-1/files/src/_parse
 
 ```diff
 diff --git a/src/_parser.ts b/src/_parser.ts
-index 992c23d..d0015ed 100644
+index 992c23d..960e2d2 100644
 --- a/src/_parser.ts
 +++ b/src/_parser.ts
 @@ -11,6 +11,7 @@ export type Argv<T = Record<string, any>> = T & {
    _: string[];
  };
  
-+/** Parses CLI arguments, resolving aliases before falling back to defaults. */
++/** Parses CLI arguments, resolving aliases before applying defaults. */
  export function parseRawArgs<T = Record<string, any>>(
    args: string[] = [],
    opts: ParseOptions = {},
@@ -832,16 +724,13 @@ index 992c23d..d0015ed 100644
        };
      }
    }
-@@ -162,6 +161,16 @@ export function parseRawArgs<T = Record<string, any>>(
+@@ -162,6 +161,13 @@ export function parseRawArgs<T = Record<string, any>>(
      }
    }
  
 +  for (const [name, value] of Object.entries(defaults)) {
-+    const aliases = mainToAliases.get(name) || [];
-+    if (
-+      (out as any)[name] === undefined &&
-+      aliases.every((alias) => (out as any)[alias] === undefined)
-+    ) {
++    const names = [name, ...(mainToAliases.get(name) || [])];
++    if (names.every((key) => (out as any)[key] === undefined)) {
 +      (out as any)[name] = value;
 +    }
 +  }
@@ -850,48 +739,24 @@ index 992c23d..d0015ed 100644
    for (const [alias, main] of aliasToMain.entries()) {
      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
 diff --git a/test/args.test.ts b/test/args.test.ts
-index 732572c..7864da5 100644
+index 732572c..effcf62 100644
 --- a/test/args.test.ts
 +++ b/test/args.test.ts
-@@ -68,6 +68,11 @@ describe("args", () => {
-       { value: { type: "enum", options: ["one", "two"] } },
-       "Invalid value for argument: --value (three). Expected one of: one, two.",
-     ],
-+    [
-+      ["--foo-bar", "three"],
-+      { fooBar: { type: "enum", options: ["one", "two"], default: "two" } },
-+      "Invalid value for argument: --fooBar (three). Expected one of: one, two.",
-+    ],
-   ])("should throw error with %o (%o)", (rawArgs, definition, result) => {
-     // TODO: should check for exact match
-     // https://github.com/vitest-dev/vitest/discussions/6048
-@@ -99,4 +104,28 @@ describe("args", () => {
+@@ -99,4 +99,16 @@ describe("args", () => {
      expect(parsed.userName).toBe("Jane");
      expect(parsed._).toEqual([]);
    });
 +
-+  it.each<[string[], ArgsDef, string | boolean]>([
-+    [
-+      ["--foo-bar", "one"],
-+      { fooBar: { type: "enum", options: ["one", "two"], default: "two" } },
-+      "one",
-+    ],
-+    [
-+      ["--fooBar", "one"],
-+      { "foo-bar": { type: "enum", options: ["one", "two"], default: "two" } },
-+      "one",
-+    ],
-+    [[], { fooBar: { type: "enum", options: ["one", "two"], default: "two" } }, "two"],
-+    [["--foo-bar", ""], { fooBar: { type: "string", default: "two" } }, ""],
-+    [["--foo-bar"], { fooBar: { type: "boolean", default: false } }, true],
-+    [["--no-foo-bar"], { fooBar: { type: "boolean", default: true } }, false],
-+    [["-f", "one"], { fooBar: { type: "string", alias: "f", default: "two" } }, "one"],
-+  ])("should resolve aliases before defaults with %o (%o)", (rawArgs, definition, value) => {
-+    const parsed = parseArgs(rawArgs, definition);
++  it.each([
++    [[], "two"],
++    [["--foo-bar", "one"], "one"],
++    [["--fooBar", "one"], "one"],
++  ])("should resolve enum defaults with %o", (rawArgs, expected) => {
++    const parsed = parseArgs(rawArgs as string[], {
++      fooBar: { type: "enum", options: ["one", "two"], default: "two" },
++    });
 +
-+    expect(parsed.fooBar).toBe(value);
-+    expect(parsed["foo-bar"]).toBe(value);
-+    expect(parsed._).toEqual([]);
++    expect(parsed).toEqual({ _: [], fooBar: expected, "foo-bar": expected });
 +  });
  });
 ```
@@ -900,17 +765,15 @@ index 732572c..7864da5 100644
 
 <details><summary>reply</summary>
 
-I’ll check how aliases and defaults interact, fix the shared parser, and add a regression test for this case.
+I’ll check how argument aliases and defaults interact, add a regression test, and run the build and relevant tests.
 
-The parser applies defaults before it resolves aliases, so the default blocks the value supplied through `--foo-bar`. I’ll defer defaults until explicit values and negated flags are known.
+Defaults are being applied before aliases are resolved, so the default blocks the supplied value. I’ve moved default handling later and added tests for both spellings and omitted input. `pnpm` isn’t available here, so I’ll use the installed build and test executables.
 
-The change belongs in `src/_parser.ts`, with coverage in the existing argument tests. I checked the command caller, exports, and types; they need no changes. No new options or dependencies are needed.
+Fixed default handling in the shared parser. `--foo-bar one` now sets both `fooBar` and `"foo-bar"` to `"one"`.
 
-Fixed the shared parser so `--foo-bar one` overrides the default and sets both `fooBar` and `"foo-bar"` to `"one"`.
+Build and all 31 relevant tests passed, including regressions for both spellings and omitted input.
 
-Added regression coverage for aliases, omitted values, empty strings, booleans, and enum validation.
-
-All 71 tests, lint, formatting, type checks, and build passed. Used local tools directly because `pnpm` wasn’t installed.
+No new options or dependencies. Full suite and lint were not run.
 
 </details>
 
@@ -922,18 +785,10 @@ Files: [src/_parser.ts](../all/codex/ts-citty-kebab-default-1/files/src/_parser.
 
 ```diff
 diff --git a/src/_parser.ts b/src/_parser.ts
-index 992c23d..5b6466c 100644
+index 992c23d..eb6785d 100644
 --- a/src/_parser.ts
 +++ b/src/_parser.ts
-@@ -11,6 +11,7 @@ export type Argv<T = Record<string, any>> = T & {
-   _: string[];
- };
- 
-+/** Parse CLI arguments, resolving aliases before applying defaults. */
- export function parseRawArgs<T = Record<string, any>>(
-   args: string[] = [],
-   opts: ParseOptions = {},
-@@ -51,7 +52,6 @@ export function parseRawArgs<T = Record<string, any>>(
+@@ -51,7 +51,6 @@ export function parseRawArgs<T = Record<string, any>>(
      {
        type: "boolean" | "string";
        short?: string;
@@ -941,7 +796,7 @@ index 992c23d..5b6466c 100644
        multiple?: boolean;
      }
    > = {};
-@@ -82,7 +82,6 @@ export function parseRawArgs<T = Record<string, any>>(
+@@ -82,7 +81,6 @@ export function parseRawArgs<T = Record<string, any>>(
        const type = getType(name);
        options[name] = {
          type,
@@ -949,8 +804,8 @@ index 992c23d..5b6466c 100644
        };
      }
    }
-@@ -162,6 +161,16 @@ export function parseRawArgs<T = Record<string, any>>(
-     }
+@@ -142,6 +140,16 @@ export function parseRawArgs<T = Record<string, any>>(
+     (out as any)[key] = value;
    }
  
 +  for (const [name, value] of Object.entries(defaults)) {
@@ -963,36 +818,32 @@ index 992c23d..5b6466c 100644
 +    }
 +  }
 +
-   // Propagate values between aliases
-   for (const [alias, main] of aliasToMain.entries()) {
-     if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
+   // Apply negated flags (with alias resolution)
+   for (const [name] of Object.entries(negatedFlags)) {
+     // Set the flag itself
 diff --git a/test/args.test.ts b/test/args.test.ts
-index 732572c..50cfaf0 100644
+index 732572c..79668ca 100644
 --- a/test/args.test.ts
 +++ b/test/args.test.ts
-@@ -76,6 +76,22 @@ describe("args", () => {
-     }).toThrowError(result);
-   });
+@@ -3,6 +3,18 @@ import { parseArgs } from "../src/args.ts";
+ import type { ArgsDef } from "../src/types.ts";
  
-+  it.each<[string[], ArgsDef[string], string | boolean]>([
-+    [[], { type: "enum", options: ["one", "two"], default: "two" }, "two"],
-+    [["--foo-bar", "one"], { type: "enum", options: ["one", "two"], default: "two" }, "one"],
-+    [["--fooBar", "one"], { type: "enum", options: ["one", "two"], default: "two" }, "one"],
-+    [["-f", "one"], { type: "enum", options: ["one", "two"], default: "two", alias: "f" }, "one"],
-+    [["--foo-bar", ""], { type: "string", default: "two" }, ""],
-+    [["--foo-bar"], { type: "boolean", default: false }, true],
-+    [["--no-foo-bar"], { type: "boolean", default: true }, false],
-+  ])("should override defaults through aliases with %o (%o)", (rawArgs, arg, expected) => {
-+    const parsed = parseArgs(rawArgs, { fooBar: arg });
+ describe("args", () => {
++  it.each([
++    [[], "two"],
++    [["--foo-bar", "one"], "one"],
++    [["--fooBar", "one"], "one"],
++  ] as [string[], string][])("resolves enum defaults with %o", (rawArgs, value) => {
++    const parsed = parseArgs(rawArgs, {
++      fooBar: { type: "enum", options: ["one", "two"], default: "two" },
++    });
 +
-+    expect(parsed.fooBar).toBe(expected);
-+    expect(parsed["foo-bar"]).toBe(expected);
-+    expect(parsed._).toEqual([]);
++    expect(parsed).toEqual({ _: [], fooBar: value, "foo-bar": value });
 +  });
 +
-   it("should resolve camelCase argument", () => {
-     const definition: ArgsDef = {
-       "user-name": { type: "string" },
+   it.each([
+     [[], {}, { _: [] }],
+     /**
 ```
 
 </details>
@@ -1000,6 +851,6 @@ index 732572c..50cfaf0 100644
 <details><summary>reply</summary>
 
 Done.
-Kebab-case input now overrides camelCase defaults; both keys match. Added regression tests. All 70 tests, type checks, lint, formatting, build passed.
+Kebab-case input now overrides camelCase defaults; both keys agree. Build, lint, types, 66 tests passed. Node v24 not checked.
 
 </details>

@@ -1,0 +1,366 @@
+diff --git a/src/client.rs b/src/client.rs
+index 0c3415c..ffb810a 100644
+--- a/src/client.rs
++++ b/src/client.rs
+@@ -1477,6 +1477,20 @@ impl Future for ResponseFuture {
+ }
+ 
+ impl ResponseFuture {
++    /// Poll for the next informational response, preserving receive order.
++    ///
++    /// Returns `Pending` until headers arrive and `None` once the final response
++    /// arrives or the stream closes. Awaiting this future returns only the final
++    /// response and discards any unconsumed informational responses.
++    pub fn poll_informational(
++        &mut self,
++        cx: &mut Context<'_>,
++    ) -> Poll<Option<Result<Response<()>, crate::Error>>> {
++        self.inner
++            .poll_informational(cx)
++            .map(|result| result.map(|response| response.map_err(Into::into)))
++    }
++
+     /// Returns the stream ID of the response stream.
+     ///
+     /// # Panics
+diff --git a/src/codec/error.rs b/src/codec/error.rs
+index 0acb913..9c637b7 100644
+--- a/src/codec/error.rs
++++ b/src/codec/error.rs
+@@ -15,6 +15,9 @@ pub enum UserError {
+     /// The stream ID is no longer accepting frames.
+     InactiveStreamId,
+ 
++    /// An informational response requires a 1xx status.
++    InvalidInformationalStatusCode,
++
+     /// The stream is not currently expecting a frame of this type.
+     UnexpectedFrameType,
+ 
+@@ -86,6 +89,7 @@ impl fmt::Display for UserError {
+ 
+         fmt.write_str(match *self {
+             InactiveStreamId => "inactive stream",
++            InvalidInformationalStatusCode => "invalid informational status code",
+             UnexpectedFrameType => "unexpected frame type",
+             PayloadTooBig => "payload too big",
+             Rejected => "rejected",
+diff --git a/src/proto/streams/recv.rs b/src/proto/streams/recv.rs
+index d49ec38..493cef2 100644
+--- a/src/proto/streams/recv.rs
++++ b/src/proto/streams/recv.rs
+@@ -171,7 +171,7 @@ impl Recv {
+             counts.inc_num_recv_streams(stream);
+         }
+ 
+-        if !stream.content_length.is_head() {
++        if !frame.is_informational() && !stream.content_length.is_head() {
+             use super::stream::ContentLength;
+             use http::header;
+ 
+@@ -246,7 +246,16 @@ impl Recv {
+             return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
+         }
+ 
+-        if !pseudo.is_informational() {
++        if pseudo.is_informational() {
++            let message = counts
++                .peer()
++                .convert_poll_message(pseudo, fields, stream_id)?;
++            if let super::peer::PollMessage::Client(response) = message {
++                stream.informational.push_back(response);
++                stream.notify_recv();
++            }
++        } else {
++            stream.informational_done = true;
+             let message = counts
+                 .peer()
+                 .convert_poll_message(pseudo, fields, stream_id)?;
+@@ -316,6 +325,30 @@ impl Recv {
+         }
+     }
+ 
++    pub fn poll_informational(
++        &mut self,
++        cx: &Context,
++        stream: &mut store::Ptr,
++    ) -> Poll<Option<Result<Response<()>, proto::Error>>> {
++        if let Some(response) = stream.informational.pop_front() {
++            return Poll::Ready(Some(Ok(response)));
++        }
++        if stream.informational_done {
++            return Poll::Ready(None);
++        }
++        match stream.state.ensure_recv_open() {
++            Ok(true) => {
++                stream.informational_task = Some(cx.waker().clone());
++                Poll::Pending
++            }
++            Ok(false) => Poll::Ready(None),
++            Err(error) => {
++                stream.informational_done = true;
++                Poll::Ready(Some(Err(error)))
++            }
++        }
++    }
++
+     /// Called by the client to get the response
+     pub fn poll_response(
+         &mut self,
+@@ -327,7 +360,10 @@ impl Recv {
+         // If the buffer is not empty, then the first frame must be a HEADERS
+         // frame or the user violated the contract.
+         match stream.pending_recv.pop_front(&mut self.buffer) {
+-            Some(Event::Headers(Client(response))) => Poll::Ready(Ok(response)),
++            Some(Event::Headers(Client(response))) => {
++                stream.informational.clear();
++                Poll::Ready(Ok(response))
++            }
+             Some(_) => panic!("poll_response called after response returned"),
+             None => {
+                 if !stream.state.ensure_recv_open()? {
+diff --git a/src/proto/streams/send.rs b/src/proto/streams/send.rs
+index 6edb6b0..e4ea6cf 100644
+--- a/src/proto/streams/send.rs
++++ b/src/proto/streams/send.rs
+@@ -141,7 +141,11 @@ impl Send {
+         let end_stream = frame.is_end_stream();
+ 
+         // Update the state
+-        stream.state.send_open(end_stream)?;
++        if frame.is_informational() {
++            stream.state.send_informational()?;
++        } else {
++            stream.state.send_open(end_stream)?;
++        }
+ 
+         let mut pending_open = false;
+         if counts.peer().is_local_init(frame.stream_id()) && !stream.is_pending_push {
+diff --git a/src/proto/streams/state.rs b/src/proto/streams/state.rs
+index c9e709a..6a21802 100644
+--- a/src/proto/streams/state.rs
++++ b/src/proto/streams/state.rs
+@@ -129,6 +129,19 @@ impl State {
+         Ok(())
+     }
+ 
++    /// Validate sending informational headers without changing stream state.
++    pub fn send_informational(&self) -> Result<(), UserError> {
++        match self.inner {
++            Open {
++                local: AwaitingHeaders,
++                ..
++            }
++            | HalfClosedRemote(AwaitingHeaders)
++            | ReservedLocal => Ok(()),
++            _ => Err(UserError::UnexpectedFrameType),
++        }
++    }
++
+     /// Opens the receive-half of the stream when a HEADERS frame is received.
+     ///
+     /// Returns true if this transitions the state to Open.
+diff --git a/src/proto/streams/stream.rs b/src/proto/streams/stream.rs
+index f522f5d..981a32c 100644
+--- a/src/proto/streams/stream.rs
++++ b/src/proto/streams/stream.rs
+@@ -100,6 +100,10 @@ pub(super) struct Stream {
+     /// Frames pending for this stream to read
+     pub pending_recv: buffer::Deque,
+ 
++    pub informational: std::collections::VecDeque<http::Response<()>>,
++    pub informational_done: bool,
++    pub informational_task: Option<Waker>,
++
+     /// When the RecvStream drop occurs, no data should be received.
+     pub is_recv: bool,
+ 
+@@ -189,6 +193,9 @@ impl Stream {
+             reset_at: None,
+             next_reset_expire: None,
+             pending_recv: buffer::Deque::new(),
++            informational: std::collections::VecDeque::new(),
++            informational_done: false,
++            informational_task: None,
+             is_recv: true,
+             recv_task: None,
+             push_task: None,
+@@ -371,6 +378,9 @@ impl Stream {
+     }
+ 
+     pub fn notify_recv(&mut self) {
++        if let Some(task) = self.informational_task.take() {
++            task.wake();
++        }
+         if let Some(task) = self.recv_task.take() {
+             task.wake();
+         }
+diff --git a/src/proto/streams/streams.rs b/src/proto/streams/streams.rs
+index af177ff..ded8aab 100644
+--- a/src/proto/streams/streams.rs
++++ b/src/proto/streams/streams.rs
+@@ -1150,6 +1150,13 @@ impl<B> StreamRef<B> {
+         }
+     }
+ 
++    pub fn send_informational(&mut self, response: Response<()>) -> Result<(), UserError> {
++        if !response.status().is_informational() {
++            return Err(UserError::InvalidInformationalStatusCode);
++        }
++        self.send_response(response, false)
++    }
++
+     pub fn send_response(
+         &mut self,
+         mut response: Response<()>,
+@@ -1334,6 +1341,16 @@ impl OpaqueStreamRef {
+ 
+         me.actions.recv.poll_response(cx, &mut stream)
+     }
++    pub fn poll_informational(
++        &mut self,
++        cx: &Context,
++    ) -> Poll<Option<Result<Response<()>, proto::Error>>> {
++        let mut me = self.inner.lock().unwrap();
++        let me = &mut *me;
++        let mut stream = me.store.resolve(self.key);
++        me.actions.recv.poll_informational(cx, &mut stream)
++    }
++
+     /// Called by a client to check for a pushed request.
+     pub fn poll_pushed(
+         &mut self,
+diff --git a/src/server.rs b/src/server.rs
+index 3ce3eb4..5a2cc6b 100644
+--- a/src/server.rs
++++ b/src/server.rs
+@@ -1102,6 +1102,14 @@ impl Default for Builder {
+ // ===== impl SendResponse =====
+ 
+ impl<B: Buf> SendResponse<B> {
++    /// Send a 1xx response before the final response.
++    ///
++    /// May be called repeatedly before `send_response`. The response must have
++    /// an informational status code. This does not close the stream.
++    pub fn send_informational(&mut self, response: Response<()>) -> Result<(), crate::Error> {
++        self.inner.send_informational(response).map_err(Into::into)
++    }
++
+     /// Send a response to a client request.
+     ///
+     /// On success, a [`SendStream`] instance is returned. This instance can be
+diff --git a/tests/informational.rs b/tests/informational.rs
+new file mode 100644
+index 0000000..c39124a
+--- /dev/null
++++ b/tests/informational.rs
+@@ -0,0 +1,109 @@
++use http::{Request, Response};
++use std::future::poll_fn;
++use std::task::Poll;
++
++async fn exchange(consume: bool) {
++    let (client_io, server_io) = tokio::io::duplex(4096);
++    let server = tokio::spawn(async move {
++        let mut connection = h2::server::handshake(server_io).await.unwrap();
++        let (_, mut respond) = connection.accept().await.unwrap().unwrap();
++        let invalid = respond.send_informational(Response::new(())).unwrap_err();
++        assert!(invalid
++            .to_string()
++            .contains("invalid informational status code"));
++        for status in [100, 103] {
++            respond
++                .send_informational(
++                    Response::builder()
++                        .status(status)
++                        .header("x-hint", status.to_string())
++                        .body(())
++                        .unwrap(),
++                )
++                .unwrap();
++        }
++        respond.send_response(Response::new(()), true).unwrap();
++        assert!(respond
++            .send_informational(Response::builder().status(103).body(()).unwrap())
++            .is_err());
++        while connection.accept().await.is_some() {}
++    });
++    let (mut client, connection) = h2::client::handshake(client_io).await.unwrap();
++    let driver = tokio::spawn(connection);
++    let (mut response, _) = client
++        .send_request(
++            Request::builder()
++                .uri("https://example.com/")
++                .body(())
++                .unwrap(),
++            true,
++        )
++        .unwrap();
++    // No response has been driven yet, so informational polling must register a waker.
++    poll_fn(|cx| {
++        assert!(response.poll_informational(cx).is_pending());
++        Poll::Ready(())
++    })
++    .await;
++    if consume {
++        for status in [100, 103] {
++            let hint = poll_fn(|cx| response.poll_informational(cx))
++                .await
++                .unwrap()
++                .unwrap();
++            assert_eq!(hint.status().as_u16(), status);
++            assert_eq!(hint.headers()["x-hint"], status.to_string());
++        }
++        assert!(poll_fn(|cx| response.poll_informational(cx))
++            .await
++            .is_none());
++    }
++    assert_eq!(response.await.unwrap().status(), 200);
++    drop(client);
++    driver.await.unwrap().unwrap();
++    server.await.unwrap();
++}
++
++#[tokio::test]
++async fn informational_responses_are_ordered() {
++    exchange(true).await;
++}
++
++#[tokio::test]
++async fn unconsumed_informational_responses_do_not_replace_final_response() {
++    exchange(false).await;
++}
++
++#[tokio::test]
++async fn informational_poll_reports_reset_then_ends() {
++    let (client_io, server_io) = tokio::io::duplex(4096);
++    let server = tokio::spawn(async move {
++        let mut connection = h2::server::handshake(server_io).await.unwrap();
++        let (_, mut respond) = connection.accept().await.unwrap().unwrap();
++        respond.send_reset(h2::Reason::CANCEL);
++        while connection.accept().await.is_some() {}
++    });
++    let (mut client, connection) = h2::client::handshake(client_io).await.unwrap();
++    let driver = tokio::spawn(connection);
++    let (mut response, _) = client
++        .send_request(
++            Request::builder()
++                .uri("https://example.com/")
++                .body(())
++                .unwrap(),
++            true,
++        )
++        .unwrap();
++    let error = poll_fn(|cx| response.poll_informational(cx))
++        .await
++        .unwrap()
++        .unwrap_err();
++    assert_eq!(error.reason(), Some(h2::Reason::CANCEL));
++    assert!(poll_fn(|cx| response.poll_informational(cx))
++        .await
++        .is_none());
++    assert!(response.await.is_err());
++    drop(client);
++    driver.await.unwrap().unwrap();
++    server.await.unwrap();
++}

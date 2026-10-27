@@ -75,12 +75,11 @@ export function resolveAlias(path: string, aliases: Record<string, string>) {
 }
 
 /**
- * Finds every aliased form of a path, the reverse of `resolveAlias`.
- * Aliases only match on a path separator boundary or the whole path.
+ * Finds every aliased form of a real path, the reverse of `resolveAlias`.
  *
- * @param path - The real path to find aliased forms of.
+ * @param path - The real path string to find aliases for.
  * @param aliases - A set of alias mappings to use for matching.
- * @returns the aliased paths, longest first, or an empty array if no alias matches.
+ * @returns the aliased paths, longest first, or an empty array if none match.
  */
 export function reverseResolveAlias(
   path: string,
@@ -96,11 +95,13 @@ export function reverseResolveAlias(
       continue;
     }
     const rest = _path.slice(target.length);
-    if (rest && !hasTrailingSlash(rest[0])) {
-      continue;
+    if (rest === "") {
+      matches.push(alias);
+    } else if (rest[0] === "/") {
+      matches.push(
+        (hasTrailingSlash(alias) ? alias.slice(0, -1) : alias) + rest,
+      );
     }
-    const _alias = hasTrailingSlash(alias) ? alias.slice(0, -1) : alias;
-    matches.push(rest ? _alias + rest : alias);
   }
   return matches.sort((a, b) => b.length - a.length);
 }

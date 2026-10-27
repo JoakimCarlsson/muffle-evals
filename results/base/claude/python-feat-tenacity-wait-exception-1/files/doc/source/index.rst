@@ -198,16 +198,15 @@ increasing jitter helps minimise collisions.
         raise Exception
 
 
-The wait time can also depend on the exception raised by the last attempt.
+To choose the wait time from the exception raised by the last attempt, use
+`wait_exception`, which passes that exception to a function returning the
+number of seconds to wait.
 
 .. testcode::
 
-    def wait_for_error(exception):
-        return 5.0 if isinstance(exception, ConnectionError) else 60.0
-
-    @retry(wait=wait_exception(wait_for_error))
-    def wait_depending_on_exception():
-        raise ConnectionError
+    @retry(wait=wait_exception(lambda e: 5.0 if isinstance(e, TimeoutError) else 60.0))
+    def wait_depends_on_exception():
+        raise Exception
 
 Sometimes it's necessary to build a chain of backoffs.
 

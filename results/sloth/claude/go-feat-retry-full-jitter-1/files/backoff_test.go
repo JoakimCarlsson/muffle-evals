@@ -119,52 +119,6 @@ func ExampleWithJitter() {
 	}
 }
 
-func TestWithFullJitter(t *testing.T) {
-	t.Parallel()
-
-	for range 100_000 {
-		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-			return 1 * time.Second, false
-		}))
-		val, stop := b.Next()
-		if stop {
-			t.Errorf("should not stop")
-		}
-
-		if val < 0 || val >= 1*time.Second {
-			t.Errorf("expected %v to be in [0, 1s)", val)
-		}
-	}
-}
-
-func TestWithFullJitter_Stop(t *testing.T) {
-	t.Parallel()
-
-	b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-		return 1 * time.Second, true
-	}))
-	if _, stop := b.Next(); !stop {
-		t.Errorf("expected stop")
-	}
-}
-
-func TestWithFullJitter_NonPositive(t *testing.T) {
-	t.Parallel()
-
-	for _, base := range []time.Duration{0, -1 * time.Second} {
-		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-			return base, false
-		}))
-		val, stop := b.Next()
-		if stop {
-			t.Errorf("should not stop")
-		}
-		if val != base {
-			t.Errorf("expected %v, got %v", base, val)
-		}
-	}
-}
-
 func TestWithJitterPercent(t *testing.T) {
 	t.Parallel()
 
@@ -383,6 +337,62 @@ func ExampleWithMaxDuration() {
 
 	if err := retry.Do(ctx, b, func(_ context.Context) error {
 		// TODO: logic here
+		return nil
+	}); err != nil {
+		// handle error
+	}
+}
+
+func TestWithFullJitter(t *testing.T) {
+	t.Parallel()
+
+	for range 100_000 {
+		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
+			return 1 * time.Second, false
+		}))
+		val, stop := b.Next()
+		if stop {
+			t.Errorf("should not stop")
+		}
+
+		if val < 0 || val >= 1*time.Second {
+			t.Errorf("expected %v to be in [0, 1s)", val)
+		}
+	}
+}
+
+func TestWithFullJitter_Stop(t *testing.T) {
+	t.Parallel()
+
+	b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
+		return 1 * time.Second, true
+	}))
+	if val, stop := b.Next(); !stop || val != 0 {
+		t.Errorf("expected stop with 0, got %v, %v", val, stop)
+	}
+}
+
+func TestWithFullJitter_NonPositive(t *testing.T) {
+	t.Parallel()
+
+	for _, base := range []time.Duration{0, -1 * time.Second} {
+		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
+			return base, false
+		}))
+		if val, stop := b.Next(); stop || val != base {
+			t.Errorf("expected %v, got %v (stop=%v)", base, val, stop)
+		}
+	}
+}
+
+func ExampleWithFullJitter() {
+	ctx := context.Background()
+
+	b := retry.NewFibonacci(1 * time.Second)
+	b = retry.WithFullJitter(b)
+
+	if err := retry.Do(ctx, b, func(ctx context.Context) error {
+		// Actual retry logic here
 		return nil
 	}); err != nil {
 		// handle error

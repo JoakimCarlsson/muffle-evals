@@ -328,7 +328,7 @@ function hasBase(input: string, base: string): boolean {
     return false;
   }
   const next = input[base.length];
-  return !next || next === "/" || next === "?" || next === "#";
+  return next === undefined || next === "/" || next === "?" || next === "#";
 }
 
 /**

@@ -33,45 +33,27 @@ index 8d4407c..2332b2a 100644
  <sc:space    #fragment> set hash to <>
  <data:space  ?query#fragment> set hash to <>
 diff --git a/url/tests/unit.rs b/url/tests/unit.rs
-index 828f797..17421ed 100644
+index 828f797..e10787b 100644
 --- a/url/tests/unit.rs
 +++ b/url/tests/unit.rs
-@@ -249,6 +249,38 @@ fn new_directory_paths() {
-     }
+@@ -60,6 +60,20 @@ fn test_relative() {
+     assert_eq!(url.as_str(), "sc://%C3%B1/resources/testharness.js");
  }
  
-+/// Carets are encoded in hierarchical paths through parsing and mutation.
++/// Carets are percent-encoded by parsing and path setters.
 +#[test]
-+fn test_path_caret_percent_encoding() {
-+    for base in &["http://localhost/", "foo://localhost/", "file:///"] {
-+        for (path, expected) in &[
-+            ("", ""),
-+            ("a^b", "a%5Eb"),
-+            ("^", "%5E"),
-+            ("^a^", "%5Ea%5E"),
-+            ("a%5Eb", "a%5Eb"),
-+        ] {
-+            let expected_url = format!("{}{}", base, expected);
-+            let mut url = Url::parse(&format!("{}{}", base, path)).unwrap();
-+            assert_eq!(url.as_str(), expected_url);
-+            assert_eq!(
-+                Url::parse(base).unwrap().join(path).unwrap().as_str(),
-+                expected_url
-+            );
-+            url.set_path(&format!("/{}", path));
-+            assert_eq!(url.as_str(), expected_url);
-+        }
-+
-+        let mut url = Url::parse(base).unwrap();
-+        url.path_segments_mut().unwrap().push("a^b");
-+        assert_eq!(url.as_str(), format!("{}a%5Eb", base));
++fn test_path_caret() {
++    for scheme in &["http", "sc"] {
++        let mut url = Url::parse(&format!("{}://localhost/a^b", scheme)).unwrap();
++        assert_eq!(url.as_str(), format!("{}://localhost/a%5Eb", scheme));
++        assert_eq!(url.join("c^d").unwrap().path(), "/c%5Ed");
++        url.set_path("e^f");
++        assert_eq!(url.path(), "/e%5Ef");
++        url.path_segments_mut().unwrap().push("g^h");
++        assert_eq!(url.path(), "/e%5Ef/g%5Eh");
 +    }
-+
-+    let url = Url::parse("http://localhost/a^b?^#^").unwrap();
-+    assert_eq!(url.as_str(), "http://localhost/a%5Eb?^#^");
-+    assert_eq!(Url::parse("data:a^b").unwrap().as_str(), "data:a^b");
 +}
 +
  #[test]
- fn path_backslash_fun() {
-     let mut special_url = "http://foobar.com".parse::<Url>().unwrap();
+ fn test_relative_empty() {
+     let base: Url = "sc://%C3%B1".parse().unwrap();

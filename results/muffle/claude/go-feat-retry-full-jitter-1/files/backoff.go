@@ -68,9 +68,9 @@ func WithJitterPercent(j uint64, next Backoff) Backoff {
 }
 
 // WithFullJitter wraps a backoff function and returns a random duration between
-// 0 (inclusive) and the backoff value (exclusive), as described in the AWS
-// "Exponential Backoff And Jitter" article. A zero or negative backoff value is
-// returned unchanged.
+// 0 (inclusive) and the base value (exclusive), as described in the AWS
+// "Exponential Backoff and Jitter" article. A base value that is zero or
+// negative is returned unchanged.
 func WithFullJitter(next Backoff) Backoff {
 	return BackoffFunc(func() (time.Duration, bool) {
 		val, stop := next.Next()

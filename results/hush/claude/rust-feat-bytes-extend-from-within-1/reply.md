@@ -1,1 +1,0 @@
-Done. Added `BytesMut::extend_from_within` in `src/bytes_mut.rs`, with a doc example and two tests in `tests/test_bytes.rs`. It panics on a bad range, and the new tests and doctest pass. I ran only those, not the full suite.

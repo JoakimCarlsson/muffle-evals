@@ -165,8 +165,8 @@ func (k *contextKey) String() string {
 	return "chi context value " + k.name
 }
 
-// addAllowedMethod records m as allowed for a 405, skipping duplicates.
-func (x *Context) addAllowedMethod(m methodTyp) {
+// addMethodAllowed records a method for the 405 Allow header, skipping duplicates.
+func (x *Context) addMethodAllowed(m methodTyp) {
 	for _, have := range x.methodsAllowed {
 		if have == m {
 			return

@@ -76,11 +76,11 @@ export function resolveAlias(path: string, aliases: Record<string, string>) {
 
 /**
  * Finds every aliased form of a real path, the opposite of `resolveAlias`.
- * Aliases only match on a path separator boundary or the whole path.
+ * An alias target only matches on a path separator boundary or the whole path.
  *
- * @param path - The real path to find aliased forms of.
- * @param aliases - A set of alias mappings to use for lookup.
- * @returns the aliased paths, sorted longest first. Empty if no alias matches.
+ * @param path - The real path to find aliases for.
+ * @param aliases - A set of alias mappings to use for resolution.
+ * @returns the aliased paths, longest first, or an empty array if none match.
  */
 export function reverseResolveAlias(
   path: string,
@@ -88,26 +88,24 @@ export function reverseResolveAlias(
 ): string[] {
   const _path = normalizeWindowsPath(path);
   aliases = normalizeAliases(aliases);
-  const matches = new Set<string>();
+  const matches: string[] = [];
   for (const [alias, to] of Object.entries(aliases)) {
-    let base = normalizeWindowsPath(to);
-    while (hasTrailingSlash(base) && base.length > 0) {
-      base = base.slice(0, -1);
-    }
-    if (!_path.startsWith(base)) {
+    // Strip trailing slashes so "/src/" and "/src" behave the same
+    const _to = normalizeWindowsPath(to).replace(/\/+$/, "");
+    if (!_path.startsWith(_to)) {
       continue;
     }
-    const rest = _path.slice(base.length);
-    if (rest !== "" && !hasTrailingSlash(rest[0])) {
-      continue;
-    }
-    if (hasTrailingSlash(alias)) {
-      matches.add(alias + rest.slice(1));
-    } else {
-      matches.add(alias + rest);
+
+    const rest = _path.slice(_to.length);
+    if (rest === "") {
+      matches.push(alias);
+    } else if (rest[0] === "/") {
+      matches.push(
+        (hasTrailingSlash(alias) ? alias.slice(0, -1) : alias) + rest,
+      );
     }
   }
-  return [...matches].sort((a, b) => b.length - a.length);
+  return matches.sort((a, b) => b.length - a.length);
 }
 
 /**

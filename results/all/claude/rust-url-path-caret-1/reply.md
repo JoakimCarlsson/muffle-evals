@@ -1,3 +1,7 @@
-Remove now-redundant `.add(b'^')` in USERINFO (harmless; leave). Add test.
+Backtick was already in FRAGMENT; revert that redundancy and add a test.
 
-Done. Added `^` to `PATH` in `url/src/parser.rs:23`. Added `path_percent_encodes_caret` test and removed 3 now-passing entries from `tests/expected_failures.txt`. `cargo test` in `url/` passes.
+Unexpected successes are expected-failure entries that now pass; update that list.
+
+I deleted a wrong line (second sed shifted). Restore it.
+
+Done. `^` added to `PATH` in `url/src/parser.rs`; `a^b` now gives `a%5Eb`. Added a test, removed 3 now-passing entries from `expected_failures.txt`; all tests pass.

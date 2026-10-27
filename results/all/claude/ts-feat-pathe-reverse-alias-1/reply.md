@@ -1,1 +1,1 @@
-Done. `reverseResolveAlias` is added in `src/utils.ts` after `resolveAlias`, with tests in `test/utils.spec.ts`. Vitest passes (366 tests), and all your examples are covered. I didn't get a type check: `npx tsc` didn't run. I didn't touch the README.
+Done. `reverseResolveAlias` added in `src/utils.ts`, with tests covering all five examples, a separator-boundary case and a Windows path; vitest passes. `tsc` didn't run (npx printed a notice instead). README not updated.

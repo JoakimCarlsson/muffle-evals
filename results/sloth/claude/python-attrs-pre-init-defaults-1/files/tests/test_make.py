@@ -660,6 +660,22 @@ class TestAttributes:
         assert 11 == getattr(c, "z", None)
 
     @pytest.mark.usefixtures("with_and_without_validation")
+    def test_pre_init_args_with_defaults(self):
+        """
+        Verify that __attrs_pre_init__ gets the passed values, not the
+        defaults, for arguments that have defaults.
+        """
+
+        @attr.s
+        class C:
+            x = attr.ib(default=1)
+            y = attr.ib(factory=dict)
+
+            def __attrs_pre_init__(self2, x, y):
+                self2.seen = (x, y)
+
+        assert (2, {"a": 1}) == C(2, {"a": 1}).seen
+
     def test_pre_init_kwargs(self):
         """
         Verify that __attrs_pre_init__ gets called with extra args and kwargs
@@ -714,28 +730,6 @@ class TestAttributes:
         inst = KWOnlyAndDefault()
 
         assert 3 == val == inst.kw_and_default
-
-    @pytest.mark.usefixtures("with_and_without_validation")
-    def test_pre_init_passes_given_values_not_defaults(self):
-        """
-        Positional fields with defaults or factories get the values passed to
-        __init__ in __attrs_pre_init__, not their defaults.
-        """
-        seen = None
-
-        @attr.define
-        class C:
-            a: int
-            b: int = 100
-            c: dict = attr.field(factory=dict)
-
-            def __attrs_pre_init__(self, a, b, c):
-                nonlocal seen
-                seen = (a, b, c)
-
-        C(1, 2, {"x": 1})
-
-        assert (1, 2, {"x": 1}) == seen
 
     @pytest.mark.usefixtures("with_and_without_validation")
     def test_post_init(self):

@@ -156,18 +156,18 @@ seconds between retries.
         print("Wait 2 second between retries")
         raise Exception
 
-Wait times can also depend on the exception raised by the last attempt.
-``wait_exception`` passes that exception to a function and uses its return value
-as the number of seconds to wait.
+Use ``wait_exception(predicate)`` to choose the delay from the last exception.
+The function receives the exception object and returns the wait in seconds::
 
-.. testcode::
+    def exception_delay(exception: BaseException) -> float:
+        return 1.0 if isinstance(exception, TimeoutError) else 60.0
 
-    @retry(wait=wait_exception(lambda exception: 1 if isinstance(exception, TimeoutError) else 60))
-    def wait_for_exception():
-        raise TimeoutError
+    @retry(wait=wait_exception(exception_delay))
+    def fetch_resource():
+        raise TimeoutError()
 
-``wait_exception`` raises ``RuntimeError`` if no exception is available, including
-when retrying a rejected result.
+This strategy raises ``RuntimeError`` if there is no exception from the last
+attempt, including when a result is rejected by ``retry_if_result``.
 
 Some things perform best with a bit of randomness injected.
 

@@ -273,6 +273,15 @@ export function cleanDoubleSlashes(input = ""): string {
 }
 
 /**
+ * Checks that input is the base itself or continues past it at a path, query or hash boundary.
+ */
+function isUnderBase(input: string, base: string) {
+  return (
+    input.startsWith(base) && (input.length === base.length || "/?#".includes(input[base.length]))
+  );
+}
+
+/**
  * Ensures the URL or pathname starts with base.
  *
  * If input already starts with base, it will not be added again.
@@ -296,16 +305,6 @@ export function withBase(input: string, base: string) {
     return input;
   }
   return joinURL(_base, input);
-}
-
-/**
- * Checks if the input is the base itself or continues it at a segment, query or hash boundary.
- */
-function isUnderBase(input: string, base: string) {
-  return (
-    input.startsWith(base) &&
-    (input.length === base.length || "/?#".includes(input[base.length]))
-  );
 }
 
 /**

@@ -57,7 +57,7 @@ class wait_fixed(wait_base):
 
 
 class wait_exception(wait_base):
-    """Wait for the seconds returned by a predicate given the last exception.
+    """Wait for the seconds returned by a function of the last exception.
 
     Raise RuntimeError if the last attempt did not raise an exception.
     """
@@ -73,9 +73,7 @@ class wait_exception(wait_base):
             )
         exception = outcome.exception()
         if exception is None:
-            raise RuntimeError(
-                "wait_exception requires an exception from the last attempt"
-            )
+            raise RuntimeError("outcome failed but the exception is None")
         return self.predicate(exception)
 
 

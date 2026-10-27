@@ -731,52 +731,59 @@ fn test_date_parse_from_str() {
 #[test]
 fn test_date_iterators() {
     fn check(mut iter: impl DoubleEndedIterator<Item = NaiveDate> + ExactSizeIterator + Clone) {
-        let expected: Vec<_> = iter.clone().collect();
-        assert_eq!(iter.len(), expected.len());
-        assert_eq!(iter.size_hint(), (expected.len(), Some(expected.len())));
-        assert_eq!(
-            iter.clone().rev().collect::<Vec<_>>(),
-            expected.iter().rev().copied().collect::<Vec<_>>()
-        );
-        let (mut front, mut back) = (0, expected.len());
-        while front < back {
-            assert_eq!(iter.next(), Some(expected[front]));
-            front += 1;
-            if front < back {
-                back -= 1;
-                assert_eq!(iter.next_back(), Some(expected[back]));
-            }
-            assert_eq!(iter.len(), back - front);
+        let forward: Vec<_> = iter.clone().take(7).collect();
+        let backward: Vec<_> = iter.clone().take(7).rev().collect();
+        assert_eq!(forward.into_iter().rev().collect::<Vec<_>>(), backward);
+
+        let mut exhausted = iter.clone();
+        assert_eq!(exhausted.nth(usize::MAX), None);
+        assert_eq!(exhausted.next_back(), None);
+        assert_eq!(exhausted.len(), 0);
+        let mut exhausted = iter.clone();
+        assert_eq!(exhausted.nth_back(usize::MAX), None);
+        assert_eq!(exhausted.next(), None);
+        assert_eq!(exhausted.len(), 0);
+
+        let len = iter.len();
+        let last = iter.clone().nth(len - 1).unwrap();
+        assert_eq!(iter.next_back(), Some(last));
+        assert_eq!(iter.len(), len - 1);
+        assert!(iter.next().is_some());
+        assert_eq!(iter.len(), len.saturating_sub(2));
+        while iter.len() > 1 {
+            iter.nth(iter.len() - 2);
+        }
+        if iter.len() == 1 {
+            let last = iter.clone().next_back();
+            assert_eq!(iter.next(), last);
         }
         assert_eq!(iter.next(), None);
         assert_eq!(iter.next_back(), None);
-        assert_eq!(iter.next(), None);
+        assert_eq!(iter.size_hint(), (0, Some(0)));
+        assert_eq!(iter.nth(usize::MAX), None);
+        assert_eq!(iter.nth_back(usize::MAX), None);
     }
 
-    for offset in 0..22 {
-        let start = NaiveDate::MAX.checked_sub_days(Days::new(offset)).unwrap();
-        check(start.iter_days());
-        check(start.iter_weeks());
-        assert_eq!(start.iter_days().len(), offset as usize + 1);
-        assert_eq!(start.iter_weeks().len(), offset as usize / 7 + 1);
-        assert_eq!(start.iter_days().next_back(), Some(NaiveDate::MAX));
-        assert_eq!(
-            start.iter_weeks().next_back(),
-            start.checked_add_days(Days::new(offset / 7 * 7))
-        );
-    }
-    for start in [NaiveDate::MIN, NaiveDate::from_ymd_opt(2025, 10, 10).unwrap()] {
-        check(start.iter_days().take(7));
-        check(start.iter_weeks().take(7));
-        assert_eq!(start.iter_days().next_back(), Some(NaiveDate::MAX));
-    }
     let start = NaiveDate::from_ymd_opt(2025, 10, 10).unwrap();
-    let mut days = start.iter_days();
-    assert_eq!(days.nth(usize::MAX), None);
-    assert_eq!(days.next_back(), None);
-    let mut weeks = start.iter_weeks();
-    assert_eq!(weeks.nth_back(usize::MAX), None);
-    assert_eq!(weeks.next(), None);
+    for date in [NaiveDate::MIN, start, NaiveDate::MAX - Days::new(14)] {
+        check(date.iter_days());
+        check(date.iter_weeks());
+    }
+    assert_eq!(start.iter_days().next_back(), Some(NaiveDate::MAX));
+    for days in 0..14 {
+        let date = NaiveDate::MAX - Days::new(days);
+        assert_eq!(date.iter_days().count(), days as usize + 1);
+        assert_eq!(date.iter_weeks().count(), days as usize / 7 + 1);
+        assert_eq!(date.iter_weeks().next_back(), Some(date + Days::new(days / 7 * 7)));
+    }
+    for reverse in [false, true] {
+        let mut iter = NaiveDate::MAX.iter_days();
+        assert_eq!(if reverse { iter.next_back() } else { iter.next() }, Some(NaiveDate::MAX));
+        assert_eq!(iter.next(), None);
+    }
+    let mut iter = NaiveDate::MAX.iter_weeks();
+    assert_eq!(iter.next(), Some(NaiveDate::MAX));
+    assert_eq!(iter.next_back(), None);
 }
 
 #[test]

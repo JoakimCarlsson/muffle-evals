@@ -1341,12 +1341,10 @@ impl NaiveDate {
     /// }
     /// assert_eq!(count, 4);
     ///
-    /// // Reversing a window gives the same dates as going forward, in reverse order.
-    /// let start = NaiveDate::from_ymd_opt(2016, 2, 27).unwrap();
-    /// let mut forward: Vec<_> = start.iter_days().take(4).collect();
-    /// forward.reverse();
-    /// assert_eq!(forward, start.iter_days().take(4).rev().collect::<Vec<_>>());
-    /// assert_eq!(start.iter_days().next_back(), Some(NaiveDate::MAX));
+    /// // Both ends of the iterator cover the same range, ending at `NaiveDate::MAX`.
+    /// let mut iter = NaiveDate::from_ymd_opt(2016, 2, 27).unwrap().iter_days();
+    /// assert_eq!(iter.next_back(), Some(NaiveDate::MAX));
+    /// assert_eq!(iter.next(), Some(expected[0]));
     /// ```
     #[inline]
     pub const fn iter_days(&self) -> NaiveDateDaysIterator {
@@ -1374,11 +1372,11 @@ impl NaiveDate {
     /// }
     /// assert_eq!(count, 4);
     ///
-    /// // Reversing a window gives the same dates as going forward, in reverse order.
-    /// let start = NaiveDate::from_ymd_opt(2016, 2, 27).unwrap();
-    /// let mut forward: Vec<_> = start.iter_weeks().take(4).collect();
-    /// forward.reverse();
-    /// assert_eq!(forward, start.iter_weeks().take(4).rev().collect::<Vec<_>>());
+    /// // Both ends of the iterator cover the same range.
+    /// let mut iter = NaiveDate::from_ymd_opt(2016, 2, 27).unwrap().iter_weeks();
+    /// let last = iter.next_back().unwrap();
+    /// assert!(last > expected[3] && last <= NaiveDate::MAX);
+    /// assert_eq!(iter.next(), Some(expected[0]));
     /// ```
     #[inline]
     pub const fn iter_weeks(&self) -> NaiveDateWeeksIterator {
@@ -2214,13 +2212,13 @@ impl From<NaiveDateTime> for NaiveDate {
 
 /// Iterator over `NaiveDate` with a step size of one day.
 ///
-/// Iterates from the starting date up to and including `NaiveDate::MAX`. Both ends of the range
-/// can be consumed, and the iterator is exhausted when they meet.
+/// Yields every date from the starting date up to and including [`NaiveDate::MAX`]. Iterating from
+/// the back starts at `NaiveDate::MAX`.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Eq, Ord)]
 pub struct NaiveDateDaysIterator {
-    /// Next date to be yielded from the front (only meaningful if `remaining > 0`).
+    /// Next date to yield from the front; only meaningful while `remaining > 0`.
     value: NaiveDate,
-    /// Number of dates left to yield.
+    /// Number of dates not yet yielded.
     remaining: u64,
 }
 
@@ -2240,16 +2238,16 @@ impl Iterator for NaiveDateDaysIterator {
         }
         let current = self.value;
         self.remaining -= 1;
-        // Only fails for `NaiveDate::MAX`, which is always the last item.
-        if let Some(next) = current.succ_opt() {
-            self.value = next;
+        if self.remaining > 0 {
+            // Can't fail: there are more dates left, so `current` is < NaiveDate::MAX.
+            self.value = current.succ_opt()?;
         }
         Some(current)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let n = self.remaining as usize;
-        (n, Some(n))
+        let exact_size = usize::try_from(self.remaining).unwrap_or(usize::MAX);
+        (exact_size, Some(exact_size))
     }
 }
 
@@ -2269,13 +2267,13 @@ impl FusedIterator for NaiveDateDaysIterator {}
 
 /// Iterator over `NaiveDate` with a step size of one week.
 ///
-/// Iterates from the starting date up to the last representable date reachable in whole weeks.
-/// Both ends of the range can be consumed, and the iterator is exhausted when they meet.
+/// Yields the starting date and every date a whole number of weeks after it that is not past
+/// [`NaiveDate::MAX`]. Iterating from the back starts at the last of those dates.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Eq, Ord)]
 pub struct NaiveDateWeeksIterator {
-    /// Next date to be yielded from the front (only meaningful if `remaining > 0`).
+    /// Next date to yield from the front; only meaningful while `remaining > 0`.
     value: NaiveDate,
-    /// Number of dates left to yield.
+    /// Number of dates not yet yielded.
     remaining: u64,
 }
 
@@ -2295,16 +2293,16 @@ impl Iterator for NaiveDateWeeksIterator {
         }
         let current = self.value;
         self.remaining -= 1;
-        // Fails only when no further item exists.
-        if let Some(next) = current.checked_add_days(Days::new(7)) {
-            self.value = next;
+        if self.remaining > 0 {
+            // Can't fail: the last date we will yield is representable.
+            self.value = current.checked_add_days(Days::new(7))?;
         }
         Some(current)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let n = self.remaining as usize;
-        (n, Some(n))
+        let exact_size = usize::try_from(self.remaining).unwrap_or(usize::MAX);
+        (exact_size, Some(exact_size))
     }
 }
 

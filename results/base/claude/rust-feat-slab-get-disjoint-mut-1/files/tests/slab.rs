@@ -734,17 +734,18 @@ fn clone_from() {
 #[test]
 fn get_disjoint_mut() {
     use slab::GetDisjointMutError::*;
+
     let mut slab = Slab::new();
     for i in 0..5 {
         slab.insert(i);
     }
     slab.remove(1);
 
+    assert_eq!(slab.get_disjoint_mut([]), Ok([]));
     let [a, b] = slab.get_disjoint_mut([3, 0]).unwrap();
     std::mem::swap(a, b);
-    assert_eq!((slab[3], slab[0]), (0, 3));
+    assert_eq!((slab[0], slab[3]), (3, 0));
 
-    assert_eq!(slab.get_disjoint_mut([]).unwrap().len(), 0);
     assert_eq!(slab.get_disjoint_mut([42, 2, 1, 2]), Err(OverlappingIndices));
     assert_eq!(slab.get_disjoint_mut([1, 5]), Err(IndexVacant));
     assert_eq!(slab.get_disjoint_mut([5, 1]), Err(IndexOutOfBounds));

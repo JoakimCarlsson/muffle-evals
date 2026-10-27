@@ -38,11 +38,11 @@ describe("alias", () => {
   });
 
   describe("reverseResolveAlias", () => {
-    it("returns every match sorted longest first", () => {
+    it("returns every match sorted by descending result length", () => {
       expect(
         reverseResolveAlias("/root/some/assets/smth.jpg", {
-          "~": "/root",
           "~assets": "/root/some/assets",
+          "~": "/root",
         }),
       ).toEqual(["~/some/assets/smth.jpg", "~assets/smth.jpg"]);
       expect(reverseResolveAlias("/root/index.js", aliases)).toEqual([
@@ -51,31 +51,35 @@ describe("alias", () => {
       ]);
     });
 
-    it("preserves aliases ending in a slash", () => {
+    it("preserves trailing alias slashes for exact matches", () => {
       expect(reverseResolveAlias("/src/foo/bar", { "~/": "/src" })).toEqual([
         "~/foo/bar",
       ]);
       expect(reverseResolveAlias("/src", { "~/": "/src" })).toEqual(["~/"]);
     });
 
-    it("respects target path boundaries", () => {
-      expect(reverseResolveAlias("/rooted/file", { "@": "/root" })).toEqual([]);
+    it("requires a whole target or a path separator boundary", () => {
+      expect(reverseResolveAlias("/rooted/foo", { "@": "/root" })).toEqual([]);
       expect(reverseResolveAlias("./bar.js", aliases)).toEqual([]);
     });
 
     it("normalizes aliases and Windows paths", () => {
+      expect(reverseResolveAlias("/root/bingpot/index.ts", _aliases)).toEqual([
+        "@/bingpot/index.ts",
+        "bingpot",
+      ]);
       expect(
-        reverseResolveAlias(String.raw`C:\root\foo.js`, {
-          "@": String.raw`C:\root`,
-          "~": "@/foo.js",
+        reverseResolveAlias(String.raw`c:\src\foo`, {
+          "~/": String.raw`C:\src`,
         }),
-      ).toEqual(["@/foo.js", "~"]);
+      ).toEqual(["~/foo"]);
     });
 
     it("handles targets ending in a slash", () => {
       expect(reverseResolveAlias("/src/foo", { "@/": "/src/" })).toEqual([
         "@/foo",
       ]);
+      expect(reverseResolveAlias("/foo", { "@": "/" })).toEqual(["@/foo"]);
     });
   });
 

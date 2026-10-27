@@ -696,47 +696,6 @@ class TestAttributes:
 
         assert 12 == getattr(c, "z", None)
 
-    @pytest.mark.parametrize("passing", ["defaults", "positional", "keyword"])
-    def test_pre_init_defaults(self, passing):
-        """
-        Pre-init receives argument values, including defaults and factories.
-        """
-        received = []
-
-        @attr.define
-        class C:
-            val1: int
-            _val2: int = attr.field(default=100, alias="value")
-            val3: dict = attr.field(factory=dict)
-            val4: int = attr.field(kw_only=True)
-            val5: int = attr.field(default=100, kw_only=True)
-            ignored: int = attr.field(default=1, init=False)
-
-            def __attrs_pre_init__(self, val1, value, val3, *, val4, val5):
-                """Record arguments before attribute initialization."""
-                received.append((val1, value, val3, val4, val5))
-
-        if passing == "defaults":
-            inst = C(200, val4=200)
-            expected = (200, 100, attr.NOTHING, 200, 100)
-            assert inst.val3 == {}
-        else:
-            value = {"blah": "blah"}
-            if passing == "positional":
-                inst = C(200, 200, value, val4=200, val5=200)
-            else:
-                inst = C(val1=200, value=200, val3=value, val4=200, val5=200)
-            expected = (200, 200, value, 200, 200)
-            assert inst.val3 is value
-
-        assert received == [expected]
-        assert (inst.val1, inst._val2, inst.val4, inst.val5) == (
-            expected[0],
-            expected[1],
-            expected[3],
-            expected[4],
-        )
-
     @pytest.mark.usefixtures("with_and_without_validation")
     def test_pre_init_kw_only_work_with_defaults(self):
         """
@@ -755,6 +714,44 @@ class TestAttributes:
         inst = KWOnlyAndDefault()
 
         assert 3 == val == inst.kw_and_default
+
+    @pytest.mark.parametrize("arguments", ["positional", "keyword", "defaults"])
+    def test_pre_init_defaults(self, arguments):
+        """
+        Pre-init receives supplied values or defaults for all parameter kinds.
+        """
+        received = None
+
+        @attr.define
+        class Example:
+            val1: int
+            val2: int = 100
+            val3: dict = attr.field(factory=dict)
+            val4: int = attr.field(kw_only=True)
+            val5: int = attr.field(default=100, kw_only=True)
+
+            def __attrs_pre_init__(self, val1, val2, val3, val4, val5):
+                """Record arguments before initialization."""
+                nonlocal received
+                received = (val1, val2, val3, val4, val5)
+
+        supplied = {"blah": "blah"}
+        if arguments == "positional":
+            instance = Example(200, 200, supplied, val4=200, val5=200)
+        elif arguments == "keyword":
+            instance = Example(
+                val1=200, val2=200, val3=supplied, val4=200, val5=200
+            )
+        else:
+            instance = Example(200, val4=200)
+
+        if arguments == "defaults":
+            assert (200, 100, attr.NOTHING, 200, 100) == received
+            assert instance.val3 == {}
+        else:
+            assert (200, 200, supplied, 200, 200) == received
+            assert received[2] is supplied
+            assert instance.val3 is supplied
 
     @pytest.mark.usefixtures("with_and_without_validation")
     def test_post_init(self):

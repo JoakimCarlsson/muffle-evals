@@ -1,9 +1,11 @@
-I added `reverseResolveAlias(path, aliases): string[]` to `src/utils.ts`, right after `resolveAlias`. The utils tests pass (37), including your five examples and a case with a Windows path. `tsc --noEmit` is clean.
+I added `reverseResolveAlias(path, aliases): string[]` to `src/utils.ts`, right after `resolveAlias`. The utils tests pass (36 tests) and `tsc --noEmit` is clean.
 
-It follows the rules you listed:
-- **Alias map and path:** it runs the aliases through `normalizeAliases` and normalizes the path, and alias targets, as Windows paths first.
-- **Matching:** a target matches only when it equals the whole path or ends at a `/`. So `/rootless/a.js` doesn't match `"~": "/root"`.
-- **Trailing `/`:** aliases that end in `/` work like they do in `resolveAlias`. `/src/foo/bar` with `"~/": "/src"` gives `~/foo/bar`, and `/src` gives `~/`.
-- **Results:** it removes duplicates, sorts longest first, and returns `[]` when nothing matches.
+- **Matching:** it normalizes the aliases with `normalizeAliases` and the path and alias targets with `normalizeWindowsPath`, so `C:\src\foo` matches a `C:/src` target. An alias only matches on a separator boundary or the whole path, so `/rootfoo/a.js` doesn't match `"~": "/root"`.
+- **Trailing `/` aliases:** these behave like `resolveAlias`, so `/src/foo/bar` gives `~/foo/bar` and `/src` gives `~/`.
+- **Output:** results are deduplicated, sorted longest first, and `[]` when nothing matches.
 
-I also added tests in `test/utils.spec.ts` and put `reverseResolveAlias` in the README's `pathe/utils` import example. I didn't commit anything.
+I tried your examples as tests. Four of the five are covered as written. The `{ "~/": "/src" }` pair is tested against the existing test aliases instead, which include that entry.
+
+I also added tests for the separator boundary and the Windows path, and added `reverseResolveAlias` to the import example in the README.
+
+I didn't commit anything.

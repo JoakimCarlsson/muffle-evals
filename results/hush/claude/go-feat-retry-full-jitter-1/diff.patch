@@ -1,24 +1,19 @@
 diff --git a/README.md b/README.md
-index 47b6e26..b2a4b02 100644
+index 47b6e26..85493e5 100644
 --- a/README.md
 +++ b/README.md
-@@ -128,6 +128,14 @@ b = WithJitter(500*time.Millisecond, b)
+@@ -126,6 +126,9 @@ b = WithJitter(500*time.Millisecond, b)
+ 
+ // Return the next value, +/- 5% of the result
  b = WithJitterPercent(5, b)
++
++// Return a random value between 0 and the result ("full jitter")
++b = WithFullJitter(b)
  ```
  
-+For "full jitter", return a random value between 0 and the next value. This
-+spreads out clients that fail at the same time better than the above.
-+
-+```golang
-+b := NewFibonacci(1 * time.Second)
-+b = WithFullJitter(b)
-+```
-+
  ### MaxRetries
- 
- To terminate a retry, specify the maximum number of _retries_. Note this
 diff --git a/backoff.go b/backoff.go
-index b493869..f72aa7b 100644
+index b493869..acd4753 100644
 --- a/backoff.go
 +++ b/backoff.go
 @@ -67,6 +67,25 @@ func WithJitterPercent(j uint64, next Backoff) Backoff {
@@ -26,9 +21,9 @@ index b493869..f72aa7b 100644
  }
  
 +// WithFullJitter wraps a backoff function and returns a random duration between
-+// 0 (inclusive) and the wrapped value (exclusive). This is the "full jitter"
-+// strategy from the AWS article on exponential backoff and jitter. A zero or
-+// negative value is returned unchanged.
++// 0 (inclusive) and the base value (exclusive), as described in the AWS
++// article "Exponential Backoff And Jitter". A zero or negative base value is
++// returned unchanged.
 +func WithFullJitter(next Backoff) Backoff {
 +	return BackoffFunc(func() (time.Duration, bool) {
 +		val, stop := next.Next()
@@ -48,10 +43,10 @@ index b493869..f72aa7b 100644
  func WithMaxRetries(max uint64, next Backoff) Backoff {
  	var l sync.Mutex
 diff --git a/backoff_test.go b/backoff_test.go
-index 7c528e8..ae2ac62 100644
+index 7c528e8..18c6d5b 100644
 --- a/backoff_test.go
 +++ b/backoff_test.go
-@@ -342,3 +342,48 @@ func ExampleWithMaxDuration() {
+@@ -342,3 +342,45 @@ func ExampleWithMaxDuration() {
  		// handle error
  	}
  }
@@ -62,14 +57,14 @@ index 7c528e8..ae2ac62 100644
 +	b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
 +		return 1 * time.Second, false
 +	}))
-+
-+	for i := 0; i < 100; i++ {
++	for range 100_000 {
 +		val, stop := b.Next()
 +		if stop {
-+			t.Fatal("should not stop")
++			t.Errorf("should not stop")
 +		}
++
 +		if val < 0 || val >= 1*time.Second {
-+			t.Fatalf("value %s not in [0, 1s)", val)
++			t.Errorf("expected %v to be in [0, 1s)", val)
 +		}
 +	}
 +}
@@ -80,9 +75,8 @@ index 7c528e8..ae2ac62 100644
 +	b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
 +		return 1 * time.Second, true
 +	}))
-+
 +	if _, stop := b.Next(); !stop {
-+		t.Fatal("expected stop")
++		t.Errorf("expected stop")
 +	}
 +}
 +
@@ -93,10 +87,8 @@ index 7c528e8..ae2ac62 100644
 +		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
 +			return base, false
 +		}))
-+
-+		val, stop := b.Next()
-+		if stop || val != base {
-+			t.Fatalf("base %s: got (%s, %t)", base, val, stop)
++		if val, stop := b.Next(); stop || val != base {
++			t.Errorf("expected (%v, false), got (%v, %v)", base, val, stop)
 +		}
 +	}
 +}

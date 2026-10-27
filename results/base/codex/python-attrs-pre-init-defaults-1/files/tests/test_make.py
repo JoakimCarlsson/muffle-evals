@@ -696,8 +696,9 @@ class TestAttributes:
 
         assert 12 == getattr(c, "z", None)
 
-    @pytest.mark.parametrize("call_style", ["positional", "keyword", "defaults"])
-    def test_pre_init_defaults(self, call_style):
+    @pytest.mark.parametrize("as_keywords", [False, True])
+    @pytest.mark.parametrize("use_defaults", [False, True])
+    def test_pre_init_defaults(self, as_keywords, use_defaults):
         """
         Pre-init receives argument values for defaults and factories.
         """
@@ -707,32 +708,27 @@ class TestAttributes:
         class C:
             required: int
             _value: int = attr.field(default=100, alias="value")
-            factory: dict = attr.field(factory=dict)
-            kw_required: int = attr.field(kw_only=True)
-            kw_default: int = attr.field(default=100, kw_only=True)
-            kw_factory: dict = attr.field(factory=dict, kw_only=True)
+            data: dict = attr.field(factory=dict)
+            keyword: int = attr.field(default=100, kw_only=True)
             ignored: int = attr.field(default=42, init=False)
 
-            def __attrs_pre_init__(self, *args, **kwargs):
-                received.append((args, kwargs))
+            def __attrs_pre_init__(self, required, value, data, *, keyword):
+                received.append((required, value, data, keyword))
 
-        value = {"blah": "blah"}
-        kwargs = {"kw_required": 200}
-        if call_style == "defaults":
-            inst = C(200, **kwargs)
-            expected = (200, 100, attr.NOTHING)
-            kwargs.update(kw_default=100, kw_factory=attr.NOTHING)
-            assert inst.factory == inst.kw_factory == {}
+        if use_defaults:
+            c = C(required=200) if as_keywords else C(200)
+            assert received == [(200, 100, attr.NOTHING, 100)]
+            assert c.data == {}
         else:
-            kwargs.update(kw_default=200, kw_factory=value)
-            if call_style == "positional":
-                inst = C(200, 200, value, **kwargs)
-            else:
-                inst = C(required=200, value=200, factory=value, **kwargs)
-            expected = (200, 200, value)
-            assert inst.factory is inst.kw_factory is value
-
-        assert received == [(expected, kwargs)]
+            data = {"blah": "blah"}
+            c = (
+                C(required=200, value=200, data=data, keyword=200)
+                if as_keywords
+                else C(200, 200, data, keyword=200)
+            )
+            assert received == [(200, 200, data, 200)]
+            assert received[0][2] is data
+            assert c.data is data
 
     @pytest.mark.usefixtures("with_and_without_validation")
     def test_pre_init_kw_only_work_with_defaults(self):

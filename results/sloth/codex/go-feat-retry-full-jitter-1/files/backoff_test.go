@@ -119,6 +119,62 @@ func ExampleWithJitter() {
 	}
 }
 
+// TestWithFullJitter verifies positive durations, including duration boundaries.
+func TestWithFullJitter(t *testing.T) {
+	t.Parallel()
+
+	for _, base := range []time.Duration{1, time.Second, 1<<63 - 1} {
+		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
+			return base, false
+		}))
+		for range 100_000 {
+			val, stop := b.Next()
+			if stop {
+				t.Fatal("should not stop")
+			}
+			if val < 0 || val >= base {
+				t.Fatalf("expected %v to be in [0, %v)", val, base)
+			}
+		}
+	}
+}
+
+// TestWithFullJitter_NonPositiveAndStop verifies unchanged durations and stopping.
+func TestWithFullJitter_NonPositiveAndStop(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		base time.Duration
+		stop bool
+		want time.Duration
+	}{
+		{name: "zero"},
+		{name: "negative", base: -time.Second, want: -time.Second},
+		{name: "minimum", base: -1 << 63, want: -1 << 63},
+		{name: "stop", base: time.Second, stop: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
+				return tc.base, tc.stop
+			}))
+			val, stop := b.Next()
+			if val != tc.want || stop != tc.stop {
+				t.Fatalf("got (%v, %t), want (%v, %t)", val, stop, tc.want, tc.stop)
+			}
+		})
+	}
+}
+
+// ExampleWithFullJitter demonstrates wrapping a Fibonacci backoff.
+func ExampleWithFullJitter() {
+	b := retry.NewFibonacci(1 * time.Second)
+	b = retry.WithFullJitter(b)
+	b.Next()
+}
+
 func TestWithJitterPercent(t *testing.T) {
 	t.Parallel()
 
@@ -195,55 +251,6 @@ func ExampleWithJitterPercent() {
 		return nil
 	}); err != nil {
 		// handle error
-	}
-}
-
-// TestWithFullJitter checks the random range, boundary durations, and stop propagation.
-func TestWithFullJitter(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name string
-		base time.Duration
-		stop bool
-	}{
-		{name: "positive", base: time.Second},
-		{name: "one_nanosecond", base: time.Nanosecond},
-		{name: "maximum", base: 1<<63 - 1},
-		{name: "zero"},
-		{name: "negative", base: -time.Second},
-		{name: "minimum", base: -1 << 63},
-		{name: "stop", base: time.Second, stop: true},
-		{name: "negative_stop", base: -time.Second, stop: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-				return tc.base, tc.stop
-			}))
-			for range 1000 {
-				val, stop := b.Next()
-				if stop != tc.stop {
-					t.Fatalf("expected stop to be %t", tc.stop)
-				}
-				switch {
-				case tc.stop:
-					if val != 0 {
-						t.Fatalf("expected %v to be 0", val)
-					}
-				case tc.base <= 0:
-					if val != tc.base {
-						t.Fatalf("expected %v to be %v", val, tc.base)
-					}
-				default:
-					if val < 0 || val >= tc.base {
-						t.Fatalf("expected %v to be in [0, %v)", val, tc.base)
-					}
-				}
-			}
-		})
 	}
 }
 

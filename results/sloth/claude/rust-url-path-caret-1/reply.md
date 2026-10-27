@@ -1,7 +1,9 @@
-Those three WPT cases are now passing, so I'm removing them from the expected-failures list.
+The fix works. Three WPT cases that were listed as expected failures now pass, so I'm removing them from the expected-failures list.
 
-The `url` crate now percent-encodes `^` in paths, so `http://localhost/a^b` parses to `http://localhost/a%5Eb`. The full `cargo test` run passes.
+The `url` crate now percent-encodes `^` in paths, so `http://localhost/a^b` parses to `http://localhost/a%5Eb`. `cargo test -p url` passes. I didn't run tests for the other workspace crates.
 
-- **Fix:** I added `^` to the `PATH` encode set in `url/src/parser.rs`. Path segments and `set_path` pick it up from there. The `USERINFO` set already encoded `^`.
-- **Test:** I added `path_caret_is_percent_encoded` in `url/tests/unit.rs`. It covers a special scheme, a non-special scheme and `set_path`.
-- **WPT expected failures:** three web-platform-test cases that failed because of the missing `^` now pass. I removed them from `url/tests/expected_failures.txt`, since the harness treats an unexpected success as a failure.
+- **Fix:** I added `^` to the `PATH` encode set in `url/src/parser.rs`. The userinfo and path-segment sets are built from `PATH`, so they inherit it. Userinfo already encoded `^`, so nothing changes there.
+- **Test:** I added `test_path_percent_encodes_caret` to `url/tests/unit.rs`.
+- **Expected failures:** Three WPT cases that were listed as known failures now pass: two `foo://host/…` and `wss://host/…` path cases, and one `set pathname` case. They made the suite report "unexpected success", so I removed them from `url/tests/expected_failures.txt`.
+
+I didn't commit anything.

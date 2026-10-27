@@ -57,9 +57,10 @@ class wait_fixed(wait_base):
 
 
 class wait_exception(wait_base):
-    """Wait for the seconds returned by a callable given the last exception.
+    """Wait for the number of seconds returned by a function of the exception.
 
-    Raise RuntimeError if the last attempt did not raise an exception.
+    The predicate receives the exception raised by the last attempt. Raise
+    RuntimeError if the last attempt has no exception (including result retries).
     """
 
     def __init__(self, predicate: typing.Callable[[BaseException], float]) -> None:
@@ -72,7 +73,10 @@ class wait_exception(wait_base):
                 "wait_exception requires an exception from the last attempt"
             )
         exception = outcome.exception()
-        assert exception is not None
+        if exception is None:
+            raise RuntimeError(
+                "wait_exception requires an exception from the last attempt"
+            )
         return self.predicate(exception)
 
 

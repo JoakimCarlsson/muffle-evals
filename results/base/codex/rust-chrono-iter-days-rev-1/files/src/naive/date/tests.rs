@@ -729,74 +729,58 @@ fn test_date_parse_from_str() {
 }
 
 #[test]
-fn test_day_iterator_limit() {
-    assert_eq!(NaiveDate::from_ymd_opt(MAX_YEAR, 12, 29).unwrap().iter_days().take(4).count(), 2);
-    assert_eq!(
-        NaiveDate::from_ymd_opt(MAX_YEAR, 12, 29).unwrap().iter_days().rev().take(4).count(),
-        2
-    );
-}
-
-#[test]
-fn test_week_iterator_limit() {
-    assert_eq!(NaiveDate::from_ymd_opt(MAX_YEAR, 12, 12).unwrap().iter_weeks().take(4).count(), 2);
-    assert_eq!(
-        NaiveDate::from_ymd_opt(MAX_YEAR, 12, 12).unwrap().iter_weeks().rev().take(4).count(),
-        2
-    );
-}
-
-#[test]
-fn test_date_iterators_reverse() {
-    let start = NaiveDate::from_ymd_opt(2025, 10, 10).unwrap();
-    for step in [1, 7] {
-        let expected: Vec<_> = (0..7).rev().map(|i| start + Days::new(i * step)).collect();
-        let actual: Vec<_> = if step == 1 {
-            start.iter_days().take(7).rev().collect()
-        } else {
-            start.iter_weeks().take(7).rev().collect()
-        };
-        assert_eq!(actual, expected);
-    }
-}
-
-#[test]
-fn test_date_iterators_mixed_ends() {
+fn test_date_iterators() {
     fn check(mut iter: impl DoubleEndedIterator<Item = NaiveDate> + ExactSizeIterator + Clone) {
-        let expected: Vec<_> = iter.clone().collect();
+        let expected: Vec<_> = iter.clone().take(7).collect();
         assert_eq!(
-            iter.clone().rev().collect::<Vec<_>>(),
+            iter.clone().take(7).rev().collect::<Vec<_>>(),
             expected.iter().rev().copied().collect::<Vec<_>>()
         );
-        let mut front = 0;
-        let mut back = expected.len();
-        while front < back {
-            assert_eq!(iter.len(), back - front);
-            assert_eq!(iter.size_hint(), (back - front, Some(back - front)));
-            assert_eq!(iter.next(), Some(expected[front]));
-            front += 1;
-            if front < back {
-                assert_eq!(iter.len(), back - front);
-                back -= 1;
-                assert_eq!(iter.next_back(), Some(expected[back]));
-            }
-        }
-        assert_eq!(iter.len(), 0);
-        assert_eq!(iter.next_back(), None);
+        let len = iter.len();
+        assert_eq!(iter.next(), Some(expected[0]));
+        assert_eq!(iter.len(), len - 1);
+        let last = iter.next_back().unwrap();
+        assert_eq!(iter.len(), len - 2);
+        assert_eq!(iter.nth_back(len - 4), Some(expected[2]));
+        assert_eq!(iter.len(), 1);
+        assert_eq!(iter.next_back(), Some(expected[1]));
         assert_eq!(iter.next(), None);
         assert_eq!(iter.next_back(), None);
+        assert_eq!(iter.len(), 0);
+        assert!(last > expected[6]);
+        let mut exhausted = iter;
+        assert_eq!(exhausted.nth(usize::MAX), None);
+        assert_eq!(exhausted.nth_back(usize::MAX), None);
     }
+    let start = NaiveDate::from_ymd_opt(2025, 10, 10).unwrap();
+    check(start.iter_days());
+    check(start.iter_weeks());
+    assert_eq!(start.iter_days().next_back(), Some(NaiveDate::MAX));
+    let last_week = start.iter_weeks().next_back().unwrap();
+    assert_eq!(last_week.weekday(), start.weekday());
+    assert!((NaiveDate::MAX - last_week).num_days() < 7);
+}
 
-    for days in 0..22 {
-        let start = NaiveDate::MAX - Days::new(days);
-        check(start.iter_days());
-        check(start.iter_weeks());
+#[test]
+fn test_date_iterator_limits() {
+    for offset in 0..15 {
+        let start = NaiveDate::MAX.checked_sub_days(Days::new(offset)).unwrap();
+        let days: Vec<_> = start.iter_days().collect();
+        assert_eq!(days.len(), offset as usize + 1);
+        assert_eq!(days.last(), Some(&NaiveDate::MAX));
+        assert_eq!(
+            start.iter_days().rev().collect::<Vec<_>>(),
+            days.iter().rev().copied().collect::<Vec<_>>()
+        );
+        let weeks: Vec<_> = start.iter_weeks().collect();
+        assert_eq!(weeks.len(), offset as usize / 7 + 1);
+        assert_eq!(
+            start.iter_weeks().rev().collect::<Vec<_>>(),
+            weeks.iter().rev().copied().collect::<Vec<_>>()
+        );
     }
     assert_eq!(NaiveDate::MIN.iter_days().next(), Some(NaiveDate::MIN));
-    assert_eq!(NaiveDate::MIN.iter_days().next_back(), NaiveDate::MAX.pred_opt());
-    let mut weeks = NaiveDate::MIN.iter_weeks();
-    let last = NaiveDate::MIN + Days::new((weeks.len() as u64 - 1) * 7);
-    assert_eq!(weeks.next_back(), Some(last));
+    assert_eq!(NaiveDate::MIN.iter_weeks().next(), Some(NaiveDate::MIN));
 }
 
 #[test]

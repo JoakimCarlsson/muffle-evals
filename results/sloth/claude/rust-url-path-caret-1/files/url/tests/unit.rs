@@ -261,21 +261,6 @@ fn path_backslash_fun() {
 }
 
 #[test]
-fn path_caret_is_percent_encoded() {
-    assert_eq!(
-        Url::parse("http://localhost/a^b").unwrap().as_str(),
-        "http://localhost/a%5Eb"
-    );
-    assert_eq!(
-        Url::parse("thing://localhost/a^b").unwrap().as_str(),
-        "thing://localhost/a%5Eb"
-    );
-    let mut url = "http://localhost".parse::<Url>().unwrap();
-    url.set_path("a^b");
-    assert_eq!(url.as_str(), "http://localhost/a%5Eb");
-}
-
-#[test]
 fn from_str() {
     assert!("http://testing.com/this".parse::<Url>().is_ok());
 }
@@ -1406,4 +1391,11 @@ fn test_parse_url_with_single_byte_control_host() {
     let url1 = Url::parse(input).unwrap();
     let url2 = Url::parse(url1.as_str()).unwrap();
     assert_eq!(url2, url1);
+}
+
+#[test]
+fn test_path_percent_encodes_caret() {
+    let url = Url::parse("http://localhost/a^b").unwrap();
+    assert_eq!(url.as_str(), "http://localhost/a%5Eb");
+    assert_eq!(url.path(), "/a%5Eb");
 }

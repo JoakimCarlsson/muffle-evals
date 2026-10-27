@@ -1,2 +1,2 @@
 Done.
-Aliases override defaults; added regression tests. All 68 tests, lint, formatting, type checks pass.
+Defaults now respect kebab-case input and aliases. Added regression coverage; 66 tests, type checks, lint, formatting passed.

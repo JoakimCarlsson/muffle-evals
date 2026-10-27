@@ -87,9 +87,8 @@ export function reverseResolveAlias(
 ): string[] {
   const _path = normalizeWindowsPath(path);
   const matches: string[] = [];
-
   for (const [alias, to] of Object.entries(normalizeAliases(aliases))) {
-    const target = normalizeWindowsPath(to).replace(/\/$/, "");
+    const target = normalizeWindowsPath(to).replace(/\/+$/, "");
     if (
       !_path.startsWith(target) ||
       !pathSeparators.has(_path[target.length])
@@ -98,13 +97,8 @@ export function reverseResolveAlias(
     }
 
     const suffix = _path.slice(target.length);
-    matches.push(
-      hasTrailingSlash(alias) && suffix.startsWith("/")
-        ? alias + suffix.slice(1)
-        : alias + suffix,
-    );
+    matches.push(suffix ? alias.replace(/[/\\]$/, "") + suffix : alias);
   }
-
   return matches.sort((a, b) => b.length - a.length);
 }
 

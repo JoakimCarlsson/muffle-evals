@@ -3,28 +3,25 @@ import { parseArgs } from "../src/args.ts";
 import type { ArgsDef } from "../src/types.ts";
 
 describe("args", () => {
-  it.each(["fooBar", "foo-bar", "f"])("lets --%s override an enum default", (name) => {
-    const parsed = parseArgs([`--${name}`, "one"], {
-      fooBar: { type: "enum", options: ["one", "two"], default: "two", alias: "f" },
-    });
-
-    expect(parsed).toEqual({ _: [], fooBar: "one", "foo-bar": "one", f: "one" });
-  });
-
-  it("propagates an omitted enum default to all aliases", () => {
-    expect(
-      parseArgs([], {
-        fooBar: { type: "enum", options: ["one", "two"], default: "two", alias: "f" },
-      }),
-    ).toEqual({ _: [], fooBar: "two", "foo-bar": "two", f: "two" });
-  });
-
-  it("validates an enum value supplied through a kebab-case alias", () => {
-    expect(() =>
-      parseArgs(["--foo-bar", "three"], {
-        fooBar: { type: "enum", options: ["one", "two"], default: "two" },
-      }),
-    ).toThrow("Invalid value for argument: --fooBar (three).");
+  it.each<ArgsDef[string]>([
+    { type: "enum", options: ["one", "two"], default: "two" },
+    { type: "string", default: "two" },
+    { type: "boolean", default: false },
+  ])("lets case variants and aliases override defaults: %o", (arg) => {
+    for (const name of ["fooBar", "foo-bar"]) {
+      const definition: ArgsDef = { [name]: { ...arg, alias: "f" } };
+      const value = arg.type === "boolean" ? true : "one";
+      for (const flag of ["--fooBar", "--foo-bar", "-f"]) {
+        const parsed = parseArgs(arg.type === "boolean" ? [flag] : [flag, "one"], definition);
+        expect(parsed).toEqual({ _: [], fooBar: value, "foo-bar": value, f: value });
+      }
+      expect(parseArgs([], definition)).toEqual({
+        _: [],
+        fooBar: arg.default,
+        "foo-bar": arg.default,
+        f: arg.default,
+      });
+    }
   });
 
   it.each([

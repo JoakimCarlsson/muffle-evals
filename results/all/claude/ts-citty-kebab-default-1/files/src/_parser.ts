@@ -174,10 +174,10 @@ export function parseRawArgs<T = Record<string, any>>(
   };
   propagateAliases();
 
-  // Defaults apply only after aliases resolve, so an explicit alias value wins
-  for (const [name, value] of Object.entries(defaults)) {
-    if ((out as any)[name] === undefined) {
-      (out as any)[name] = value;
+  // Defaults apply only after aliases resolve, so an aliased CLI value wins
+  for (const [key, value] of Object.entries(defaults)) {
+    if ((out as any)[key] === undefined) {
+      (out as any)[key] = value;
     }
   }
   propagateAliases();

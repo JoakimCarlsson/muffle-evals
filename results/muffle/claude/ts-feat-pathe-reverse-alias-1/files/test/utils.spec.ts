@@ -61,35 +61,6 @@ describe("alias", () => {
       expect(resolveAlias("~win/foo/bar", aliases)).toBe("C:/src/foo/bar");
     });
   });
-
-  describe("reverseResolveAlias", () => {
-    it("returns all aliases, longest first", () => {
-      expect(
-        reverseResolveAlias("/root/some/assets/smth.jpg", {
-          "~": "/root",
-          "~assets": "/root/some/assets",
-        }),
-      ).toEqual(["~/some/assets/smth.jpg", "~assets/smth.jpg"]);
-      expect(
-        reverseResolveAlias("/root/index.js", { "@": "/root", "~": "/root/index.js" }),
-      ).toEqual(["@/index.js", "~"]);
-    });
-    it("respects path separators", () => {
-      expect(reverseResolveAlias("/rootfoo/a.js", { "@": "/root" })).toEqual([]);
-    });
-    it("respect ending with /", () => {
-      expect(reverseResolveAlias("/src/foo/bar", { "~/": "/src" })).toEqual([
-        "~/foo/bar",
-      ]);
-      expect(reverseResolveAlias("/src", { "~/": "/src" })).toEqual(["~/"]);
-      expect(reverseResolveAlias("C:\\src\\foo", aliases)).toEqual([
-        "~win/foo",
-      ]);
-    });
-    it("unchanged", () => {
-      expect(reverseResolveAlias("./bar.js", { "@": "/root" })).toEqual([]);
-    });
-  });
 });
 
 describe("filename", () => {
@@ -122,4 +93,38 @@ describe("filename", () => {
       expect(filename(file)).toEqual(files[file]);
     });
   }
+
+  describe("reverseResolveAlias", () => {
+    it("returns all matches, longest first", () => {
+      expect(
+        reverseResolveAlias("/root/some/assets/smth.jpg", {
+          "~": "/root",
+          "~assets": "/root/some/assets",
+        }),
+      ).toEqual(["~/some/assets/smth.jpg", "~assets/smth.jpg"]);
+      expect(
+        reverseResolveAlias("/root/index.js", {
+          "@": "/root",
+          "~": "/root/index.js",
+        }),
+      ).toEqual(["@/index.js", "~"]);
+    });
+    it("respects path separators", () => {
+      expect(reverseResolveAlias("/rootless/a", { "@": "/root" })).toEqual([]);
+    });
+    it("respects ending with /", () => {
+      expect(reverseResolveAlias("/src/foo/bar", { "~/": "/src" })).toEqual([
+        "~/foo/bar",
+      ]);
+      expect(reverseResolveAlias("/src", { "~/": "/src" })).toEqual(["~/"]);
+    });
+    it("normalizes windows paths", () => {
+      expect(reverseResolveAlias("C:\\src\\foo", { "~": "C:/src" })).toEqual([
+        "~/foo",
+      ]);
+    });
+    it("unchanged", () => {
+      expect(reverseResolveAlias("./bar.js", { "@": "/root" })).toEqual([]);
+    });
+  });
 });

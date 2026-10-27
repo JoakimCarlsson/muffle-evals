@@ -1,28 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { withBase, withoutBase } from "../src";
 
-describe("base boundaries", () => {
-  for (const base of ["/admin", "/admin/"]) {
-    for (const suffix of ["-dashboard", "istrator", ".html", "%2Fdashboard"]) {
-      test(`${base} does not contain /admin${suffix}`, () => {
-        const input = `/admin${suffix}`;
-        expect(withoutBase(input, base)).toBe(input);
-        expect(withBase(input, base)).toBe(`/admin${input}`);
-      });
-    }
-
-    for (const suffix of ["", "/", "/dashboard", "?x", "#section"]) {
-      test(`${base} contains /admin${suffix}`, () => {
-        const input = `/admin${suffix}`;
-        expect(withoutBase(input, base)).toBe(
-          suffix.startsWith("/") ? suffix : `/${suffix}`,
-        );
-        expect(withBase(input, base)).toBe(input);
-      });
-    }
-  }
-});
-
 describe("withBase", () => {
   const tests = [
     { base: "/", input: "/", out: "/" },
@@ -66,5 +44,37 @@ describe("withoutBase", () => {
     test(JSON.stringify(t.input) + "-" + JSON.stringify(t.base), () => {
       expect(withoutBase(t.input, t.base)).toBe(t.out);
     });
+  }
+});
+
+describe("base path boundaries", () => {
+  for (const base of ["/admin", "/admin/"]) {
+    for (const input of [
+      "/admin-dashboard",
+      "/administrator",
+      "/admin%2Fdashboard",
+    ]) {
+      test(`${base} does not match ${input}`, () => {
+        expect(withoutBase(input, base)).toBe(input);
+        expect(withBase(input, base)).toBe(`/admin${input}`);
+      });
+    }
+
+    for (const suffix of [
+      "",
+      "/",
+      "/dashboard",
+      "?x",
+      "#section",
+      "?x#section",
+    ]) {
+      test(`${base} matches /admin${suffix}`, () => {
+        const input = `/admin${suffix}`;
+        expect(withoutBase(input, base)).toBe(
+          suffix.startsWith("/") ? suffix : `/${suffix}`,
+        );
+        expect(withBase(input, base)).toBe(input);
+      });
+    }
   }
 });

@@ -2,9 +2,11 @@ import { expect, it } from "vitest";
 import { parseArgs } from "../src/args.ts";
 
 it("kebab-case input overrides camelCase default", () => {
-  const def = { fooBar: { type: "enum", options: ["one", "two"], default: "two" } } as const;
-  const r: any = parseArgs(["--foo-bar", "one"], def as any);
+  const args = { fooBar: { type: "enum", options: ["one", "two"], default: "two" } } as const;
+  const r = parseArgs(["--foo-bar", "one"], args as any) as any;
   expect(r.fooBar).toBe("one");
   expect(r["foo-bar"]).toBe("one");
-  expect((parseArgs([], def as any) as any).fooBar).toBe("two");
+  const d = parseArgs([], args as any) as any;
+  expect(d.fooBar).toBe("two");
+  expect(d["foo-bar"]).toBe("two");
 });

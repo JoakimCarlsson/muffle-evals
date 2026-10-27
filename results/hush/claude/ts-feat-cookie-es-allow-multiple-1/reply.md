@@ -1,1 +1,0 @@
-Done. `parse()` now takes `allowMultiple`, with a `CookiesMultiple` return type via overload. Tests pass (98). `tsc` only reports an existing tsconfig deprecation error, which I left alone. Nothing committed.

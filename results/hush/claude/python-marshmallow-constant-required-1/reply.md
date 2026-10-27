@@ -1,1 +1,0 @@
-Done. `Constant` now accepts `required=True` and always loads the constant (`src/marshmallow/fields.py`). `load({})` and `load({"foo": 99})` both give `{"foo": 42}`, `Constant(None, required=True)` loads `None`, and `required` stays `True` on the field. Full test suite passes; I added no new tests and no changelog entry.

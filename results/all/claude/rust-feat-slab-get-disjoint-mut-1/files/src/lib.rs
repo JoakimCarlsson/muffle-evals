@@ -739,8 +739,8 @@ impl<T> Slab<T> {
     /// Return mutable references to the values associated with the given keys
     /// simultaneously, in the same order as `keys`.
     ///
-    /// Overlapping keys are rejected first, then the keys are checked in order
-    /// and the first out-of-bounds or vacant key decides the error.
+    /// Overlapping keys are reported first, then the keys are checked in order
+    /// and the first one that is out of bounds or vacant decides the error.
     ///
     /// # Examples
     ///
@@ -763,27 +763,22 @@ impl<T> Slab<T> {
         &mut self,
         keys: [usize; N],
     ) -> Result<[&mut T; N], GetDisjointMutError> {
-        for (i, key) in keys.iter().enumerate() {
-            if keys[..i].contains(key) {
+        for i in 0..N {
+            if keys[i + 1..].contains(&keys[i]) {
                 return Err(GetDisjointMutError::OverlappingIndices);
             }
         }
-        for &key in keys.iter() {
-            match self.entries.get(key) {
+        let mut ptrs = [core::ptr::null_mut::<T>(); N];
+        for (ptr, &key) in ptrs.iter_mut().zip(keys.iter()) {
+            match self.entries.get_mut(key) {
                 None => return Err(GetDisjointMutError::IndexOutOfBounds),
                 Some(Entry::Vacant(_)) => return Err(GetDisjointMutError::IndexVacant),
-                Some(Entry::Occupied(_)) => {}
+                Some(Entry::Occupied(val)) => *ptr = val,
             }
         }
-        let base = self.entries.as_mut_ptr();
-        // SAFETY: keys are in bounds, occupied and pairwise distinct, so each
-        // reference points at a different live entry.
-        Ok(keys.map(|key| unsafe {
-            match &mut *base.add(key) {
-                Entry::Occupied(val) => val,
-                Entry::Vacant(_) => core::hint::unreachable_unchecked(),
-            }
-        }))
+        // SAFETY: the keys are distinct, so the pointers refer to different
+        // entries, and each came from a live `&mut` borrowed from `self`.
+        Ok(unsafe { core::ptr::read(&ptrs as *const [*mut T; N] as *const [&mut T; N]) })
     }
 
     /// Return two mutable references to the values associated with the two

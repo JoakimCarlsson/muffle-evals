@@ -1,9 +1,9 @@
-I’ll check how argument names and defaults interact, fix the precedence issue, and add a regression test.
+I’ll check how defaults interact with kebab-case input, fix the precedence issue, and add a regression test.
 
-The parser applies defaults before copying values between aliases, so the default blocks the value passed as `--foo-bar`. I’ll apply defaults after resolving explicit values and test both casing variants, declared aliases, and boolean defaults.
+Defaults are being applied before aliases are resolved, so the default blocks the value passed through `--foo-bar`. I’ve changed defaults to apply only when neither the argument nor an alias was supplied, and added regression coverage. I’ll run the checks using the installed tools; `pnpm` isn’t available here.
 
-Fixed default precedence: explicit CLI values now resolve across aliases before defaults are applied. `--foo-bar one` produces both `fooBar: "one"` and `"foo-bar": "one"`.
+Fixed: `--foo-bar one` now overrides the `fooBar` default and sets both keys to `"one"`.
 
-Added regression coverage for casing variants, declared aliases, and boolean defaults.
+Defaults apply only when neither the argument nor an alias was supplied. Added regression tests covering enums, strings, booleans, aliases, and enum validation.
 
-Validation passed: all 71 tests, type checking, lint, and formatting.
+All 69 tests pass, along with type, lint, and formatting checks.

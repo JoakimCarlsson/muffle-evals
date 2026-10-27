@@ -687,6 +687,7 @@ __all__ = [
     "stop_when_event_set",
     "wait_chain",
     "wait_combine",
+    "wait_exception",
     "wait_exponential",
     "wait_fixed",
     "wait_incrementing",

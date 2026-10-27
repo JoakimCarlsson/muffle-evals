@@ -127,7 +127,7 @@ b = WithJitter(500*time.Millisecond, b)
 // Return the next value, +/- 5% of the result
 b = WithJitterPercent(5, b)
 
-// Return a random duration from zero (inclusive) to the next value (exclusive)
+// Return a random duration from zero up to (but excluding) the next value
 b = WithFullJitter(b)
 ```
 

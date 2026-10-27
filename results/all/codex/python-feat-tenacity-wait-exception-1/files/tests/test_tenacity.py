@@ -213,35 +213,59 @@ class TestStopConditions(unittest.TestCase):
         self.assertTrue(r.stop(make_retry_state(101, 101)))
 
 
-class TestWaitConditions(unittest.TestCase):
-    def test_exception_wait(self):
-        """Use each exception's delay and reject outcomes without exceptions."""
-        predicate = mock.Mock(side_effect=lambda exception: exception.args[0])
-        wait = tenacity.wait_exception(predicate=predicate)
-        for exception in (ValueError(1.5), BaseException(0)):
-            sleep = mock.Mock()
-            attempt = mock.Mock(side_effect=[exception, "success"])
-            retrying = Retrying(
-                wait=wait,
-                sleep=sleep,
-                retry=tenacity.retry_if_exception_type(BaseException),
-            )
-            self.assertEqual(retrying(attempt), "success")
-            predicate.assert_called_with(exception)
-            sleep.assert_called_once_with(exception.args[0])
+class TestWaitException:
+    @pytest.mark.parametrize("decorated", [False, True])
+    def test_exception_wait(self, decorated):
+        """Use each failed attempt's exception and sleep for its exact duration."""
+        errors = [ValueError("429"), OSError("other")]
+        attempts = iter(errors + [None])
+        seen = []
+        sleeps = []
 
-        state = RetryCallState(None, None, (), {})
-        predicate.reset_mock()
-        with self.assertRaises(RuntimeError):
-            wait(state)
-        state.set_result(None)
-        with self.assertRaises(RuntimeError):
-            wait(state)
-        retrying = Retrying(wait=wait, retry=tenacity.retry_if_result(lambda _: True))
-        with self.assertRaises(RuntimeError):
+        def predicate(exception):
+            """Choose a wait based on the exact exception received."""
+            seen.append(exception)
+            return 1.25 if exception is errors[0] else 60.0
+
+        def request():
+            """Fail twice, then succeed."""
+            exception = next(attempts)
+            if exception is not None:
+                raise exception
+            return "ok"
+
+        options = {
+            "wait": tenacity.wait_exception(predicate),
+            "stop": tenacity.stop_after_attempt(3),
+            "sleep": sleeps.append,
+        }
+        result = retry(**options)(request)() if decorated else Retrying(**options)(request)
+        assert result == "ok"
+        assert seen[0] is errors[0]
+        assert seen[1] is errors[1]
+        assert sleeps == [1.25, 60.0]
+
+    def test_result_retry(self):
+        """Reject a result retry without calling the predicate."""
+        predicate = mock.Mock()
+        retrying = Retrying(
+            wait=tenacity.wait_exception(predicate),
+            retry=tenacity.retry_if_result(lambda result: True),
+        )
+        with pytest.raises(RuntimeError):
             retrying(lambda: None)
         predicate.assert_not_called()
 
+    def test_missing_outcome(self):
+        """Reject a state with no completed attempt."""
+        predicate = mock.Mock()
+        state = tenacity.RetryCallState(Retrying(), None, (), {})
+        with pytest.raises(RuntimeError):
+            tenacity.wait_exception(predicate)(state)
+        predicate.assert_not_called()
+
+
+class TestWaitConditions(unittest.TestCase):
     def test_no_sleep(self):
         r = Retrying()
         self.assertEqual(0, r.wait(make_retry_state(18, 9879)))

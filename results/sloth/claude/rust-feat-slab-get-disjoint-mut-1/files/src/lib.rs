@@ -230,7 +230,7 @@ pub struct Drain<'a, T> {
     len: usize,
 }
 
-/// The error returned by [`Slab::get_disjoint_mut`].
+/// The error type returned by [`Slab::get_disjoint_mut`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GetDisjointMutError {
     /// The same key was given more than once.
@@ -787,11 +787,18 @@ impl<T> Slab<T> {
         }
     }
 
-    /// Return mutable references to the values associated with the given keys
-    /// simultaneously, in the same order as `keys`.
+    /// Return mutable references to the values associated with `N` distinct
+    /// keys simultaneously, in the same order as `keys`.
     ///
-    /// Overlapping keys are checked first, then the keys are checked in order
-    /// and the first one that is out of bounds or vacant decides the error.
+    /// Duplicate keys are reported first, before any other check. Otherwise
+    /// the keys are checked in order and the first bad one decides the error.
+    ///
+    /// # Errors
+    ///
+    /// * [`GetDisjointMutError::OverlappingIndices`] if a key appears twice.
+    /// * [`GetDisjointMutError::IndexOutOfBounds`] if a key is past the end of
+    ///   the slab.
+    /// * [`GetDisjointMutError::IndexVacant`] if a key has no value.
     ///
     /// # Examples
     ///
@@ -800,14 +807,11 @@ impl<T> Slab<T> {
     /// let mut slab = Slab::new();
     /// let a = slab.insert(1);
     /// let b = slab.insert(2);
+    ///
     /// let [x, y] = slab.get_disjoint_mut([a, b]).unwrap();
     /// std::mem::swap(x, y);
-    /// assert_eq!((slab[a], slab[b]), (2, 1));
     ///
-    /// assert_eq!(
-    ///     slab.get_disjoint_mut([a, a]),
-    ///     Err(GetDisjointMutError::OverlappingIndices)
-    /// );
+    /// assert_eq!((slab[a], slab[b]), (2, 1));
     /// ```
     pub fn get_disjoint_mut<const N: usize>(
         &mut self,
@@ -818,19 +822,21 @@ impl<T> Slab<T> {
                 return Err(GetDisjointMutError::OverlappingIndices);
             }
         }
-        for &key in &keys {
+        for &key in keys.iter() {
             match self.entries.get(key) {
                 None => return Err(GetDisjointMutError::IndexOutOfBounds),
                 Some(Entry::Vacant(_)) => return Err(GetDisjointMutError::IndexVacant),
                 Some(Entry::Occupied(_)) => {}
             }
         }
+
         let base = self.entries.as_mut_ptr();
-        // SAFETY: every key is in bounds and distinct, so each pointer refers
-        // to a different element of `self.entries`, which `&mut self` borrows.
-        Ok(keys.map(|key| match unsafe { &mut *base.add(key) } {
-            Entry::Occupied(val) => val,
-            Entry::Vacant(_) => unreachable!(),
+        Ok(keys.map(|key| {
+            // SAFETY: keys are distinct, in bounds and occupied (checked above).
+            match unsafe { &mut *base.add(key) } {
+                Entry::Occupied(val) => val,
+                Entry::Vacant(_) => unreachable!(),
+            }
         }))
     }
 

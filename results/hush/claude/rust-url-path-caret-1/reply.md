@@ -1,5 +1,3 @@
-Remove redundant `^` in USERINFO and test.
+Already in url/; rerun.
 
-Tests now pass that were expected-fail; update the expectations list.
-
-Done. Added `^` to `PATH` set in `url/src/parser.rs`, dropped redundant `^` from `USERINFO`, and removed 3 now-passing entries from `tests/expected_failures.txt`. All tests pass.
+Done. `^` added to the `PATH` set in `url/src/parser.rs:23`. I removed three WPT entries from `tests/expected_failures.txt`, because they now pass. `cargo test` in `url` passes. The doctests and the other workspace crates were not run.

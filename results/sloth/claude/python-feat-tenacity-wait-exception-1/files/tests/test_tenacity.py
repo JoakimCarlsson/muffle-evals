@@ -369,6 +369,25 @@ class TestWaitConditions(unittest.TestCase):
             self.assertLess(w, 8)
             self.assertGreaterEqual(w, 5)
 
+    def test_wait_exception(self):
+        def failed(exc):
+            fut = tenacity.Future(1)
+            fut.set_exception(exc)
+            return fut
+
+        r = Retrying(
+            wait=tenacity.wait_exception(
+                lambda e: 5.0 if isinstance(e, ValueError) else 60.0
+            )
+        )
+        self.assertEqual(5.0, r.wait(make_retry_state(1, 0, failed(ValueError()))))
+        self.assertEqual(60.0, r.wait(make_retry_state(1, 0, failed(KeyError()))))
+
+    def test_wait_exception_without_exception(self):
+        r = Retrying(wait=tenacity.wait_exception(lambda e: 1.0))
+        with self.assertRaises(RuntimeError):
+            r.wait(make_retry_state(1, 0))
+
     def test_wait_double_sum(self):
         r = Retrying(wait=tenacity.wait_random(0, 3) + tenacity.wait_fixed(5))
         # Test it a few time since it's random
@@ -575,16 +594,6 @@ class TestWaitConditions(unittest.TestCase):
         self.assertEqual(str(retry_state.outcome.exception()), "Broken")
         self.assertEqual(retry_state.attempt_number, 1)
         self.assertGreaterEqual(retry_state.outcome_timestamp, retry_state.start_time)
-
-    def test_wait_exception(self):
-        r = Retrying(wait=tenacity.wait_exception(lambda e: float(str(e))))
-        failed = tenacity.Future.construct(1, ValueError("3.5"), True)
-        self.assertEqual(3.5, r.wait(make_retry_state(1, 0, last_result=failed)))
-        with self.assertRaises(RuntimeError):
-            r.wait(make_retry_state(1, 0))
-        rejected = tenacity.Future.construct(1, 1, False)
-        with self.assertRaises(RuntimeError):
-            r.wait(make_retry_state(1, 0, last_result=rejected))
 
 
 class TestRetryConditions(unittest.TestCase):

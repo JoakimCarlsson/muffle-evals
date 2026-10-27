@@ -1,5 +1,2 @@
-Iterator ends must share one range. Checking day/week bounds and reverse tests.
-
-
 Done.
-Fixed day/week reverse ranges, lengths, exhaustion; included endpoints. 290 tests passed; no-default-features check passed. Three unrelated doctests fail on deprecated constants.
+Fixed both iterators’ reverse traversal, lengths, exhaustion, endpoint inclusion; updated docs. 290 unit tests passed. Iterator doctests passed; three unrelated doctests failed deprecated-constant lint.

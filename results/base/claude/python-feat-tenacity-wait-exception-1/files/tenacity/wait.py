@@ -56,25 +56,6 @@ class wait_fixed(wait_base):
         return self.wait_fixed
 
 
-class wait_exception(wait_base):
-    """Wait strategy that waits the amount of time returned by the predicate.
-
-    The predicate is passed the exception raised by the last attempt and
-    returns the number of seconds to wait.
-    """
-
-    def __init__(self, predicate: typing.Callable[[BaseException], float]) -> None:
-        self.predicate = predicate
-
-    def __call__(self, retry_state: "RetryCallState") -> float:
-        if retry_state.outcome is None:
-            raise RuntimeError("__call__() called before outcome was set")
-        exception = retry_state.outcome.exception()
-        if exception is None:
-            raise RuntimeError("outcome failed but the exception is None")
-        return self.predicate(exception)
-
-
 class wait_none(wait_fixed):
     """Wait strategy that doesn't wait at all before retrying."""
 
@@ -251,3 +232,22 @@ class wait_exponential_jitter(wait_base):
         except OverflowError:
             result = self.max
         return max(0, min(result, self.max))
+
+
+class wait_exception(wait_base):
+    """Wait strategy that waits the amount of time returned by a predicate.
+
+    The predicate is called with the exception raised by the last attempt and
+    must return the number of seconds to wait.
+    """
+
+    def __init__(self, predicate: typing.Callable[[BaseException], float]) -> None:
+        self.predicate = predicate
+
+    def __call__(self, retry_state: "RetryCallState") -> float:
+        if retry_state.outcome is None:
+            raise RuntimeError("__call__() called before outcome was set")
+        exception = retry_state.outcome.exception()
+        if exception is None:
+            raise RuntimeError("outcome failed but the exception is None")
+        return self.predicate(exception)

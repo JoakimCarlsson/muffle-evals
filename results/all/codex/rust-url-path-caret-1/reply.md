@@ -1,5 +1,2 @@
-Path encoding fix: check shared encode set and tests, add caret, run checks.
-
-
 Done.
-Paths encode `^` as `%5E`. Added regression test; removed three expected failures. Build, URL tests, formatting passed.
+Paths now encode `^` as `%5E`; added regression coverage and removed three obsolete expected failures. `cargo test -p url` passed.

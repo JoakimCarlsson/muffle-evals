@@ -1,1 +1,0 @@
-Done. `"%_"`, `"%-"` and `"%0"` now return `Expected { what: "valid escape sequence", index: 2 }` instead of panicking, using `.get()` in `strftime.rs`. It compiles, but I didn't run the repro or any tests, and I added no regression test.

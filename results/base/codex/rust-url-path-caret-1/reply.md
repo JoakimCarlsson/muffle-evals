@@ -1,9 +1,9 @@
-I’ll check the path encoding set and regression tests, add the caret, and run the relevant tests.
+I’ll check the path encoding set, add the caret, and run the relevant tests.
 
-The fix passes the new regression test and makes three existing WHATWG cases pass. I’ll remove those three entries from the expected-failure list and rerun the suite.
+The shared path encoding set was missing `^`. Adding it also fixes path setters and segment insertion, and should resolve three existing web-platform test failures. The regression test covers those APIs, plus query, fragment, and opaque-path behavior.
 
-Fixed: URL paths now encode `^` as `%5E`.
+Fixed the path percent-encode set to include `^`, so parsing `http://localhost/a^b` now produces `http://localhost/a%5Eb`.
 
-Added regression coverage for parsing, relative URLs, and path setters. Removed three expected-failure entries that now pass.
+Added regression coverage for parsing, relative resolution, path setters, and segment insertion. Removed three now-passing web-platform tests from the expected-failures list.
 
 Validation: `cargo test -p url`, formatting, and diff checks all pass.

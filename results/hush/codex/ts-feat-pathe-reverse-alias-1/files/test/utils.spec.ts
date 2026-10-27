@@ -38,33 +38,41 @@ describe("alias", () => {
   });
 
   describe("reverseResolveAlias", () => {
-    it.each([
-      [
-        "/root/some/assets/smth.jpg",
-        { "~": "/root", "~assets": "/root/some/assets" },
-        ["~/some/assets/smth.jpg", "~assets/smth.jpg"],
-      ],
-      [
-        "/root/index.js",
-        { "@": "/root", "~": "/root/index.js" },
-        ["@/index.js", "~"],
-      ],
-      ["/src/foo/bar", { "~/": "/src" }, ["~/foo/bar"]],
-      ["/src", { "~/": "/src" }, ["~/"]],
-      ["./bar.js", { "@": "/root" }, []],
-      ["/rooted/foo", { "@": "/root" }, []],
-      ["/src/foo", { "@": "/src/" }, ["@/foo"]],
-      ["/foo", { "@": "/" }, ["@/foo"]],
-      [String.raw`c:\src\foo`, { "@": String.raw`C:\src` }, ["@/foo"]],
-      ["/root/lib/foo", { "@": "/root", "~": "@/lib" }, ["@/lib/foo", "~/foo"]],
-    ])("resolves %s", (path, aliases, expected) => {
+    it("returns all matches longest first", () => {
       expect(
-        reverseResolveAlias(path, aliases as Record<string, string>),
-      ).toEqual(expected);
+        reverseResolveAlias("/root/some/assets/smth.jpg", {
+          "~": "/root",
+          "~assets": "/root/some/assets",
+        }),
+      ).toEqual(["~/some/assets/smth.jpg", "~assets/smth.jpg"]);
+      expect(reverseResolveAlias("/root/index.js", aliases)).toEqual([
+        "@/index.js",
+        "~",
+      ]);
     });
-
-    it("accepts normalized aliases", () => {
-      expect(reverseResolveAlias("/src/foo", aliases)).toEqual(["~/foo"]);
+    it("preserves trailing alias separators", () => {
+      expect(reverseResolveAlias("/src/foo/bar", aliases)).toEqual([
+        "~/foo/bar",
+      ]);
+      expect(reverseResolveAlias("/src", aliases)).toEqual(["~/"]);
+    });
+    it("normalizes alias chains and Windows paths", () => {
+      expect(reverseResolveAlias("/root/bingpot/index.ts", _aliases)).toEqual([
+        "@/bingpot/index.ts",
+        "bingpot",
+      ]);
+      expect(
+        reverseResolveAlias(String.raw`C:\src\foo`, { "~/": "C:\\src\\" }),
+      ).toEqual(["~/foo"]);
+    });
+    it("matches only whole targets and separator boundaries", () => {
+      expect(reverseResolveAlias("/rooted/foo", { "@": "/root" })).toEqual([]);
+      expect(reverseResolveAlias("./bar.js", aliases)).toEqual([]);
+      expect(reverseResolveAlias("/root/foo", { "@": "/root/" })).toEqual([
+        "@/foo",
+      ]);
+      expect(reverseResolveAlias("/foo", { "@": "/" })).toEqual(["@/foo"]);
+      expect(reverseResolveAlias("/foo", {})).toEqual([]);
     });
   });
 

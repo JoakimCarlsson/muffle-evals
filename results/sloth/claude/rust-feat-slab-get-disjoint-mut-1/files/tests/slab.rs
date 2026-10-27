@@ -732,17 +732,26 @@ fn clone_from() {
 }
 
 #[test]
-fn get_disjoint_mut() {
+fn get_disjoint_mut_returns_in_key_order() {
+    let mut slab = Slab::new();
+    let a = slab.insert(1);
+    let b = slab.insert(2);
+    let c = slab.insert(3);
+
+    let [x, y, z] = slab.get_disjoint_mut([c, a, b]).unwrap();
+    assert_eq!((*x, *y, *z), (3, 1, 2));
+    std::mem::swap(x, y);
+    assert_eq!((slab[a], slab[b], slab[c]), (3, 2, 1));
+    assert_eq!(slab.get_disjoint_mut([]), Ok([]));
+}
+
+#[test]
+fn get_disjoint_mut_errors() {
     let mut slab = Slab::new();
     for i in 0..5 {
         slab.insert(i);
     }
     slab.remove(1);
-
-    let [a, b] = slab.get_disjoint_mut([3, 0]).unwrap();
-    std::mem::swap(a, b);
-    assert_eq!((slab[0], slab[3]), (3, 0));
-    assert_eq!(slab.get_disjoint_mut([]), Ok([]));
 
     assert_eq!(
         slab.get_disjoint_mut([42, 2, 1, 2]),

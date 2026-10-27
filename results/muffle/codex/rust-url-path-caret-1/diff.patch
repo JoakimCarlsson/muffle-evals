@@ -1,5 +1,5 @@
 diff --git a/url/src/parser.rs b/url/src/parser.rs
-index 27d7cb7..189be6f 100644
+index 27d7cb7..5ff6305 100644
 --- a/url/src/parser.rs
 +++ b/url/src/parser.rs
 @@ -20,7 +20,7 @@ use percent_encoding::{percent_encode, utf8_percent_encode, AsciiSet, CONTROLS};
@@ -11,6 +11,14 @@ index 27d7cb7..189be6f 100644
  
  /// https://url.spec.whatwg.org/#userinfo-percent-encode-set
  pub(crate) const USERINFO: &AsciiSet = &PATH
+@@ -32,7 +32,6 @@ pub(crate) const USERINFO: &AsciiSet = &PATH
+     .add(b'[')
+     .add(b'\\')
+     .add(b']')
+-    .add(b'^')
+     .add(b'|');
+ 
+ pub(crate) const PATH_SEGMENT: &AsciiSet = &PATH.add(b'/').add(b'%');
 diff --git a/url/tests/expected_failures.txt b/url/tests/expected_failures.txt
 index 8d4407c..2332b2a 100644
 --- a/url/tests/expected_failures.txt
@@ -33,31 +41,30 @@ index 8d4407c..2332b2a 100644
  <sc:space    #fragment> set hash to <>
  <data:space  ?query#fragment> set hash to <>
 diff --git a/url/tests/unit.rs b/url/tests/unit.rs
-index 828f797..0f599c5 100644
+index 828f797..de253c0 100644
 --- a/url/tests/unit.rs
 +++ b/url/tests/unit.rs
-@@ -53,6 +53,27 @@ fn size() {
+@@ -53,6 +53,26 @@ fn size() {
      assert_eq!(size_of::<Url>(), size_of::<Option<Url>>());
  }
  
 +#[test]
 +fn test_caret_in_path() {
-+    for input in ["http://localhost/a^b", "file:///a^b", "custom:/a^b"] {
++    for input in ["http://localhost/a^b", "custom:/a^b", "file:///a^b"] {
 +        let mut url = Url::parse(input).unwrap();
 +        assert_eq!(url.path(), "/a%5Eb");
 +
-+        let relative = url.join("c^d").unwrap();
-+        assert_eq!(relative.path(), "/c%5Ed");
++        url.set_path("/c^d");
++        assert_eq!(url.path(), "/c%5Ed");
 +
-+        url.set_path("/e^f");
-+        assert_eq!(url.path(), "/e%5Ef");
++        url.path_segments_mut().unwrap().push("e^f");
++        assert_eq!(url.path(), "/c%5Ed/e%5Ef");
 +
-+        url.path_segments_mut().unwrap().push("g^h");
-+        assert_eq!(url.path(), "/e%5Ef/g%5Eh");
++        assert_eq!(url.join("g^h").unwrap().path(), "/c%5Ed/g%5Eh");
 +    }
 +
-+    let url = Url::parse("http://localhost/a^b?q^r#s^t").unwrap();
-+    assert_eq!(url.as_str(), "http://localhost/a%5Eb?q^r#s^t");
++    let url = Url::parse("http://localhost/a%5Eb?c^d#e^f").unwrap();
++    assert_eq!(url.as_str(), "http://localhost/a%5Eb?c^d#e^f");
 +    assert_eq!(Url::parse("custom:a^b").unwrap().path(), "a^b");
 +}
 +

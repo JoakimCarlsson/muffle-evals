@@ -126,8 +126,13 @@ b = WithJitter(500*time.Millisecond, b)
 
 // Return the next value, +/- 5% of the result
 b = WithJitterPercent(5, b)
+```
 
-// Return a random duration from zero up to (but excluding) the next value
+For full jitter, choose a random duration from zero (inclusive) to the next
+backoff value (exclusive). Zero and negative values are returned unchanged.
+
+```golang
+b := NewFibonacci(1 * time.Second)
 b = WithFullJitter(b)
 ```
 

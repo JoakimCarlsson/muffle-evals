@@ -1,13 +1,9 @@
-Now add tests.
+Now add regression tests.
 
-I fixed both functions in `src/utils.ts`, and the full test suite passes (483 tests), including the new ones I added.
+I fixed both functions in `src/utils.ts`. `withoutBase('/admin-dashboard', '/admin/')` now returns `/admin-dashboard`, and `withBase('/admin-dashboard', '/admin/')` returns `/admin/admin-dashboard`.
 
-I added a small helper, `_isUnderBase`. It treats an input as under the base only if it starts with the base and the next character is the end of the string, `/`, `?` or `#`. `withBase` and `withoutBase` both use it instead of a plain `startsWith`.
+Both functions now use a small shared helper, `isUnderBase`. It treats a path as under the base only when it equals the base or the next character is `/`, `?` or `#`. Paths like `/admin`, `/admin/dashboard` and `/admin?x` still behave as before.
 
-- **`withoutBase('/admin-dashboard', '/admin/')`** now returns `/admin-dashboard`.
-- **`withBase('/admin-dashboard', '/admin/')`** now returns `/admin/admin-dashboard`.
-- **Paths under the base** such as `/admin`, `/admin/dashboard` and `/admin?x` behave as before.
+I added regression tests for these cases to `test/base.test.ts`. The full suite passes (482 tests) and eslint reports no errors. I haven't tested this inside a Nuxt `nuxt generate` build, so I haven't confirmed the `-dashboard` stub file is gone there.
 
-I added the `/admin-dashboard` and under-base cases to `test/base.test.ts`. I didn't run `nuxt generate` against the fix.
-
-I haven't committed anything.
+I didn't commit anything.

@@ -3,17 +3,10 @@ import { withBase, withoutBase } from "../src";
 
 describe("withBase", () => {
   const tests = [
-    { base: "/", input: "/", out: "/" },
     {
       base: "/admin",
       input: "/admin-dashboard",
       out: "/admin/admin-dashboard",
-    },
-    { base: "/admin", input: "/administrator", out: "/admin/administrator" },
-    {
-      base: "/admin",
-      input: "/admin%2Fdashboard",
-      out: "/admin/admin%2Fdashboard",
     },
     { base: "/admin", input: "/admin", out: "/admin" },
     { base: "/admin", input: "/admin/dashboard", out: "/admin/dashboard" },
@@ -24,16 +17,11 @@ describe("withBase", () => {
       input: "/admin-dashboard",
       out: "/admin/admin-dashboard",
     },
-    { base: "/admin/", input: "/administrator", out: "/admin/administrator" },
-    {
-      base: "/admin/",
-      input: "/admin%2Fdashboard",
-      out: "/admin/admin%2Fdashboard",
-    },
     { base: "/admin/", input: "/admin", out: "/admin" },
     { base: "/admin/", input: "/admin/dashboard", out: "/admin/dashboard" },
     { base: "/admin/", input: "/admin?x", out: "/admin?x" },
     { base: "/admin/", input: "/admin#x", out: "/admin#x" },
+    { base: "/", input: "/", out: "/" },
     { base: "/foo", input: "", out: "/foo" },
     { base: "/foo/", input: "/", out: "/foo" },
     { base: "/foo", input: "/bar", out: "/foo/bar" },
@@ -54,21 +42,17 @@ describe("withBase", () => {
 
 describe("withoutBase", () => {
   const tests = [
-    { base: "/", input: "/", out: "/" },
     { base: "/admin", input: "/admin-dashboard", out: "/admin-dashboard" },
-    { base: "/admin", input: "/administrator", out: "/administrator" },
-    { base: "/admin", input: "/admin%2Fdashboard", out: "/admin%2Fdashboard" },
     { base: "/admin", input: "/admin", out: "/" },
     { base: "/admin", input: "/admin/dashboard", out: "/dashboard" },
     { base: "/admin", input: "/admin?x", out: "/?x" },
     { base: "/admin", input: "/admin#x", out: "/#x" },
     { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
-    { base: "/admin/", input: "/administrator", out: "/administrator" },
-    { base: "/admin/", input: "/admin%2Fdashboard", out: "/admin%2Fdashboard" },
     { base: "/admin/", input: "/admin", out: "/" },
     { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
     { base: "/admin/", input: "/admin?x", out: "/?x" },
     { base: "/admin/", input: "/admin#x", out: "/#x" },
+    { base: "/", input: "/", out: "/" },
     { base: "/foo", input: "/", out: "/" },
     { base: "/foo/", input: "/", out: "/" },
     { base: "/foo", input: "/bar", out: "/bar" },

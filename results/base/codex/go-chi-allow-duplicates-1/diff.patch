@@ -16,51 +16,40 @@ index 37cd500..48c3601 100644
  		}
  		w.WriteHeader(405)
 diff --git a/mux_test.go b/mux_test.go
-index 3e3b18f..299395b 100644
+index 3e3b18f..7888443 100644
 --- a/mux_test.go
 +++ b/mux_test.go
-@@ -428,6 +428,47 @@ func TestMethodNotAllowed(t *testing.T) {
+@@ -428,6 +428,36 @@ func TestMethodNotAllowed(t *testing.T) {
  	})
  }
  
 +func TestMethodNotAllowedOverlappingRoutes(t *testing.T) {
-+	for _, methods := range [][]string{{http.MethodPost}, {http.MethodPost, http.MethodPut}} {
-+		t.Run(fmt.Sprint(methods), func(t *testing.T) {
-+			r := NewRouter()
-+			for _, pattern := range []string{
-+				"/article/1-2-3",
-+				"/article/{a}",
-+				"/article/{b}-{c}",
-+				"/article/{b}-{c}-{d}",
-+			} {
-+				for _, method := range methods {
-+					r.MethodFunc(method, pattern, func(w http.ResponseWriter, r *http.Request) {
-+						w.WriteHeader(http.StatusOK)
-+					})
-+				}
-+			}
++	r := NewRouter()
++	handler := func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(http.StatusOK)
++	}
++	for _, pattern := range []string{
++		"/article/1-2-3",
++		"/article/{a}",
++		"/article/{b}-{c}",
++		"/article/{b}-{c}-{d}",
++	} {
++		r.Post(pattern, handler)
++		r.Put(pattern, handler)
++	}
 +
-+			w := httptest.NewRecorder()
-+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/article/1-2-3", nil))
-+			if w.Code != http.StatusMethodNotAllowed {
-+				t.Fatalf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
-+			}
-+			allowed := w.Header().Values("Allow")
-+			if len(allowed) != len(methods) {
-+				t.Fatalf("Allow = %v, want each of %v once", allowed, methods)
-+			}
-+			for _, method := range methods {
-+				count := 0
-+				for _, value := range allowed {
-+					if value == method {
-+						count++
-+					}
-+				}
-+				if count != 1 {
-+					t.Errorf("Allow = %v, want %s once", allowed, method)
-+				}
-+			}
-+		})
++	resp := httptest.NewRecorder()
++	r.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/article/1-2-3", nil))
++	if resp.Code != http.StatusMethodNotAllowed {
++		t.Fatalf("expected status 405, got %d", resp.Code)
++	}
++	allowedMethods := resp.Header().Values("Allow")
++	counts := make(map[string]int)
++	for _, method := range allowedMethods {
++		counts[method]++
++	}
++	if len(allowedMethods) != 2 || counts[http.MethodPost] != 1 || counts[http.MethodPut] != 1 {
++		t.Fatalf("expected Allow to contain POST and PUT once each, got %v", allowedMethods)
 +	}
 +}
 +

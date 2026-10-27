@@ -1,0 +1,372 @@
+diff --git a/either3.go b/either3.go
+index 3c3e122..28d0477 100644
+--- a/either3.go
++++ b/either3.go
+@@ -1,6 +1,11 @@
+ package mo
+ 
+-import "fmt"
++import (
++	"bytes"
++	"encoding/gob"
++	"errors"
++	"fmt"
++)
+ 
+ const (
+ 	either3ArgId1 = iota
+@@ -221,3 +226,68 @@ func (e Either3[T1, T2, T3]) MapArg3(mapper func(T3) Either3[T1, T2, T3]) Either
+ 
+ 	return e
+ }
++
++// MarshalBinary encodes Either3 into binary form.
++func (e Either3[T1, T2, T3]) MarshalBinary() ([]byte, error) {
++	var value any
++	switch e.argId {
++	case either3ArgId1:
++		value = e.arg1
++	case either3ArgId2:
++		value = e.arg2
++	case either3ArgId3:
++		value = e.arg3
++	default:
++		return []byte{}, errEither3InvalidArgumentId
++	}
++
++	var buf bytes.Buffer
++	buf.WriteByte(byte(e.argId))
++	if err := gob.NewEncoder(&buf).Encode(value); err != nil {
++		return []byte{}, err
++	}
++	return buf.Bytes(), nil
++}
++
++// UnmarshalBinary decodes Either3 from binary form.
++func (e *Either3[T1, T2, T3]) UnmarshalBinary(data []byte) error {
++	if len(data) == 0 {
++		return errors.New("Either3[T1, T2, T3].UnmarshalBinary: no data")
++	}
++
++	dec := gob.NewDecoder(bytes.NewReader(data[1:]))
++
++	switch data[0] {
++	case either3ArgId1:
++		var v T1
++		if err := dec.Decode(&v); err != nil {
++			return err
++		}
++		*e = Either3[T1, T2, T3]{argId: either3ArgId1, arg1: v}
++	case either3ArgId2:
++		var v T2
++		if err := dec.Decode(&v); err != nil {
++			return err
++		}
++		*e = Either3[T1, T2, T3]{argId: either3ArgId2, arg2: v}
++	case either3ArgId3:
++		var v T3
++		if err := dec.Decode(&v); err != nil {
++			return err
++		}
++		*e = Either3[T1, T2, T3]{argId: either3ArgId3, arg3: v}
++	default:
++		return errEither3InvalidArgumentId
++	}
++	return nil
++}
++
++// GobEncode implements the gob.GobEncoder interface.
++func (e Either3[T1, T2, T3]) GobEncode() ([]byte, error) {
++	return e.MarshalBinary()
++}
++
++// GobDecode implements the gob.GobDecoder interface.
++func (e *Either3[T1, T2, T3]) GobDecode(data []byte) error {
++	return e.UnmarshalBinary(data)
++}
+diff --git a/either3_test.go b/either3_test.go
+index 10b84e1..fac97a5 100644
+--- a/either3_test.go
++++ b/either3_test.go
+@@ -295,3 +295,24 @@ func TestEither3MapArg(t *testing.T) {
+ 	})
+ 	is.Equal(NewEither3Arg3[int, bool, float64](2.1), result3_3)
+ }
++
++func TestEither3Gob(t *testing.T) {
++	is := assert.New(t)
++
++	for _, original := range []Either3[int, string, bool]{
++		NewEither3Arg1[int, string, bool](1),
++		NewEither3Arg2[int, string, bool]("a"),
++		NewEither3Arg3[int, string, bool](true),
++	} {
++		bin, err := original.GobEncode()
++		is.NoError(err)
++
++		var decoded Either3[int, string, bool]
++		is.NoError(decoded.GobDecode(bin))
++		is.Equal(original, decoded)
++	}
++
++	var decoded Either3[int, string, bool]
++	is.Error(decoded.UnmarshalBinary(nil))
++	is.Error(decoded.UnmarshalBinary([]byte{3}))
++}
+diff --git a/either4.go b/either4.go
+index 40d54cf..af21c0f 100644
+--- a/either4.go
++++ b/either4.go
+@@ -1,6 +1,11 @@
+ package mo
+ 
+-import "fmt"
++import (
++	"bytes"
++	"encoding/gob"
++	"errors"
++	"fmt"
++)
+ 
+ const (
+ 	either4ArgId1 = iota
+@@ -283,3 +288,76 @@ func (e Either4[T1, T2, T3, T4]) MapArg4(mapper func(T4) Either4[T1, T2, T3, T4]
+ 
+ 	return e
+ }
++
++// MarshalBinary encodes Either4 into binary form.
++func (e Either4[T1, T2, T3, T4]) MarshalBinary() ([]byte, error) {
++	var value any
++	switch e.argId {
++	case either4ArgId1:
++		value = e.arg1
++	case either4ArgId2:
++		value = e.arg2
++	case either4ArgId3:
++		value = e.arg3
++	case either4ArgId4:
++		value = e.arg4
++	default:
++		return []byte{}, errEither4InvalidArgumentId
++	}
++
++	var buf bytes.Buffer
++	buf.WriteByte(byte(e.argId))
++	if err := gob.NewEncoder(&buf).Encode(value); err != nil {
++		return []byte{}, err
++	}
++	return buf.Bytes(), nil
++}
++
++// UnmarshalBinary decodes Either4 from binary form.
++func (e *Either4[T1, T2, T3, T4]) UnmarshalBinary(data []byte) error {
++	if len(data) == 0 {
++		return errors.New("Either4[T1, T2, T3, T4].UnmarshalBinary: no data")
++	}
++
++	dec := gob.NewDecoder(bytes.NewReader(data[1:]))
++
++	switch data[0] {
++	case either4ArgId1:
++		var v T1
++		if err := dec.Decode(&v); err != nil {
++			return err
++		}
++		*e = Either4[T1, T2, T3, T4]{argId: either4ArgId1, arg1: v}
++	case either4ArgId2:
++		var v T2
++		if err := dec.Decode(&v); err != nil {
++			return err
++		}
++		*e = Either4[T1, T2, T3, T4]{argId: either4ArgId2, arg2: v}
++	case either4ArgId3:
++		var v T3
++		if err := dec.Decode(&v); err != nil {
++			return err
++		}
++		*e = Either4[T1, T2, T3, T4]{argId: either4ArgId3, arg3: v}
++	case either4ArgId4:
++		var v T4
++		if err := dec.Decode(&v); err != nil {
++			return err
++		}
++		*e = Either4[T1, T2, T3, T4]{argId: either4ArgId4, arg4: v}
++	default:
++		return errEither4InvalidArgumentId
++	}
++	return nil
++}
++
++// GobEncode implements the gob.GobEncoder interface.
++func (e Either4[T1, T2, T3, T4]) GobEncode() ([]byte, error) {
++	return e.MarshalBinary()
++}
++
++// GobDecode implements the gob.GobDecoder interface.
++func (e *Either4[T1, T2, T3, T4]) GobDecode(data []byte) error {
++	return e.UnmarshalBinary(data)
++}
+diff --git a/either4_test.go b/either4_test.go
+index 4d5726b..470af6c 100644
+--- a/either4_test.go
++++ b/either4_test.go
+@@ -451,3 +451,25 @@ func TestEither4MapArg(t *testing.T) {
+ 	})
+ 	is.Equal(NewEither4Arg4[int, bool, float64, string]("Bye"), result4_4)
+ }
++
++func TestEither4Gob(t *testing.T) {
++	is := assert.New(t)
++
++	for _, original := range []Either4[int, string, bool, float64]{
++		NewEither4Arg1[int, string, bool, float64](1),
++		NewEither4Arg2[int, string, bool, float64]("a"),
++		NewEither4Arg3[int, string, bool, float64](true),
++		NewEither4Arg4[int, string, bool, float64](1.5),
++	} {
++		bin, err := original.GobEncode()
++		is.NoError(err)
++
++		var decoded Either4[int, string, bool, float64]
++		is.NoError(decoded.GobDecode(bin))
++		is.Equal(original, decoded)
++	}
++
++	var decoded Either4[int, string, bool, float64]
++	is.Error(decoded.UnmarshalBinary(nil))
++	is.Error(decoded.UnmarshalBinary([]byte{4}))
++}
+diff --git a/either5.go b/either5.go
+index 7fca738..4a5f00d 100644
+--- a/either5.go
++++ b/either5.go
+@@ -1,6 +1,11 @@
+ package mo
+ 
+-import "fmt"
++import (
++	"bytes"
++	"encoding/gob"
++	"errors"
++	"fmt"
++)
+ 
+ const (
+ 	either5ArgId1 = iota
+@@ -345,3 +350,84 @@ func (e Either5[T1, T2, T3, T4, T5]) MapArg5(mapper func(T5) Either5[T1, T2, T3,
+ 
+ 	return e
+ }
++
++// MarshalBinary encodes Either5 into binary form.
++func (e Either5[T1, T2, T3, T4, T5]) MarshalBinary() ([]byte, error) {
++	var value any
++	switch e.argId {
++	case either5ArgId1:
++		value = e.arg1
++	case either5ArgId2:
++		value = e.arg2
++	case either5ArgId3:
++		value = e.arg3
++	case either5ArgId4:
++		value = e.arg4
++	case either5ArgId5:
++		value = e.arg5
++	default:
++		return []byte{}, errEither5InvalidArgumentId
++	}
++
++	var buf bytes.Buffer
++	buf.WriteByte(byte(e.argId))
++	if err := gob.NewEncoder(&buf).Encode(value); err != nil {
++		return []byte{}, err
++	}
++	return buf.Bytes(), nil
++}
++
++// UnmarshalBinary decodes Either5 from binary form.
++func (e *Either5[T1, T2, T3, T4, T5]) UnmarshalBinary(data []byte) error {
++	if len(data) == 0 {
++		return errors.New("Either5[T1, T2, T3, T4, T5].UnmarshalBinary: no data")
++	}
++
++	dec := gob.NewDecoder(bytes.NewReader(data[1:]))
++
++	switch data[0] {
++	case either5ArgId1:
++		var v T1
++		if err := dec.Decode(&v); err != nil {
++			return err
++		}
++		*e = Either5[T1, T2, T3, T4, T5]{argId: either5ArgId1, arg1: v}
++	case either5ArgId2:
++		var v T2
++		if err := dec.Decode(&v); err != nil {
++			return err
++		}
++		*e = Either5[T1, T2, T3, T4, T5]{argId: either5ArgId2, arg2: v}
++	case either5ArgId3:
++		var v T3
++		if err := dec.Decode(&v); err != nil {
++			return err
++		}
++		*e = Either5[T1, T2, T3, T4, T5]{argId: either5ArgId3, arg3: v}
++	case either5ArgId4:
++		var v T4
++		if err := dec.Decode(&v); err != nil {
++			return err
++		}
++		*e = Either5[T1, T2, T3, T4, T5]{argId: either5ArgId4, arg4: v}
++	case either5ArgId5:
++		var v T5
++		if err := dec.Decode(&v); err != nil {
++			return err
++		}
++		*e = Either5[T1, T2, T3, T4, T5]{argId: either5ArgId5, arg5: v}
++	default:
++		return errEither5InvalidArgumentId
++	}
++	return nil
++}
++
++// GobEncode implements the gob.GobEncoder interface.
++func (e Either5[T1, T2, T3, T4, T5]) GobEncode() ([]byte, error) {
++	return e.MarshalBinary()
++}
++
++// GobDecode implements the gob.GobDecoder interface.
++func (e *Either5[T1, T2, T3, T4, T5]) GobDecode(data []byte) error {
++	return e.UnmarshalBinary(data)
++}
+diff --git a/either5_test.go b/either5_test.go
+index 754f141..332f097 100644
+--- a/either5_test.go
++++ b/either5_test.go
+@@ -645,3 +645,26 @@ func TestEither5MapArg(t *testing.T) {
+ 	})
+ 	is.Equal(NewEither5Arg5[int, bool, float64, string, byte](10), result5_5)
+ }
++
++func TestEither5Gob(t *testing.T) {
++	is := assert.New(t)
++
++	for _, original := range []Either5[int, string, bool, float64, int64]{
++		NewEither5Arg1[int, string, bool, float64, int64](1),
++		NewEither5Arg2[int, string, bool, float64, int64]("a"),
++		NewEither5Arg3[int, string, bool, float64, int64](true),
++		NewEither5Arg4[int, string, bool, float64, int64](1.5),
++		NewEither5Arg5[int, string, bool, float64, int64](int64(7)),
++	} {
++		bin, err := original.GobEncode()
++		is.NoError(err)
++
++		var decoded Either5[int, string, bool, float64, int64]
++		is.NoError(decoded.GobDecode(bin))
++		is.Equal(original, decoded)
++	}
++
++	var decoded Either5[int, string, bool, float64, int64]
++	is.Error(decoded.UnmarshalBinary(nil))
++	is.Error(decoded.UnmarshalBinary([]byte{5}))
++}

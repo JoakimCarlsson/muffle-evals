@@ -1,5 +1,2 @@
-Full jitter middleware will preserve stop signals and nonpositive waits.
-
-
 Done.
-Added `WithFullJitter`, docs, tests covering bounds, stop signals, nonpositive bases. `go test ./...` passed.
+Added `WithFullJitter`, documentation, and boundary tests. Returns `[0, base)`, propagates stops, preserves nonpositive bases. `go test ./...` passed.

@@ -1,8 +1,8 @@
 diff --git a/src/utils.ts b/src/utils.ts
-index db7c2c2..737b8e6 100644
+index db7c2c2..00968c4 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
-@@ -292,12 +292,25 @@ export function withBase(input: string, base: string) {
+@@ -292,12 +292,21 @@ export function withBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
@@ -14,22 +14,18 @@ index db7c2c2..737b8e6 100644
  }
  
 +/**
-+ * Checks that input is the base itself or continues it at a segment, query or hash boundary.
-+ *
-+ * @param input - URL or pathname.
-+ * @param base - Base without trailing slash.
++ * Checks that input equals base or continues it at a path, query or hash boundary.
 + */
 +function isUnderBase(input: string, base: string) {
 +  return (
-+    input.startsWith(base) &&
-+    (input.length === base.length || "/?#".includes(input[base.length]!))
++    input.startsWith(base) && (!input[base.length] || "/?#".includes(input[base.length]))
 +  );
 +}
 +
  /**
   * Removes the base from the URL or pathname.
   *
-@@ -316,7 +329,7 @@ export function withoutBase(input: string, base: string) {
+@@ -316,7 +325,7 @@ export function withoutBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
@@ -39,28 +35,19 @@ index db7c2c2..737b8e6 100644
    }
    const trimmed = input.slice(_base.length);
 diff --git a/test/base.test.ts b/test/base.test.ts
-index ed684d1..9991a75 100644
+index ed684d1..4b36baf 100644
 --- a/test/base.test.ts
 +++ b/test/base.test.ts
-@@ -11,6 +11,12 @@ describe("withBase", () => {
-     { base: "/base", input: "/base/", out: "/base/" },
-     { base: "/base", input: "/base/a", out: "/base/a" },
-     { base: "/base/", input: "/base/a", out: "/base/a" },
-+    {
-+      base: "/admin/",
-+      input: "/admin-dashboard",
-+      out: "/admin/admin-dashboard",
-+    },
-+    { base: "/admin/", input: "/admin?x", out: "/admin?x" },
-     { base: "/base/", input: "https://test.com", out: "https://test.com" },
-     { base: "/", input: "https://test.com", out: "https://test.com" },
-   ];
-@@ -36,6 +42,8 @@ describe("withoutBase", () => {
-     { base: "/", input: "/test/", out: "/test/" },
-     { base: "/", input: "/?test", out: "/?test" },
-     { base: "/api", input: "/api?test", out: "/?test" },
-+    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
-+    { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
-     { base: "/base/", input: "https://test.com", out: "https://test.com" },
-     { base: "/", input: "https://test.com", out: "https://test.com" },
-   ];
+@@ -46,3 +46,12 @@ describe("withoutBase", () => {
+     });
+   }
+ });
++
++describe("base prefix", () => {
++  test("does not treat a shared prefix as under base", () => {
++    expect(withoutBase("/admin-dashboard", "/admin/")).toBe("/admin-dashboard");
++    expect(withBase("/admin-dashboard", "/admin/")).toBe("/admin/admin-dashboard");
++    expect(withoutBase("/admin?x", "/admin/")).toBe("/?x");
++    expect(withBase("/admin/dashboard", "/admin/")).toBe("/admin/dashboard");
++  });
++});

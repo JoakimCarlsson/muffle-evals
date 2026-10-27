@@ -1,1 +1,0 @@
-Done. `genDynamicTypeImport` is in `src/typescript.ts`, with tests covering all five of your examples and a README entry. Vitest passes. `tsc` didn't run, because `npx` printed a notice instead of type-checking.

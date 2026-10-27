@@ -1,5 +1,2 @@
-`reverseResolveAlias` needs matching, export, and test checks before changes.
-
-
 Done.
-Added `reverseResolveAlias`, docs, edge-case tests. All 363 tests, lint, types, build passed.
+Added `reverseResolveAlias` with normalization, boundary matching, slash handling, and length sorting. Build, lint, type checks, and all 367 tests passed.

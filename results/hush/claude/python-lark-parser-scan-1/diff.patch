@@ -1,0 +1,344 @@
+diff --git a/lark/__init__.py b/lark/__init__.py
+index e3d10ed..b938011 100644
+--- a/lark/__init__.py
++++ b/lark/__init__.py
+@@ -11,7 +11,7 @@ from .exceptions import (
+ from .lark import Lark
+ from .lexer import Token
+ from .tree import ParseTree, Tree
+-from .utils import logger, TextSlice
++from .utils import logger, TextSlice, ScanMatch
+ from .visitors import Discard, Transformer, Transformer_NonRecursive, Visitor, v_args
+ 
+ __version__: str = "1.3.1"
+@@ -34,6 +34,7 @@ __all__ = (
+     "Transformer",
+     "Transformer_NonRecursive",
+     "TextSlice",
++    "ScanMatch",
+     "Visitor",
+     "v_args",
+ )
+diff --git a/lark/lark.py b/lark/lark.py
+index 49ff5a5..0200dd9 100644
+--- a/lark/lark.py
++++ b/lark/lark.py
+@@ -16,7 +16,7 @@ if TYPE_CHECKING:
+     from .parser_frontends import ParsingFrontend
+ 
+ from .exceptions import ConfigurationError, assert_config, UnexpectedInput
+-from .utils import Serialize, SerializeMemoizer, FS, logger, TextOrSlice, LarkInput
++from .utils import Serialize, SerializeMemoizer, FS, logger, TextOrSlice, LarkInput, ScanMatch
+ from .load_grammar import load_grammar, FromPackageLoader, Grammar, verify_used_files, PackageResource, sha256_digest
+ 
+ from .tree import Tree
+@@ -736,5 +736,35 @@ class Lark(Serialize, Generic[_Return_T]):
+             raise NotImplementedError("The on_error option is only implemented for the LALR(1) parser.")
+         return self.parser.parse(text, start=start, on_error=on_error)
+ 
++    def scan(self, text: TextOrSlice, start: Optional[str]=None) -> Iterator['ScanMatch[_Return_T]']:
++        """Find the grammar's matches inside a larger text, like a regex search.
++
++        Yields non-overlapping matches, in order. Each match is the longest prefix that parses,
++        from the earliest position where one starts. Text that doesn't parse is skipped.
++        A match is never empty, and never starts or ends with an ignored terminal.
++
++        Only works with parser='lalr', and lexer='basic' or 'contextual' (no postlex).
++
++        Parameters:
++            text (str, bytes or TextSlice): Text to scan. For a TextSlice, only the slice is scanned,
++                and positions are relative to the whole text.
++            start (str, optional): Required if Lark was given multiple possible start symbols.
++
++        Returns:
++            An iterator of ``ScanMatch(range=(start, end), value=...)``, where value is the same
++            as what ``parse()`` returns for the matched text.
++
++        :raises ConfigurationError: If Lark's configuration doesn't support scanning.
++            Raised immediately, not when the iterator is first used.
++
++        Callbacks (``lexer_callbacks``, and the transformer's terminal callbacks) may be called
++        for text that ends up not matching. A callback that raises ValueError marks the token as invalid.
++        """
++        if self.options.parser is None:
++            raise ConfigurationError("scan() doesn't work with parser=None (lexer only)")
++        if self.options.parser != 'lalr':
++            raise ConfigurationError("scan() only works with parser='lalr'")
++        return self.parser.scan(text, start=start)
++
+ 
+ ###}
+diff --git a/lark/lexer.py b/lark/lexer.py
+index 9aa10c2..a5602e1 100644
+--- a/lark/lexer.py
++++ b/lark/lexer.py
+@@ -17,7 +17,7 @@ if TYPE_CHECKING:
+     from .parsers.lalr_parser_state import ParserState
+ 
+ from .utils import classify, get_regexp_width, Serialize, logger, TextSlice, TextOrSlice
+-from .exceptions import UnexpectedCharacters, LexError, UnexpectedToken
++from .exceptions import UnexpectedCharacters, LexError, UnexpectedToken, ConfigurationError
+ from .grammar import TOKEN_DEFAULT_PRIORITY
+ 
+ 
+@@ -254,13 +254,15 @@ class Token(str):
+         return cls(type_, value, borrow_t.start_pos, borrow_t.line, borrow_t.column, borrow_t.end_line, borrow_t.end_column, borrow_t.end_pos)
+ 
+     def __reduce__(self):
+-        return (self.__class__, (self.type, self.value, self.start_pos, self.line, self.column))
++        return (self.__class__, (self.type, self.value, self.start_pos, self.line, self.column,
++                                 self.end_line, self.end_column, self.end_pos))
+ 
+     def __repr__(self):
+         return 'Token(%r, %r)' % (self.type, self.value)
+ 
+     def __deepcopy__(self, memo):
+-        return Token(self.type, self.value, self.start_pos, self.line, self.column)
++        return Token(self.type, self.value, self.start_pos, self.line, self.column,
++                     self.end_line, self.end_column, self.end_pos)
+ 
+     def __eq__(self, other):
+         if isinstance(other, Token) and self.type != other.type:
+@@ -396,6 +398,15 @@ class Scanner:
+                 return m.lastgroup
+         return None
+ 
++    def search_start(self, text: TextSlice, pos: int) -> Optional[int]:
++        """Return the earliest position >= pos where any terminal matches, or None."""
++        best = None
++        for mre in self._mres:
++            m = mre.search(text.text, pos, text.end)
++            if m and (best is None or m.start() < best):
++                best = m.start()
++        return best
++
+ def _regexp_has_newline(r: str):
+     r"""Expressions that may indicate newlines in a regexp:
+         - newlines (\n)
+@@ -645,6 +656,49 @@ class BasicLexer(AbstractBasicLexer):
+         # EOF
+         raise EOFError(self)
+ 
++    def scan_token(self, lex_state: LexerState, parser_state: Any = None) -> Optional[Token]:
++        """Like next_token(), but meant for Lark.scan().
++
++        Returns None when no token can be lexed (end of text, no match, or a callback raised ValueError).
++        """
++        line_ctr = lex_state.line_ctr
++        scanner = self.scanner
++        while line_ctr.char_pos < lex_state.text.end:
++            res = scanner.match(lex_state.text, line_ctr.char_pos)
++            if not res:
++                return None
++
++            value, type_ = res
++
++            ignored = type_ in self.ignore_types
++            t = None
++            if not ignored or type_ in self.callback:
++                t = Token(type_, value, line_ctr.char_pos, line_ctr.line, line_ctr.column)
++            line_ctr.feed(value, type_ in self.newline_types)
++            if t is not None:
++                t.end_line = line_ctr.line
++                t.end_column = line_ctr.column
++                t.end_pos = line_ctr.char_pos
++                if t.type in self.callback:
++                    try:
++                        t = self.callback[t.type](t)
++                    except ConfigurationError:
++                        raise
++                    except ValueError:
++                        return None
++                if not ignored:
++                    if not isinstance(t, Token):
++                        raise LexError("Callbacks must return a token (returned %r)" % t)
++                    if None in (t.start_pos, t.end_pos, t.line, t.column, t.end_line, t.end_column):
++                        raise LexError("Callback for %s did not preserve token positions (use Token.update())" % type_)
++                    lex_state.last_token = t
++                    return t
++        return None
++
++    def scan_start(self, lex_state: LexerState) -> Optional[int]:
++        """Earliest position at or after the current one where some terminal matches"""
++        return self.scanner.search_start(lex_state.text, lex_state.line_ctr.char_pos)
++
+ 
+ class ContextualLexer(Lexer):
+     lexers: Dict[int, AbstractBasicLexer]
+diff --git a/lark/parser_frontends.py b/lark/parser_frontends.py
+index e67890d..ce59f73 100644
+--- a/lark/parser_frontends.py
++++ b/lark/parser_frontends.py
+@@ -1,8 +1,11 @@
+-from typing import Any, Callable, Dict, Optional, Collection, Union, TYPE_CHECKING
++from copy import copy
++from typing import Any, Callable, Dict, Iterator, List, Optional, Collection, Union, TYPE_CHECKING
+ 
+ from .exceptions import ConfigurationError, GrammarError, assert_config
+-from .utils import get_regexp_width, Serialize, TextOrSlice, TextSlice, LarkInput
+-from .lexer import LexerThread, BasicLexer, ContextualLexer, Lexer
++from .utils import get_regexp_width, Serialize, TextOrSlice, TextSlice, LarkInput, ScanMatch
++from .lexer import LexerThread, BasicLexer, ContextualLexer, Lexer, LexerState, LineCounter, Token
++from .parsers.lalr_analysis import Shift
++from .parsers.lalr_parser_state import ParseConf, ParserState
+ from .parsers import earley, xearley, cyk
+ from .parsers.lalr_parser import LALR_Parser
+ from .tree import Tree
+@@ -140,6 +143,133 @@ class ParsingFrontend(Serialize):
+         return self.parser.parse_interactive(stream, chosen_start)
+ 
+ 
++    def scan(self, text: TextOrSlice, start=None) -> Iterator[ScanMatch]:
++        if self.parser_conf.parser_type != 'lalr':
++            raise ConfigurationError("scan() only works with parser='lalr'")
++        lexer_type = self.lexer_conf.lexer_type
++        if isinstance(lexer_type, type):
++            raise ConfigurationError("scan() doesn't support custom lexers")
++        if self.lexer_conf.postlex is not None:
++            raise ConfigurationError("scan() doesn't support postlex")
++        chosen_start = self._verify_start(start)
++
++        if lexer_type == 'contextual':
++            lexers = self.lexer.lexers
++            start_lexer = lexers[self.parser._parse_table.start_states[chosen_start]]
++        else:
++            lexers = None
++            start_lexer = self.lexer
++        if not isinstance(start_lexer, BasicLexer):
++            raise ConfigurationError("scan() requires a lexer based on BasicLexer")
++
++        # A match never starts with an ignored terminal, so its first token is lexed without them
++        conf = copy(self.lexer_conf)
++        conf.terminals = [t for t in start_lexer.terminals if t.name not in start_lexer.ignore_types]
++        conf.ignore = ()
++        conf.skip_validation = True
++        first_lexer = type(start_lexer)(conf)
++
++        return self._scan(TextSlice.cast_from(text), chosen_start, first_lexer, lexers)
++
++    def _scan(self, text: TextSlice, start: str, first_lexer: BasicLexer, lexers) -> Iterator[ScanMatch]:
++        parse_table = self.parser._parse_table
++        states = parse_table.states
++        start_state = parse_table.start_states[start]
++        end_state = parse_table.end_states[start]
++        callbacks = self.parser_conf.callbacks
++        # Transformer callbacks for terminals. They are only called here to detect a ValueError,
++        # the result is discarded. The real call happens when the returned match is built.
++        basic_lexer = self.lexer
++        token_callbacks = {k: v for k, v in callbacks.items() if isinstance(k, str)}
++
++        def attempt(line_ctr: LineCounter) -> List[Token]:
++            lex_state = LexerState(text, copy(line_ctr))
++            stack = [start_state]
++            tokens: List[Token] = []
++            longest = 0
++            lexer = first_lexer
++            while True:
++                token = lexer.scan_token(lex_state)
++                if token is None:
++                    break
++                cb = token_callbacks.get(token.type)
++                if cb is not None:
++                    try:
++                        cb(Token.new_borrow_pos(token.type, token.value, token))
++                    except ConfigurationError:
++                        raise
++                    except ValueError:
++                        break
++                if not _lalr_feed(states, stack, token.type):
++                    break
++                tokens.append(token)
++                if _lalr_accepts(states, stack, end_state):
++                    longest = len(tokens)
++                lexer = lexers[stack[-1]] if lexers is not None else basic_lexer
++            return tokens[:longest]
++
++        line_ctr = LineCounter(b'\n' if isinstance(text.text, bytes) else '\n')
++        if text.start > 0:
++            line_ctr.feed(TextSlice(text.text, 0, text.start))
++        pos = text.start
++        while pos < text.end:
++            found = first_lexer.scan_start(LexerState(text, copy(line_ctr)))
++            if found is None:
++                return
++            if found > pos:
++                line_ctr.feed(text.text[pos:found])
++                pos = found
++
++            tokens = attempt(line_ctr)
++            if tokens and tokens[-1].end_pos > pos:
++                end = tokens[-1].end_pos
++                parser_state = ParserState(ParseConf(parse_table, callbacks, start), None)  # type: ignore[arg-type]
++                for token in tokens:
++                    parser_state.feed_token(token)
++                value = parser_state.feed_token(Token.new_borrow_pos('$END', '', tokens[-1]), True)
++                yield ScanMatch((tokens[0].start_pos, end), value)
++            else:
++                end = pos + 1
++            line_ctr.feed(text.text[pos:end])
++            pos = end
++
++
++def _lalr_feed(states, stack: list, token_type: str) -> bool:
++    "Feed a token type to a stack of LALR states. Returns False if it isn't accepted."
++    while True:
++        try:
++            action, arg = states[stack[-1]][token_type]
++        except KeyError:
++            return False
++        if action is Shift:
++            stack.append(arg)
++            return True
++        size = len(arg.expansion)
++        if size:
++            del stack[-size:]
++        stack.append(states[stack[-1]][arg.origin.name][1])
++
++
++def _lalr_accepts(states, stack: list, end_state) -> bool:
++    "Check if the end of input would be accepted, without changing the stack."
++    if '$END' not in states[stack[-1]]:
++        return False
++    stack = list(stack)
++    while True:
++        try:
++            action, arg = states[stack[-1]]['$END']
++        except KeyError:
++            return False
++        if action is Shift:
++            return False
++        size = len(arg.expansion)
++        if size:
++            del stack[-size:]
++        stack.append(states[stack[-1]][arg.origin.name][1])
++        if stack[-1] == end_state:
++            return True
++
++
+ def _validate_frontend_args(parser, lexer) -> None:
+     assert_config(parser, ('lalr', 'earley', 'cyk'))
+     if not isinstance(lexer, type):     # not custom lexer?
+diff --git a/lark/utils.py b/lark/utils.py
+index 9c974a4..725cd15 100644
+--- a/lark/utils.py
++++ b/lark/utils.py
+@@ -228,6 +228,19 @@ class TextSlice(Generic[AnyStr]):
+ TextOrSlice = Union[AnyStr, 'TextSlice[AnyStr]']
+ LarkInput = Union[AnyStr, TextSlice[AnyStr], Any]
+ 
++_ScanT = TypeVar('_ScanT')
++
++@dataclass(frozen=True)
++class ScanMatch(Generic[_ScanT]):
++    """A match found by ``Lark.scan()``.
++
++    Attributes:
++        range: A ``(start, end)`` tuple of offsets into the scanned text.
++        value: The parse tree (or the transformer's result) for the matched text.
++    """
++    range: Tuple[int, int]
++    value: _ScanT
++
+ ###}
+ 
+ 

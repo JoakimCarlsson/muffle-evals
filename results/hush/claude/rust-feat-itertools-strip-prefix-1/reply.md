@@ -1,1 +1,0 @@
-Done. Added `strip_prefix`, `strip_prefix_by` and public `StripPrefixError` (in `src/strip_prefix_err.rs`, re-exported in `structs`). The bound is `Self::Item: PartialEq<P::Item>`. Doctests cover your examples, and all tests pass. I also added a CHANGELOG line. I didn't add a `tests/` file or a `str::strip_prefix` agreement test. Nothing committed.

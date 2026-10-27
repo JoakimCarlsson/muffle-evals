@@ -4,6 +4,18 @@ import type { ArgsDef } from "../src/types.ts";
 
 describe("args", () => {
   it.each([
+    [[], "two"],
+    [["--foo-bar", "one"], "one"],
+    [["--fooBar", "one"], "one"],
+  ] as [string[], string][])("resolves enum defaults with %o", (rawArgs, value) => {
+    const parsed = parseArgs(rawArgs, {
+      fooBar: { type: "enum", options: ["one", "two"], default: "two" },
+    });
+
+    expect(parsed).toEqual({ _: [], fooBar: value, "foo-bar": value });
+  });
+
+  it.each([
     [[], {}, { _: [] }],
     /**
      * String
@@ -74,22 +86,6 @@ describe("args", () => {
     expect(() => {
       parseArgs(rawArgs, definition);
     }).toThrowError(result);
-  });
-
-  it.each<[string[], ArgsDef[string], string | boolean]>([
-    [[], { type: "enum", options: ["one", "two"], default: "two" }, "two"],
-    [["--foo-bar", "one"], { type: "enum", options: ["one", "two"], default: "two" }, "one"],
-    [["--fooBar", "one"], { type: "enum", options: ["one", "two"], default: "two" }, "one"],
-    [["-f", "one"], { type: "enum", options: ["one", "two"], default: "two", alias: "f" }, "one"],
-    [["--foo-bar", ""], { type: "string", default: "two" }, ""],
-    [["--foo-bar"], { type: "boolean", default: false }, true],
-    [["--no-foo-bar"], { type: "boolean", default: true }, false],
-  ])("should override defaults through aliases with %o (%o)", (rawArgs, arg, expected) => {
-    const parsed = parseArgs(rawArgs, { fooBar: arg });
-
-    expect(parsed.fooBar).toBe(expected);
-    expect(parsed["foo-bar"]).toBe(expected);
-    expect(parsed._).toEqual([]);
   });
 
   it("should resolve camelCase argument", () => {

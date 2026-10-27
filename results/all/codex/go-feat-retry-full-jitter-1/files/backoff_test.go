@@ -119,46 +119,6 @@ func ExampleWithJitter() {
 	}
 }
 
-// TestWithFullJitter checks duration bounds, non-positive values, and stopping.
-func TestWithFullJitter(t *testing.T) {
-	t.Parallel()
-
-	for _, base := range []time.Duration{0, -time.Second, -1 << 63, time.Nanosecond, time.Second, 1<<63 - 1} {
-		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-			return base, false
-		}))
-		for range 1000 {
-			val, stop := b.Next()
-			if stop {
-				t.Fatal("should not stop")
-			}
-			if base <= 0 {
-				if val != base {
-					t.Fatalf("expected %v to be %v", val, base)
-				}
-			} else if val < 0 || val >= base {
-				t.Fatalf("expected %v to be in [0, %v)", val, base)
-			}
-		}
-	}
-
-	b := retry.NewFibonacci(1 * time.Second)
-	b = retry.WithFullJitter(retry.WithMaxRetries(1, b))
-	if val, stop := b.Next(); stop || val < 0 || val >= time.Second {
-		t.Fatalf("expected duration in [0, 1s) without stopping, got (%v, %t)", val, stop)
-	}
-	if val, stop := b.Next(); !stop || val != 0 {
-		t.Fatalf("expected (0, true), got (%v, %t)", val, stop)
-	}
-
-	b = retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-		return time.Second, true
-	}))
-	if val, stop := b.Next(); !stop || val != 0 {
-		t.Fatalf("expected (0, true), got (%v, %t)", val, stop)
-	}
-}
-
 func TestWithJitterPercent(t *testing.T) {
 	t.Parallel()
 
@@ -236,6 +196,62 @@ func ExampleWithJitterPercent() {
 	}); err != nil {
 		// handle error
 	}
+}
+
+// TestWithFullJitter checks bounds for each wrapped duration.
+func TestWithFullJitter(t *testing.T) {
+	t.Parallel()
+
+	base := time.Duration(1)
+	b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
+		return base, false
+	}))
+	for _, duration := range []time.Duration{1, time.Second, 1<<63 - 1} {
+		base = duration
+		for range 100_000 {
+			val, stop := b.Next()
+			if stop || val < 0 || val >= base {
+				t.Fatalf("Next() = (%v, %t), want duration in [0, %v) and false", val, stop, base)
+			}
+		}
+	}
+}
+
+// TestWithFullJitter_NonPositiveAndStop checks unchanged bases and stopping.
+func TestWithFullJitter_NonPositiveAndStop(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		base time.Duration
+		stop bool
+	}{
+		{name: "zero"},
+		{name: "negative", base: -time.Second},
+		{name: "minimum", base: -1 << 63},
+		{name: "stop", base: time.Second, stop: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
+				return tc.base, tc.stop
+			}))
+			want := tc.base
+			if tc.stop {
+				want = 0
+			}
+			if val, stop := b.Next(); val != want || stop != tc.stop {
+				t.Errorf("Next() = (%v, %t), want (%v, %t)", val, stop, want, tc.stop)
+			}
+		})
+	}
+}
+
+// ExampleWithFullJitter demonstrates wrapping a Fibonacci backoff.
+func ExampleWithFullJitter() {
+	b := retry.NewFibonacci(1 * time.Second)
+	b = retry.WithFullJitter(b)
+	b.Next()
+	// Output:
 }
 
 func TestWithMaxRetries(t *testing.T) {

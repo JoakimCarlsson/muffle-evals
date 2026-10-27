@@ -11,12 +11,6 @@ describe("withBase", () => {
     { base: "/base", input: "/base/", out: "/base/" },
     { base: "/base", input: "/base/a", out: "/base/a" },
     { base: "/base/", input: "/base/a", out: "/base/a" },
-    {
-      base: "/admin/",
-      input: "/admin-dashboard",
-      out: "/admin/admin-dashboard",
-    },
-    { base: "/admin/", input: "/admin?x", out: "/admin?x" },
     { base: "/base/", input: "https://test.com", out: "https://test.com" },
     { base: "/", input: "https://test.com", out: "https://test.com" },
   ];
@@ -42,8 +36,6 @@ describe("withoutBase", () => {
     { base: "/", input: "/test/", out: "/test/" },
     { base: "/", input: "/?test", out: "/?test" },
     { base: "/api", input: "/api?test", out: "/?test" },
-    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
-    { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
     { base: "/base/", input: "https://test.com", out: "https://test.com" },
     { base: "/", input: "https://test.com", out: "https://test.com" },
   ];
@@ -53,4 +45,13 @@ describe("withoutBase", () => {
       expect(withoutBase(t.input, t.base)).toBe(t.out);
     });
   }
+});
+
+describe("base prefix", () => {
+  test("does not treat a shared prefix as under base", () => {
+    expect(withoutBase("/admin-dashboard", "/admin/")).toBe("/admin-dashboard");
+    expect(withBase("/admin-dashboard", "/admin/")).toBe("/admin/admin-dashboard");
+    expect(withoutBase("/admin?x", "/admin/")).toBe("/?x");
+    expect(withBase("/admin/dashboard", "/admin/")).toBe("/admin/dashboard");
+  });
 });

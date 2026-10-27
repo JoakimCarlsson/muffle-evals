@@ -60,6 +60,20 @@ fn test_relative() {
     assert_eq!(url.as_str(), "sc://%C3%B1/resources/testharness.js");
 }
 
+/// Carets are percent-encoded by parsing and path setters.
+#[test]
+fn test_path_caret() {
+    for scheme in &["http", "sc"] {
+        let mut url = Url::parse(&format!("{}://localhost/a^b", scheme)).unwrap();
+        assert_eq!(url.as_str(), format!("{}://localhost/a%5Eb", scheme));
+        assert_eq!(url.join("c^d").unwrap().path(), "/c%5Ed");
+        url.set_path("e^f");
+        assert_eq!(url.path(), "/e%5Ef");
+        url.path_segments_mut().unwrap().push("g^h");
+        assert_eq!(url.path(), "/e%5Ef/g%5Eh");
+    }
+}
+
 #[test]
 fn test_relative_empty() {
     let base: Url = "sc://%C3%B1".parse().unwrap();
@@ -247,38 +261,6 @@ fn new_directory_paths() {
         assert_eq!(url.host(), None);
         assert_eq!(url.path(), "/C:/foo/bar/");
     }
-}
-
-/// Carets are encoded in hierarchical paths through parsing and mutation.
-#[test]
-fn test_path_caret_percent_encoding() {
-    for base in &["http://localhost/", "foo://localhost/", "file:///"] {
-        for (path, expected) in &[
-            ("", ""),
-            ("a^b", "a%5Eb"),
-            ("^", "%5E"),
-            ("^a^", "%5Ea%5E"),
-            ("a%5Eb", "a%5Eb"),
-        ] {
-            let expected_url = format!("{}{}", base, expected);
-            let mut url = Url::parse(&format!("{}{}", base, path)).unwrap();
-            assert_eq!(url.as_str(), expected_url);
-            assert_eq!(
-                Url::parse(base).unwrap().join(path).unwrap().as_str(),
-                expected_url
-            );
-            url.set_path(&format!("/{}", path));
-            assert_eq!(url.as_str(), expected_url);
-        }
-
-        let mut url = Url::parse(base).unwrap();
-        url.path_segments_mut().unwrap().push("a^b");
-        assert_eq!(url.as_str(), format!("{}a%5Eb", base));
-    }
-
-    let url = Url::parse("http://localhost/a^b?^#^").unwrap();
-    assert_eq!(url.as_str(), "http://localhost/a%5Eb?^#^");
-    assert_eq!(Url::parse("data:a^b").unwrap().as_str(), "data:a^b");
 }
 
 #[test]

@@ -51,6 +51,7 @@ export function parseRawArgs<T = Record<string, any>>(
     {
       type: "boolean" | "string";
       short?: string;
+      default?: any;
       multiple?: boolean;
     }
   > = {};
@@ -161,26 +162,25 @@ export function parseRawArgs<T = Record<string, any>>(
   }
 
   // Propagate values between aliases
-  for (const [alias, main] of aliasToMain.entries()) {
-    if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
-      (out as any)[main] = (out as any)[alias];
-    }
-    if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
-      (out as any)[alias] = (out as any)[main];
-    }
-  }
-
-  // Defaults apply after alias propagation so a value given via any alias wins
-  for (const [name, value] of Object.entries(defaults)) {
-    if ((out as any)[name] === undefined) {
-      (out as any)[name] = value;
-      for (const alias of mainToAliases.get(name) || []) {
-        if ((out as any)[alias] === undefined) {
-          (out as any)[alias] = value;
-        }
+  const propagateAliases = () => {
+    for (const [alias, main] of aliasToMain.entries()) {
+      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
+        (out as any)[main] = (out as any)[alias];
+      }
+      if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
+        (out as any)[alias] = (out as any)[main];
       }
     }
+  };
+  propagateAliases();
+
+  // Defaults apply only after aliases resolve, so an aliased value is not shadowed by a default
+  for (const [key, value] of Object.entries(defaults)) {
+    if ((out as any)[key] === undefined) {
+      (out as any)[key] = value;
+    }
   }
+  propagateAliases();
 
   return out;
 }

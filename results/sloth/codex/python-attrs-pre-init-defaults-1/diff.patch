@@ -13,49 +13,51 @@ index e84d979..1bbb0bb 100644
          # leading comma & kw_only args
          args += f"{', ' if args else ''}*, {', '.join(kw_only_args)}"
 diff --git a/tests/test_make.py b/tests/test_make.py
-index 80c0066..9c10b73 100644
+index 80c0066..3a50a61 100644
 --- a/tests/test_make.py
 +++ b/tests/test_make.py
-@@ -696,6 +696,42 @@ class TestAttributes:
+@@ -715,6 +715,44 @@ class TestAttributes:
  
-         assert 12 == getattr(c, "z", None)
+         assert 3 == val == inst.kw_and_default
  
 +    @pytest.mark.parametrize("arguments", ["positional", "keyword", "omitted"])
 +    def test_pre_init_defaults(self, arguments):
 +        """
-+        Pre-init receives supplied values or defaults for all init parameters.
++        Pre-init receives supplied values or defaults before factories run.
 +        """
 +        received = None
 +
 +        @attr.define
-+        class C:
++        class Example:
 +            val1: int
 +            val2: int = 100
-+            _val3: dict = attr.field(factory=dict, alias="val3")
++            val3: dict = attr.field(factory=dict)
 +            val4: int = attr.field(kw_only=True)
 +            val5: int = attr.field(default=100, kw_only=True)
-+            ignored: int = attr.field(default=0, init=False)
 +
-+            def __attrs_pre_init__(self, val1, val2, val3, *, val4, val5):
-+                """Record arguments before attributes are initialized."""
++            def __attrs_pre_init__(self, val1, val2, val3, val4, val5):
++                """Record the initializer arguments."""
 +                nonlocal received
 +                received = (val1, val2, val3, val4, val5)
 +
 +        value = {"blah": "blah"}
 +        if arguments == "positional":
-+            inst = C(200, 200, value, val4=200, val5=200)
++            inst = Example(200, 200, value, val4=200, val5=200)
 +        elif arguments == "keyword":
-+            inst = C(val1=200, val2=200, val3=value, val4=200, val5=200)
++            inst = Example(
++                val1=200, val2=200, val3=value, val4=200, val5=200
++            )
 +        else:
-+            inst = C(200, val4=200)
++            inst = Example(200, val4=200)
 +
 +        if arguments == "omitted":
 +            assert (200, 100, attr.NOTHING, 200, 100) == received
-+            assert {} == inst._val3
++            assert {} == inst.val3
 +        else:
 +            assert (200, 200, value, 200, 200) == received
-+            assert value is received[2] is inst._val3
++            assert received[2] is value
++            assert inst.val3 is value
 +
      @pytest.mark.usefixtures("with_and_without_validation")
-     def test_pre_init_kw_only_work_with_defaults(self):
+     def test_post_init(self):
          """

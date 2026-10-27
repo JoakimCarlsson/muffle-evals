@@ -1,31 +1,28 @@
 import { describe, expect, test } from "vitest";
 import { withBase, withoutBase } from "../src";
 
-test("base prefixes must end at a path boundary", () => {
-  for (const base of ["/admin", "/admin/"]) {
-    for (const input of [
-      "/admin-dashboard",
-      "/administrator",
-      "/admin%2Fdashboard",
-    ]) {
-      expect(withoutBase(input, base)).toBe(input);
-      expect(withBase(input, base)).toBe("/admin" + input);
-    }
-    for (const [input, output] of [
-      ["/admin", "/"],
-      ["/admin/", "/"],
-      ["/admin/dashboard", "/dashboard"],
-      ["/admin?x", "/?x"],
-      ["/admin#x", "/#x"],
-    ]) {
-      expect(withoutBase(input, base)).toBe(output);
-      expect(withBase(input, base)).toBe(input);
-    }
-  }
-});
-
 describe("withBase", () => {
   const tests = [
+    { base: "/admin/", input: "", out: "/admin" },
+    {
+      base: "/admin/",
+      input: "/admin-dashboard",
+      out: "/admin/admin-dashboard",
+    },
+    { base: "/admin/", input: "/admin", out: "/admin" },
+    { base: "/admin/", input: "/admin/dashboard", out: "/admin/dashboard" },
+    { base: "/admin/", input: "/admin?x", out: "/admin?x" },
+    { base: "/admin/", input: "/admin#x", out: "/admin#x" },
+    { base: "/admin", input: "", out: "/admin" },
+    {
+      base: "/admin",
+      input: "/admin-dashboard",
+      out: "/admin/admin-dashboard",
+    },
+    { base: "/admin", input: "/admin", out: "/admin" },
+    { base: "/admin", input: "/admin/dashboard", out: "/admin/dashboard" },
+    { base: "/admin", input: "/admin?x", out: "/admin?x" },
+    { base: "/admin", input: "/admin#x", out: "/admin#x" },
     { base: "/", input: "/", out: "/" },
     { base: "/foo", input: "", out: "/foo" },
     { base: "/foo/", input: "/", out: "/foo" },
@@ -47,6 +44,18 @@ describe("withBase", () => {
 
 describe("withoutBase", () => {
   const tests = [
+    { base: "/admin/", input: "", out: "" },
+    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
+    { base: "/admin/", input: "/admin", out: "/" },
+    { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
+    { base: "/admin/", input: "/admin?x", out: "/?x" },
+    { base: "/admin/", input: "/admin#x", out: "/#x" },
+    { base: "/admin", input: "", out: "" },
+    { base: "/admin", input: "/admin-dashboard", out: "/admin-dashboard" },
+    { base: "/admin", input: "/admin", out: "/" },
+    { base: "/admin", input: "/admin/dashboard", out: "/dashboard" },
+    { base: "/admin", input: "/admin?x", out: "/?x" },
+    { base: "/admin", input: "/admin#x", out: "/#x" },
     { base: "/", input: "/", out: "/" },
     { base: "/foo", input: "/", out: "/" },
     { base: "/foo/", input: "/", out: "/" },

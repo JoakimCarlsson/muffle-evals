@@ -298,6 +298,7 @@ export function withBase(input: string, base: string) {
   return joinURL(_base, input);
 }
 
+// `base` must have no trailing slash. Matches only on a path segment boundary.
 function isUnderBase(input: string, base: string) {
   if (!input.startsWith(base)) {
     return false;

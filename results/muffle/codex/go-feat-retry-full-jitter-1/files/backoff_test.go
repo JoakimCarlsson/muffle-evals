@@ -201,25 +201,23 @@ func ExampleWithJitterPercent() {
 func TestWithFullJitter(t *testing.T) {
 	t.Parallel()
 
-	for _, base := range []time.Duration{1, time.Second, 1<<63 - 1} {
-		t.Run(base.String(), func(t *testing.T) {
-			t.Parallel()
-
-			calls := 0
-			b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-				calls++
-				return base, false
-			}))
-			for range 1000 {
-				val, stop := b.Next()
-				if stop || val < 0 || val >= base {
-					t.Fatalf("Next() = (%v, %t), want duration in [0, %v) and no stop", val, stop, base)
-				}
-			}
-			if calls != 1000 {
-				t.Errorf("wrapped backoff called %d times, want 1000", calls)
-			}
-		})
+	// Vary the underlying value to verify each call uses the current base.
+	bases := []time.Duration{time.Nanosecond, time.Second, time.Duration(1<<63 - 1)}
+	calls := 0
+	b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
+		base := bases[calls%len(bases)]
+		calls++
+		return base, false
+	}))
+	for i := range 10_000 {
+		base := bases[i%len(bases)]
+		val, stop := b.Next()
+		if stop || val < 0 || val >= base {
+			t.Fatalf("Next() = (%v, %t), want duration in [0, %v) and no stop", val, stop, base)
+		}
+	}
+	if calls != 10_000 {
+		t.Fatalf("wrapped backoff called %d times, want 10000", calls)
 	}
 }
 
@@ -234,7 +232,7 @@ func TestWithFullJitter_EdgeCases(t *testing.T) {
 	}{
 		{name: "zero"},
 		{name: "negative", base: -time.Second, want: -time.Second},
-		{name: "minimum", base: -1 << 63, want: -1 << 63},
+		{name: "minimum", base: time.Duration(-1 << 63), want: time.Duration(-1 << 63)},
 		{name: "stop_positive", base: time.Second, stop: true},
 		{name: "stop_zero", stop: true},
 		{name: "stop_negative", base: -time.Second, stop: true},
@@ -242,7 +240,6 @@ func TestWithFullJitter_EdgeCases(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-
 			b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
 				return tc.base, tc.stop
 			}))
@@ -256,13 +253,7 @@ func TestWithFullJitter_EdgeCases(t *testing.T) {
 func ExampleWithFullJitter() {
 	b := retry.NewFibonacci(1 * time.Second)
 	b = retry.WithFullJitter(b)
-
-	if err := retry.Do(context.Background(), b, func(context.Context) error {
-		// TODO: logic here
-		return nil
-	}); err != nil {
-		// handle error
-	}
+	b.Next()
 }
 
 func TestWithMaxRetries(t *testing.T) {

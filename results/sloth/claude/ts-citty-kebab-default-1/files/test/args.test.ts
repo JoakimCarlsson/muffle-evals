@@ -11,11 +11,6 @@ describe("args", () => {
     [["--name", "John"], { name: { type: "string" } }, { name: "John", _: [] }],
     [[], { name: { type: "string", default: "John" } }, { name: "John", _: [] }],
     [["--name", "Jane"], { name: { type: "string", default: "John" } }, { name: "Jane", _: [] }],
-    [
-      ["--foo-bar", "one"],
-      { fooBar: { type: "enum", options: ["one", "two"], default: "two" } },
-      { fooBar: "one", "foo-bar": "one", _: [] },
-    ],
     [["-n", "Jane"], { name: { type: "string", alias: "n" } }, { name: "Jane", n: "Jane", _: [] }],
     /**
      * Boolean
@@ -103,5 +98,16 @@ describe("args", () => {
 
     expect(parsed.userName).toBe("Jane");
     expect(parsed._).toEqual([]);
+  });
+
+  it("should let kebab-case input override camelCase default", () => {
+    const definition: ArgsDef = {
+      fooBar: { type: "enum", options: ["one", "two"], default: "two" },
+    };
+
+    const parsed = parseArgs(["--foo-bar", "one"], definition);
+
+    expect(parsed.fooBar).toBe("one");
+    expect(parsed["foo-bar"]).toBe("one");
   });
 });

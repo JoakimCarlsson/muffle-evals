@@ -1,8 +1,24 @@
 diff --git a/src/utils.ts b/src/utils.ts
-index db7c2c2..f169722 100644
+index db7c2c2..532192a 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
-@@ -292,12 +292,22 @@ export function withBase(input: string, base: string) {
+@@ -272,6 +272,15 @@ export function cleanDoubleSlashes(input = ""): string {
+     .join("://");
+ }
+ 
++/**
++ * Checks that input is the base itself or continues past it at a path, query or hash boundary.
++ */
++function isUnderBase(input: string, base: string) {
++  return (
++    input.startsWith(base) && (input.length === base.length || "/?#".includes(input[base.length]))
++  );
++}
++
+ /**
+  * Ensures the URL or pathname starts with base.
+  *
+@@ -292,7 +301,7 @@ export function withBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
@@ -11,22 +27,7 @@ index db7c2c2..f169722 100644
      return input;
    }
    return joinURL(_base, input);
- }
- 
-+/**
-+ * Checks if the input is the base itself or continues it at a segment, query or hash boundary.
-+ */
-+function isUnderBase(input: string, base: string) {
-+  return (
-+    input.startsWith(base) &&
-+    (input.length === base.length || "/?#".includes(input[base.length]))
-+  );
-+}
-+
- /**
-  * Removes the base from the URL or pathname.
-  *
-@@ -316,7 +326,7 @@ export function withoutBase(input: string, base: string) {
+@@ -316,7 +325,7 @@ export function withoutBase(input: string, base: string) {
      return input;
    }
    const _base = withoutTrailingSlash(base);
@@ -36,29 +37,26 @@ index db7c2c2..f169722 100644
    }
    const trimmed = input.slice(_base.length);
 diff --git a/test/base.test.ts b/test/base.test.ts
-index ed684d1..f9cb198 100644
+index ed684d1..ce2e9ca 100644
 --- a/test/base.test.ts
 +++ b/test/base.test.ts
-@@ -11,6 +11,12 @@ describe("withBase", () => {
+@@ -11,6 +11,8 @@ describe("withBase", () => {
      { base: "/base", input: "/base/", out: "/base/" },
      { base: "/base", input: "/base/a", out: "/base/a" },
      { base: "/base/", input: "/base/a", out: "/base/a" },
-+    {
-+      base: "/admin/",
-+      input: "/admin-dashboard",
-+      out: "/admin/admin-dashboard",
-+    },
++    { base: "/admin/", input: "/admin-dashboard", out: "/admin/admin-dashboard" },
 +    { base: "/admin/", input: "/admin?x", out: "/admin?x" },
      { base: "/base/", input: "https://test.com", out: "https://test.com" },
      { base: "/", input: "https://test.com", out: "https://test.com" },
    ];
-@@ -36,6 +42,9 @@ describe("withoutBase", () => {
+@@ -36,6 +38,10 @@ describe("withoutBase", () => {
      { base: "/", input: "/test/", out: "/test/" },
      { base: "/", input: "/?test", out: "/?test" },
      { base: "/api", input: "/api?test", out: "/?test" },
 +    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
++    { base: "/admin/", input: "/admin", out: "/" },
 +    { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
-+    { base: "/admin/", input: "/admin#x", out: "/#x" },
++    { base: "/admin/", input: "/admin?x", out: "/?x" },
      { base: "/base/", input: "https://test.com", out: "https://test.com" },
      { base: "/", input: "https://test.com", out: "https://test.com" },
    ];

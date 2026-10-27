@@ -1,5 +1,5 @@
 diff --git a/src/_parser.ts b/src/_parser.ts
-index 992c23d..5906954 100644
+index 992c23d..d82a3e8 100644
 --- a/src/_parser.ts
 +++ b/src/_parser.ts
 @@ -82,7 +82,6 @@ export function parseRawArgs<T = Record<string, any>>(
@@ -31,36 +31,29 @@ index 992c23d..5906954 100644
 +  };
 +  propagateAliases();
 +
-+  // Defaults apply only after aliases resolve, so an explicit alias value wins
-+  for (const [name, value] of Object.entries(defaults)) {
-+    if ((out as any)[name] === undefined) {
-+      (out as any)[name] = value;
++  // Defaults apply only after aliases resolve, so an aliased CLI value wins
++  for (const [key, value] of Object.entries(defaults)) {
++    if ((out as any)[key] === undefined) {
++      (out as any)[key] = value;
      }
    }
 +  propagateAliases();
  
    return out;
  }
-diff --git a/test/args.test.ts b/test/args.test.ts
-index 732572c..680d9e7 100644
---- a/test/args.test.ts
-+++ b/test/args.test.ts
-@@ -88,6 +88,18 @@ describe("args", () => {
-     expect(parsed._).toEqual([]);
-   });
- 
-+  it("should override camelCase default with kebab-case input", () => {
-+    const definition: ArgsDef = {
-+      fooBar: { type: "enum", options: ["one", "two"], default: "two" },
-+    };
+diff --git a/test/kebab-default.test.ts b/test/kebab-default.test.ts
+new file mode 100644
+index 0000000..352199d
+--- /dev/null
++++ b/test/kebab-default.test.ts
+@@ -0,0 +1,10 @@
++import { expect, it } from "vitest";
++import { parseArgs } from "../src/args.ts";
 +
-+    const parsed = parseArgs(["--foo-bar", "one"], definition);
-+
-+    expect(parsed.fooBar).toBe("one");
-+    expect(parsed["foo-bar"]).toBe("one");
-+    expect(parseArgs([], definition).fooBar).toBe("two");
-+  });
-+
-   it("should resolve kebab-case argument", () => {
-     const definition: ArgsDef = {
-       userName: { type: "string" },
++it("kebab-case input overrides camelCase default", () => {
++  const args = { fooBar: { type: "enum", options: ["one", "two"], default: "two" } } as const;
++  const r = parseArgs(["--foo-bar", "one"], args as any) as any;
++  expect(r.fooBar).toBe("one");
++  expect(r["foo-bar"]).toBe("one");
++  expect((parseArgs([], args as any) as any).fooBar).toBe("two");
++});

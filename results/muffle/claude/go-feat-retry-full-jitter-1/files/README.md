@@ -126,13 +126,8 @@ b = WithJitter(500*time.Millisecond, b)
 
 // Return the next value, +/- 5% of the result
 b = WithJitterPercent(5, b)
-```
 
-For "full jitter", which waits a random duration between 0 and the returned
-value, use `WithFullJitter`:
-
-```golang
-b := NewFibonacci(1 * time.Second)
+// Return a random value between 0 and the result ("full jitter")
 b = WithFullJitter(b)
 ```
 

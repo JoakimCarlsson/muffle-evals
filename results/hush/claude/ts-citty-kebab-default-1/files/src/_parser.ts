@@ -162,26 +162,26 @@ export function parseRawArgs<T = Record<string, any>>(
   }
 
   // Propagate values between aliases
-  for (const [alias, main] of aliasToMain.entries()) {
-    if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
-      (out as any)[main] = (out as any)[alias];
-    }
-    if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
-      (out as any)[alias] = (out as any)[main];
-    }
-  }
-
-  // Apply defaults only after alias propagation, so an explicit value passed
-  // via one spelling is not shadowed by the default of another spelling
-  for (const [name, value] of Object.entries(defaults)) {
-    if ((out as any)[name] !== undefined) continue;
-    (out as any)[name] = value;
-    for (const alias of mainToAliases.get(name) || []) {
-      if ((out as any)[alias] === undefined) {
-        (out as any)[alias] = value;
+  const propagateAliases = () => {
+    for (const [alias, main] of aliasToMain.entries()) {
+      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
+        (out as any)[main] = (out as any)[alias];
+      }
+      if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
+        (out as any)[alias] = (out as any)[main];
       }
     }
+  };
+  propagateAliases();
+
+  // Apply defaults only after aliases are resolved, so a value passed via any
+  // alias (e.g. kebab-case) is not shadowed by the default of another name
+  for (const [name, value] of Object.entries(defaults)) {
+    if ((out as any)[name] === undefined) {
+      (out as any)[name] = value;
+    }
   }
+  propagateAliases();
 
   return out;
 }

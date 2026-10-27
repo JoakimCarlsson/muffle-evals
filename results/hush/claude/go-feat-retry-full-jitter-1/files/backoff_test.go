@@ -349,14 +349,14 @@ func TestWithFullJitter(t *testing.T) {
 	b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
 		return 1 * time.Second, false
 	}))
-
-	for i := 0; i < 100; i++ {
+	for range 100_000 {
 		val, stop := b.Next()
 		if stop {
-			t.Fatal("should not stop")
+			t.Errorf("should not stop")
 		}
+
 		if val < 0 || val >= 1*time.Second {
-			t.Fatalf("value %s not in [0, 1s)", val)
+			t.Errorf("expected %v to be in [0, 1s)", val)
 		}
 	}
 }
@@ -367,9 +367,8 @@ func TestWithFullJitter_Stop(t *testing.T) {
 	b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
 		return 1 * time.Second, true
 	}))
-
 	if _, stop := b.Next(); !stop {
-		t.Fatal("expected stop")
+		t.Errorf("expected stop")
 	}
 }
 
@@ -380,10 +379,8 @@ func TestWithFullJitter_NonPositive(t *testing.T) {
 		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
 			return base, false
 		}))
-
-		val, stop := b.Next()
-		if stop || val != base {
-			t.Fatalf("base %s: got (%s, %t)", base, val, stop)
+		if val, stop := b.Next(); stop || val != base {
+			t.Errorf("expected (%v, false), got (%v, %v)", base, val, stop)
 		}
 	}
 }

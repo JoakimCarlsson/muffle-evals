@@ -1,1 +1,0 @@
-Done. `Iter` and `IterMut` `size_hint` in `src/header/map.rs` now subtract 1 from the lower bound once the current entry is exhausted (`cursor` is `None`). The subtraction saturates, so an empty map reports 0. I added a test to `tests/header_map.rs`. The `header_map` test suite passes (36 tests); I did not run the rest of the crate's tests.

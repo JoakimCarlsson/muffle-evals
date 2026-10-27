@@ -1,0 +1,777 @@
+diff --git a/docs/1.guide/1.index.md b/docs/1.guide/1.index.md
+index 5b54950..056040c 100644
+--- a/docs/1.guide/1.index.md
++++ b/docs/1.guide/1.index.md
+@@ -68,6 +68,20 @@ const value = await storage.getItem("user:1");
+ 
+ Alias: `storage.get()`.
+ 
++Pass `type` to read the value in a specific format. A missing key gives `null` for every type.
++
++```ts
++await storage.getItem("user:1", { type: "text" }); // string
++await storage.getItem("user:1", { type: "json" }); // JSONValue
++await storage.getItem("avatar.png", { type: "bytes" }); // Uint8Array
++await storage.getItem("avatar.png", { type: "blob" }); // Blob
++await storage.getItem("avatar.png", { type: "stream" }); // ReadableStream<Uint8Array>
++```
++
++- `bytes`, `blob` and `stream` read the driver's raw value (`getItemRaw`, or `getItem` with `base64:` strings decoded). A `Blob` or `ReadableStream` held by the driver is returned as is for `blob` and `stream`. Other binary-like values (`Uint8Array`, `Buffer`, `ArrayBuffer`, `DataView`, `Response`, async iterables, strings as UTF-8) are normalized. Numbers, booleans, plain objects and arrays use their text form. Anything else, such as a `Map`, throws.
++- `text` and `json` also decode values written with `setItemRaw()`. `json` is lenient: a plain string stays a string.
++- `type` is reserved and not forwarded to the driver.
++
+ #### `getItems(items, commonOptions?)`
+ 
+ ::warning
+@@ -84,6 +98,12 @@ const items = await storage.getItems([
+ // [{ key: "user:1", value: ... }, { key: "user:2", value: ... }]
+ ```
+ 
++`type` works in the common options and per item (`{ key, options: { type } }`); a per-item `type` overrides the common one. Results keep input order.
++
++```ts
++await storage.getItems(["a", { key: "b", options: { type: "bytes" } }], { type: "text" });
++```
++
+ ### Writing values
+ 
+ #### `setItem(key, value, options?)`
+diff --git a/src/_utils.ts b/src/_utils.ts
+index e19ef0a..ee03b5d 100644
+--- a/src/_utils.ts
++++ b/src/_utils.ts
+@@ -1,3 +1,5 @@
++import { destr } from "destr";
++
+ type Awaited<T> = T extends Promise<infer U> ? Awaited<U> : T;
+ type Promisified<T> = Promise<Awaited<T>>;
+ 
+@@ -80,3 +82,151 @@ function base64Encode(input: Uint8Array) {
+   }
+   return globalThis.btoa(String.fromCodePoint(...input));
+ }
++
++const textEncoder = /* @__PURE__ */ new TextEncoder();
++const textDecoder = /* @__PURE__ */ new TextDecoder();
++
++function isPlainValue(value: any): boolean {
++  const type = typeof value;
++  return (
++    type === "number" ||
++    type === "boolean" ||
++    (type === "object" && value !== null && (Array.isArray(value) || isPureObject(value)))
++  );
++}
++
++function asUint8Array(value: Uint8Array): Uint8Array {
++  // Normalize subclasses such as `Buffer` without copying
++  return value.constructor === Uint8Array
++    ? value
++    : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
++}
++
++async function drainStream(stream: ReadableStream): Promise<Uint8Array> {
++  const reader = stream.getReader();
++  const chunks: Uint8Array[] = [];
++  try {
++    while (true) {
++      const { done, value } = await reader.read();
++      if (done) {
++        break;
++      }
++      chunks.push((await toBytes(value))!);
++    }
++  } finally {
++    reader.releaseLock();
++  }
++  return concatBytes(chunks);
++}
++
++async function drainIterable(iterable: AsyncIterable<unknown>): Promise<Uint8Array> {
++  const chunks: Uint8Array[] = [];
++  for await (const chunk of iterable) {
++    chunks.push((await toBytes(chunk))!);
++  }
++  return concatBytes(chunks);
++}
++
++function concatBytes(chunks: Uint8Array[]): Uint8Array {
++  if (chunks.length === 1) {
++    return chunks[0]!;
++  }
++  const result = new Uint8Array(chunks.reduce((length, chunk) => length + chunk.byteLength, 0));
++  let offset = 0;
++  for (const chunk of chunks) {
++    result.set(chunk, offset);
++    offset += chunk.byteLength;
++  }
++  return result;
++}
++
++/** Normalizes any binary-like value to a `Uint8Array`. */
++export async function toBytes(value: any): Promise<Uint8Array | null> {
++  if (value === null || value === undefined) {
++    return null;
++  }
++  if (typeof value === "string") {
++    return textEncoder.encode(value);
++  }
++  if (value instanceof Uint8Array) {
++    return asUint8Array(value);
++  }
++  if (value instanceof ArrayBuffer) {
++    return new Uint8Array(value);
++  }
++  if (ArrayBuffer.isView(value)) {
++    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
++  }
++  if (typeof Blob !== "undefined" && value instanceof Blob) {
++    return new Uint8Array(await value.arrayBuffer());
++  }
++  if (typeof Response !== "undefined" && value instanceof Response) {
++    return new Uint8Array(await value.arrayBuffer());
++  }
++  if (typeof ReadableStream !== "undefined" && value instanceof ReadableStream) {
++    return drainStream(value);
++  }
++  if (typeof value[Symbol.asyncIterator] === "function") {
++    return drainIterable(value);
++  }
++  if (isPlainValue(value)) {
++    return textEncoder.encode(stringify(value));
++  }
++  const name = (typeof value === "object" && value.constructor?.name) || "Object";
++  throw new Error(`[unstorage] Cannot convert \`${name}\` to bytes`);
++}
++
++async function toText(value: any): Promise<string> {
++  if (typeof value === "string") {
++    return value.startsWith(BASE64_PREFIX)
++      ? textDecoder.decode(base64Decode(value.slice(BASE64_PREFIX.length)))
++      : value;
++  }
++  if (isPlainValue(value)) {
++    return stringify(value);
++  }
++  return textDecoder.decode((await toBytes(value))!);
++}
++
++/** Converts a value read through the driver's `getItem` to a `text`, `json` or untyped item. */
++export async function convertText(value: any, type: "text" | "json" | undefined): Promise<any> {
++  if (value === null || value === undefined) {
++    return null;
++  }
++  if (type === "text") {
++    return toText(value);
++  }
++  if (type === "json") {
++    return typeof value === "string" || !isPlainValue(value) ? destr(await toText(value)) : value;
++  }
++  return destr(value);
++}
++
++/** Converts a raw driver value to a `bytes`, `blob` or `stream` item. */
++export async function convertBinary(value: any, type: "bytes" | "blob" | "stream"): Promise<any> {
++  if (value === null || value === undefined) {
++    return null;
++  }
++  if (type === "blob") {
++    if (typeof Blob !== "undefined" && value instanceof Blob) {
++      return value;
++    }
++    return new Blob([(await toBytes(value))! as BlobPart]);
++  }
++  if (type === "stream") {
++    if (typeof ReadableStream !== "undefined" && value instanceof ReadableStream) {
++      return value;
++    }
++    if (typeof Blob !== "undefined" && value instanceof Blob) {
++      return value.stream();
++    }
++    const bytes = (await toBytes(value))!;
++    return new ReadableStream<Uint8Array>({
++      start(controller) {
++        controller.enqueue(bytes);
++        controller.close();
++      },
++    });
++  }
++  return toBytes(value);
++}
+diff --git a/src/storage.ts b/src/storage.ts
+index 0c25ad8..054791c 100644
+--- a/src/storage.ts
++++ b/src/storage.ts
+@@ -7,9 +7,19 @@ import type {
+   StorageValue,
+   WatchEvent,
+   TransactionOptions,
++  GetItemOptions,
++  GetItemType,
++  GetItemsInput,
+ } from "./types.ts";
+ import memory from "./drivers/memory.ts";
+-import { asyncCall, deserializeRaw, serializeRaw, stringify } from "./_utils.ts";
++import {
++  asyncCall,
++  convertBinary,
++  convertText,
++  deserializeRaw,
++  serializeRaw,
++  stringify,
++} from "./_utils.ts";
+ import {
+   normalizeKey,
+   normalizeBaseKey,
+@@ -30,6 +40,21 @@ export interface CreateStorageOptions {
+   driver?: Driver;
+ }
+ 
++const binaryTypes = new Set<unknown>(["bytes", "blob", "stream"]);
++
++function isBinaryType(type: unknown): type is "bytes" | "blob" | "stream" {
++  return binaryTypes.has(type);
++}
++
++// `type` is reserved for the read format and never forwarded to drivers
++function splitType(opts: GetItemOptions | undefined): {
++  type: GetItemType | undefined;
++  options: TransactionOptions;
++} {
++  const { type, ...options } = opts || {};
++  return { type, options };
++}
++
+ export function createStorage<T extends StorageValue>(
+   options: CreateStorageOptions = {},
+ ): Storage<T> {
+@@ -106,6 +131,7 @@ export function createStorage<T extends StorageValue>(
+     driver: Driver;
+     base: string;
+     items: {
++      index: number;
+       key: string;
+       relativeKey: string;
+       value?: StorageValue;
+@@ -114,7 +140,10 @@ export function createStorage<T extends StorageValue>(
+   };
+ 
+   const runBatch = (
+-    items: (string | { key: string; value?: StorageValue; options?: TransactionOptions })[],
++    items: readonly (
++      | string
++      | { key: string; value?: StorageValue; options?: TransactionOptions }
++    )[],
+     commonOptions: undefined | TransactionOptions,
+     cb: (batch: BatchItem) => Promise<any>,
+   ) => {
+@@ -132,7 +161,7 @@ export function createStorage<T extends StorageValue>(
+       return batch;
+     };
+ 
+-    for (const item of items) {
++    for (const [index, item] of items.entries()) {
+       const isStringItem = typeof item === "string";
+       const key = normalizeKey(isStringItem ? item : item.key);
+       const value = isStringItem ? undefined : item.value;
+@@ -140,6 +169,7 @@ export function createStorage<T extends StorageValue>(
+         isStringItem || !item.options ? commonOptions : { ...commonOptions, ...item.options };
+       const mount = getMount(key);
+       getBatch(mount).items.push({
++        index,
+         key,
+         value,
+         relativeKey: mount.relativeKey,
+@@ -150,6 +180,26 @@ export function createStorage<T extends StorageValue>(
+     return Promise.all([...batches.values()].map((batch) => cb(batch))).then((r) => r.flat());
+   };
+ 
++  const readRaw = (driver: Driver, key: string, opts: TransactionOptions) => {
++    if (driver.getItemRaw) {
++      return asyncCall(driver.getItemRaw, key, opts);
++    }
++    return asyncCall(driver.getItem, key, opts).then((value) => deserializeRaw(value));
++  };
++
++  const readItem = (
++    driver: Driver,
++    key: string,
++    type: GetItemType | undefined,
++    opts: TransactionOptions,
++  ) =>
++    isBinaryType(type)
++      ? readRaw(driver, key, opts).then((value) => convertBinary(value, type))
++      : asyncCall(driver.getItem, key, opts).then((value) => convertText(value, type));
++
++  const convertValue = (value: unknown, type: GetItemType | undefined) =>
++    isBinaryType(type) ? convertBinary(value, type) : convertText(value, type);
++
+   const storage: Storage = {
+     // Item
+     hasItem(key: string, opts = {}) {
+@@ -157,52 +207,69 @@ export function createStorage<T extends StorageValue>(
+       const { relativeKey, driver } = getMount(key);
+       return asyncCall(driver.hasItem, relativeKey, opts);
+     },
+-    getItem(key: string, opts = {}) {
++    getItem(key: string, opts: GetItemOptions = {}): Promise<any> {
+       key = normalizeKey(key);
+       const { relativeKey, driver } = getMount(key);
+-      return asyncCall(driver.getItem, relativeKey, opts).then(
+-        (value) => destr(value) as StorageValue,
+-      );
++      const { type, options } = splitType(opts);
++      return readItem(driver, relativeKey, type, options);
+     },
+-    getItems(
+-      items: (string | { key: string; options?: TransactionOptions })[],
+-      commonOptions = {},
+-    ) {
+-      return runBatch(items, commonOptions, (batch) => {
+-        if (batch.driver.getItems) {
+-          return asyncCall(
+-            batch.driver.getItems,
+-            batch.items.map((item) => ({
+-              key: item.relativeKey,
+-              options: item.options,
+-            })),
+-            commonOptions,
+-          ).then((r) =>
+-            r.map((item) => ({
+-              key: joinKeys(batch.base, item.key),
+-              value: destr(item.value),
+-            })),
+-          );
+-        }
+-        return Promise.all(
+-          batch.items.map((item) => {
+-            return asyncCall(batch.driver.getItem, item.relativeKey, item.options).then(
+-              (value) => ({
+-                key: item.key,
+-                value: destr(value),
+-              }),
++    async getItems(items: readonly GetItemsInput[], commonOptions: GetItemOptions = {}) {
++      const results = await runBatch(items, commonOptions, async (batch) => {
++        const typed = batch.items.map((item) => ({ item, ...splitType(item.options) }));
++        const binary = typed.filter(({ type }) => isBinaryType(type));
++        const rest = typed.filter(({ type }) => !isBinaryType(type));
++        const read = (entry: (typeof typed)[number], value: StorageValue, key = entry.item.key) =>
++          convertValue(value, entry.type).then((value) => ({
++            index: entry.item.index,
++            key,
++            value,
++          }));
++
++        const tasks: Promise<{ index: number; key: string; value: any }[]>[] = [
++          Promise.all(
++            binary.map((entry) =>
++              readRaw(batch.driver, entry.item.relativeKey, entry.options).then((value) =>
++                read(entry, value),
++              ),
++            ),
++          ),
++        ];
++        if (rest.length > 0) {
++          if (batch.driver.getItems) {
++            tasks.push(
++              asyncCall(
++                batch.driver.getItems,
++                rest.map(({ item, options }) => ({ key: item.relativeKey, options })),
++                splitType(commonOptions).options,
++              ).then((r) =>
++                // Match by position, drivers may return different keys
++                Promise.all(
++                  rest.map((entry, i) =>
++                    read(entry, r[i]?.value as StorageValue, joinKeys(batch.base, r[i]?.key ?? "")),
++                  ),
++                ),
++              ),
+             );
+-          }),
+-        );
++          } else {
++            tasks.push(
++              Promise.all(
++                rest.map((entry) =>
++                  asyncCall(batch.driver.getItem, entry.item.relativeKey, entry.options).then(
++                    (value) => read(entry, value),
++                  ),
++                ),
++              ),
++            );
++          }
++        }
++        return (await Promise.all(tasks)).flat();
+       });
++      return results.sort((a, b) => a.index - b.index).map(({ key, value }) => ({ key, value }));
+     },
+     getItemRaw(key, opts = {}) {
+       key = normalizeKey(key);
+       const { relativeKey, driver } = getMount(key);
+-      if (driver.getItemRaw) {
+-        return asyncCall(driver.getItemRaw, relativeKey, opts);
+-      }
+-      return asyncCall(driver.getItem, relativeKey, opts).then((value) => deserializeRaw(value));
++      return readRaw(driver, relativeKey, opts);
+     },
+     async setItem(key: string, value: T, opts = {}) {
+       if (value === undefined) {
+diff --git a/src/tracing.ts b/src/tracing.ts
+index cd7401d..e83e574 100644
+--- a/src/tracing.ts
++++ b/src/tracing.ts
+@@ -133,7 +133,9 @@ export function withTracing<T extends StorageValue>(storage: MaybeTracedStorage<
+       return normalizer(typeof i === "string" ? i : i.key);
+     };
+ 
+-    return Array.isArray(keyArg) ? keyArg.map((i) => getKeyValue(i)) : [getKeyValue(keyArg)];
++    return Array.isArray(keyArg)
++      ? (keyArg as (string | { key: string })[]).map((i) => getKeyValue(i))
++      : [getKeyValue(keyArg as string)];
+   };
+ 
+   function wrapOperation<
+diff --git a/src/types.ts b/src/types.ts
+index 40f3988..cc6464e 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -18,6 +18,36 @@ export interface StorageMeta {
+ // TODO: type ttl
+ export type TransactionOptions = Record<string, any>;
+ 
++export type JSONValue = null | string | number | boolean | JSONObject | JSONArray;
++export type JSONObject = { [key: string]: JSONValue };
++export type JSONArray = JSONValue[];
++
++/** Formats `getItem()` and `getItems()` can read a value as. */
++export interface GetItemTypeMap {
++  text: string;
++  json: JSONValue;
++  bytes: Uint8Array;
++  blob: Blob;
++  stream: ReadableStream<Uint8Array>;
++}
++
++export type GetItemType = keyof GetItemTypeMap;
++
++export type GetItemOptions<K extends GetItemType = GetItemType> = TransactionOptions & {
++  /** Format to read the value as. Not forwarded to the driver. */
++  type?: K;
++};
++
++export type GetItemsInput<K extends GetItemType = GetItemType> =
++  | string
++  | { key: string; options?: GetItemOptions<K> };
++
++type ItemValueType<I, C> = I extends { options: { type: infer K extends GetItemType } }
++  ? GetItemTypeMap[K] | null
++  : C extends { type: infer K extends GetItemType }
++    ? GetItemTypeMap[K] | null
++    : StorageValue;
++
+ export type GetKeysOptions = TransactionOptions & {
+   maxDepth?: number;
+ };
+@@ -112,20 +142,24 @@ export interface Storage<T extends StorageValue = StorageValue> {
+   ): Promise<boolean>;
+   hasItem(key: string, opts?: TransactionOptions): Promise<boolean>;
+ 
++  getItem<K extends GetItemType>(
++    key: string,
++    opts: TransactionOptions & { type: K },
++  ): Promise<GetItemTypeMap[K] | null>;
+   getItem<U extends Extract<T, StorageDefinition>, K extends string & keyof StorageItemMap<U>>(
+     key: K,
+-    ops?: TransactionOptions,
++    ops?: TransactionOptions & { type?: undefined },
+   ): Promise<StorageItemType<T, K> | null>;
+   getItem<R = StorageItemType<T, string>>(
+     key: string,
+-    opts?: TransactionOptions,
++    opts?: TransactionOptions & { type?: undefined },
+   ): Promise<R | null>;
+ 
+   /** @experimental */
+-  getItems: <U extends T>(
+-    items: (string | { key: string; options?: TransactionOptions })[],
+-    commonOptions?: TransactionOptions,
+-  ) => Promise<{ key: string; value: U }[]>;
++  getItems: <I extends readonly GetItemsInput[], C extends GetItemOptions | undefined = undefined>(
++    items: I,
++    commonOptions?: C,
++  ) => Promise<{ key: string; value: ItemValueType<I[number], C> }[]>;
+   /** @experimental See https://github.com/unjs/unstorage/issues/142 */
+   getItemRaw: <T = any>(key: string, opts?: TransactionOptions) => Promise<MaybeDefined<T> | null>;
+ 
+diff --git a/src/utils.ts b/src/utils.ts
+index eb44352..9694e1f 100644
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -1,4 +1,10 @@
+-import type { Storage, StorageValue, TransactionOptions } from "./types.ts";
++import type {
++  GetItemOptions,
++  GetItemsInput,
++  Storage,
++  StorageValue,
++  TransactionOptions,
++} from "./types.ts";
+ 
+ type StorageKeys = Array<keyof Storage>;
+ 
+@@ -56,19 +62,16 @@ export function prefixStorage<T extends StorageValue>(
+       }
+     });
+ 
+-  nsStorage.getItems = async <U extends T>(
+-    items: (string | { key: string; options?: TransactionOptions })[],
+-    commonOptions?: TransactionOptions,
+-  ) => {
++  nsStorage.getItems = (async (items: readonly GetItemsInput[], commonOptions?: GetItemOptions) => {
+     const prefixedItems = items.map((item) =>
+       typeof item === "string" ? base + item : { ...item, key: base + item.key },
+     );
+-    const results = await storage.getItems<U>(prefixedItems, commonOptions);
++    const results = await storage.getItems(prefixedItems, commonOptions);
+     return results.map((entry) => ({
+       key: entry.key.slice(base.length),
+       value: entry.value,
+     }));
+-  };
++  }) as Storage<T>["getItems"];
+ 
+   nsStorage.setItems = async <U extends T>(
+     items: { key: string; value: U; options?: TransactionOptions }[],
+diff --git a/test/get-item-type.test.ts b/test/get-item-type.test.ts
+new file mode 100644
+index 0000000..4534641
+--- /dev/null
++++ b/test/get-item-type.test.ts
+@@ -0,0 +1,178 @@
++import { describe, it, expect } from "vitest";
++import { createStorage } from "../src/index.ts";
++import memory from "../src/drivers/memory.ts";
++import type { Driver } from "../src/index.ts";
++
++const enc = (s: string) => new TextEncoder().encode(s);
++const dec = (b: Uint8Array) => new TextDecoder().decode(b);
++
++describe("getItem type", () => {
++  it("missing key and undefined give null", async () => {
++    const storage = createStorage();
++    for (const type of ["text", "json", "bytes", "blob", "stream"] as const) {
++      expect(await storage.getItem("nope", { type })).toBeNull();
++    }
++    const undef = createStorage({
++      driver: {
++        getItem: () => undefined as any,
++        hasItem: () => false,
++        getKeys: () => [],
++      } as Driver,
++    });
++    expect(await undef.getItem("x")).toBeNull();
++  });
++
++  it("text and json", async () => {
++    const storage = createStorage();
++    await storage.setItem("user", { a: 1 });
++    await storage.setItem("n", 12);
++    expect(await storage.getItem("user", { type: "text" })).toBe('{"a":1}');
++    expect(await storage.getItem("user", { type: "json" })).toEqual({ a: 1 });
++    expect(await storage.getItem("n", { type: "text" })).toBe("12");
++    await storage.setItem("s", "plain");
++    expect(await storage.getItem("s", { type: "json" })).toBe("plain");
++    expect(await storage.get("s", { type: "text" })).toBe("plain");
++  });
++
++  it("decodes setItemRaw values", async () => {
++    const storage = createStorage();
++    await storage.setItemRaw("a", enc("hello wörld"));
++    await storage.setItemRaw("j", enc('{"x":[1]}'));
++    expect(await storage.getItem("a", { type: "text" })).toBe("hello wörld");
++    expect(await storage.getItem("j", { type: "json" })).toEqual({ x: [1] });
++
++    const strings = new Map<string, string>();
++    const str = createStorage({
++      driver: {
++        hasItem: (k) => strings.has(k),
++        getItem: (k) => strings.get(k) ?? null,
++        setItem: (k, v) => void strings.set(k, v),
++        getKeys: () => [],
++      },
++    });
++    await str.setItemRaw("a", enc("hello wörld"));
++    expect(strings.get("a")).toMatch(/^base64:/);
++    expect(await str.getItem("a", { type: "text" })).toBe("hello wörld");
++    expect(dec((await str.getItem("a", { type: "bytes" }))!)).toBe("hello wörld");
++  });
++
++  it("bytes, blob, stream normalization", async () => {
++    const storage = createStorage();
++    const bytes = new Uint8Array([1, 2, 3]);
++    await storage.setItemRaw("b", Buffer.from(bytes));
++    const out = (await storage.getItem("b", { type: "bytes" }))!;
++    expect(out.constructor).toBe(Uint8Array);
++    expect([...out]).toEqual([1, 2, 3]);
++    const blob = (await storage.getItem("b", { type: "blob" }))!;
++    expect(blob).toBeInstanceOf(Blob);
++    expect(blob.size).toBe(3);
++    const stream = (await storage.getItem("b", { type: "stream" }))!;
++    expect(stream).toBeInstanceOf(ReadableStream);
++    expect([...new Uint8Array(await new Response(stream).arrayBuffer())]).toEqual([1, 2, 3]);
++  });
++
++  it("accepts many binary-like inputs", async () => {
++    const storage = createStorage();
++    const source = enc("abc");
++    const inputs: any[] = [
++      source.buffer.slice(0),
++      new DataView(source.buffer.slice(0)),
++      new Blob(["abc"]),
++      new Response("abc"),
++      new ReadableStream({
++        start(c) {
++          c.enqueue(enc("a"));
++          c.enqueue("bc");
++          c.close();
++        },
++      }),
++      (async function* () {
++        yield enc("ab");
++        yield enc("c");
++      })(),
++      "abc",
++    ];
++    for (const input of inputs) {
++      await storage.setItemRaw("k", input);
++      expect(dec((await storage.getItem("k", { type: "bytes" }))!)).toBe("abc");
++    }
++    await storage.setItemRaw("k", true);
++    expect(dec((await storage.getItem("k", { type: "bytes" }))!)).toBe("true");
++    await storage.setItemRaw("k", { a: 1 });
++    expect(dec((await storage.getItem("k", { type: "bytes" }))!)).toBe('{"a":1}');
++    await storage.setItemRaw("k", new Map());
++    await expect(storage.getItem("k", { type: "bytes" })).rejects.toThrow(
++      "Cannot convert `Map` to bytes",
++    );
++  });
++
++  it("returns blob and stream as is", async () => {
++    const storage = createStorage();
++    const blob = new Blob(["x"]);
++    const stream = new ReadableStream();
++    await storage.setItemRaw("blob", blob);
++    await storage.setItemRaw("stream", stream);
++    expect(await storage.getItem("blob", { type: "blob" })).toBe(blob);
++    expect(await storage.getItem("stream", { type: "stream" })).toBe(stream);
++    expect(stream.locked).toBe(false);
++  });
++
++  it("releases the reader lock when a stream fails", async () => {
++    const storage = createStorage();
++    const stream = new ReadableStream({
++      pull(c) {
++        c.error(new Error("boom"));
++      },
++    });
++    await storage.setItemRaw("s", stream);
++    await expect(storage.getItem("s", { type: "bytes" })).rejects.toThrow("boom");
++    expect(stream.locked).toBe(false);
++  });
++
++  it("does not forward type to the driver", async () => {
++    const seen: any[] = [];
++    const storage = createStorage({
++      driver: {
++        hasItem: () => false,
++        getItem: (_k, o) => (seen.push(o), "v"),
++        getKeys: () => [],
++      },
++    });
++    await storage.getItem("a", { type: "text", foo: 1 });
++    expect(seen).toEqual([{ foo: 1 }]);
++  });
++});
++
++describe("getItems type", () => {
++  it("keeps order and per-item types", async () => {
++    const storage = createStorage();
++    storage.mount("m", memory());
++    await storage.setItem("a", { n: 1 });
++    await storage.setItem("m:b", { n: 2 });
++    await storage.setItem("c", { n: 3 });
++    const res = await storage.getItems(["a", { key: "m:b", options: { type: "bytes" } }, "c"], {
++      type: "text",
++    });
++    expect(res.map((r) => r.key)).toEqual(["a", "m:b", "c"]);
++    expect(res[0]!.value).toBe('{"n":1}');
++    expect(dec(res[1]!.value as Uint8Array)).toBe('{"n":2}');
++    expect(res[2]!.value).toBe('{"n":3}');
++    expect((await storage.getItems(["nope"], { type: "blob" }))[0]!.value).toBeNull();
++  });
++
++  it("applies type by position when driver keys differ", async () => {
++    const storage = createStorage({
++      driver: {
++        hasItem: () => false,
++        getItem: () => null,
++        getItems: (items) => items.map((i) => ({ key: i.key + "!", value: enc("hi") })),
++        getKeys: () => [],
++      },
++    });
++    const res = await storage.getItems(["a", "b"], { type: "text" });
++    expect(res).toEqual([
++      { key: "a!", value: "hi" },
++      { key: "b!", value: "hi" },
++    ]);
++  });
++});
+diff --git a/test/storage.test-d.ts b/test/storage.test-d.ts
+index 9d8933c..610cfed 100644
+--- a/test/storage.test-d.ts
++++ b/test/storage.test-d.ts
+@@ -1,6 +1,6 @@
+ import { describe, it, expectTypeOf } from "vitest";
+ import { createStorage, prefixStorage } from "../src/index.ts";
+-import type { Storage, StorageValue } from "../src/index.ts";
++import type { JSONValue, Storage, StorageValue } from "../src/index.ts";
+ 
+ describe("types", () => {
+   it("default types for storage", async () => {
+@@ -81,3 +81,36 @@ describe("types", () => {
+     expectTypeOf(prefixedStorage3).toEqualTypeOf<Storage<number>>();
+   });
+ });
++
++describe("getItem type option", () => {
++  it("narrows return types", async () => {
++    const storage = createStorage();
++    expectTypeOf(await storage.getItem("k", { type: "text" })).toEqualTypeOf<string | null>();
++    expectTypeOf(await storage.get("k", { type: "json" })).toEqualTypeOf<JSONValue | null>();
++    expectTypeOf(await storage.getItem("k", { type: "bytes" })).toEqualTypeOf<Uint8Array | null>();
++    expectTypeOf(await storage.getItem("k", { type: "blob" })).toEqualTypeOf<Blob | null>();
++    expectTypeOf(
++      await storage.getItem("k", { type: "stream" }),
++    ).toEqualTypeOf<ReadableStream<Uint8Array> | null>();
++    // @ts-expect-error unknown type
++    await storage.getItem("k", { type: "buffer" });
++  });
++
++  it("narrows getItems", async () => {
++    const storage = createStorage();
++    expectTypeOf(await storage.getItems(["a"], { type: "text" })).toEqualTypeOf<
++      { key: string; value: string | null }[]
++    >();
++    expectTypeOf(
++      (await storage.getItems([{ key: "a", options: { type: "bytes" } }]))[0]!.value,
++    ).toEqualTypeOf<Uint8Array | null>();
++    expectTypeOf(
++      (
++        await storage.getItems(["a", { key: "a", options: { type: "bytes" } }], { type: "json" })
++      )[0]!.value,
++    ).toEqualTypeOf<JSONValue | Uint8Array | null>();
++    expectTypeOf((await storage.getItems(["a"]))[0]!.value).toEqualTypeOf<StorageValue>();
++    // @ts-expect-error unknown per-item type
++    await storage.getItems([{ key: "a", options: { type: "buffer" } }]);
++  });
++});

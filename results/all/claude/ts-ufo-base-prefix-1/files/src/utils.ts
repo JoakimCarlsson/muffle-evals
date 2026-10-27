@@ -299,15 +299,11 @@ export function withBase(input: string, base: string) {
 }
 
 /**
- * Checks that input is the base itself or continues it at a segment, query or hash boundary.
- *
- * @param input - URL or pathname.
- * @param base - Base without trailing slash.
+ * Checks that input equals base or continues it at a path, query or hash boundary.
  */
 function isUnderBase(input: string, base: string) {
   return (
-    input.startsWith(base) &&
-    (input.length === base.length || "/?#".includes(input[base.length]!))
+    input.startsWith(base) && (!input[base.length] || "/?#".includes(input[base.length]))
   );
 }
 

@@ -16,7 +16,7 @@ index 37cd500..48c3601 100644
  		}
  		w.WriteHeader(405)
 diff --git a/mux_test.go b/mux_test.go
-index 3e3b18f..fb9b684 100644
+index 3e3b18f..7c7e0ee 100644
 --- a/mux_test.go
 +++ b/mux_test.go
 @@ -428,6 +428,50 @@ func TestMethodNotAllowed(t *testing.T) {
@@ -24,43 +24,43 @@ index 3e3b18f..fb9b684 100644
  }
  
 +func TestMethodNotAllowedOverlappingRoutes(t *testing.T) {
-+	for _, methods := range [][]string{
-+		{http.MethodPost},
-+		{http.MethodPost, http.MethodPut},
-+	} {
-+		t.Run(fmt.Sprint(methods), func(t *testing.T) {
++	for _, multipleMethods := range []bool{false, true} {
++		t.Run(fmt.Sprintf("multipleMethods=%v", multipleMethods), func(t *testing.T) {
 +			r := NewRouter()
++			handler := func(w http.ResponseWriter, r *http.Request) {
++				w.WriteHeader(http.StatusOK)
++			}
 +			for _, pattern := range []string{
 +				"/article/1-2-3",
 +				"/article/{a}",
 +				"/article/{b}-{c}",
 +				"/article/{b}-{c}-{d}",
 +			} {
-+				for _, method := range methods {
-+					r.MethodFunc(method, pattern, func(w http.ResponseWriter, r *http.Request) {
-+						w.WriteHeader(http.StatusOK)
-+					})
++				r.Post(pattern, handler)
++				if multipleMethods {
++					r.Put(pattern, handler)
 +				}
 +			}
 +
-+			resp := httptest.NewRecorder()
-+			r.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/article/1-2-3", nil))
-+			if resp.Code != http.StatusMethodNotAllowed {
-+				t.Fatalf("expected status 405, got %d", resp.Code)
++			w := httptest.NewRecorder()
++			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/article/1-2-3", nil))
++			if w.Code != http.StatusMethodNotAllowed {
++				t.Fatalf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
 +			}
-+			allowed := resp.Header().Values("Allow")
-+			if len(allowed) != len(methods) {
-+				t.Fatalf("expected each allowed method once: %v, got %v", methods, allowed)
++			want := map[string]int{http.MethodPost: 1}
++			if multipleMethods {
++				want[http.MethodPut] = 1
 +			}
-+			for _, method := range methods {
-+				count := 0
-+				for _, value := range allowed {
-+					if value == method {
-+						count++
-+					}
-+				}
-+				if count != 1 {
-+					t.Errorf("expected %s once in Allow header, got %v", method, allowed)
++			got := make(map[string]int)
++			for _, method := range w.Header().Values("Allow") {
++				got[method]++
++			}
++			if len(got) != len(want) {
++				t.Fatalf("Allow methods = %v, want %v", got, want)
++			}
++			for method, count := range want {
++				if got[method] != count {
++					t.Errorf("Allow contains %s %d times, want %d", method, got[method], count)
 +				}
 +			}
 +		})

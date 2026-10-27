@@ -251,18 +251,22 @@ fn new_directory_paths() {
 
 #[test]
 fn path_caret_encoding() {
-    for base in &["http://localhost/", "thing://localhost/", "file:///"] {
-        let expected = format!("{}a%5Eb?c^d#e^f", base);
-        let mut url = Url::parse(&format!("{}a^b?c^d#e^f", base)).unwrap();
+    for scheme in &["http", "thing", "file"] {
+        let base = Url::parse(&format!("{}://localhost/", scheme)).unwrap();
+        let expected = format!("{}a%5Eb", base);
+        let mut url = base.join("a^b").unwrap();
         assert_eq!(url.as_str(), expected);
+        assert_eq!(
+            Url::parse(&format!("{}://localhost/a^b", scheme)).unwrap(),
+            url
+        );
 
         url.set_path("/a^b");
         assert_eq!(url.as_str(), expected);
 
-        url.path_segments_mut().unwrap().clear().push("a^b");
+        url.set_path("/");
+        url.path_segments_mut().unwrap().push("a^b");
         assert_eq!(url.as_str(), expected);
-
-        assert_eq!(url.join("a^b").unwrap().path(), "/a%5Eb");
     }
 }
 

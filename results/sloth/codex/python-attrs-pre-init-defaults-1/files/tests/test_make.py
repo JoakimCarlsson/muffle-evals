@@ -696,42 +696,6 @@ class TestAttributes:
 
         assert 12 == getattr(c, "z", None)
 
-    @pytest.mark.parametrize("arguments", ["positional", "keyword", "omitted"])
-    def test_pre_init_defaults(self, arguments):
-        """
-        Pre-init receives supplied values or defaults for all init parameters.
-        """
-        received = None
-
-        @attr.define
-        class C:
-            val1: int
-            val2: int = 100
-            _val3: dict = attr.field(factory=dict, alias="val3")
-            val4: int = attr.field(kw_only=True)
-            val5: int = attr.field(default=100, kw_only=True)
-            ignored: int = attr.field(default=0, init=False)
-
-            def __attrs_pre_init__(self, val1, val2, val3, *, val4, val5):
-                """Record arguments before attributes are initialized."""
-                nonlocal received
-                received = (val1, val2, val3, val4, val5)
-
-        value = {"blah": "blah"}
-        if arguments == "positional":
-            inst = C(200, 200, value, val4=200, val5=200)
-        elif arguments == "keyword":
-            inst = C(val1=200, val2=200, val3=value, val4=200, val5=200)
-        else:
-            inst = C(200, val4=200)
-
-        if arguments == "omitted":
-            assert (200, 100, attr.NOTHING, 200, 100) == received
-            assert {} == inst._val3
-        else:
-            assert (200, 200, value, 200, 200) == received
-            assert value is received[2] is inst._val3
-
     @pytest.mark.usefixtures("with_and_without_validation")
     def test_pre_init_kw_only_work_with_defaults(self):
         """
@@ -750,6 +714,44 @@ class TestAttributes:
         inst = KWOnlyAndDefault()
 
         assert 3 == val == inst.kw_and_default
+
+    @pytest.mark.parametrize("arguments", ["positional", "keyword", "omitted"])
+    def test_pre_init_defaults(self, arguments):
+        """
+        Pre-init receives supplied values or defaults before factories run.
+        """
+        received = None
+
+        @attr.define
+        class Example:
+            val1: int
+            val2: int = 100
+            val3: dict = attr.field(factory=dict)
+            val4: int = attr.field(kw_only=True)
+            val5: int = attr.field(default=100, kw_only=True)
+
+            def __attrs_pre_init__(self, val1, val2, val3, val4, val5):
+                """Record the initializer arguments."""
+                nonlocal received
+                received = (val1, val2, val3, val4, val5)
+
+        value = {"blah": "blah"}
+        if arguments == "positional":
+            inst = Example(200, 200, value, val4=200, val5=200)
+        elif arguments == "keyword":
+            inst = Example(
+                val1=200, val2=200, val3=value, val4=200, val5=200
+            )
+        else:
+            inst = Example(200, val4=200)
+
+        if arguments == "omitted":
+            assert (200, 100, attr.NOTHING, 200, 100) == received
+            assert {} == inst.val3
+        else:
+            assert (200, 200, value, 200, 200) == received
+            assert received[2] is value
+            assert inst.val3 is value
 
     @pytest.mark.usefixtures("with_and_without_validation")
     def test_post_init(self):

@@ -13,6 +13,38 @@ import (
 	"time"
 )
 
+func TestMethodNotAllowedDuplicateMethods(t *testing.T) {
+	r := NewRouter()
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}
+	for _, pattern := range []string{
+		"/article/1-2-3",
+		"/article/{a}",
+		"/article/{b}-{c}",
+		"/article/{b}-{c}-{d}",
+	} {
+		r.Post(pattern, handler)
+		r.Put(pattern, handler)
+	}
+
+	for i := 0; i < 2; i++ {
+		resp := httptest.NewRecorder()
+		r.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/article/1-2-3", nil))
+		if resp.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("expected status 405, got %d", resp.Code)
+		}
+		allowed := resp.Header().Values("Allow")
+		counts := make(map[string]int)
+		for _, method := range allowed {
+			counts[method]++
+		}
+		if len(allowed) != 2 || counts[http.MethodPost] != 1 || counts[http.MethodPut] != 1 {
+			t.Fatalf("expected POST and PUT once each, got %v", allowed)
+		}
+	}
+}
+
 func TestMuxBasic(t *testing.T) {
 	var count uint64
 	countermw := func(next http.Handler) http.Handler {
@@ -426,35 +458,6 @@ func TestMethodNotAllowed(t *testing.T) {
 			t.Fatal("Allow header should contain 2 headers: GET, HEAD. Received: ", allowedMethods)
 		}
 	})
-}
-
-func TestMethodNotAllowedOverlappingRoutes(t *testing.T) {
-	r := NewRouter()
-	handler := func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}
-	for _, pattern := range []string{
-		"/article/1-2-3",
-		"/article/{a}",
-		"/article/{b}-{c}",
-		"/article/{b}-{c}-{d}",
-	} {
-		r.Post(pattern, handler)
-	}
-	r.Put("/article/{a}", handler)
-
-	for i := 0; i < 2; i++ {
-		resp := httptest.NewRecorder()
-		r.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/article/1-2-3", nil))
-		if resp.Code != http.StatusMethodNotAllowed {
-			t.Fatalf("expected status 405, got %d", resp.Code)
-		}
-		allowed := resp.Header().Values("Allow")
-		if len(allowed) != 2 || !((allowed[0] == "POST" && allowed[1] == "PUT") ||
-			(allowed[0] == "PUT" && allowed[1] == "POST")) {
-			t.Fatalf("expected POST and PUT exactly once, got %v", allowed)
-		}
-	}
 }
 
 func TestMuxNestedMethodNotAllowed(t *testing.T) {

@@ -428,29 +428,37 @@ func TestMethodNotAllowed(t *testing.T) {
 	})
 }
 
-// TestMethodNotAllowedOverlappingRoutes checks that matching routes advertise each method once.
-func TestMethodNotAllowedOverlappingRoutes(t *testing.T) {
-	r := NewRouter()
-	for _, pattern := range []string{"/article/1-2-3", "/article/{a}", "/article/{b}-{c}", "/article/{b}-{c}-{d}"} {
-		r.Post(pattern, func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		})
-	}
-	r.Put("/article/{a}", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	ts := httptest.NewServer(r)
-	defer ts.Close()
-
-	resp, _ := testRequest(t, ts, "GET", "/article/1-2-3", nil)
-	if resp.StatusCode != http.StatusMethodNotAllowed {
-		t.Fatal(resp.Status)
-	}
-	allowedMethods := resp.Header.Values("Allow")
-	if len(allowedMethods) != 2 || ((allowedMethods[0] != "POST" || allowedMethods[1] != "PUT") &&
-		(allowedMethods[1] != "POST" || allowedMethods[0] != "PUT")) {
-		t.Fatal("Allow header should contain 2 headers: POST, PUT. Received: ", allowedMethods)
+// TestMethodNotAllowedDuplicateMethods checks overlapping routes advertise each method once.
+func TestMethodNotAllowedDuplicateMethods(t *testing.T) {
+	for _, methods := range [][]string{{"POST"}, {"POST", "PUT"}} {
+		r := NewRouter()
+		for _, pattern := range []string{"/article/1-2-3", "/article/{a}", "/article/{b}-{c}", "/article/{b}-{c}-{d}"} {
+			for _, method := range methods {
+				r.MethodFunc(method, pattern, func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusOK)
+				})
+			}
+		}
+		resp := httptest.NewRecorder()
+		r.ServeHTTP(resp, httptest.NewRequest("GET", "/article/1-2-3", nil))
+		if resp.Code != http.StatusMethodNotAllowed {
+			t.Fatal(resp.Code)
+		}
+		allowed := resp.Header().Values("Allow")
+		if len(allowed) != len(methods) {
+			t.Fatalf("expected methods %v, received %v", methods, allowed)
+		}
+		for _, method := range methods {
+			count := 0
+			for _, value := range allowed {
+				if value == method {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Fatalf("expected %s once, received %v", method, allowed)
+			}
+		}
 	}
 }
 

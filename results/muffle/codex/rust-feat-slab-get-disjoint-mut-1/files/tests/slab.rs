@@ -732,15 +732,17 @@ fn clone_from() {
 }
 
 #[test]
-fn get_disjoint_mut_preserves_order() {
+fn get_disjoint_mut_order_and_mutation() {
     let mut slab: Slab<_> = (0..5).map(|i| (i, i)).collect();
     slab.remove(1);
-    let [last, first, middle] = slab.get_disjoint_mut([4, 0, 2]).unwrap();
-    std::mem::swap(last, first);
-    *middle = 20;
+    let [a, b, c] = slab.get_disjoint_mut([4, 0, 2]).unwrap();
+    assert_eq!((*a, *b, *c), (4, 0, 2));
+    std::mem::swap(a, b);
+    *c = 20;
     assert_eq!((slab[0], slab[2], slab[4]), (4, 20, 0));
-    assert_eq!(slab.len(), 4);
-    assert_eq!(slab.insert(10), 1);
+    let [value] = slab.get_disjoint_mut([3]).unwrap();
+    *value = 30;
+    assert_eq!(slab[3], 30);
 }
 
 #[test]
@@ -753,48 +755,30 @@ fn get_disjoint_mut_errors() {
         slab.get_disjoint_mut([42, 2, 1, 2]),
         Err(OverlappingIndices)
     );
+    assert_eq!(slab.get_disjoint_mut([5, 5]), Err(OverlappingIndices));
     assert_eq!(slab.get_disjoint_mut([1, 1]), Err(OverlappingIndices));
-    assert_eq!(
-        slab.get_disjoint_mut([usize::MAX, usize::MAX]),
-        Err(OverlappingIndices)
-    );
     assert_eq!(slab.get_disjoint_mut([1, 5]), Err(IndexVacant));
     assert_eq!(slab.get_disjoint_mut([5, 1]), Err(IndexOutOfBounds));
+    assert_eq!(slab.get_disjoint_mut([0, 1]), Err(IndexVacant));
     assert_eq!(
         slab.get_disjoint_mut([0, usize::MAX]),
         Err(IndexOutOfBounds)
     );
-    assert_eq!(slab.get_disjoint_mut([0, 1]), Err(IndexVacant));
-    assert_eq!(
-        slab.iter().map(|(k, v)| (k, *v)).collect::<Vec<_>>(),
-        vec![(0, 0), (2, 2), (3, 3), (4, 4)]
-    );
+    assert_eq!(slab.len(), 4);
+    assert_eq!(slab[2], 2);
 }
 
 #[test]
-fn get_disjoint_mut_empty_and_single() {
-    let mut slab = Slab::with_capacity(8);
+fn get_disjoint_mut_empty_and_zst() {
+    let mut slab = Slab::<()>::with_capacity(10);
     assert_eq!(slab.get_disjoint_mut([]), Ok([]));
     assert_eq!(
         slab.get_disjoint_mut([0]),
         Err(GetDisjointMutError::IndexOutOfBounds)
     );
-    let key = slab.insert(String::from("hello"));
-    let [value] = slab.get_disjoint_mut([key]).unwrap();
-    value.push_str(" world");
-    assert_eq!(slab[key], "hello world");
-    slab.remove(key);
-    assert_eq!(slab.get_disjoint_mut([]), Ok([]));
-    assert_eq!(
-        slab.get_disjoint_mut([key]),
-        Err(GetDisjointMutError::IndexVacant)
-    );
-}
-
-#[test]
-fn get_disjoint_mut_zero_sized_values() {
-    let mut slab: Slab<_> = (0..3).map(|i| (i, ())).collect();
-    let [a, b, c] = slab.get_disjoint_mut([2, 0, 1]).unwrap();
+    slab.insert(());
+    slab.insert(());
+    let [a, b] = slab.get_disjoint_mut([1, 0]).unwrap();
     std::mem::swap(a, b);
-    *c = ();
+    assert_eq!(slab.get_disjoint_mut([]), Ok([]));
 }

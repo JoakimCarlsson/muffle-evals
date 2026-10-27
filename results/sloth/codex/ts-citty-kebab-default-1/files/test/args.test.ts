@@ -68,11 +68,6 @@ describe("args", () => {
       { value: { type: "enum", options: ["one", "two"] } },
       "Invalid value for argument: --value (three). Expected one of: one, two.",
     ],
-    [
-      ["--foo-bar", "three"],
-      { fooBar: { type: "enum", options: ["one", "two"], default: "two" } },
-      "Invalid value for argument: --fooBar (three). Expected one of: one, two.",
-    ],
   ])("should throw error with %o (%o)", (rawArgs, definition, result) => {
     // TODO: should check for exact match
     // https://github.com/vitest-dev/vitest/discussions/6048
@@ -105,27 +100,15 @@ describe("args", () => {
     expect(parsed._).toEqual([]);
   });
 
-  it.each<[string[], ArgsDef, string | boolean]>([
-    [
-      ["--foo-bar", "one"],
-      { fooBar: { type: "enum", options: ["one", "two"], default: "two" } },
-      "one",
-    ],
-    [
-      ["--fooBar", "one"],
-      { "foo-bar": { type: "enum", options: ["one", "two"], default: "two" } },
-      "one",
-    ],
-    [[], { fooBar: { type: "enum", options: ["one", "two"], default: "two" } }, "two"],
-    [["--foo-bar", ""], { fooBar: { type: "string", default: "two" } }, ""],
-    [["--foo-bar"], { fooBar: { type: "boolean", default: false } }, true],
-    [["--no-foo-bar"], { fooBar: { type: "boolean", default: true } }, false],
-    [["-f", "one"], { fooBar: { type: "string", alias: "f", default: "two" } }, "one"],
-  ])("should resolve aliases before defaults with %o (%o)", (rawArgs, definition, value) => {
-    const parsed = parseArgs(rawArgs, definition);
+  it.each([
+    [[], "two"],
+    [["--foo-bar", "one"], "one"],
+    [["--fooBar", "one"], "one"],
+  ])("should resolve enum defaults with %o", (rawArgs, expected) => {
+    const parsed = parseArgs(rawArgs as string[], {
+      fooBar: { type: "enum", options: ["one", "two"], default: "two" },
+    });
 
-    expect(parsed.fooBar).toBe(value);
-    expect(parsed["foo-bar"]).toBe(value);
-    expect(parsed._).toEqual([]);
+    expect(parsed).toEqual({ _: [], fooBar: expected, "foo-bar": expected });
   });
 });

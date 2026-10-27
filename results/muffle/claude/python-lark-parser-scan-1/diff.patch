@@ -1,0 +1,404 @@
+diff --git a/docs/classes.rst b/docs/classes.rst
+index 7e88cef..220debe 100644
+--- a/docs/classes.rst
++++ b/docs/classes.rst
+@@ -5,7 +5,7 @@ Lark
+ ----
+ 
+ .. autoclass:: lark.Lark
+-    :members: open, parse, parse_interactive, lex, save, load, get_terminal, open_from_package
++    :members: open, parse, scan, parse_interactive, lex, save, load, get_terminal, open_from_package
+ 
+ 
+ Using Unicode character classes with ``regex``
+@@ -101,3 +101,8 @@ TextSlice
+ ---------
+ 
+ .. autoclass:: lark.utils.TextSlice
++
++ScanMatch
++---------
++
++.. autoclass:: lark.utils.ScanMatch
+diff --git a/lark/__init__.py b/lark/__init__.py
+index e3d10ed..b938011 100644
+--- a/lark/__init__.py
++++ b/lark/__init__.py
+@@ -11,7 +11,7 @@ from .exceptions import (
+ from .lark import Lark
+ from .lexer import Token
+ from .tree import ParseTree, Tree
+-from .utils import logger, TextSlice
++from .utils import logger, TextSlice, ScanMatch
+ from .visitors import Discard, Transformer, Transformer_NonRecursive, Visitor, v_args
+ 
+ __version__: str = "1.3.1"
+@@ -34,6 +34,7 @@ __all__ = (
+     "Transformer",
+     "Transformer_NonRecursive",
+     "TextSlice",
++    "ScanMatch",
+     "Visitor",
+     "v_args",
+ )
+diff --git a/lark/lark.py b/lark/lark.py
+index 49ff5a5..0df6d46 100644
+--- a/lark/lark.py
++++ b/lark/lark.py
+@@ -16,7 +16,7 @@ if TYPE_CHECKING:
+     from .parser_frontends import ParsingFrontend
+ 
+ from .exceptions import ConfigurationError, assert_config, UnexpectedInput
+-from .utils import Serialize, SerializeMemoizer, FS, logger, TextOrSlice, LarkInput
++from .utils import Serialize, SerializeMemoizer, FS, logger, TextOrSlice, LarkInput, ScanMatch
+ from .load_grammar import load_grammar, FromPackageLoader, Grammar, verify_used_files, PackageResource, sha256_digest
+ 
+ from .tree import Tree
+@@ -736,5 +736,31 @@ class Lark(Serialize, Generic[_Return_T]):
+             raise NotImplementedError("The on_error option is only implemented for the LALR(1) parser.")
+         return self.parser.parse(text, start=start, on_error=on_error)
+ 
++    def scan(self, text: TextOrSlice, start: Optional[str]=None) -> Iterator[ScanMatch[_Return_T]]:
++        """Find the parts of the text that match the grammar, like a regex search. Only works when parser='lalr'.
++
++        Yields non-overlapping matches, in order. Each match is the longest prefix that parses,
++        from the earliest position where one starts. Text that doesn't parse is skipped.
++        Matches are never empty, and never start or end with an ignored terminal.
++
++        Lexer callbacks and the transformer's terminal callbacks may be called on text that doesn't end up matching.
++        A callback that raises ValueError marks the token as invalid.
++
++        Parameters:
++            text (TextOrSlice): Text to be scanned, as `str`, `bytes` or `TextSlice`.
++                For a TextSlice, only the slice is scanned, and positions are relative to the whole text.
++            start (str, optional): Required if Lark was given multiple possible start symbols (using the start option).
++
++        Returns:
++            An iterator of ``ScanMatch`` instances, whose ``range`` is a ``(start, end)`` tuple of offsets into the text,
++            and whose ``value`` is what ``parse()`` returns for the matched text.
++
++        :raises ConfigurationError: (when called) If the configuration doesn't support scanning,
++            i.e. a parser other than 'lalr', no parser, a postlex, or a custom lexer.
++        """
++        if self.options.parser is None:
++            raise ConfigurationError("scan() requires a parser. Use parser='lalr'")
++        return self.parser.scan(text, start=start)
++
+ 
+ ###}
+diff --git a/lark/lexer.py b/lark/lexer.py
+index 9aa10c2..2f92966 100644
+--- a/lark/lexer.py
++++ b/lark/lexer.py
+@@ -254,13 +254,13 @@ class Token(str):
+         return cls(type_, value, borrow_t.start_pos, borrow_t.line, borrow_t.column, borrow_t.end_line, borrow_t.end_column, borrow_t.end_pos)
+ 
+     def __reduce__(self):
+-        return (self.__class__, (self.type, self.value, self.start_pos, self.line, self.column))
++        return (self.__class__, (self.type, self.value, self.start_pos, self.line, self.column, self.end_line, self.end_column, self.end_pos))
+ 
+     def __repr__(self):
+         return 'Token(%r, %r)' % (self.type, self.value)
+ 
+     def __deepcopy__(self, memo):
+-        return Token(self.type, self.value, self.start_pos, self.line, self.column)
++        return Token(self.type, self.value, self.start_pos, self.line, self.column, self.end_line, self.end_column, self.end_pos)
+ 
+     def __eq__(self, other):
+         if isinstance(other, Token) and self.type != other.type:
+diff --git a/lark/parser_frontends.py b/lark/parser_frontends.py
+index e67890d..53c4b0f 100644
+--- a/lark/parser_frontends.py
++++ b/lark/parser_frontends.py
+@@ -1,10 +1,13 @@
+-from typing import Any, Callable, Dict, Optional, Collection, Union, TYPE_CHECKING
++from copy import copy
++from typing import Any, Callable, Dict, Iterator, List, Optional, Collection, Union, TYPE_CHECKING
+ 
+-from .exceptions import ConfigurationError, GrammarError, assert_config
+-from .utils import get_regexp_width, Serialize, TextOrSlice, TextSlice, LarkInput
+-from .lexer import LexerThread, BasicLexer, ContextualLexer, Lexer
++from .exceptions import ConfigurationError, GrammarError, LexError, UnexpectedInput, assert_config
++from .utils import get_regexp_width, Serialize, TextOrSlice, TextSlice, LarkInput, ScanMatch
++from .lexer import LexerThread, BasicLexer, ContextualLexer, Lexer, LexerState, LineCounter, Token
+ from .parsers import earley, xearley, cyk
+ from .parsers.lalr_parser import LALR_Parser
++from .parsers.lalr_analysis import Shift
++from .parsers.lalr_parser_state import ParserState, ParseConf
+ from .tree import Tree
+ from .common import LexerConf, ParserConf, _ParserArgType, _LexerArgType
+ 
+@@ -139,6 +142,136 @@ class ParsingFrontend(Serialize):
+         stream = self._make_lexer_thread(text)
+         return self.parser.parse_interactive(stream, chosen_start)
+ 
++    def scan(self, text: TextOrSlice, start: Optional[str]=None) -> Iterator[ScanMatch]:
++        # Validation happens here, so that errors are raised when scan() is called, not on first iteration
++        if self.parser_conf.parser_type != 'lalr':
++            raise ConfigurationError("scan() only works with parser='lalr'")
++        if self.lexer_conf.postlex is not None:
++            raise ConfigurationError("scan() doesn't support postlex")
++        if not isinstance(self.lexer_conf.lexer_type, str):
++            raise ConfigurationError("scan() doesn't support custom lexers")
++        if self.skip_lexer:
++            raise ConfigurationError("scan() only works with lexer='basic' or 'contextual'")
++        chosen_start = self._verify_start(start)
++        if not isinstance(text, (str, bytes, TextSlice)):
++            raise TypeError("scan() expects str, bytes or TextSlice, got %s" % type(text).__name__)
++        return self._scan(TextSlice.cast_from(text), chosen_start)
++
++    def _scan_attempt(self, parse_conf: ParseConf, text: TextSlice, pos: int, line_ctr: LineCounter) -> List[Token]:
++        """Find the longest sequence of tokens, starting exactly at pos, that is a complete parse.
++
++        The parser runs without values: only the state stack is tracked, so the transformer is never applied here.
++        Returns an empty list if there is no such sequence.
++        """
++        lexer = self.lexer
++        contextual = isinstance(lexer, ContextualLexer)
++        parser_state = ParserState(parse_conf, None)    # type: ignore[arg-type]
++        stack = parser_state.state_stack
++        states = parse_conf.states
++        end_state = parse_conf.end_state
++        callbacks = parse_conf.callbacks
++        lexer_state = LexerState(TextSlice(text.text, pos, text.end), copy(line_ctr))
++
++        tokens: List[Token] = []
++        accepted = 0
++        while True:
++            try:
++                next_token = (lexer.lexers[stack[-1]] if contextual else lexer).next_token
++                token = next_token(lexer_state, parser_state)
++            except (EOFError, UnexpectedInput):
++                break
++            except ConfigurationError:
++                raise
++            except ValueError:      # A callback rejected the token
++                break
++
++            if None in (token.start_pos, token.end_pos, token.line, token.column, token.end_line, token.end_column):
++                raise LexError("A callback did not preserve token positions (token %r). Use Token.update() instead of creating a new Token" % (token,))
++            if not tokens and token.start_pos != pos:
++                return []   # An ignored terminal comes first, so this isn't a valid start
++
++            # Feed the token, without building values
++            while True:
++                try:
++                    action, arg = states[stack[-1]][token.type]
++                except KeyError:
++                    action = None
++                    break
++                if action is Shift:
++                    stack.append(arg)
++                    break
++                size = len(arg.expansion)
++                if size:
++                    del stack[-size:]
++                stack.append(states[stack[-1]][arg.origin.name][1])
++            if action is None:
++                break
++            if token.type in callbacks:
++                try:
++                    callbacks[token.type](Token.new_borrow_pos(token.type, token.value, token))
++                except ConfigurationError:
++                    raise
++                except ValueError:
++                    break
++
++            tokens.append(token)
++            if _accepts_end(states, end_state, stack):
++                accepted = len(tokens)
++
++        return tokens[:accepted]
++
++    def _scan(self, text: TextSlice, start: str) -> Iterator[ScanMatch]:
++        parse_conf = ParseConf(self.parser._parse_table, self.parser.parser.callbacks, start)
++        line_ctr = LineCounter(b'\n' if isinstance(text.text, bytes) else '\n')
++        if text.start > 0:
++            line_ctr.feed(TextSlice(text.text, 0, text.start))
++
++        pos = text.start
++        while pos < text.end:
++            tokens = self._scan_attempt(parse_conf, text, pos, line_ctr)
++            new_pos = pos + 1
++            if tokens:
++                # Parse again, now with values, from the tokens that were already lexed
++                value = self.parser.parse(_TokenReplay(tokens), start)
++                end = tokens[-1].end_pos
++                yield ScanMatch((pos, end), value)
++                new_pos = max(end, new_pos)
++            line_ctr.feed(text.text[pos:new_pos])
++            pos = new_pos
++
++
++class _TokenReplay:
++    "Stands in for a LexerThread, to feed the parser with tokens that were already lexed"
++    def __init__(self, tokens):
++        self.tokens = tokens
++
++    def lex(self, parser_state):
++        return iter(self.tokens)
++
++
++def _accepts_end(states, end_state, stack) -> bool:
++    "Whether the parser can finish, if the input ends now. Doesn't change the stack."
++    keep = len(stack)       # stack[:keep] is untouched, `pushed` is what comes after it
++    pushed: List[Any] = []
++    while True:
++        top = pushed[-1] if pushed else stack[keep - 1]
++        try:
++            action, rule = states[top]['$END']
++        except KeyError:
++            return False
++        if action is Shift:
++            return False
++        size = len(rule.expansion)
++        drop = min(size, len(pushed))
++        if drop:
++            del pushed[-drop:]
++        keep -= size - drop
++        top = pushed[-1] if pushed else stack[keep - 1]
++        new_state = states[top][rule.origin.name][1]
++        if new_state == end_state:
++            return True
++        pushed.append(new_state)
++
+ 
+ def _validate_frontend_args(parser, lexer) -> None:
+     assert_config(parser, ('lalr', 'earley', 'cyk'))
+diff --git a/lark/utils.py b/lark/utils.py
+index 9c974a4..0cf2791 100644
+--- a/lark/utils.py
++++ b/lark/utils.py
+@@ -225,6 +225,18 @@ class TextSlice(Generic[AnyStr]):
+         return self.text.rindex(substr, self.start, self.end)
+ 
+ 
++@dataclass(frozen=True)
++class ScanMatch(Generic[T]):
++    """A match found by ``Lark.scan()``.
++
++    Attributes:
++        range: A ``(start, end)`` tuple of offsets into the scanned text.
++        value: The parse tree (or the transformer's result) for the matched text.
++    """
++    range: Tuple[int, int]
++    value: T
++
++
+ TextOrSlice = Union[AnyStr, 'TextSlice[AnyStr]']
+ LarkInput = Union[AnyStr, TextSlice[AnyStr], Any]
+ 
+diff --git a/tests/__main__.py b/tests/__main__.py
+index c5298a7..72ed822 100644
+--- a/tests/__main__.py
++++ b/tests/__main__.py
+@@ -12,6 +12,7 @@ from .test_grammar import TestGrammar
+ from .test_reconstructor import TestReconstructor
+ from .test_tree_forest_transformer import TestTreeForestTransformer
+ from .test_lexer import TestLexer
++from .test_scan import TestScan
+ from .test_python_grammar import TestPythonParser
+ from .test_tree_templates import *  # We define __all__ to list which TestSuites to run
+ 
+diff --git a/tests/test_scan.py b/tests/test_scan.py
+new file mode 100644
+index 0000000..5b902bc
+--- /dev/null
++++ b/tests/test_scan.py
+@@ -0,0 +1,96 @@
++from unittest import TestCase, main
++
++from lark import Lark, LexError, ScanMatch, TextSlice, Token, Transformer, Tree
++from lark.exceptions import ConfigurationError
++
++GRAMMAR = r'''
++start: expr+
++expr: "(" (NAME | expr)* ")"
++NAME: /[a-z]+/
++%ignore " "
++'''
++
++
++class TestScan(TestCase):
++    def test_ranges(self):
++        for lexer in ('contextual', 'basic'):
++            p = Lark(GRAMMAR, parser='lalr', lexer=lexer)
++            self.assertEqual([m.range for m in p.scan("(a)(b) || (c)(d(e)")], [(0, 6), (10, 13), (15, 18)])
++
++    def test_equality(self):
++        self.assertEqual(ScanMatch((1, 3), Tree('expr', [])), ScanMatch((1, 3), Tree('expr', [])))
++
++    def test_slice_and_empty(self):
++        p = Lark('start: "a"+', parser='lalr')
++        self.assertEqual([m.range for m in p.scan('xxaa yy a')], [(2, 4), (8, 9)])
++        self.assertEqual([m.range for m in p.scan(TextSlice('xxaa yy a', 3, 9))], [(3, 4), (8, 9)])
++        p = Lark('start: "a"*', parser='lalr')
++        self.assertEqual([m.range for m in p.scan('baab')], [(1, 3)])
++
++    def test_ignore_does_not_hide_start(self):
++        p = Lark('start: "a"\n%ignore /#.*/', parser='lalr')
++        self.assertEqual([m.range for m in p.scan('#a')], [(1, 2)])
++
++    def test_keyword_in_basic_lexer(self):
++        p = Lark('start: "if" NAME\nNAME: /[a-z]+/\n%ignore " "', parser='lalr', lexer='basic')
++        (m,) = p.scan('zz if abc')
++        self.assertEqual(m, ScanMatch((3, 9), p.parse('if abc')))
++
++    def test_positions(self):
++        p = Lark('start: "a" "b"', parser='lalr', propagate_positions=True)
++        meta = [(m.value.meta.line, m.value.meta.column, m.value.meta.end_line, m.value.meta.end_column)
++                for m in p.scan('x\nab\nab')]
++        self.assertEqual(meta, [(2, 1, 2, 3), (3, 1, 3, 3)])
++
++    def test_configuration_errors(self):
++        class PostLex:
++            always_accept = ()
++            def process(self, stream):
++                return stream
++        with self.assertRaises(ConfigurationError):
++            Lark('start: "a"', parser='earley').scan('a')
++        with self.assertRaises(ConfigurationError):
++            Lark('start: "a"', parser=None, lexer='basic').scan('a')
++        with self.assertRaisesRegex(ConfigurationError, 'postlex'):
++            Lark('start: "a"', parser='lalr', postlex=PostLex()).scan('a')
++        p = Lark('start: "a"\nother: "b"', parser='lalr', start=['start', 'other'])
++        with self.assertRaises(ConfigurationError):
++            p.scan('a')
++        self.assertEqual([m.range for m in p.scan('ab', start='other')], [(1, 2)])
++
++    def test_callbacks(self):
++        def lose_positions(t):
++            return Token('A', str(t))
++        p = Lark('start: A B\nA: "a"\nB: "b"', parser='lalr', lexer_callbacks={'A': lose_positions})
++        with self.assertRaisesRegex(LexError, 'did not preserve token positions'):
++            list(p.scan('ab'))
++
++        def reject_x(t):
++            if t == 'x':
++                raise ValueError()
++            return t
++        p = Lark('start: A+\nA: /[a-z]/', parser='lalr', lexer_callbacks={'A': reject_x})
++        self.assertEqual([m.range for m in p.scan('abxcd')], [(0, 2), (3, 5)])
++
++    def test_transformer_not_copied(self):
++        class Uncopyable:
++            def __deepcopy__(self, memo):
++                raise RuntimeError()
++
++        class T(Transformer):
++            def start(self, children):
++                return Uncopyable()
++        p = Lark('start: "a"+', parser='lalr', transformer=T())
++        (m,) = p.scan('xaab')
++        self.assertEqual(m.range, (1, 3))
++        self.assertIsInstance(m.value, Uncopyable)
++
++    def test_token_copy_keeps_end(self):
++        import copy, pickle
++        t = Token('A', 'a', 1, 2, 3, 4, 5, 6)
++        for c in (copy.deepcopy(t), pickle.loads(pickle.dumps(t))):
++            self.assertEqual((c.end_line, c.end_column, c.end_pos), (4, 5, 6))
++
++
++if __name__ == '__main__':
++    main()

@@ -164,17 +164,23 @@ export function parseRawArgs<T = Record<string, any>>(
   // Propagate values between aliases
   const propagateAliases = () => {
     for (const [alias, main] of aliasToMain.entries()) {
-      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
+      if (
+        (out as any)[alias] !== undefined &&
+        (out as any)[main] === undefined
+      ) {
         (out as any)[main] = (out as any)[alias];
       }
-      if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
+      if (
+        (out as any)[main] !== undefined &&
+        (out as any)[alias] === undefined
+      ) {
         (out as any)[alias] = (out as any)[main];
       }
     }
   };
   propagateAliases();
 
-  // Apply defaults last so a value passed via any alias (e.g. kebab-case) wins
+  // Apply defaults last so values passed via any alias take precedence
   for (const [name, value] of Object.entries(defaults)) {
     if ((out as any)[name] === undefined) {
       (out as any)[name] = value;

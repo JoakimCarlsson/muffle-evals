@@ -1,1 +1,0 @@
-Done. Both sets now implement `driver.Valuer` and `sql.Scanner`, in `threadunsafe.go` and `threadsafe.go`. `Scan` replaces the contents, empties the set on `nil`, and leaves the set unchanged on an unsupported type or invalid JSON. I added `sql_test.go`, and `go vet` and `go test ./...` pass. I did not test against a real database driver.

@@ -292,18 +292,18 @@ export function withBase(input: string, base: string) {
     return input;
   }
   const _base = withoutTrailingSlash(base);
-  if (_isUnderBase(input, _base)) {
+  if (isUnderBase(input, _base)) {
     return input;
   }
   return joinURL(_base, input);
 }
 
-function _isUnderBase(input: string, base: string) {
+function isUnderBase(input: string, base: string) {
   if (!input.startsWith(base)) {
     return false;
   }
   const next = input[base.length];
-  return !next || next === "/" || next === "?" || next === "#";
+  return next === undefined || next === "/" || next === "?" || next === "#";
 }
 
 /**
@@ -324,7 +324,7 @@ export function withoutBase(input: string, base: string) {
     return input;
   }
   const _base = withoutTrailingSlash(base);
-  if (!_isUnderBase(input, _base)) {
+  if (!isUnderBase(input, _base)) {
     return input;
   }
   const trimmed = input.slice(_base.length);

@@ -1,18 +1,17 @@
 diff --git a/src/utils.ts b/src/utils.ts
-index 6ec11c1..42eebec 100644
+index 6ec11c1..7aacffb 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
-@@ -74,6 +74,37 @@ export function resolveAlias(path: string, aliases: Record<string, string>) {
+@@ -74,6 +74,38 @@ export function resolveAlias(path: string, aliases: Record<string, string>) {
    return _path;
  }
  
 +/**
-+ * Finds every aliased form of a path, the reverse of `resolveAlias`.
-+ * Aliases only match on a path separator boundary or the whole path.
++ * Finds every aliased form of a real path, the reverse of `resolveAlias`.
 + *
-+ * @param path - The real path to find aliased forms of.
++ * @param path - The real path string to find aliases for.
 + * @param aliases - A set of alias mappings to use for matching.
-+ * @returns the aliased paths, longest first, or an empty array if no alias matches.
++ * @returns the aliased paths, longest first, or an empty array if none match.
 + */
 +export function reverseResolveAlias(
 +  path: string,
@@ -28,11 +27,13 @@ index 6ec11c1..42eebec 100644
 +      continue;
 +    }
 +    const rest = _path.slice(target.length);
-+    if (rest && !hasTrailingSlash(rest[0])) {
-+      continue;
++    if (rest === "") {
++      matches.push(alias);
++    } else if (rest[0] === "/") {
++      matches.push(
++        (hasTrailingSlash(alias) ? alias.slice(0, -1) : alias) + rest,
++      );
 +    }
-+    const _alias = hasTrailingSlash(alias) ? alias.slice(0, -1) : alias;
-+    matches.push(rest ? _alias + rest : alias);
 +  }
 +  return matches.sort((a, b) => b.length - a.length);
 +}
@@ -41,7 +42,7 @@ index 6ec11c1..42eebec 100644
   * Extracts the filename from a given path, excluding any directory paths and the file extension.
   *
 diff --git a/test/utils.spec.ts b/test/utils.spec.ts
-index 51ad676..135b32b 100644
+index 51ad676..1b66a77 100644
 --- a/test/utils.spec.ts
 +++ b/test/utils.spec.ts
 @@ -1,6 +1,11 @@
@@ -57,20 +58,19 @@ index 51ad676..135b32b 100644
  
  describe("alias", () => {
    const _aliases = {
-@@ -56,6 +61,36 @@ describe("alias", () => {
+@@ -56,6 +61,40 @@ describe("alias", () => {
        expect(resolveAlias("~win/foo/bar", aliases)).toBe("C:/src/foo/bar");
      });
    });
 +
 +  describe("reverseResolveAlias", () => {
-+    it("respects path separators, longest first", () => {
-+      const aliases = { "~": "/root", "~assets": "/root/some/assets" };
++    it("returns all aliases longest first", () => {
 +      expect(
-+        reverseResolveAlias("/root/some/assets/smth.jpg", aliases),
++        reverseResolveAlias("/root/some/assets/smth.jpg", {
++          "~": "/root",
++          "~assets": "/root/some/assets",
++        }),
 +      ).toEqual(["~/some/assets/smth.jpg", "~assets/smth.jpg"]);
-+      expect(reverseResolveAlias("/rootless/a.js", aliases)).toEqual([]);
-+    });
-+    it("matches whole path", () => {
 +      expect(
 +        reverseResolveAlias("/root/index.js", {
 +          "@": "/root",
@@ -78,16 +78,21 @@ index 51ad676..135b32b 100644
 +        }),
 +      ).toEqual(["@/index.js", "~"]);
 +    });
++    it("respects path separators", () => {
++      expect(reverseResolveAlias("/rootfoo/a", { "@": "/root" })).toEqual([]);
++    });
 +    it("respect ending with /", () => {
 +      expect(reverseResolveAlias("/src/foo/bar", { "~/": "/src" })).toEqual([
 +        "~/foo/bar",
 +      ]);
 +      expect(reverseResolveAlias("/src", { "~/": "/src" })).toEqual(["~/"]);
-+      expect(reverseResolveAlias("C:\\src\\foo", aliases)).toEqual([
-+        "~win/foo",
++    });
++    it("normalizes windows paths", () => {
++      expect(reverseResolveAlias("C:\\src\\foo", { "~/": "C:/src" })).toEqual([
++        "~/foo",
 +      ]);
 +    });
-+    it("unchanged", () => {
++    it("no match", () => {
 +      expect(reverseResolveAlias("./bar.js", { "@": "/root" })).toEqual([]);
 +    });
 +  });

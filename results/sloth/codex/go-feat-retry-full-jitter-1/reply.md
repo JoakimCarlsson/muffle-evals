@@ -1,9 +1,9 @@
-I’ll check the existing jitter code and tests, add the middleware in the same style, then run the tests and build.
+I’ll check the existing jitter code and tests, add `WithFullJitter` in the same style, and run the build and tests.
 
-The change needs a public function in `backoff.go`, coverage in `backoff_test.go`, and a README example. No existing callers, fixtures, config, or dependencies need changes. I’ll use the existing random-number API and follow the other middleware’s `(0, true)` stop convention.
+Added `WithFullJitter(next Backoff) Backoff` beside the existing jitter middleware.
 
-Added `WithFullJitter(next Backoff) Backoff` with `[0, base)` sampling, stop propagation, and unchanged zero or negative durations.
+Tests cover `[0, base)`, stop propagation, unchanged zero and negative bases, and duration boundaries. The Fibonacci usage example compiles.
 
-Added README usage and tests covering bounds, duration extremes, and stop behavior.
+Passed: `go build ./... && go test ./...`.
 
-Validation passed: `go test ./...`, `go build ./...`, and `git diff --check`.
+No extra options or dependencies added. Race tests were not run.

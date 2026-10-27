@@ -127,6 +127,17 @@ use alloc::vec::{self, Vec};
 use core::iter::{self, FromIterator, FusedIterator};
 use core::{fmt, mem, ops, slice};
 
+/// An error returned by [`Slab::get_disjoint_mut`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GetDisjointMutError {
+    /// The same key occurs more than once.
+    OverlappingIndices,
+    /// A key is past the end of the slab's allocated entries.
+    IndexOutOfBounds,
+    /// A key refers to a vacant entry.
+    IndexVacant,
+}
+
 /// Pre-allocated storage for a uniform data type
 ///
 /// See the [module documentation] for more details.
@@ -142,17 +153,6 @@ pub struct Slab<T> {
     // Offset of the next available slot in the slab. Set to the slab's
     // capacity when the slab is full.
     next: usize,
-}
-
-/// An error returned by [`Slab::get_disjoint_mut`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GetDisjointMutError {
-    /// The same key appears more than once.
-    OverlappingIndices,
-    /// A key is past the end of the slab's slots.
-    IndexOutOfBounds,
-    /// A key refers to a vacant slot.
-    IndexVacant,
 }
 
 impl<T> Clone for Slab<T>
@@ -736,18 +736,19 @@ impl<T> Slab<T> {
         }
     }
 
-    /// Return mutable references to several values in the same order as `keys`.
+    /// Return mutable references to several values, in the order of `keys`.
     ///
-    /// An empty array of keys returns an empty array of references.
+    /// An empty key array returns an empty array of references.
     /// Checking for duplicate keys takes O(N²) time.
     ///
     /// # Errors
     ///
-    /// Returns [`GetDisjointMutError::OverlappingIndices`] if any key appears
-    /// more than once, even if another key is out of bounds or vacant.
+    /// Returns [`GetDisjointMutError::OverlappingIndices`] if any keys are
+    /// equal, before checking whether any key is out of bounds or vacant.
     /// Otherwise, keys are checked in order, returning
     /// [`GetDisjointMutError::IndexOutOfBounds`] for a key past the end of the
-    /// slab's slots or [`GetDisjointMutError::IndexVacant`] for a vacant slot.
+    /// slab's entries, or [`GetDisjointMutError::IndexVacant`] for a vacant entry.
+    /// Allocated capacity beyond the entries does not count as in bounds.
     ///
     /// # Examples
     ///
@@ -758,7 +759,7 @@ impl<T> Slab<T> {
     /// let a = slab.insert(1);
     /// let b = slab.insert(2);
     /// let [x, y] = slab.get_disjoint_mut([a, b]).unwrap();
-    /// std::mem::swap(x, y);
+    /// core::mem::swap(x, y);
     /// assert_eq!((slab[a], slab[b]), (2, 1));
     /// ```
     pub fn get_disjoint_mut<const N: usize>(
@@ -770,7 +771,6 @@ impl<T> Slab<T> {
                 return Err(GetDisjointMutError::OverlappingIndices);
             }
         }
-
         for &key in &keys {
             match self.entries.get(key) {
                 None => return Err(GetDisjointMutError::IndexOutOfBounds),
@@ -779,21 +779,21 @@ impl<T> Slab<T> {
             }
         }
 
-        let entries = self.entries.as_mut_ptr();
         let mut result = mem::MaybeUninit::<[&mut T; N]>::uninit();
-        let result_ptr = result.as_mut_ptr() as *mut &mut T;
+        let output = result.as_mut_ptr() as *mut &mut T;
+        let entries = self.entries.as_mut_ptr();
         for (i, &key) in keys.iter().enumerate() {
-            // SAFETY: All keys are in bounds and occupied, and duplicate keys
-            // were rejected. Each reference therefore points to a distinct
-            // entry, and the entries are not otherwise accessed while borrowed.
+            // SAFETY: Every key was checked to be in bounds and occupied.
+            // Keys are distinct, so each reference borrows a separate entry.
+            // The slab is exclusively borrowed for the returned references'
+            // lifetime, and its storage is not moved or resized here.
             unsafe {
                 if let Entry::Occupied(value) = &mut *entries.add(key) {
-                    result_ptr.add(i).write(value);
+                    output.add(i).write(value);
                 }
             }
         }
-        // SAFETY: Every element was initialized above, including vacuously for
-        // N == 0. The references borrow distinct entries for the lifetime of self.
+        // SAFETY: All N elements were initialized above (including when N is 0).
         Ok(unsafe { result.assume_init() })
     }
 

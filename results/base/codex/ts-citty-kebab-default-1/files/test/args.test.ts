@@ -100,32 +100,26 @@ describe("args", () => {
     expect(parsed._).toEqual([]);
   });
 
-  it.each(["fooBar", "foo-bar"])(
-    "should override defaults through either spelling of %s",
-    (name) => {
-      const definition: ArgsDef = {
-        [name]: { type: "enum", options: ["one", "two"], default: "two", alias: "f" },
-      };
+  it.each<ArgsDef[string]>([
+    { type: "enum", options: ["one", "two"], default: "two" },
+    { type: "string", default: "two" },
+    { type: "boolean", default: false },
+  ])("should override defaults through argument variants (%o)", (arg) => {
+    for (const name of ["fooBar", "foo-bar"]) {
+      const definition: ArgsDef = { [name]: { ...arg, alias: "f" } };
+      const value = arg.type === "boolean" ? true : "one";
+      for (const flag of ["--fooBar", "--foo-bar", "-f"]) {
+        const parsed = parseArgs(arg.type === "boolean" ? [flag] : [flag, "one"], definition);
 
-      for (const flag of ["--foo-bar", "--fooBar", "-f"]) {
-        const parsed = parseArgs([flag, "one"], definition);
-        expect(parsed).toEqual({ _: [], fooBar: "one", "foo-bar": "one", f: "one" });
+        expect(parsed).toEqual({ _: [], fooBar: value, "foo-bar": value, f: value });
       }
 
       expect(parseArgs([], definition)).toEqual({
         _: [],
-        fooBar: "two",
-        "foo-bar": "two",
-        f: "two",
+        fooBar: arg.default,
+        "foo-bar": arg.default,
+        f: arg.default,
       });
-    },
-  );
-
-  it("should validate an enum value supplied through an alias over its default", () => {
-    expect(() =>
-      parseArgs(["--foo-bar", "three"], {
-        fooBar: { type: "enum", options: ["one", "two"], default: "two" },
-      }),
-    ).toThrow("Invalid value for argument: --fooBar (three).");
+    }
   });
 });

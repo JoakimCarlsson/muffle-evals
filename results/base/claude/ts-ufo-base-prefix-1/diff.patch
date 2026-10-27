@@ -1,5 +1,5 @@
 diff --git a/src/utils.ts b/src/utils.ts
-index db7c2c2..d3cd8d0 100644
+index db7c2c2..f950431 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
 @@ -292,12 +292,20 @@ export function withBase(input: string, base: string) {
@@ -7,18 +7,18 @@ index db7c2c2..d3cd8d0 100644
    }
    const _base = withoutTrailingSlash(base);
 -  if (input.startsWith(_base)) {
-+  if (_isUnderBase(input, _base)) {
++  if (isUnderBase(input, _base)) {
      return input;
    }
    return joinURL(_base, input);
  }
  
-+function _isUnderBase(input: string, base: string) {
++function isUnderBase(input: string, base: string) {
 +  if (!input.startsWith(base)) {
 +    return false;
 +  }
 +  const next = input[base.length];
-+  return !next || next === "/" || next === "?" || next === "#";
++  return next === undefined || next === "/" || next === "?" || next === "#";
 +}
 +
  /**
@@ -29,40 +29,28 @@ index db7c2c2..d3cd8d0 100644
    }
    const _base = withoutTrailingSlash(base);
 -  if (!input.startsWith(_base)) {
-+  if (!_isUnderBase(input, _base)) {
++  if (!isUnderBase(input, _base)) {
      return input;
    }
    const trimmed = input.slice(_base.length);
 diff --git a/test/base.test.ts b/test/base.test.ts
-index ed684d1..f62433a 100644
+index ed684d1..fdff226 100644
 --- a/test/base.test.ts
 +++ b/test/base.test.ts
-@@ -22,6 +22,19 @@ describe("withBase", () => {
-   }
- });
+@@ -13,6 +13,8 @@ describe("withBase", () => {
+     { base: "/base/", input: "/base/a", out: "/base/a" },
+     { base: "/base/", input: "https://test.com", out: "https://test.com" },
+     { base: "/", input: "https://test.com", out: "https://test.com" },
++    { base: "/admin/", input: "/admin-dashboard", out: "/admin/admin-dashboard" },
++    { base: "/admin/", input: "/admin?x", out: "/admin?x" },
+   ];
  
-+describe("withBase prefix-only match", () => {
-+  test("prefixes paths that only share a prefix with base", () => {
-+    expect(withBase("/admin-dashboard", "/admin/")).toBe(
-+      "/admin/admin-dashboard",
-+    );
-+  });
-+  test("keeps paths under base", () => {
-+    expect(withBase("/admin", "/admin/")).toBe("/admin");
-+    expect(withBase("/admin/dashboard", "/admin/")).toBe("/admin/dashboard");
-+    expect(withBase("/admin?x", "/admin/")).toBe("/admin?x");
-+  });
-+});
-+
- describe("withoutBase", () => {
-   const tests = [
-     { base: "/", input: "/", out: "/" },
-@@ -38,6 +51,10 @@ describe("withoutBase", () => {
+   for (const t of tests) {
+@@ -38,6 +40,9 @@ describe("withoutBase", () => {
      { base: "/api", input: "/api?test", out: "/?test" },
      { base: "/base/", input: "https://test.com", out: "https://test.com" },
      { base: "/", input: "https://test.com", out: "https://test.com" },
 +    { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
-+    { base: "/admin/", input: "/admin", out: "/" },
 +    { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
 +    { base: "/admin/", input: "/admin?x", out: "/?x" },
    ];

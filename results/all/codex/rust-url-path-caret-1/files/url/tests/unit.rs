@@ -53,6 +53,23 @@ fn size() {
     assert_eq!(size_of::<Url>(), size_of::<Option<Url>>());
 }
 
+/// Carets are percent-encoded by every hierarchical path entry point.
+#[test]
+fn test_path_caret() {
+    let mut url = Url::parse("http://localhost/a^b").unwrap();
+    assert_eq!(url.as_str(), "http://localhost/a%5Eb");
+    assert_eq!(url.join("^/b^").unwrap().path(), "/%5E/b%5E");
+    url.set_path("/^a^");
+    assert_eq!(url.path(), "/%5Ea%5E");
+    url.path_segments_mut().unwrap().push("a^b");
+    assert_eq!(url.path(), "/%5Ea%5E/a%5Eb");
+    assert_eq!(Url::parse("sc:/a^b").unwrap().path(), "/a%5Eb");
+    assert_eq!(Url::parse("sc:a^b").unwrap().path(), "a^b");
+    let url = Url::parse("http://localhost/?a^b#a^b").unwrap();
+    assert_eq!(url.query(), Some("a^b"));
+    assert_eq!(url.fragment(), Some("a^b"));
+}
+
 #[test]
 fn test_relative() {
     let base: Url = "sc://%C3%B1".parse().unwrap();
@@ -246,29 +263,6 @@ fn new_directory_paths() {
         let url = Url::from_directory_path(Path::new(r"C:\foo\bar")).unwrap();
         assert_eq!(url.host(), None);
         assert_eq!(url.path(), "/C:/foo/bar/");
-    }
-}
-
-/// Carets are encoded in hierarchical paths, including path mutations.
-#[test]
-fn path_caret_encoding() {
-    for scheme in &["http", "foo", "file"] {
-        let base = Url::parse(&format!("{}://localhost/", scheme)).unwrap();
-        for (path, expected) in &[("a^b", "a%5Eb"), ("^", "%5E"), ("a%5Eb", "a%5Eb"), ("", "")] {
-            let expected_url = format!("{}{}", base, expected);
-            let input = format!("{}{}", base, path);
-            assert_eq!(Url::parse(&input).unwrap().as_str(), expected_url);
-            assert_eq!(base.join(path).unwrap().as_str(), expected_url);
-            let mut url = base.clone();
-            url.set_path(&format!("/{}", path));
-            assert_eq!(url.as_str(), expected_url);
-        }
-        let mut url = base.clone();
-        url.path_segments_mut().unwrap().push("a^b");
-        assert_eq!(url.as_str(), format!("{}a%5Eb", base));
-    }
-    for input in &["http://localhost/?a^b#c^d", "foo:a^b"] {
-        assert_eq!(Url::parse(input).unwrap().as_str(), *input);
     }
 }
 

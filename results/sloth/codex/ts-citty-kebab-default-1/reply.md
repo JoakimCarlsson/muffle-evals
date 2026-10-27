@@ -1,11 +1,9 @@
-I’ll check how aliases and defaults interact, fix the shared parser, and add a regression test for this case.
+I’ll check how argument aliases and defaults interact, add a regression test, and run the build and relevant tests.
 
-The parser applies defaults before it resolves aliases, so the default blocks the value supplied through `--foo-bar`. I’ll defer defaults until explicit values and negated flags are known.
+Defaults are being applied before aliases are resolved, so the default blocks the supplied value. I’ve moved default handling later and added tests for both spellings and omitted input. `pnpm` isn’t available here, so I’ll use the installed build and test executables.
 
-The change belongs in `src/_parser.ts`, with coverage in the existing argument tests. I checked the command caller, exports, and types; they need no changes. No new options or dependencies are needed.
+Fixed default handling in the shared parser. `--foo-bar one` now sets both `fooBar` and `"foo-bar"` to `"one"`.
 
-Fixed the shared parser so `--foo-bar one` overrides the default and sets both `fooBar` and `"foo-bar"` to `"one"`.
+Build and all 31 relevant tests passed, including regressions for both spellings and omitted input.
 
-Added regression coverage for aliases, omitted values, empty strings, booleans, and enum validation.
-
-All 71 tests, lint, formatting, type checks, and build passed. Used local tools directly because `pnpm` wasn’t installed.
+No new options or dependencies. Full suite and lint were not run.

@@ -224,12 +224,6 @@ pub struct IterMut<'a, T> {
     len: usize,
 }
 
-/// A draining iterator for `Slab`
-pub struct Drain<'a, T> {
-    inner: vec::Drain<'a, Entry<T>>,
-    len: usize,
-}
-
 /// The error type returned by [`Slab::get_disjoint_mut`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GetDisjointMutError {
@@ -237,23 +231,28 @@ pub enum GetDisjointMutError {
     OverlappingIndices,
     /// A key is past the end of the slab.
     IndexOutOfBounds,
-    /// A key is in bounds but has no value associated with it.
+    /// A key is in bounds but has no value.
     IndexVacant,
 }
 
 impl fmt::Display for GetDisjointMutError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let msg = match self {
-            GetDisjointMutError::OverlappingIndices => "an index is provided more than once",
+        f.write_str(match self {
+            GetDisjointMutError::OverlappingIndices => "an index is repeated",
             GetDisjointMutError::IndexOutOfBounds => "an index is out of bounds",
             GetDisjointMutError::IndexVacant => "an index is vacant",
-        };
-        f.write_str(msg)
+        })
     }
 }
 
 #[cfg(feature = "std")]
 impl std::error::Error for GetDisjointMutError {}
+
+/// A draining iterator for `Slab`
+pub struct Drain<'a, T> {
+    inner: vec::Drain<'a, Entry<T>>,
+    len: usize,
+}
 
 #[derive(Clone)]
 enum Entry<T> {
@@ -801,19 +800,17 @@ impl<T> Slab<T> {
         }
     }
 
-    /// Return mutable references to the values associated with `N` keys
-    /// simultaneously. The result is in the same order as `keys`.
+    /// Return mutable references to the values associated with the given keys.
     ///
-    /// Duplicate keys are rejected first, before any other check. The
-    /// remaining keys are then checked in order and the first bad one
-    /// determines the error.
+    /// The references are returned in the same order as `keys`.
     ///
     /// # Errors
     ///
-    /// * [`GetDisjointMutError::OverlappingIndices`] if a key appears twice.
-    /// * [`GetDisjointMutError::IndexOutOfBounds`] if a key is past the end of
-    ///   the slab.
-    /// * [`GetDisjointMutError::IndexVacant`] if a key has no value.
+    /// Returns [`GetDisjointMutError::OverlappingIndices`] if any key appears
+    /// more than once; this is checked for all keys first. Otherwise the keys
+    /// are checked in order and the first invalid one decides the error:
+    /// [`GetDisjointMutError::IndexOutOfBounds`] if it is past the end of the
+    /// slab, or [`GetDisjointMutError::IndexVacant`] if it has no value.
     ///
     /// # Examples
     ///
@@ -830,9 +827,11 @@ impl<T> Slab<T> {
         &mut self,
         keys: [usize; N],
     ) -> Result<[&mut T; N], GetDisjointMutError> {
-        for i in 1..N {
-            if keys[..i].contains(&keys[i]) {
-                return Err(GetDisjointMutError::OverlappingIndices);
+        for i in 0..N {
+            for j in 0..i {
+                if keys[i] == keys[j] {
+                    return Err(GetDisjointMutError::OverlappingIndices);
+                }
             }
         }
 
@@ -845,10 +844,10 @@ impl<T> Slab<T> {
         }
 
         let base = self.entries.as_mut_ptr();
-        Ok(keys.map(|key| {
-            // SAFETY: every key is in bounds and distinct, so each pointer is
-            // valid and the resulting references do not alias.
-            match unsafe { &mut *base.add(key) } {
+        // SAFETY: every key is in bounds and occupied, and no key repeats, so
+        // each reference points at a distinct, initialized entry.
+        Ok(core::array::from_fn(|i| unsafe {
+            match &mut *base.add(keys[i]) {
                 Entry::Occupied(val) => val,
                 Entry::Vacant(_) => unreachable!(),
             }

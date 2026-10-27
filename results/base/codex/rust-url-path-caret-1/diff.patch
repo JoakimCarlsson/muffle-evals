@@ -41,38 +41,41 @@ index 8d4407c..2332b2a 100644
  <sc:space    #fragment> set hash to <>
  <data:space  ?query#fragment> set hash to <>
 diff --git a/url/tests/unit.rs b/url/tests/unit.rs
-index 828f797..9a7df12 100644
+index 828f797..0d1a0fb 100644
 --- a/url/tests/unit.rs
 +++ b/url/tests/unit.rs
-@@ -53,6 +53,31 @@ fn size() {
-     assert_eq!(size_of::<Url>(), size_of::<Option<Url>>());
+@@ -249,6 +249,34 @@ fn new_directory_paths() {
+     }
  }
  
 +#[test]
-+fn test_caret_in_path() {
-+    for base in &["http://localhost/", "file:///", "foo://localhost/"] {
-+        let base = Url::parse(base).unwrap();
-+        let expected = format!("{}a%5Eb", base);
++fn path_caret_is_percent_encoded() {
++    for scheme in &["http", "thing", "file"] {
++        let base = Url::parse(&format!("{}://example.com/", scheme)).unwrap();
++        let expected = format!("{}://example.com/a%5Eb", scheme);
++
++        assert_eq!(base.join("/a^b").unwrap().as_str(), expected);
 +        assert_eq!(
-+            Url::parse(&format!("{}a^b", base)).unwrap().as_str(),
++            Url::parse(&format!("{}://example.com/a^b", scheme))
++                .unwrap()
++                .as_str(),
 +            expected
 +        );
-+        assert_eq!(base.join("a^b").unwrap().as_str(), expected);
 +
 +        let mut url = base.clone();
-+        url.set_path("a^b");
++        url.set_path("/a^b");
 +        assert_eq!(url.as_str(), expected);
 +
-+        let mut url = base.clone();
++        let mut url = base;
 +        url.path_segments_mut().unwrap().push("a^b");
 +        assert_eq!(url.as_str(), expected);
 +    }
 +
-+    let url = Url::parse("http://localhost/a%5Eb?q=^#^").unwrap();
-+    assert_eq!(url.as_str(), "http://localhost/a%5Eb?q=^#^");
-+    assert_eq!(Url::parse("data:a^b").unwrap().as_str(), "data:a^b");
++    let url = Url::parse("http://example.com/a%5Eb?c^d#e^f").unwrap();
++    assert_eq!(url.as_str(), "http://example.com/a%5Eb?c^d#e^f");
++    assert_eq!(Url::parse("thing:a^b").unwrap().as_str(), "thing:a^b");
 +}
 +
  #[test]
- fn test_relative() {
-     let base: Url = "sc://%C3%B1".parse().unwrap();
+ fn path_backslash_fun() {
+     let mut special_url = "http://foobar.com".parse::<Url>().unwrap();

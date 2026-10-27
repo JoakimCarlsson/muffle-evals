@@ -198,21 +198,6 @@ increasing jitter helps minimise collisions.
         raise Exception
 
 
-The wait time can also depend on the exception raised by the last attempt.
-The function is given the exception and returns the number of seconds to wait.
-
-.. testcode::
-
-    def wait_for_error(exception):
-        if isinstance(exception, ConnectionError):
-            return 1
-        return 60
-
-    @retry(wait=wait_exception(wait_for_error))
-    def wait_depending_on_exception():
-        raise Exception
-
-
 Sometimes it's necessary to build a chain of backoffs.
 
 .. testcode::
@@ -222,6 +207,20 @@ Sometimes it's necessary to build a chain of backoffs.
                            [wait_fixed(9)]))
     def wait_fixed_chained():
         print("Wait 3s for 3 attempts, 7s for the next 2 attempts and 9s for all attempts thereafter")
+        raise Exception
+
+Wait times can also depend on the exception raised by the last attempt.
+
+.. testcode::
+
+    def wait_for_http_error(exception):
+        if isinstance(exception, IOError):
+            return 10.0
+        return 60.0
+
+    @retry(wait=wait_exception(wait_for_http_error))
+    def wait_depends_on_exception():
+        print("Wait 10s after an IOError and 60s after any other exception")
         raise Exception
 
 Whether to retry

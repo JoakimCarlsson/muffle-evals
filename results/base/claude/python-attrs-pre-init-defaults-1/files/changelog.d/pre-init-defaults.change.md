@@ -1,1 +1,1 @@
-Fixed `__attrs_pre_init__` receiving default values instead of the passed values for positional attributes with defaults.
+`__attrs_pre_init__` now receives the values passed to `__init__` for positional attributes that have defaults, instead of their defaults.

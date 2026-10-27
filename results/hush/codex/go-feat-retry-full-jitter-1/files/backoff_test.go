@@ -201,44 +201,42 @@ func ExampleWithJitterPercent() {
 func TestWithFullJitter(t *testing.T) {
 	t.Parallel()
 
-	bases := []time.Duration{0, -time.Second, time.Duration(-1 << 63), 1, time.Second, time.Duration(1<<63 - 1)}
-	for _, base := range bases {
-		t.Run(base.String(), func(t *testing.T) {
-			t.Parallel()
-			calls := 0
-			b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-				calls++
-				return base, false
-			}))
-			for range 1000 {
-				val, stop := b.Next()
-				if stop {
-					t.Fatal("should not stop")
-				}
-				if base <= 0 {
-					if val != base {
-						t.Fatalf("got %v, want %v", val, base)
-					}
-				} else if val < 0 || val >= base {
-					t.Fatalf("got %v, want duration in [0, %v)", val, base)
-				}
+	for _, base := range []time.Duration{1, time.Second, time.Duration(1<<63 - 1)} {
+		calls := 0
+		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
+			calls++
+			return base, false
+		}))
+		for range 1000 {
+			val, stop := b.Next()
+			if stop || val < 0 || val >= base {
+				t.Fatalf("base %v: got (%v, %t), want duration in [0, base) and no stop", base, val, stop)
 			}
-			if calls != 1000 {
-				t.Fatalf("got %d wrapped calls, want 1000", calls)
-			}
-		})
+		}
+		if calls != 1000 {
+			t.Fatalf("wrapped backoff called %d times, want 1000", calls)
+		}
 	}
 }
 
-func TestWithFullJitter_Stop(t *testing.T) {
+func TestWithFullJitter_NonPositiveAndStop(t *testing.T) {
 	t.Parallel()
 
-	for _, base := range []time.Duration{-time.Second, 0, time.Second} {
-		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-			return base, true
-		}))
-		if val, stop := b.Next(); val != 0 || !stop {
-			t.Errorf("base %v: got (%v, %t), want (0, true)", base, val, stop)
+	for _, base := range []time.Duration{0, -time.Second, time.Duration(-1 << 63), time.Second} {
+		for _, stop := range []bool{false, true} {
+			if base > 0 && !stop {
+				continue
+			}
+			b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
+				return base, stop
+			}))
+			want := base
+			if stop {
+				want = 0
+			}
+			if val, gotStop := b.Next(); val != want || gotStop != stop {
+				t.Errorf("base %v, stop %t: got (%v, %t), want (%v, %t)", base, stop, val, gotStop, want, stop)
+			}
 		}
 	}
 }

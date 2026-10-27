@@ -660,23 +660,6 @@ class TestAttributes:
         assert 11 == getattr(c, "z", None)
 
     @pytest.mark.usefixtures("with_and_without_validation")
-    def test_pre_init_args_with_defaults(self):
-        """
-        __attrs_pre_init__ gets the passed values, not the defaults.
-        """
-
-        @attr.s
-        class C:
-            x = attr.ib()
-            y = attr.ib(default=100)
-            z = attr.ib(factory=dict)
-
-            def __attrs_pre_init__(self2, x, y, z):
-                self2.seen = (x, y, z)
-
-        assert (1, 2, {"a": 1}) == C(1, 2, {"a": 1}).seen
-
-    @pytest.mark.usefixtures("with_and_without_validation")
     def test_pre_init_kwargs(self):
         """
         Verify that __attrs_pre_init__ gets called with extra args and kwargs
@@ -2766,3 +2749,24 @@ class TestMatchArgs:
 
         C1 = make_class("C1", {"a": attr.ib(kw_only=True), "b": attr.ib()})
         assert ("b",) == C1.__match_args__
+
+
+def test_pre_init_receives_passed_values_for_defaulted_args():
+    """
+    Values given for attributes with defaults reach __attrs_pre_init__.
+    """
+    seen = []
+
+    @attr.s
+    class C:
+        a = attr.ib()
+        b = attr.ib(default=100)
+        c = attr.ib(factory=dict)
+        d = attr.ib(default=100, kw_only=True)
+
+        def __attrs_pre_init__(self, a, b, c, d):
+            seen.append((a, b, c, d))
+
+    C(1, 2, {"x": 1}, d=3)
+
+    assert [(1, 2, {"x": 1}, 3)] == seen

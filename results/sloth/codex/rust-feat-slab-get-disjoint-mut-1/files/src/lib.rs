@@ -144,6 +144,17 @@ pub struct Slab<T> {
     next: usize,
 }
 
+/// An error returned by [`Slab::get_disjoint_mut`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GetDisjointMutError {
+    /// The same key appears more than once.
+    OverlappingIndices,
+    /// A key is past the end of the slab's slots.
+    IndexOutOfBounds,
+    /// A key refers to a vacant slot.
+    IndexVacant,
+}
+
 impl<T> Clone for Slab<T>
 where
     T: Clone,
@@ -167,17 +178,6 @@ impl<T> Default for Slab<T> {
     fn default() -> Self {
         Slab::new()
     }
-}
-
-/// An error returned by [`Slab::get_disjoint_mut`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GetDisjointMutError {
-    /// The same key appears more than once.
-    OverlappingIndices,
-    /// A key is past the end of the slab's slots.
-    IndexOutOfBounds,
-    /// A key refers to a vacant slot.
-    IndexVacant,
 }
 
 /// A handle to a vacant entry in a `Slab`.
@@ -736,15 +736,13 @@ impl<T> Slab<T> {
         }
     }
 
-    /// Return mutable references to the values associated with the given keys,
-    /// in the same order as `keys`. An empty array returns `Ok([])`.
-    ///
-    /// # Errors
+    /// Return mutable references to the given keys, in the same order.
     ///
     /// Duplicate keys return [`GetDisjointMutError::OverlappingIndices`] before
     /// any slots are checked. Otherwise, keys are checked in order, returning
     /// [`GetDisjointMutError::IndexOutOfBounds`] for a key past the end of the
     /// slots or [`GetDisjointMutError::IndexVacant`] for a vacant slot.
+    /// An empty key array returns an empty array of references.
     ///
     /// # Examples
     ///
@@ -766,25 +764,24 @@ impl<T> Slab<T> {
                 return Err(GetDisjointMutError::OverlappingIndices);
             }
         }
-        for &key in &keys {
-            match self.entries.get(key) {
-                Some(Entry::Occupied(_)) => {}
-                Some(Entry::Vacant(_)) => return Err(GetDisjointMutError::IndexVacant),
+        for key in &keys {
+            match self.entries.get(*key) {
                 None => return Err(GetDisjointMutError::IndexOutOfBounds),
+                Some(Entry::Vacant(_)) => return Err(GetDisjointMutError::IndexVacant),
+                Some(Entry::Occupied(_)) => {}
             }
         }
-
-        let mut values = mem::MaybeUninit::<[&mut T; N]>::uninit();
-        let output = values.as_mut_ptr() as *mut &mut T;
+        let mut result = mem::MaybeUninit::<[&mut T; N]>::uninit();
+        let output = result.as_mut_ptr().cast::<&mut T>();
         let entries = self.entries.as_mut_ptr();
-        for (i, &key) in keys.iter().enumerate() {
-            unsafe {
-                if let Entry::Occupied(value) = &mut *entries.add(key) {
+        unsafe {
+            for (i, key) in keys.iter().enumerate() {
+                if let Entry::Occupied(value) = &mut *entries.add(*key) {
                     output.add(i).write(value);
                 }
             }
+            Ok(result.assume_init())
         }
-        Ok(unsafe { values.assume_init() })
     }
 
     /// Return two mutable references to the values associated with the two

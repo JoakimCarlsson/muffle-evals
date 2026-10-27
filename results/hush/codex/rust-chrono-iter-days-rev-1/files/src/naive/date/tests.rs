@@ -730,50 +730,44 @@ fn test_date_parse_from_str() {
 
 #[test]
 fn test_date_iterators() {
-    let start = NaiveDate::from_ymd_opt(2025, 10, 10).unwrap();
-    for step in [1, 7] {
-        let check = |mut iter: Box<dyn DoubleEndedIterator<Item = NaiveDate>>| {
-            assert_eq!(iter.next(), Some(start));
-            assert_eq!(iter.next_back(), Some(start + Days::new(step * 2)));
-            assert_eq!(iter.next_back(), Some(start + Days::new(step)));
-            assert_eq!(iter.next(), None);
-            assert_eq!(iter.next_back(), None);
-        };
-        if step == 1 {
-            check(Box::new(start.iter_days().take(3)));
-        } else {
-            check(Box::new(start.iter_weeks().take(3)));
+    fn check<I>(iter: I)
+    where
+        I: DoubleEndedIterator<Item = NaiveDate> + ExactSizeIterator + Clone,
+    {
+        let forward: Vec<_> = iter.clone().collect();
+        let reverse: Vec<_> = iter.clone().rev().collect();
+        assert_eq!(forward.len(), iter.len());
+        assert!(forward.iter().rev().copied().eq(reverse));
+        let mut mixed = iter;
+        let mut front = 0;
+        let mut back = forward.len();
+        while front < back {
+            assert_eq!(mixed.len(), back - front);
+            assert_eq!(mixed.next(), Some(forward[front]));
+            front += 1;
+            if front < back {
+                back -= 1;
+                assert_eq!(mixed.next_back(), Some(forward[back]));
+            }
         }
+        assert_eq!(mixed.size_hint(), (0, Some(0)));
+        assert_eq!(mixed.next(), None);
+        assert_eq!(mixed.next_back(), None);
+        assert_eq!(mixed.next(), None);
     }
-    let mut expected: Vec<_> = start.iter_days().take(7).collect();
-    expected.reverse();
-    assert_eq!(expected, start.iter_days().take(7).rev().collect::<Vec<_>>());
-    let mut expected: Vec<_> = start.iter_weeks().take(7).collect();
-    expected.reverse();
-    assert_eq!(expected, start.iter_weeks().take(7).rev().collect::<Vec<_>>());
 
-    for offset in 0..15 {
-        let start = NaiveDate::MAX - Days::new(offset);
-        let mut days = start.iter_days();
-        assert_eq!(days.len(), offset as usize + 1);
-        assert_eq!(days.next_back(), Some(NaiveDate::MAX));
-        assert_eq!(days.len(), offset as usize);
-        assert_eq!(days.count(), offset as usize);
-        let mut weeks = start.iter_weeks();
-        assert_eq!(weeks.len(), offset as usize / 7 + 1);
-        assert_eq!(weeks.next_back(), Some(start + Days::new(offset / 7 * 7)));
-        assert_eq!(weeks.len(), offset as usize / 7);
-        assert_eq!(weeks.count(), offset as usize / 7);
+    let start = NaiveDate::from_ymd_opt(2025, 10, 10).unwrap();
+    check(start.iter_days().take(7));
+    check(start.iter_weeks().take(7));
+    check(NaiveDate::MIN.iter_days().take(7));
+    check(NaiveDate::MIN.iter_weeks().take(7));
+    for days in 0..22 {
+        let start = NaiveDate::MAX.checked_sub_days(Days::new(days)).unwrap();
+        check(start.iter_days());
+        check(start.iter_weeks());
+        assert_eq!(start.iter_days().next_back(), Some(NaiveDate::MAX));
+        assert_eq!(start.iter_weeks().next_back(), start.checked_add_days(Days::new(days / 7 * 7)));
     }
-    let mut days = NaiveDate::MIN.iter_days();
-    assert_eq!(days.next(), Some(NaiveDate::MIN));
-    assert_eq!(days.next_back(), Some(NaiveDate::MAX));
-    assert_eq!(days.nth(usize::MAX), None);
-    assert_eq!(days.next_back(), None);
-    let mut weeks = NaiveDate::MIN.iter_weeks();
-    assert_eq!(weeks.next(), Some(NaiveDate::MIN));
-    assert_eq!(weeks.nth_back(usize::MAX), None);
-    assert_eq!(weeks.next(), None);
 }
 
 #[test]

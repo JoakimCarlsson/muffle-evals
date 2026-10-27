@@ -1351,9 +1351,7 @@ impl NaiveDate {
         NaiveDateDaysIterator { value: *self, end: NaiveDate::MAX }
     }
 
-    /// Returns an iterator that steps by weeks from this date.
-    ///
-    /// Only dates with a representable successor one week later are included.
+    /// Returns an iterator that steps by weeks from this date, yielding dates whose next week is representable.
     ///
     /// # Example
     ///
@@ -2239,15 +2237,6 @@ impl Iterator for NaiveDateDaysIterator {
 impl ExactSizeIterator for NaiveDateDaysIterator {}
 
 impl DoubleEndedIterator for NaiveDateDaysIterator {
-    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
-        if n >= self.len() {
-            self.end = self.value;
-            return None;
-        }
-        self.end = self.end.checked_sub_days(Days::new(n as u64))?;
-        self.next_back()
-    }
-
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.value == self.end {
             return None;
@@ -2287,16 +2276,6 @@ impl Iterator for NaiveDateWeeksIterator {
 impl ExactSizeIterator for NaiveDateWeeksIterator {}
 
 impl DoubleEndedIterator for NaiveDateWeeksIterator {
-    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
-        let remaining = self.len();
-        if n >= remaining {
-            self.end = self.value;
-            return None;
-        }
-        self.end = self.value.checked_add_days(Days::new((remaining - n) as u64 * 7))?;
-        self.next_back()
-    }
-
     fn next_back(&mut self) -> Option<Self::Item> {
         let remaining = self.len();
         if remaining == 0 {

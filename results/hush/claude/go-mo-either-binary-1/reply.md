@@ -1,0 +1,1 @@
+Done. Added `MarshalBinary`, `UnmarshalBinary`, `GobEncode` and `GobDecode` to `Either3`, `Either4` and `Either5`. A throwaway `Either3` gob round-trip and error test passed, then I deleted it. `Either4` and `Either5` are compiled but not tested, and I added no permanent tests. The types have no `Equal` method, so I compared decoded values with `==`.

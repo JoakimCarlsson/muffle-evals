@@ -11,11 +11,7 @@ describe("withBase", () => {
     { base: "/base", input: "/base/", out: "/base/" },
     { base: "/base", input: "/base/a", out: "/base/a" },
     { base: "/base/", input: "/base/a", out: "/base/a" },
-    {
-      base: "/admin/",
-      input: "/admin-dashboard",
-      out: "/admin/admin-dashboard",
-    },
+    { base: "/admin/", input: "/admin-dashboard", out: "/admin/admin-dashboard" },
     { base: "/admin/", input: "/admin?x", out: "/admin?x" },
     { base: "/base/", input: "https://test.com", out: "https://test.com" },
     { base: "/", input: "https://test.com", out: "https://test.com" },
@@ -43,8 +39,9 @@ describe("withoutBase", () => {
     { base: "/", input: "/?test", out: "/?test" },
     { base: "/api", input: "/api?test", out: "/?test" },
     { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
+    { base: "/admin/", input: "/admin", out: "/" },
     { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
-    { base: "/admin/", input: "/admin#x", out: "/#x" },
+    { base: "/admin/", input: "/admin?x", out: "/?x" },
     { base: "/base/", input: "https://test.com", out: "https://test.com" },
     { base: "/", input: "https://test.com", out: "https://test.com" },
   ];

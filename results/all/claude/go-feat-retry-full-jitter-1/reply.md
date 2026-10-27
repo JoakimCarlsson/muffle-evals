@@ -1,1 +1,1 @@
-Done. Added `WithFullJitter` in `backoff.go`, with tests (range, non-positive base, stop) and a README line. Build, vet and tests pass. Nothing committed.
+Done. `WithFullJitter` is in `backoff.go`, with range, stop, zero/negative and example tests in `backoff_test.go`. Tests pass. Nothing committed.

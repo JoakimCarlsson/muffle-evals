@@ -1,1 +1,1 @@
-Done. Added `wait_exception` in `tenacity/wait.py`, exported from `tenacity`. Raises `RuntimeError` when no exception. Added tests and a release note; targeted tests pass, full suite and lint not run.
+Done. Added `wait_exception` in `tenacity/wait.py`, exported from `tenacity`, plus a release note. A quick manual check passed: it retries on an exception and raises `RuntimeError` after a rejected result. I didn't add tests or docs.

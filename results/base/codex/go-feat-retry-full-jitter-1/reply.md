@@ -1,7 +1,9 @@
-I’ll check the existing jitter middleware, add `WithFullJitter` and focused tests, then run the test suite.
+I’ll check the existing jitter middleware, add `WithFullJitter`, and test the range, stop, and nonpositive-duration behavior.
 
-Added `WithFullJitter(next Backoff)` with uniform sampling in `[0, base)`, stop propagation, and unchanged zero or negative durations.
+Added `WithFullJitter(next Backoff) Backoff`.
 
-Included edge-case tests, a usage example, and README documentation.
+- Returns a uniformly random duration in `[0, base)`.
+- Propagates stop signals.
+- Returns zero and negative bases unchanged without panicking.
 
-Validation passed: `go test ./...`, `go test -race ./...`, and `git diff --check`.
+Added tests, a usage example, and README documentation. `go test ./...` and `git diff --check` pass.

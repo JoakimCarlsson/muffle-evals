@@ -156,21 +156,21 @@ seconds between retries.
         print("Wait 2 second between retries")
         raise Exception
 
-To choose the wait from the last exception, use ``wait_exception``. The callable
-receives the exception and returns the number of seconds to wait. This strategy
-raises ``RuntimeError`` if the last attempt did not raise an exception, including
-when retrying a rejected result.
+A wait can also depend on the exception raised by the last attempt. The
+function passed to ``wait_exception`` receives that exception and returns the
+number of seconds to wait.
 
 .. testcode::
 
-    from tenacity import wait_exception
-
-    def exception_delay(exception: BaseException) -> float:
+    def exception_delay(exception):
         return 1.0 if isinstance(exception, TimeoutError) else 60.0
 
     @retry(wait=wait_exception(exception_delay))
     def wait_for_exception():
         raise TimeoutError
+
+``wait_exception`` raises ``RuntimeError`` if the last attempt has no exception,
+including when retrying a rejected result with ``retry_if_result``.
 
 Some things perform best with a bit of randomness injected.
 

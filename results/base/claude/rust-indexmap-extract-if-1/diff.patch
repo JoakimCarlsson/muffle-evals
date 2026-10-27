@@ -1,0 +1,410 @@
+diff --git a/src/map.rs b/src/map.rs
+index c87a7fd..00a0ba6 100644
+--- a/src/map.rs
++++ b/src/map.rs
+@@ -1,7 +1,7 @@
+ //! [`IndexMap`] is a hash table where the iteration order of the key-value
+ //! pairs is independent of the hash values of the keys.
+ 
+-mod core;
++pub(crate) mod core;
+ mod iter;
+ mod mutable;
+ mod slice;
+@@ -16,7 +16,8 @@ mod tests;
+ pub use self::core::raw_entry_v1::{self, RawEntryApiV1};
+ pub use self::core::{Entry, IndexedEntry, OccupiedEntry, VacantEntry};
+ pub use self::iter::{
+-    Drain, IntoIter, IntoKeys, IntoValues, Iter, IterMut, IterMut2, Keys, Splice, Values, ValuesMut,
++    Drain, ExtractIf, IntoIter, IntoKeys, IntoValues, Iter, IterMut, IterMut2, Keys, Splice,
++    Values, ValuesMut,
+ };
+ pub use self::mutable::MutableEntryKey;
+ pub use self::mutable::MutableKeys;
+@@ -303,6 +304,46 @@ impl<K, V, S> IndexMap<K, V, S> {
+         Drain::new(self.core.drain(range))
+     }
+ 
++    /// Creates an iterator which uses a closure to determine if an entry should be removed,
++    /// for all entries in the given range.
++    ///
++    /// If the closure returns true, the entry is removed from the map and yielded. If the closure
++    /// returns false, or panics, the entry remains in the map and will not be yielded.
++    ///
++    /// Only the entries whose index is inside `range` are tested, and the closure may modify
++    /// the values of the entries it keeps. Extracted entries are yielded in index order,
++    /// and the remaining entries keep their relative order.
++    ///
++    /// The iterator is lazy: if it is dropped before being exhausted, the rest of the range
++    /// is left in the map untouched.
++    ///
++    /// The range may be any type that implements [`RangeBounds<usize>`],
++    /// including all of the `std::ops::Range*` types, or even a tuple pair of
++    /// `Bound` start and end values. To check the entire map, use `RangeFull`
++    /// like `map.extract_if(.., predicate)`.
++    ///
++    /// ***Panics*** if the starting point is greater than the end point or if
++    /// the end point is greater than the length of the map.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// use indexmap::IndexMap;
++    ///
++    /// let mut map: IndexMap<i32, i32> = (0..8).map(|i| (i, i * 10)).collect();
++    /// let odd: Vec<_> = map.extract_if(.., |k, _| k % 2 == 1).collect();
++    /// assert_eq!(odd, [(1, 10), (3, 30), (5, 50), (7, 70)]);
++    /// assert!(map.keys().copied().eq([0, 2, 4, 6]));
++    /// ```
++    #[track_caller]
++    pub fn extract_if<F, R>(&mut self, range: R, pred: F) -> ExtractIf<'_, K, V, F>
++    where
++        F: FnMut(&K, &mut V) -> bool,
++        R: RangeBounds<usize>,
++    {
++        ExtractIf::new(&mut self.core, range, pred)
++    }
++
+     /// Splits the collection into two at the given index.
+     ///
+     /// Returns a newly allocated map containing the elements in the range
+diff --git a/src/map/core.rs b/src/map/core.rs
+index 96f750e..8611297 100644
+--- a/src/map/core.rs
++++ b/src/map/core.rs
+@@ -499,6 +499,23 @@ impl<K, V> IndexMapCore<K, V> {
+         }
+     }
+ 
++    #[track_caller]
++    pub(crate) fn extract<R>(&mut self, range: R) -> ExtractCore<'_, K, V>
++    where
++        R: RangeBounds<usize>,
++    {
++        let range = simplify_range(range, self.entries.len());
++        // Take everything from `range.start` out of the table, and put entries
++        // back as they are visited, so the map is always consistent.
++        self.erase_indices(range.start, self.entries.len());
++        let pending = self.entries.split_off(range.start).into_iter();
++        ExtractCore {
++            map: self,
++            pending,
++            untested: range.end - range.start,
++        }
++    }
++
+     fn rebuild_hash_table(&mut self) {
+         self.indices.clear();
+         insert_bulk_no_grow(&mut self.indices, &self.entries);
+@@ -516,6 +533,55 @@ impl<K, V> IndexMapCore<K, V> {
+     }
+ }
+ 
++/// Shared implementation of `extract_if` for maps and sets.
++///
++/// Entries from the start of the range are held in `pending`, with their
++/// indices erased from the table. Visited entries that are kept are pushed back
++/// onto the map, and the rest are restored on drop.
++pub(crate) struct ExtractCore<'a, K, V> {
++    map: &'a mut IndexMapCore<K, V>,
++    pending: vec::IntoIter<Bucket<K, V>>,
++    /// The number of entries in `pending` that are still in the range to test.
++    untested: usize,
++}
++
++impl<K, V> ExtractCore<'_, K, V> {
++    pub(crate) fn extract_next<F>(&mut self, mut pred: F) -> Option<Bucket<K, V>>
++    where
++        F: FnMut(&mut Bucket<K, V>) -> bool,
++    {
++        while self.untested > 0 {
++            let mut entry = self.pending.next()?;
++            self.untested -= 1;
++            if pred(&mut entry) {
++                return Some(entry);
++            }
++            let map = &mut *self.map;
++            map.indices
++                .insert_unique(entry.hash.get(), map.entries.len(), |_| unreachable!());
++            map.entries.push(entry);
++        }
++        None
++    }
++
++    pub(crate) fn remaining(&self) -> usize {
++        self.untested
++    }
++
++    pub(crate) fn pending(&self) -> &[Bucket<K, V>] {
++        &self.pending.as_slice()[..self.untested]
++    }
++}
++
++impl<K, V> Drop for ExtractCore<'_, K, V> {
++    fn drop(&mut self) {
++        let map = &mut *self.map;
++        let start = map.entries.len();
++        map.entries.extend(self.pending.by_ref());
++        insert_bulk_no_grow(&mut map.indices, &map.entries[start..]);
++    }
++}
++
+ /// Reserve entries capacity, rounded up to match the indices (via `try_capacity`).
+ fn reserve_entries<K, V>(entries: &mut Entries<K, V>, additional: usize, try_capacity: usize) {
+     // Use a soft-limit on the maximum capacity, but if the caller explicitly
+diff --git a/src/map/iter.rs b/src/map/iter.rs
+index d060588..09ccd5e 100644
+--- a/src/map/iter.rs
++++ b/src/map/iter.rs
+@@ -1,4 +1,4 @@
+-use super::core::IndexMapCore;
++use super::core::{ExtractCore, IndexMapCore};
+ use super::{Bucket, IndexMap, Slice};
+ 
+ use alloc::vec::{self, Vec};
+@@ -774,3 +774,56 @@ where
+             .finish()
+     }
+ }
++
++/// An extracting iterator for the entries of an [`IndexMap`].
++///
++/// This `struct` is created by the [`IndexMap::extract_if`] method.
++/// See its documentation for more.
++pub struct ExtractIf<'a, K, V, F> {
++    inner: ExtractCore<'a, K, V>,
++    pred: F,
++}
++
++impl<'a, K, V, F> ExtractIf<'a, K, V, F> {
++    pub(super) fn new<R>(core: &'a mut IndexMapCore<K, V>, range: R, pred: F) -> Self
++    where
++        R: RangeBounds<usize>,
++    {
++        Self {
++            inner: core.extract(range),
++            pred,
++        }
++    }
++}
++
++impl<K, V, F> Iterator for ExtractIf<'_, K, V, F>
++where
++    F: FnMut(&K, &mut V) -> bool,
++{
++    type Item = (K, V);
++
++    fn next(&mut self) -> Option<Self::Item> {
++        let pred = &mut self.pred;
++        self.inner
++            .extract_next(|b| pred(&b.key, &mut b.value))
++            .map(Bucket::key_value)
++    }
++
++    fn size_hint(&self) -> (usize, Option<usize>) {
++        (0, Some(self.inner.remaining()))
++    }
++}
++
++impl<K, V, F> FusedIterator for ExtractIf<'_, K, V, F> where F: FnMut(&K, &mut V) -> bool {}
++
++impl<K, V, F> fmt::Debug for ExtractIf<'_, K, V, F>
++where
++    K: fmt::Debug,
++    V: fmt::Debug,
++{
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_list()
++            .entries(self.inner.pending().iter().map(Bucket::refs))
++            .finish()
++    }
++}
+diff --git a/src/map/tests.rs b/src/map/tests.rs
+index 25ef794..e7de711 100644
+--- a/src/map/tests.rs
++++ b/src/map/tests.rs
+@@ -1226,3 +1226,40 @@ fn disjoint_indices_mut_fail_duplicate() {
+         Err(crate::GetDisjointMutError::OverlappingIndices)
+     );
+ }
++
++#[test]
++fn extract_if() {
++    let mut map: IndexMap<i32, i32> = (0..8).map(|i| (i, i * 10)).collect();
++    let odd: Vec<_> = map.extract_if(.., |k, _| k % 2 == 1).collect();
++    assert_eq!(odd, [(1, 10), (3, 30), (5, 50), (7, 70)]);
++    assert!(map.keys().copied().eq([0, 2, 4, 6]));
++    for k in [0, 2, 4, 6] {
++        assert_eq!(map.get_index_of(&k), Some(k as usize / 2));
++    }
++    assert_eq!(map.get(&3), None);
++}
++
++#[test]
++fn extract_if_range_lazy_and_mut() {
++    let mut map: IndexMap<i32, i32> = (0..10).map(|i| (i, i)).collect();
++    {
++        let mut it = map.extract_if(2..8, |k, v| {
++            *v += 100;
++            k % 2 == 0
++        });
++        assert_eq!(it.size_hint(), (0, Some(6)));
++        assert_eq!(it.next(), Some((2, 102)));
++        assert_eq!(it.size_hint(), (0, Some(5)));
++    }
++    // 3 was visited (kept, modified); 4.. untouched
++    assert!(map.keys().copied().eq([0, 1, 3, 4, 5, 6, 7, 8, 9]));
++    assert_eq!(map[&3], 3);
++    assert_eq!(map[&5], 5);
++    for (i, k) in map.keys().enumerate() {
++        assert_eq!(map.get_index_of(k), Some(i));
++    }
++    let taken: Vec<_> = map.extract_if(.., |_, _| true).take(2).collect();
++    assert_eq!(taken, [(0, 0), (1, 1)]);
++    assert_eq!(map.len(), 7);
++    assert_eq!(map.get_index_of(&9), Some(6));
++}
+diff --git a/src/set.rs b/src/set.rs
+index cb1c0d0..25e7b4c 100644
+--- a/src/set.rs
++++ b/src/set.rs
+@@ -8,7 +8,7 @@ mod slice;
+ mod tests;
+ 
+ pub use self::iter::{
+-    Difference, Drain, Intersection, IntoIter, Iter, Splice, SymmetricDifference, Union,
++    Difference, Drain, ExtractIf, Intersection, IntoIter, Iter, Splice, SymmetricDifference, Union,
+ };
+ pub use self::mutable::MutableValues;
+ pub use self::slice::Slice;
+@@ -249,6 +249,45 @@ impl<T, S> IndexSet<T, S> {
+         Drain::new(self.map.core.drain(range))
+     }
+ 
++    /// Creates an iterator which uses a closure to determine if a value should be removed,
++    /// for all values in the given range.
++    ///
++    /// If the closure returns true, the value is removed from the set and yielded. If the closure
++    /// returns false, or panics, the value remains in the set and will not be yielded.
++    ///
++    /// Only the values whose index is inside `range` are tested. Extracted values are yielded
++    /// in index order, and the remaining values keep their relative order.
++    ///
++    /// The iterator is lazy: if it is dropped before being exhausted, the rest of the range
++    /// is left in the set untouched.
++    ///
++    /// The range may be any type that implements [`RangeBounds<usize>`],
++    /// including all of the `std::ops::Range*` types, or even a tuple pair of
++    /// `Bound` start and end values. To check the entire set, use `RangeFull`
++    /// like `set.extract_if(.., predicate)`.
++    ///
++    /// ***Panics*** if the starting point is greater than the end point or if
++    /// the end point is greater than the length of the set.
++    ///
++    /// # Examples
++    ///
++    /// ```
++    /// use indexmap::IndexSet;
++    ///
++    /// let mut set: IndexSet<i32> = (0..8).collect();
++    /// let odd: Vec<_> = set.extract_if(.., |v| v % 2 == 1).collect();
++    /// assert_eq!(odd, [1, 3, 5, 7]);
++    /// assert!(set.iter().copied().eq([0, 2, 4, 6]));
++    /// ```
++    #[track_caller]
++    pub fn extract_if<F, R>(&mut self, range: R, pred: F) -> ExtractIf<'_, T, F>
++    where
++        F: FnMut(&T) -> bool,
++        R: RangeBounds<usize>,
++    {
++        ExtractIf::new(&mut self.map.core, range, pred)
++    }
++
+     /// Splits the collection into two at the given index.
+     ///
+     /// Returns a newly allocated set containing the elements in the range
+diff --git a/src/set/iter.rs b/src/set/iter.rs
+index 3d0e043..5bc3dfe 100644
+--- a/src/set/iter.rs
++++ b/src/set/iter.rs
+@@ -1,4 +1,5 @@
+ use super::{Bucket, IndexSet, Slice};
++use crate::map::core::{ExtractCore, IndexMapCore};
+ 
+ use alloc::vec::{self, Vec};
+ use core::fmt;
+@@ -626,3 +627,53 @@ impl<I: fmt::Debug> fmt::Debug for UnitValue<I> {
+         fmt::Debug::fmt(&self.0, f)
+     }
+ }
++
++/// An extracting iterator for the items of an [`IndexSet`].
++///
++/// This `struct` is created by the [`IndexSet::extract_if`] method.
++/// See its documentation for more.
++pub struct ExtractIf<'a, T, F> {
++    inner: ExtractCore<'a, T, ()>,
++    pred: F,
++}
++
++impl<'a, T, F> ExtractIf<'a, T, F> {
++    pub(super) fn new<R>(core: &'a mut IndexMapCore<T, ()>, range: R, pred: F) -> Self
++    where
++        R: RangeBounds<usize>,
++    {
++        Self {
++            inner: core.extract(range),
++            pred,
++        }
++    }
++}
++
++impl<T, F> Iterator for ExtractIf<'_, T, F>
++where
++    F: FnMut(&T) -> bool,
++{
++    type Item = T;
++
++    fn next(&mut self) -> Option<Self::Item> {
++        let pred = &mut self.pred;
++        self.inner.extract_next(|b| pred(&b.key)).map(Bucket::key)
++    }
++
++    fn size_hint(&self) -> (usize, Option<usize>) {
++        (0, Some(self.inner.remaining()))
++    }
++}
++
++impl<T, F> FusedIterator for ExtractIf<'_, T, F> where F: FnMut(&T) -> bool {}
++
++impl<T, F> fmt::Debug for ExtractIf<'_, T, F>
++where
++    T: fmt::Debug,
++{
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_list()
++            .entries(self.inner.pending().iter().map(Bucket::key_ref))
++            .finish()
++    }
++}
+diff --git a/src/set/tests.rs b/src/set/tests.rs
+index 88a7ee8..d6e1349 100644
+--- a/src/set/tests.rs
++++ b/src/set/tests.rs
+@@ -997,3 +997,16 @@ fn test_partition_point() {
+     assert_eq!(b.partition_point(|&x| x < 7), 2);
+     assert_eq!(b.partition_point(|&x| x < 8), 3);
+ }
++
++#[test]
++fn extract_if() {
++    let mut set: IndexSet<i32> = (0..8).collect();
++    let odd: Vec<_> = set.extract_if(2.., |v| v % 2 == 1).collect();
++    assert_eq!(odd, [3, 5, 7]);
++    assert!(set.iter().copied().eq([0, 1, 2, 4, 6]));
++    assert_eq!(set.get_index_of(&6), Some(4));
++    let first: Vec<_> = set.extract_if(.., |_| true).take(1).collect();
++    assert_eq!(first, [0]);
++    assert_eq!(set.get_index_of(&6), Some(3));
++    assert_eq!(set.len(), 4);
++}

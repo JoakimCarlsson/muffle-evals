@@ -1,5 +1,5 @@
 diff --git a/README.md b/README.md
-index 47b6e26..95e7f60 100644
+index 47b6e26..01ee360 100644
 --- a/README.md
 +++ b/README.md
 @@ -126,6 +126,9 @@ b = WithJitter(500*time.Millisecond, b)
@@ -7,22 +7,22 @@ index 47b6e26..95e7f60 100644
  // Return the next value, +/- 5% of the result
  b = WithJitterPercent(5, b)
 +
-+// Return a random duration in [0, next value)
++// Return a random duration in [0, the next value)
 +b = WithFullJitter(b)
  ```
  
  ### MaxRetries
 diff --git a/backoff.go b/backoff.go
-index b493869..353ad0e 100644
+index b493869..18f9081 100644
 --- a/backoff.go
 +++ b/backoff.go
 @@ -67,6 +67,22 @@ func WithJitterPercent(j uint64, next Backoff) Backoff {
  	})
  }
  
-+// WithFullJitter wraps a backoff and returns a uniformly random duration in
-+// [0, base), where base is the wrapped backoff's next duration. Non-positive
-+// durations are returned unchanged. If the wrapped backoff stops, it stops too.
++// WithFullJitter wraps a backoff function and returns a random duration in
++// [0, base), where base is the wrapped backoff's next duration. Zero and
++// negative durations are returned unchanged.
 +func WithFullJitter(next Backoff) Backoff {
 +	return BackoffFunc(func() (time.Duration, bool) {
 +		val, stop := next.Next()
@@ -40,54 +40,52 @@ index b493869..353ad0e 100644
  func WithMaxRetries(max uint64, next Backoff) Backoff {
  	var l sync.Mutex
 diff --git a/backoff_test.go b/backoff_test.go
-index 7c528e8..b235ced 100644
+index 7c528e8..a630bc6 100644
 --- a/backoff_test.go
 +++ b/backoff_test.go
-@@ -198,6 +198,51 @@ func ExampleWithJitterPercent() {
+@@ -198,6 +198,49 @@ func ExampleWithJitterPercent() {
  	}
  }
  
 +func TestWithFullJitter(t *testing.T) {
 +	t.Parallel()
 +
-+	bases := []time.Duration{0, -time.Second, time.Duration(-1 << 63), 1, time.Second, time.Duration(1<<63 - 1)}
-+	for _, base := range bases {
-+		t.Run(base.String(), func(t *testing.T) {
-+			t.Parallel()
-+			calls := 0
-+			b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-+				calls++
-+				return base, false
-+			}))
-+			for range 1000 {
-+				val, stop := b.Next()
-+				if stop {
-+					t.Fatal("should not stop")
-+				}
-+				if base <= 0 {
-+					if val != base {
-+						t.Fatalf("got %v, want %v", val, base)
-+					}
-+				} else if val < 0 || val >= base {
-+					t.Fatalf("got %v, want duration in [0, %v)", val, base)
-+				}
++	for _, base := range []time.Duration{1, time.Second, time.Duration(1<<63 - 1)} {
++		calls := 0
++		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
++			calls++
++			return base, false
++		}))
++		for range 1000 {
++			val, stop := b.Next()
++			if stop || val < 0 || val >= base {
++				t.Fatalf("base %v: got (%v, %t), want duration in [0, base) and no stop", base, val, stop)
 +			}
-+			if calls != 1000 {
-+				t.Fatalf("got %d wrapped calls, want 1000", calls)
-+			}
-+		})
++		}
++		if calls != 1000 {
++			t.Fatalf("wrapped backoff called %d times, want 1000", calls)
++		}
 +	}
 +}
 +
-+func TestWithFullJitter_Stop(t *testing.T) {
++func TestWithFullJitter_NonPositiveAndStop(t *testing.T) {
 +	t.Parallel()
 +
-+	for _, base := range []time.Duration{-time.Second, 0, time.Second} {
-+		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-+			return base, true
-+		}))
-+		if val, stop := b.Next(); val != 0 || !stop {
-+			t.Errorf("base %v: got (%v, %t), want (0, true)", base, val, stop)
++	for _, base := range []time.Duration{0, -time.Second, time.Duration(-1 << 63), time.Second} {
++		for _, stop := range []bool{false, true} {
++			if base > 0 && !stop {
++				continue
++			}
++			b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
++				return base, stop
++			}))
++			want := base
++			if stop {
++				want = 0
++			}
++			if val, gotStop := b.Next(); val != want || gotStop != stop {
++				t.Errorf("base %v, stop %t: got (%v, %t), want (%v, %t)", base, stop, val, gotStop, want, stop)
++			}
 +		}
 +	}
 +}

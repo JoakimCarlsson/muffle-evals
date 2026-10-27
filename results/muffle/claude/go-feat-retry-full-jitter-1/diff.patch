@@ -1,24 +1,19 @@
 diff --git a/README.md b/README.md
-index 47b6e26..bc5ce45 100644
+index 47b6e26..85493e5 100644
 --- a/README.md
 +++ b/README.md
-@@ -128,6 +128,14 @@ b = WithJitter(500*time.Millisecond, b)
+@@ -126,6 +126,9 @@ b = WithJitter(500*time.Millisecond, b)
+ 
+ // Return the next value, +/- 5% of the result
  b = WithJitterPercent(5, b)
++
++// Return a random value between 0 and the result ("full jitter")
++b = WithFullJitter(b)
  ```
  
-+For "full jitter", which waits a random duration between 0 and the returned
-+value, use `WithFullJitter`:
-+
-+```golang
-+b := NewFibonacci(1 * time.Second)
-+b = WithFullJitter(b)
-+```
-+
  ### MaxRetries
- 
- To terminate a retry, specify the maximum number of _retries_. Note this
 diff --git a/backoff.go b/backoff.go
-index b493869..1f8e231 100644
+index b493869..2e48346 100644
 --- a/backoff.go
 +++ b/backoff.go
 @@ -67,6 +67,25 @@ func WithJitterPercent(j uint64, next Backoff) Backoff {
@@ -26,9 +21,9 @@ index b493869..1f8e231 100644
  }
  
 +// WithFullJitter wraps a backoff function and returns a random duration between
-+// 0 (inclusive) and the backoff value (exclusive), as described in the AWS
-+// "Exponential Backoff And Jitter" article. A zero or negative backoff value is
-+// returned unchanged.
++// 0 (inclusive) and the base value (exclusive), as described in the AWS
++// "Exponential Backoff and Jitter" article. A base value that is zero or
++// negative is returned unchanged.
 +func WithFullJitter(next Backoff) Backoff {
 +	return BackoffFunc(func() (time.Duration, bool) {
 +		val, stop := next.Next()
@@ -48,10 +43,10 @@ index b493869..1f8e231 100644
  func WithMaxRetries(max uint64, next Backoff) Backoff {
  	var l sync.Mutex
 diff --git a/backoff_test.go b/backoff_test.go
-index 7c528e8..f19e1ee 100644
+index 7c528e8..62bb4b4 100644
 --- a/backoff_test.go
 +++ b/backoff_test.go
-@@ -119,6 +119,48 @@ func ExampleWithJitter() {
+@@ -119,6 +119,72 @@ func ExampleWithJitter() {
  	}
  }
  
@@ -73,27 +68,51 @@ index 7c528e8..f19e1ee 100644
 +	}
 +}
 +
-+func TestWithFullJitter_Stop(t *testing.T) {
-+	t.Parallel()
-+
-+	b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-+		return 1 * time.Second, true
-+	}))
-+	if val, stop := b.Next(); !stop || val != 0 {
-+		t.Errorf("expected stop with 0, got %v, %v", val, stop)
-+	}
-+}
-+
 +func TestWithFullJitter_NonPositive(t *testing.T) {
 +	t.Parallel()
 +
-+	for _, in := range []time.Duration{0, -1 * time.Second} {
-+		b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
-+			return in, false
-+		}))
-+		if val, stop := b.Next(); stop || val != in {
-+			t.Errorf("expected %v, false, got %v, %v", in, val, stop)
-+		}
++	cases := []struct {
++		name     string
++		nextVal  time.Duration
++		nextStop bool
++		wantVal  time.Duration
++		wantStop bool
++	}{
++		{name: "zero", nextVal: 0, wantVal: 0},
++		{name: "negative", nextVal: -1 * time.Second, wantVal: -1 * time.Second},
++		{name: "stop_propagates", nextVal: 1 * time.Second, nextStop: true, wantVal: 0, wantStop: true},
++	}
++
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			t.Parallel()
++
++			b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
++				return tc.nextVal, tc.nextStop
++			}))
++
++			val, stop := b.Next()
++			if stop != tc.wantStop {
++				t.Errorf("expected stop to be %t", tc.wantStop)
++			}
++			if val != tc.wantVal {
++				t.Errorf("expected %v to be %v", val, tc.wantVal)
++			}
++		})
++	}
++}
++
++func ExampleWithFullJitter() {
++	ctx := context.Background()
++
++	b := retry.NewFibonacci(1 * time.Second)
++	b = retry.WithFullJitter(b)
++
++	if err := retry.Do(ctx, b, func(_ context.Context) error {
++		// TODO: logic here
++		return nil
++	}); err != nil {
++		// handle error
 +	}
 +}
 +

@@ -1,0 +1,601 @@
+diff --git a/packages/docs/content/api.mdx b/packages/docs/content/api.mdx
+index c2de56a..4d1a6c9 100644
+--- a/packages/docs/content/api.mdx
++++ b/packages/docs/content/api.mdx
+@@ -1435,6 +1435,24 @@ const RecipeOptionalIngredients = z.partial(Recipe, {
+ </Tab>
+ </Tabs>
+ 
++### `z.deepPartial()`
++
++Zod 4 has no `.deepPartial()` method. Use `z.deepPartial()` to make every object in a schema tree partial: through arrays, tuples, records, maps, sets, unions, intersections, catchall values, optional/nullable/default/readonly wrappers, promises, pipes, codecs and recursive schemas.
++
++```ts
++const User = z.object({
++  name: z.string(),
++  address: z.object({ street: z.string(), city: z.string() }),
++});
++
++const PartialUser = z.deepPartial(User);
++PartialUser.parse({ address: {} }); // ✅
++```
++
++Tuple positions stay required (only objects inside become partial), transforms and checks such as `z.string().min(1)` are untouched, and a discriminated union becomes a plain union. The input schema is never mutated. Only the top-level shape is reflected in the returned type; nested objects keep their original static type.
++
++`z.deepPartial` is available in both `zod` and `zod/mini`.
++
+ ### `.required()`
+ 
+ Zod provides an API for making some or all properties *required*, inspired by TypeScript's [`Required`](https://www.typescriptlang.org/docs/handbook/utility-types.html#requiredtype) utility type.
+@@ -1475,6 +1493,22 @@ const RecipeRequiredDescription = z.required(Recipe, {description: true});
+ 
+ 
+ 
++## `z.input()` and `z.output()`
++
++`z.input(schema)` and `z.output(schema)` are runtime versions of `z.input<T>` and `z.output<T>`. They replace every pipe (codecs included) anywhere in the tree with its input or output side, so codecs nested inside objects, records or maps can be reached. A schema without pipes is returned as the same object.
++
++```ts
++const stringToBigInt = z.codec(z.string(), z.bigint(), {
++  decode: (s) => BigInt(s),
++  encode: (b) => b.toString(),
++});
++
++const Schema = z.object({ b: stringToBigInt });
++
++z.input(Schema).parse({ b: "1" }); // { b: "1" }
++z.output(Schema).parse({ b: 1n }); // { b: 1n }
++```
++
+ ## Recursive objects
+ 
+ To define a self-referential type, use a [getter](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions/get) on the key. This lets JavaScript resolve the cyclical schema at runtime.
+diff --git a/packages/zod/src/v4/classic/deep-partial.ts b/packages/zod/src/v4/classic/deep-partial.ts
+new file mode 100644
+index 0000000..518dcde
+--- /dev/null
++++ b/packages/zod/src/v4/classic/deep-partial.ts
+@@ -0,0 +1,23 @@
++import * as core from "../core/index.js";
++import { visit } from "../core/visit.js";
++import { ZodOptional, ZodUnion, type ZodObject } from "./schemas.js";
++
++/**
++ * limit: only the top-level shape is typed as partial, nested objects keep their original type
++ * to keep recursive schemas shallow; revisit with a depth-bounded type.
++ */
++export type ZodDeepPartial<T extends core.$ZodType> =
++  T extends ZodObject<infer Shape, infer Config>
++    ? ZodObject<{ -readonly [k in keyof Shape]: ZodOptional<Shape[k]> }, Config>
++    : T;
++
++/** Makes every object in the schema tree partial, recursively. Never mutates `schema`. */
++export function deepPartial<T extends core.$ZodType>(schema: T): ZodDeepPartial<T> {
++  return visit(schema, {
++    object: (s) => core.util.partial(ZodOptional, s, undefined),
++    union: (s) => {
++      const { discriminator, unionFallback, ...def } = s._zod.def;
++      return discriminator === undefined ? s : new ZodUnion(def);
++    },
++  }) as any;
++}
+diff --git a/packages/zod/src/v4/classic/external.ts b/packages/zod/src/v4/classic/external.ts
+index a3f682d..8e9f17a 100644
+--- a/packages/zod/src/v4/classic/external.ts
++++ b/packages/zod/src/v4/classic/external.ts
+@@ -4,8 +4,10 @@ export * from "./checks.js";
+ export * from "./errors.js";
+ export * from "./parse.js";
+ export * from "./compat.js";
++export * from "./deep-partial.js";
++export * from "./input-output.js";
+ 
+-export type { infer, output, input } from "../core/index.js";
++export type { infer } from "../core/index.js";
+ export type { JSONType } from "../core/util.js";
+ export {
+   globalRegistry,
+diff --git a/packages/zod/src/v4/classic/input-output.ts b/packages/zod/src/v4/classic/input-output.ts
+new file mode 100644
+index 0000000..9c398f3
+--- /dev/null
++++ b/packages/zod/src/v4/classic/input-output.ts
+@@ -0,0 +1,16 @@
++import * as core from "../core/index.js";
++import { unpipe } from "../core/visit.js";
++import type { ZodType } from "./schemas.js";
++
++export type input<T> = core.input<T>;
++export type output<T> = core.output<T>;
++
++/** Runtime `z.input<T>`: replaces every pipe in the tree with its input side. */
++export function input<T extends core.$ZodType>(schema: T): ZodType<core.input<T>, core.input<T>> {
++  return unpipe(schema, "in") as any;
++}
++
++/** Runtime `z.output<T>`: replaces every pipe in the tree with its output side. */
++export function output<T extends core.$ZodType>(schema: T): ZodType<core.output<T>, core.output<T>> {
++  return unpipe(schema, "out") as any;
++}
+diff --git a/packages/zod/src/v4/classic/tests/deep-partial.test.ts b/packages/zod/src/v4/classic/tests/deep-partial.test.ts
+new file mode 100644
+index 0000000..0bbcdf9
+--- /dev/null
++++ b/packages/zod/src/v4/classic/tests/deep-partial.test.ts
+@@ -0,0 +1,97 @@
++import { expect, expectTypeOf, test } from "vitest";
++import * as z from "zod/v4";
++
++const stringToBigInt = z.codec(z.string(), z.bigint(), {
++  decode: (s) => BigInt(s),
++  encode: (b) => b.toString(),
++});
++
++test("deepPartial: objects through containers", () => {
++  const s = z.object({
++    a: z.string(),
++    arr: z.array(z.object({ x: z.number() })),
++    tup: z.tuple([z.object({ x: z.number() }), z.number()], z.object({ y: z.number() })),
++    rec: z.record(z.string(), z.object({ x: z.number() })),
++    map: z.map(z.string(), z.object({ x: z.number() })),
++    set: z.set(z.object({ x: z.number() })),
++    u: z.union([z.object({ x: z.number() }), z.string()]),
++    i: z.intersection(z.object({ x: z.number() }), z.object({ y: z.number() })),
++    n: z.object({ x: z.number() }).nullable().default(null).readonly(),
++    c: z.object({ a: z.string() }).catchall(z.object({ x: z.number() })),
++  });
++  const p = z.deepPartial(s);
++  expect(p.safeParse({}).success).toBe(true);
++  expect(p.safeParse({ arr: [{}], rec: { k: {} }, map: new Map([["k", {}]]), set: new Set([{}]) }).success).toBe(true);
++  expect(p.safeParse({ tup: [{}, 1, {}] }).success).toBe(true);
++  expect(p.safeParse({ tup: [{}] }).success).toBe(false);
++  expect(p.safeParse({ u: {}, i: {}, c: { k: {} }, n: {} }).success).toBe(true);
++  expect(s.safeParse({}).success).toBe(false);
++  expectTypeOf(p.shape.a).toEqualTypeOf<z.ZodOptional<z.ZodString>>();
++  expect(Object.keys(p.extend({ z: z.string() }).shape)).toContain("z");
++  expect(p.keyof().options).toContain("arr");
++});
++
++test("deepPartial: promise", async () => {
++  const p = z.deepPartial(z.promise(z.object({ x: z.number() })));
++  await expect(p.parseAsync(Promise.resolve({}))).resolves.toEqual({});
++});
++
++test("deepPartial: leaves with checks untouched, strict kept", () => {
++  const p = z.deepPartial(z.strictObject({ s: z.string().min(1), t: z.string().transform((x) => x.length) }));
++  expect(p.safeParse({ s: "" }).success).toBe(false);
++  expect(p.safeParse({ t: "abc" }).data).toEqual({ t: 3 });
++  expect(p.safeParse({ q: 1 }).success).toBe(false);
++});
++
++test("deepPartial: discriminated union becomes plain union", () => {
++  const u = z.discriminatedUnion("t", [
++    z.object({ t: z.literal("a"), x: z.number() }),
++    z.object({ t: z.literal("b"), y: z.number() }),
++  ]);
++  const p = z.deepPartial(u);
++  expect(p._zod.def.type).toBe("union");
++  expect((p._zod.def as any).discriminator).toBeUndefined();
++  expect(p.safeParse({}).success).toBe(true);
++  expect(u.safeParse({}).success).toBe(false);
++});
++
++test("deepPartial: codecs and preprocess kept", () => {
++  const s = z.object({
++    c: z.codec(z.object({ a: z.string() }), z.object({ b: z.string() }), {
++      decode: () => ({ b: "x" }),
++      encode: () => ({ a: "x" }),
++    }),
++    pre: z.preprocess((v) => v, z.object({ a: z.string() })),
++  });
++  const p = z.deepPartial(s);
++  expect(p.safeParse({ c: {}, pre: {} }).success).toBe(true);
++  expect(z.encode(p.shape.c.unwrap() as any, {} as any)).toEqual({ a: "x" });
++  expect((p.shape.pre.unwrap() as any)._zod.def.in._zod.def.type).toBe("transform");
++});
++
++test("deepPartial: recursive schemas and no mutation", () => {
++  const Node = z.object({
++    name: z.string(),
++    get children() {
++      return z.array(Node);
++    },
++  });
++  const lazyNode: z.ZodType<any> = z.object({ name: z.string(), kids: z.array(z.lazy(() => lazyNode)) });
++  const p = z.deepPartial(Node);
++  expect(p.safeParse({ children: [{ children: [{}] }] }).success).toBe(true);
++  expect(Node.safeParse({ children: [] }).success).toBe(false);
++  const lp = z.deepPartial(lazyNode);
++  expect(lp.safeParse({ kids: [{ kids: [{}] }] }).success).toBe(true);
++  expect(lazyNode.safeParse({ kids: [] }).success).toBe(false);
++});
++
++test("z.input / z.output", () => {
++  const s = z.object({ b: stringToBigInt, a: z.array(stringToBigInt) });
++  expect(z.output(s).parse({ b: 1n, a: [2n] })).toEqual({ b: 1n, a: [2n] });
++  expect(z.input(s).parse({ b: "1", a: ["2"] })).toEqual({ b: "1", a: ["2"] });
++  expect(z.output(z.record(z.string(), stringToBigInt)).parse({ k: 1n })).toEqual({ k: 1n });
++  const plain = z.object({ a: z.string() });
++  expect(z.input(plain)).toBe(plain);
++  expect(z.output(plain)).toBe(plain);
++  expectTypeOf<z.input<typeof s>>().toEqualTypeOf<{ b: string; a: string[] }>();
++});
+diff --git a/packages/zod/src/v4/core/tests/visit.test.ts b/packages/zod/src/v4/core/tests/visit.test.ts
+new file mode 100644
+index 0000000..2e3a6f3
+--- /dev/null
++++ b/packages/zod/src/v4/core/tests/visit.test.ts
+@@ -0,0 +1,93 @@
++import { expect, test, vi } from "vitest";
++import * as z from "zod/v4";
++import { visit } from "../visit.js";
++
++test("untouched schema keeps identity", () => {
++  const s = z.object({ a: z.array(z.string()), b: z.record(z.string(), z.number()) });
++  expect(visit(s, (x) => x)).toBe(s);
++});
++
++test("shared nodes are visited once", () => {
++  const inner = z.object({ v: z.string() });
++  const fn = vi.fn((s: z.core.$ZodType) => s);
++  visit(z.object({ x: inner, y: inner }), fn);
++  expect(fn).toHaveBeenCalledTimes(3);
++});
++
++test("handler map, siblings keep identity, object keeps strict", () => {
++  const untouched = z.string();
++  const s = z.strictObject({ a: z.number(), b: untouched, c: z.tuple([z.number()], z.number()) });
++  const r = visit(s, { number: () => z.string() }) as typeof s;
++  expect(r).not.toBe(s);
++  expect(r.shape.b).toBe(untouched);
++  expect(r.parse({ a: "x", b: "y", c: ["a", "b"] })).toEqual({ a: "x", b: "y", c: ["a", "b"] });
++  expect(z.safeParse(r, { a: "x", b: "y", c: ["a"], d: 1 }).success).toBe(false);
++});
++
++test("unknown def type is untouched", () => {
++  const custom = { _zod: { def: { type: "weird" } } } as any;
++  const fn = vi.fn(() => z.string());
++  expect(visit(custom, fn)).toBe(custom);
++  const s = z.array(custom);
++  expect(visit(s, (x) => x)).toBe(s);
++});
++
++test("lazy recursion", () => {
++  const Node: z.ZodType<any> = z.object({ n: z.number(), kids: z.array(z.lazy(() => Node)) });
++  Node.parse({ n: 1, kids: [] });
++  const fn = vi.fn((s: z.core.$ZodType) => (s._zod.def.type === "number" ? z.string() : s));
++  const r = visit(Node, fn);
++  const calls = fn.mock.calls.length;
++  expect(z.safeParse(r, { n: "a", kids: [{ n: "b", kids: [] }] }).success).toBe(true);
++  expect(z.safeParse(r, { n: "a", kids: [{ n: 1, kids: [] }] }).success).toBe(false);
++  expect(fn).toHaveBeenCalledTimes(calls);
++  expect(visit(Node, (x) => x)).toBe(Node);
++});
++
++test("getter recursion", () => {
++  const Node = z.object({
++    n: z.number(),
++    get children() {
++      return z.array(Node);
++    },
++  });
++  expect(visit(Node, (x) => x)).toBe(Node);
++  const fn = vi.fn((s: z.core.$ZodType) => (s._zod.def.type === "number" ? z.string() : s));
++  const r = visit(Node, fn) as any;
++  const calls = fn.mock.calls.length;
++  expect(z.safeParse(r, { n: "a", children: [{ n: "b", children: [] }] }).success).toBe(true);
++  expect(z.safeParse(r, { n: "a", children: [{ n: 1, children: [] }] }).success).toBe(false);
++  expect(fn).toHaveBeenCalledTimes(calls);
++});
++
++test("direct getter self reference", () => {
++  const Node = z.object({
++    n: z.number(),
++    get next() {
++      return Node.optional();
++    },
++  });
++  const r = visit(Node, { number: () => z.string() }) as any;
++  expect(z.safeParse(r, { n: "a", next: { n: "b" } }).success).toBe(true);
++  expect(z.safeParse(r, { n: "a", next: { n: 1 } }).success).toBe(false);
++});
++
++test("lazy already resolved by earlier parse is still rewritten", () => {
++  const l = z.lazy(() => z.number());
++  l.parse(1);
++  const r = visit(l, { number: () => z.string() });
++  expect(z.safeParse(r, "a").success).toBe(true);
++  expect(z.safeParse(r, 1).success).toBe(false);
++});
++
++test("pipes keep their kind", () => {
++  const codec = z.codec(z.string(), z.number(), { decode: Number, encode: String });
++  const r = visit(z.object({ c: codec }), { number: (s) => s }) as any;
++  expect(r).not.toBeUndefined();
++  const pre = z.preprocess((v) => v, z.number());
++  const r2 = visit(pre, { number: () => z.string() }) as any;
++  expect(r2._zod.def.type).toBe("pipe");
++  expect(z.safeParse(r2, "a").success).toBe(true);
++  const c2 = visit(codec, { number: () => z.bigint() }) as any;
++  expect(typeof c2._zod.def.transform).toBe("function");
++});
+diff --git a/packages/zod/src/v4/core/visit.ts b/packages/zod/src/v4/core/visit.ts
+new file mode 100644
+index 0000000..3e8a18a
+--- /dev/null
++++ b/packages/zod/src/v4/core/visit.ts
+@@ -0,0 +1,183 @@
++import type { $ZodType, $ZodTypeDef } from "./schemas.js";
++import { clone, cloneDef } from "./util.js";
++
++export type Rewrite =
++  | ((schema: $ZodType) => $ZodType)
++  | { [K in $ZodTypeDef["type"]]?: (schema: any) => $ZodType };
++
++interface Entry {
++  node: $ZodType;
++  out: $ZodType;
++  /** a child (or the rewrite) really changed this node */
++  changed: boolean;
++  /** in-progress nodes that `out` references through cycle back-edges */
++  deps: Set<$ZodType>;
++  back?: true;
++}
++
++const slots = new Map<string, string[]>(
++  Object.entries({
++    object: ["shape", "catchall"],
++    array: ["element"],
++    tuple: ["items", "rest"],
++    record: ["keyType", "valueType"],
++    map: ["keyType", "valueType"],
++    set: ["valueType"],
++    union: ["options"],
++    intersection: ["left", "right"],
++    optional: ["innerType"],
++    nullable: ["innerType"],
++    default: ["innerType"],
++    prefault: ["innerType"],
++    nonoptional: ["innerType"],
++    catch: ["innerType"],
++    readonly: ["innerType"],
++    promise: ["innerType"],
++    success: ["innerType"],
++    pipe: ["in", "out"],
++    function: ["input", "output"],
++    lazy: [],
++  })
++);
++
++const leaves = new Set([
++  "string",
++  "number",
++  "int",
++  "boolean",
++  "bigint",
++  "symbol",
++  "null",
++  "undefined",
++  "void",
++  "never",
++  "any",
++  "unknown",
++  "date",
++  "file",
++  "enum",
++  "literal",
++  "transform",
++  "nan",
++  "template_literal",
++  "custom",
++]);
++
++const isSchema = (v: unknown): v is $ZodType => !!v && typeof v === "object" && "_zod" in v;
++
++/**
++ * Rewrites a schema bottom-up and returns the new schema.
++ *
++ * Children are rewritten first; a parent is re-cloned only if a child changed, so an untouched
++ * schema is returned as the same object. Every unique node is rewritten once, and cycles
++ * (lazy and getter recursion) are tied back to the rewritten node through getters.
++ * `rewrite` is a callback run on every node, or a handler map keyed by `def.type`.
++ * Nodes with an unknown `def.type` are returned untouched.
++ */
++export function visit(schema: $ZodType, rewrite: Rewrite): $ZodType {
++  const apply =
++    typeof rewrite === "function"
++      ? rewrite
++      : (s: $ZodType) => {
++          const handler = Object.prototype.hasOwnProperty.call(rewrite, s._zod.def.type)
++            ? rewrite[s._zod.def.type]
++            : undefined;
++          return handler ? handler(s) : s;
++        };
++  const done = new Map<$ZodType, Entry>();
++  const active = new Set<$ZodType>();
++  const pending: Entry[] = [];
++
++  const settled = (node: $ZodType, out: $ZodType = node): Entry => {
++    const entry: Entry = { node, out, changed: false, deps: new Set() };
++    done.set(node, entry);
++    return entry;
++  };
++
++  const walk = (node: $ZodType): Entry => {
++    const hit = done.get(node);
++    if (hit) return hit;
++    if (active.has(node)) return { node, out: node, changed: false, deps: new Set([node]), back: true };
++
++    const def = node._zod.def as any;
++    const keys = slots.get(def.type);
++    if (!keys) {
++      if (!leaves.has(def.type)) return settled(node);
++      const entry = settled(node, apply(node));
++      entry.changed = entry.out !== node;
++      return entry;
++    }
++
++    active.add(node);
++    const deps = new Set<$ZodType>();
++    let dirty = false;
++    let childChanged = false;
++    const newDef = cloneDef(node);
++
++    const put = (target: any, key: PropertyKey, child: $ZodType) => {
++      const e = walk(child);
++      dirty ||= e.out !== child || !!e.back;
++      childChanged ||= e.changed;
++      for (const d of e.deps) deps.add(d);
++      Object.defineProperty(
++        target,
++        key,
++        e.back
++          ? { get: () => done.get(child)?.out ?? child, enumerable: true, configurable: true }
++          : { value: e.out, enumerable: true, configurable: true, writable: true }
++      );
++    };
++
++    if (def.type === "lazy") {
++      const inner = (node._zod as any).innerType as $ZodType;
++      const holder: { inner?: $ZodType } = {};
++      put(holder, "inner", inner);
++      delete newDef._cachedInner;
++      Object.defineProperty(newDef, "getter", { value: () => holder.inner, enumerable: true, configurable: true });
++    }
++    for (const key of keys) {
++      const value = def[key];
++      if (isSchema(value)) {
++        put(newDef, key, value);
++      } else if (Array.isArray(value)) {
++        const copy: $ZodType[] = [];
++        value.forEach((child, i) => put(copy, i, child));
++        Object.defineProperty(newDef, key, { value: copy, enumerable: true, configurable: true, writable: true });
++      } else if (value && typeof value === "object") {
++        const copy: Record<string, $ZodType> = {};
++        for (const k of Object.keys(value)) put(copy, k, value[k]);
++        Object.defineProperty(newDef, key, { value: copy, enumerable: true, configurable: true, writable: true });
++      }
++    }
++
++    active.delete(node);
++    const rebuilt = dirty ? clone(node, newDef, { parent: true }) : node;
++    const out = apply(rebuilt);
++    const changed = childChanged || out !== rebuilt;
++    deps.delete(node);
++
++    const entry = settled(node, out);
++    entry.changed = changed;
++    entry.deps = deps;
++    if (!changed && dirty) {
++      if (deps.size) pending.push(entry);
++      else entry.out = node;
++    }
++    for (let i = pending.length - 1; i >= 0; i--) {
++      const p = pending[i]!;
++      if (!p.deps.delete(node) || p.deps.size) continue;
++      if (!changed) p.out = p.node;
++      pending.splice(i, 1);
++    }
++    return entry;
++  };
++
++  return walk(schema).out;
++}
++
++/**
++ * Replaces every pipe (codecs and preprocess included) in the tree with its input or output side.
++ */
++export function unpipe(schema: $ZodType, side: "in" | "out"): $ZodType {
++  return visit(schema, { pipe: (s) => s._zod.def[side] });
++}
+diff --git a/packages/zod/src/v4/mini/deep-partial.ts b/packages/zod/src/v4/mini/deep-partial.ts
+new file mode 100644
+index 0000000..00332f6
+--- /dev/null
++++ b/packages/zod/src/v4/mini/deep-partial.ts
+@@ -0,0 +1,23 @@
++import * as core from "../core/index.js";
++import { visit } from "../core/visit.js";
++import { ZodMiniOptional, ZodMiniUnion, type ZodMiniObject } from "./schemas.js";
++
++/**
++ * limit: only the top-level shape is typed as partial, nested objects keep their original type
++ * to keep recursive schemas shallow; revisit with a depth-bounded type.
++ */
++export type ZodMiniDeepPartial<T extends core.$ZodType> =
++  T extends ZodMiniObject<infer Shape, infer Config>
++    ? ZodMiniObject<{ -readonly [k in keyof Shape]: ZodMiniOptional<Shape[k]> }, Config>
++    : T;
++
++/** Makes every object in the schema tree partial, recursively. Never mutates `schema`. */
++export function deepPartial<T extends core.$ZodType>(schema: T): ZodMiniDeepPartial<T> {
++  return visit(schema, {
++    object: (s) => core.util.partial(ZodMiniOptional, s, undefined),
++    union: (s) => {
++      const { discriminator, unionFallback, ...def } = s._zod.def;
++      return discriminator === undefined ? s : new ZodMiniUnion(def);
++    },
++  }) as any;
++}
+diff --git a/packages/zod/src/v4/mini/external.ts b/packages/zod/src/v4/mini/external.ts
+index 67661e9..c16aa64 100644
+--- a/packages/zod/src/v4/mini/external.ts
++++ b/packages/zod/src/v4/mini/external.ts
+@@ -2,8 +2,10 @@ export * as core from "../core/index.js";
+ export * from "./parse.js";
+ export * from "./schemas.js";
+ export * from "./checks.js";
++export * from "./deep-partial.js";
++export * from "./input-output.js";
+ 
+-export type { infer, output, input } from "../core/index.js";
++export type { infer } from "../core/index.js";
+ export type { JSONType } from "../core/util.js";
+ export {
+   globalRegistry,
+diff --git a/packages/zod/src/v4/mini/input-output.ts b/packages/zod/src/v4/mini/input-output.ts
+new file mode 100644
+index 0000000..35a2af9
+--- /dev/null
++++ b/packages/zod/src/v4/mini/input-output.ts
+@@ -0,0 +1,16 @@
++import * as core from "../core/index.js";
++import { unpipe } from "../core/visit.js";
++import type { ZodMiniType } from "./schemas.js";
++
++export type input<T> = core.input<T>;
++export type output<T> = core.output<T>;
++
++/** Runtime `z.input<T>`: replaces every pipe in the tree with its input side. */
++export function input<T extends core.$ZodType>(schema: T): ZodMiniType<core.input<T>, core.input<T>> {
++  return unpipe(schema, "in") as any;
++}
++
++/** Runtime `z.output<T>`: replaces every pipe in the tree with its output side. */
++export function output<T extends core.$ZodType>(schema: T): ZodMiniType<core.output<T>, core.output<T>> {
++  return unpipe(schema, "out") as any;
++}
+diff --git a/packages/zod/src/v4/mini/tests/deep-partial.test.ts b/packages/zod/src/v4/mini/tests/deep-partial.test.ts
+new file mode 100644
+index 0000000..a3a592b
+--- /dev/null
++++ b/packages/zod/src/v4/mini/tests/deep-partial.test.ts
+@@ -0,0 +1,18 @@
++import { expect, test } from "vitest";
++import * as z from "zod/mini";
++
++test("deepPartial", () => {
++  const s = z.object({ a: z.array(z.object({ x: z.number() })), u: z.discriminatedUnion("t", [z.object({ t: z.literal("a") })]) });
++  const p = z.deepPartial(s);
++  expect(p.safeParse({ a: [{}], u: {} }).success).toBe(true);
++  expect(s.safeParse({}).success).toBe(false);
++  expect(p.shape.a._zod.def.type).toBe("optional");
++});
++
++test("input / output", () => {
++  const codec = z.codec(z.string(), z.bigint(), { decode: (s) => BigInt(s), encode: (b) => b.toString() });
++  expect(z.output(z.object({ b: codec })).parse({ b: 1n })).toEqual({ b: 1n });
++  expect(z.input(z.object({ b: codec })).parse({ b: "1" })).toEqual({ b: "1" });
++  const plain = z.object({ a: z.string() });
++  expect(z.output(plain)).toBe(plain);
++});

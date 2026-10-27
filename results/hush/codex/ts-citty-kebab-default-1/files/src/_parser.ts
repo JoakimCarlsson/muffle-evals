@@ -161,7 +161,7 @@ export function parseRawArgs<T = Record<string, any>>(
     }
   }
 
-  // Apply defaults only when neither the option nor its aliases were supplied.
+  // Apply defaults only when neither the option nor any alias was supplied.
   for (const [name, value] of Object.entries(defaults)) {
     const names = [name, ...(mainToAliases.get(name) || [])];
     if (names.every((key) => (out as any)[key] === undefined)) {

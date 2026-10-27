@@ -1,5 +1,9 @@
-I’ll check the existing alias behavior, add the reverse utility, and run focused tests.
+I’ll check how `resolveAlias` handles normalization, add the reverse helper, and test the matching edge cases.
 
-Added `reverseResolveAlias` to `src/utils.ts`, with alias normalization, Windows path support, separator-boundary matching, trailing-slash handling, and longest-first results.
+The helper and tests are in place. They cover the examples, alias normalization, Windows paths, and separator boundaries. `pnpm` isn’t available here, so I’ll run the checks using the installed local tools.
 
-Added regression tests. All 367 tests, TypeScript checks, ESLint, and formatting checks pass.
+Added `reverseResolveAlias(path, aliases): string[]` to `src/utils.ts`.
+
+It normalizes aliases and Windows paths, matches targets at path boundaries, preserves trailing alias slashes, and sorts results longest first.
+
+All 367 tests pass, along with lint, type checks, and build.

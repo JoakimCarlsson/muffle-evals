@@ -1,9 +1,11 @@
-I’ll check where the router collects allowed methods, fix the duplicate handling, and add a regression test for overlapping routes.
+I’ll check how the 405 handler builds `Allow`, fix the duplicate methods, and add a regression test for the overlapping routes.
 
-Both route-matching paths collect methods, and the shared 405 handler writes them to `Allow`. I’ll deduplicate there, preserving the order of distinct methods. This needs changes only in `mux.go` and `mux_test.go`; no API or configuration changes are needed.
+The shared 405 handler now adds each method once, preserving its first occurrence. The regression test covers your four overlapping POST routes and checks that a distinct PUT method is still included. The build and full test suite are running.
 
-Fixed the shared 405 handler so each method appears only once in `Allow`, preserving the order of distinct methods.
+Fixed the shared 405 handler so each method appears only once in `Allow`.
 
-Added regression coverage for overlapping wildcard routes and multiple allowed methods.
+Added regression coverage for your overlapping POST routes and for retaining a distinct PUT method.
 
-Validation passed: `go test ./...`, `go build ./...`, and `git diff --check`.
+Passed: `go build ./... && go test ./...`.
+
+No unrelated changes; race tests were not run.

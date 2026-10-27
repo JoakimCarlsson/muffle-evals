@@ -1,7 +1,10 @@
-I’ll check the base-matching logic, add regression tests for the prefix collision, and run the relevant checks.
+I’ll check how both helpers match the base, add regression coverage, and fix the path boundary check.
 
-Fixed both functions to require a boundary after the base: end of input, `/`, `?`, or `#`.
+The regression tests reproduce the prefix bug with both `/admin` and `/admin/`. I’ll make both helpers require the base to end at the end of the input or before `/`, `?`, or `#`.
 
-`/admin-dashboard` now stays unchanged with `withoutBase` and becomes `/admin/admin-dashboard` with `withBase`. Existing base-path behavior is preserved.
+Fixed both helpers to match complete path segments, preserving query and hash suffixes.
 
-Added regression coverage. All 495 tests, type checks, lint, and formatting passed.
+- `withoutBase('/admin-dashboard', '/admin/')` returns `/admin-dashboard`.
+- `withBase('/admin-dashboard', '/admin/')` returns `/admin/admin-dashboard`.
+
+Added regression coverage for both base formats and valid matches. All 497 tests, type checks, lint, and formatting checks pass.

@@ -198,16 +198,17 @@ increasing jitter helps minimise collisions.
         raise Exception
 
 
-To choose the wait from the exception raised by the last attempt, use
-``wait_exception``.
+The wait can also depend on the exception raised by the last attempt.
 
 .. testcode::
 
-    def wait_for_error(exception):
-        return 5.0 if isinstance(exception, TimeoutError) else 60.0
+    def http_error(exception):
+        if isinstance(exception, requests.HTTPError) and exception.response.status_code == 429:
+            return float(exception.response.headers.get("Retry-After", "1"))
+        return 60.0
 
-    @retry(wait=wait_exception(wait_for_error))
-    def wait_depends_on_exception():
+    @retry(wait=wait_exception(http_error))
+    def wait_for_retry_after():
         raise Exception
 
 

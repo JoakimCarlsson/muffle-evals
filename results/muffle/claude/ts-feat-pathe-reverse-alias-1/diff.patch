@@ -12,15 +12,15 @@ index e371656..0575b62 100644
  
  ## License
 diff --git a/src/utils.ts b/src/utils.ts
-index 6ec11c1..c114cce 100644
+index 6ec11c1..437997c 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
-@@ -74,6 +74,37 @@ export function resolveAlias(path: string, aliases: Record<string, string>) {
+@@ -74,6 +74,43 @@ export function resolveAlias(path: string, aliases: Record<string, string>) {
    return _path;
  }
  
 +/**
-+ * Finds every aliased form of a path, the reverse of {@link resolveAlias}.
++ * Finds every aliased form of a real path, the reverse of `resolveAlias`.
 + * Alias targets only match on a path separator boundary or the whole path.
 + *
 + * @param path - The real path to find aliases for.
@@ -34,18 +34,24 @@ index 6ec11c1..c114cce 100644
 +  const _path = normalizeWindowsPath(path);
 +  aliases = normalizeAliases(aliases);
 +  const matches = new Set<string>();
-+  for (const [alias, target] of Object.entries(aliases)) {
-+    const to = normalizeWindowsPath(target);
-+    // Strip trailing slash from target for the boundary check
-+    const _to = hasTrailingSlash(to) ? to.slice(0, -1) : to;
-+
-+    if (_path === to || _path === _to) {
-+      matches.add(alias);
-+    } else if (_path.startsWith(_to) && hasTrailingSlash(_path[_to.length])) {
-+      // Strip trailing slash from alias, the remainder starts with one
-+      const _alias = hasTrailingSlash(alias) ? alias.slice(0, -1) : alias;
-+      matches.add(_alias + _path.slice(_to.length));
++  for (const [alias, to] of Object.entries(aliases)) {
++    let _to = normalizeWindowsPath(to);
++    if (hasTrailingSlash(_to) && _to.length > 0) {
++      _to = _to.slice(0, -1);
 +    }
++
++    if (!_path.startsWith(_to)) {
++      continue;
++    }
++
++    const rest = _path.slice(_to.length);
++    if (rest && rest[0] !== "/") {
++      continue;
++    }
++
++    matches.add(
++      hasTrailingSlash(alias) ? alias + rest.replace(/^\/+/, "") : alias + rest,
++    );
 +  }
 +  return [...matches].sort((a, b) => b.length - a.length);
 +}
@@ -54,7 +60,7 @@ index 6ec11c1..c114cce 100644
   * Extracts the filename from a given path, excluding any directory paths and the file extension.
   *
 diff --git a/test/utils.spec.ts b/test/utils.spec.ts
-index 51ad676..e888e46 100644
+index 51ad676..b4a0265 100644
 --- a/test/utils.spec.ts
 +++ b/test/utils.spec.ts
 @@ -1,6 +1,11 @@
@@ -70,13 +76,13 @@ index 51ad676..e888e46 100644
  
  describe("alias", () => {
    const _aliases = {
-@@ -56,6 +61,35 @@ describe("alias", () => {
-       expect(resolveAlias("~win/foo/bar", aliases)).toBe("C:/src/foo/bar");
+@@ -88,4 +93,38 @@ describe("filename", () => {
+       expect(filename(file)).toEqual(files[file]);
      });
-   });
+   }
 +
 +  describe("reverseResolveAlias", () => {
-+    it("returns all aliases, longest first", () => {
++    it("returns all matches, longest first", () => {
 +      expect(
 +        reverseResolveAlias("/root/some/assets/smth.jpg", {
 +          "~": "/root",
@@ -84,19 +90,24 @@ index 51ad676..e888e46 100644
 +        }),
 +      ).toEqual(["~/some/assets/smth.jpg", "~assets/smth.jpg"]);
 +      expect(
-+        reverseResolveAlias("/root/index.js", { "@": "/root", "~": "/root/index.js" }),
++        reverseResolveAlias("/root/index.js", {
++          "@": "/root",
++          "~": "/root/index.js",
++        }),
 +      ).toEqual(["@/index.js", "~"]);
 +    });
 +    it("respects path separators", () => {
-+      expect(reverseResolveAlias("/rootfoo/a.js", { "@": "/root" })).toEqual([]);
++      expect(reverseResolveAlias("/rootless/a", { "@": "/root" })).toEqual([]);
 +    });
-+    it("respect ending with /", () => {
++    it("respects ending with /", () => {
 +      expect(reverseResolveAlias("/src/foo/bar", { "~/": "/src" })).toEqual([
 +        "~/foo/bar",
 +      ]);
 +      expect(reverseResolveAlias("/src", { "~/": "/src" })).toEqual(["~/"]);
-+      expect(reverseResolveAlias("C:\\src\\foo", aliases)).toEqual([
-+        "~win/foo",
++    });
++    it("normalizes windows paths", () => {
++      expect(reverseResolveAlias("C:\\src\\foo", { "~": "C:/src" })).toEqual([
++        "~/foo",
 +      ]);
 +    });
 +    it("unchanged", () => {
@@ -104,5 +115,3 @@ index 51ad676..e888e46 100644
 +    });
 +  });
  });
- 
- describe("filename", () => {

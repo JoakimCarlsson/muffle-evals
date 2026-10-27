@@ -1,4 +1,5 @@
-Reverse alias support needs matching existing normalization and boundary rules.
+Adding `reverseResolveAlias` beside `resolveAlias`, with tests for matching, ordering, and path normalization.
+
 
 Done.
-Added `reverseResolveAlias` with normalization, boundary matching, trailing slash support, longest-first sorting. All 373 tests, lint, type checks passed.
+Added `reverseResolveAlias` and regression tests. All 366 tests, lint, formatting, and type checks passed.

@@ -1,37 +1,36 @@
 diff --git a/doc/source/index.rst b/doc/source/index.rst
-index 928ddd9..f2da34c 100644
+index 928ddd9..8f1b497 100644
 --- a/doc/source/index.rst
 +++ b/doc/source/index.rst
-@@ -198,6 +198,17 @@ increasing jitter helps minimise collisions.
+@@ -198,6 +198,16 @@ increasing jitter helps minimise collisions.
          raise Exception
  
  
-+The wait time can also depend on the exception raised by the last attempt.
++To choose the wait time from the exception raised by the last attempt, use
++`wait_exception`, which passes that exception to a function returning the
++number of seconds to wait.
 +
 +.. testcode::
 +
-+    def wait_for_error(exception):
-+        return 5.0 if isinstance(exception, ConnectionError) else 60.0
-+
-+    @retry(wait=wait_exception(wait_for_error))
-+    def wait_depending_on_exception():
-+        raise ConnectionError
++    @retry(wait=wait_exception(lambda e: 5.0 if isinstance(e, TimeoutError) else 60.0))
++    def wait_depends_on_exception():
++        raise Exception
 +
  Sometimes it's necessary to build a chain of backoffs.
  
  .. testcode::
-diff --git a/releasenotes/notes/add-wait-exception-3f9a1c7e5b2d4a60.yaml b/releasenotes/notes/add-wait-exception-3f9a1c7e5b2d4a60.yaml
+diff --git a/releasenotes/notes/add-wait-exception-3f1c9a7d2b5e4a60.yaml b/releasenotes/notes/add-wait-exception-3f1c9a7d2b5e4a60.yaml
 new file mode 100644
-index 0000000..782f7a9
+index 0000000..b542733
 --- /dev/null
-+++ b/releasenotes/notes/add-wait-exception-3f9a1c7e5b2d4a60.yaml
++++ b/releasenotes/notes/add-wait-exception-3f1c9a7d2b5e4a60.yaml
 @@ -0,0 +1,6 @@
 +---
 +features:
 +  - |
-+    Add ``wait_exception``, a wait strategy that calls a function with the
-+    exception raised by the last attempt and waits the returned number of
-+    seconds. It raises ``RuntimeError`` if the last attempt did not raise.
++    Add ``wait_exception``, a wait strategy that waits for the number of
++    seconds returned by a function called with the exception raised by the
++    last attempt.
 diff --git a/tenacity/__init__.py b/tenacity/__init__.py
 index e93793c..b0b4794 100644
 --- a/tenacity/__init__.py
@@ -53,18 +52,20 @@ index e93793c..b0b4794 100644
      "wait_fixed",
      "wait_incrementing",
 diff --git a/tenacity/wait.py b/tenacity/wait.py
-index dc3c850..f03cf40 100644
+index dc3c850..5ebb100 100644
 --- a/tenacity/wait.py
 +++ b/tenacity/wait.py
-@@ -56,6 +56,25 @@ class wait_fixed(wait_base):
-         return self.wait_fixed
- 
- 
-+class wait_exception(wait_base):
-+    """Wait strategy that waits the amount of time returned by the predicate.
+@@ -232,3 +232,22 @@ class wait_exponential_jitter(wait_base):
+         except OverflowError:
+             result = self.max
+         return max(0, min(result, self.max))
 +
-+    The predicate is passed the exception raised by the last attempt and
-+    returns the number of seconds to wait.
++
++class wait_exception(wait_base):
++    """Wait strategy that waits the amount of time returned by a predicate.
++
++    The predicate is called with the exception raised by the last attempt and
++    must return the number of seconds to wait.
 +    """
 +
 +    def __init__(self, predicate: typing.Callable[[BaseException], float]) -> None:
@@ -77,16 +78,11 @@ index dc3c850..f03cf40 100644
 +        if exception is None:
 +            raise RuntimeError("outcome failed but the exception is None")
 +        return self.predicate(exception)
-+
-+
- class wait_none(wait_fixed):
-     """Wait strategy that doesn't wait at all before retrying."""
- 
 diff --git a/tests/test_tenacity.py b/tests/test_tenacity.py
-index b76fec2..e9b90ff 100644
+index b76fec2..ca8b321 100644
 --- a/tests/test_tenacity.py
 +++ b/tests/test_tenacity.py
-@@ -1795,3 +1795,24 @@ class TestMockingSleep:
+@@ -1795,3 +1795,44 @@ class TestMockingSleep:
  
  if __name__ == "__main__":
      unittest.main()
@@ -94,20 +90,40 @@ index b76fec2..e9b90ff 100644
 +
 +class TestWaitException(unittest.TestCase):
 +    def test_wait_exception(self):
-+        calls = []
-+
 +        def predicate(exc):
-+            calls.append(exc)
-+            return 3.5 if isinstance(exc, ValueError) else 60.0
++            return 7.5 if isinstance(exc, ValueError) else 60.0
 +
 +        r = Retrying(wait=tenacity.wait_exception(predicate))
-+        for exc, expected in ((ValueError(), 3.5), (KeyError(), 60.0)):
-+            rs = make_retry_state(1, 0, last_result=tenacity.Future.construct(1, exc, True))
++        for exc, expected in ((ValueError(), 7.5), (KeyError(), 60.0)):
++            fut = tenacity.Future(1)
++            fut.set_exception(exc)
++            rs = RetryCallState(r, None, (), {})
++            rs.outcome = fut
 +            self.assertEqual(expected, r.wait(rs))
-+            self.assertIs(exc, calls[-1])
 +
 +    def test_wait_exception_no_exception(self):
 +        r = Retrying(wait=tenacity.wait_exception(lambda e: 1.0))
-+        rs = make_retry_state(1, 0, last_result=tenacity.Future.construct(1, "x", False))
++        fut = tenacity.Future(1)
++        fut.set_result(None)
++        rs = RetryCallState(r, None, (), {})
++        rs.outcome = fut
 +        with self.assertRaises(RuntimeError):
 +            r.wait(rs)
++
++    def test_wait_exception_in_retry(self):
++        seen = []
++        sleeps = []
++
++        @retry(
++            stop=tenacity.stop_after_attempt(3),
++            wait=tenacity.wait_exception(lambda e: seen.append(e) or 2.0),
++            sleep=sleeps.append,
++            reraise=True,
++        )
++        def f():
++            raise ValueError("x")
++
++        with self.assertRaises(ValueError):
++            f()
++        self.assertEqual([2.0, 2.0], sleeps)
++        self.assertTrue(all(isinstance(e, ValueError) for e in seen))

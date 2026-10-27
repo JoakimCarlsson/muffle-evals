@@ -1,1 +1,0 @@
-Done. `decodeMap` in `decode.go` now turns non-string keys into text for string-keyed maps, so `42: 100` gives `map[42:100]`. The old code converted the integer to a rune, which is where `*` came from. I added `TestDecoder_IntegerKeyToStringMap`, and `go test ./...` passes. Nothing committed.

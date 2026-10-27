@@ -1,12 +1,5 @@
-diff --git a/changelog.d/+pre-init-defaults.change.md b/changelog.d/+pre-init-defaults.change.md
-new file mode 100644
-index 0000000..c221241
---- /dev/null
-+++ b/changelog.d/+pre-init-defaults.change.md
-@@ -0,0 +1 @@
-+Fixed `__attrs_pre_init__` receiving default values instead of the passed ones for attributes with defaults or factories.
 diff --git a/src/attr/_make.py b/src/attr/_make.py
-index e84d979..7459547 100644
+index e84d979..103e80d 100644
 --- a/src/attr/_make.py
 +++ b/src/attr/_make.py
 @@ -2322,7 +2322,7 @@ def _attrs_to_init_script(
@@ -14,37 +7,7 @@ index e84d979..7459547 100644
  
      args = ", ".join(args)
 -    pre_init_args = args
-+    pre_init_args = ", ".join(a.split("=")[0] for a in args.split(", ") if a)
++    pre_init_args = ", ".join(arg.split("=")[0] for arg in args.split(", "))
      if kw_only_args:
          # leading comma & kw_only args
          args += f"{', ' if args else ''}*, {', '.join(kw_only_args)}"
-diff --git a/tests/test_make.py b/tests/test_make.py
-index 80c0066..5220f47 100644
---- a/tests/test_make.py
-+++ b/tests/test_make.py
-@@ -659,6 +659,25 @@ class TestAttributes:
- 
-         assert 11 == getattr(c, "z", None)
- 
-+    @pytest.mark.usefixtures("with_and_without_validation")
-+    def test_pre_init_args_with_defaults(self):
-+        """
-+        Verify that __attrs_pre_init__ gets the passed values, not the
-+        defaults, for attributes with defaults and factories.
-+        """
-+
-+        @attr.s
-+        class C:
-+            x = attr.ib()
-+            y = attr.ib(default=100)
-+            z = attr.ib(factory=dict)
-+
-+            def __attrs_pre_init__(self2, x, y, z):
-+                self2.seen = (x, y, z)
-+
-+        assert (1, 2, {"a": 1}) == C(1, 2, {"a": 1}).seen
-+        assert (1, 100, attr.NOTHING) == C(1).seen
-+
-     @pytest.mark.usefixtures("with_and_without_validation")
-     def test_pre_init_kwargs(self):
-         """

@@ -298,6 +298,15 @@ export function withBase(input: string, base: string) {
   return joinURL(_base, input);
 }
 
+// The base must match a complete path segment, allowing query and hash suffixes.
+function hasBase(input: string, base: string): boolean {
+  if (!input.startsWith(base)) {
+    return false;
+  }
+  const next = input[base.length];
+  return next === undefined || next === "/" || next === "?" || next === "#";
+}
+
 /**
  * Removes the base from the URL or pathname.
  *
@@ -321,14 +330,6 @@ export function withoutBase(input: string, base: string) {
   }
   const trimmed = input.slice(_base.length);
   return trimmed[0] === "/" ? trimmed : "/" + trimmed;
-}
-
-function hasBase(input: string, base: string): boolean {
-  if (!input.startsWith(base)) {
-    return false;
-  }
-  const next = input[base.length];
-  return !next || next === "/" || next === "?" || next === "#";
 }
 
 /**

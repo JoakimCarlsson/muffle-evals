@@ -11,7 +11,6 @@ export type Argv<T = Record<string, any>> = T & {
   _: string[];
 };
 
-/** Parse CLI arguments, resolving aliases before applying defaults. */
 export function parseRawArgs<T = Record<string, any>>(
   args: string[] = [],
   opts: ParseOptions = {},
@@ -141,6 +140,16 @@ export function parseRawArgs<T = Record<string, any>>(
     (out as any)[key] = value;
   }
 
+  for (const [name, value] of Object.entries(defaults)) {
+    const aliases = mainToAliases.get(name) || [];
+    if (
+      (out as any)[name] === undefined &&
+      aliases.every((alias) => (out as any)[alias] === undefined)
+    ) {
+      (out as any)[name] = value;
+    }
+  }
+
   // Apply negated flags (with alias resolution)
   for (const [name] of Object.entries(negatedFlags)) {
     // Set the flag itself
@@ -158,16 +167,6 @@ export function parseRawArgs<T = Record<string, any>>(
       for (const alias of aliases) {
         (out as any)[alias] = false;
       }
-    }
-  }
-
-  for (const [name, value] of Object.entries(defaults)) {
-    const aliases = mainToAliases.get(name) || [];
-    if (
-      (out as any)[name] === undefined &&
-      aliases.every((alias) => (out as any)[alias] === undefined)
-    ) {
-      (out as any)[name] = value;
     }
   }
 

@@ -1,1 +1,0 @@
-Done. `Argument.make_metavar` in `src/click/core.py` no longer wraps a metavar that already has brackets, so optional `Choice` and `DateTime` arguments show single brackets. I added a parametrized test in `tests/test_arguments.py`, and the full suite passes (1660 passed). I did not run `--help` on your exact example.

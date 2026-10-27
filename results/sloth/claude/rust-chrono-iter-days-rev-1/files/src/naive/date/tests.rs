@@ -730,42 +730,37 @@ fn test_date_parse_from_str() {
 
 #[test]
 fn test_day_iterator_limit() {
-    assert_eq!(NaiveDate::from_ymd_opt(MAX_YEAR, 12, 29).unwrap().iter_days().take(4).count(), 2);
-    assert_eq!(
-        NaiveDate::from_ymd_opt(MAX_YEAR, 12, 28).unwrap().iter_days().rev().take(4).count(),
-        3
-    );
-
-    let start = NaiveDate::from_ymd_opt(2025, 10, 10).unwrap();
-    let mut forward: Vec<_> = start.iter_days().take(7).collect();
-    forward.reverse();
-    assert_eq!(forward, start.iter_days().take(7).rev().collect::<Vec<_>>());
-    assert_eq!(start.iter_days().next_back(), NaiveDate::MAX.pred_opt());
-
-    let mut iter = NaiveDate::from_ymd_opt(MAX_YEAR, 12, 28).unwrap().iter_days();
-    assert_eq!(iter.next_back(), NaiveDate::from_ymd_opt(MAX_YEAR, 12, 30));
-    assert_eq!(iter.next(), NaiveDate::from_ymd_opt(MAX_YEAR, 12, 28));
-    assert_eq!(iter.next(), NaiveDate::from_ymd_opt(MAX_YEAR, 12, 29));
-    assert_eq!((iter.next(), iter.next_back()), (None, None));
+    let last = NaiveDate::from_ymd_opt(MAX_YEAR, 12, 29).unwrap();
+    assert_eq!(last.iter_days().take(4).count(), 3);
+    assert_eq!(last.iter_days().next_back(), Some(NaiveDate::MAX));
+    assert_eq!(last.iter_days().len(), 3);
+    assert_eq!(NaiveDate::MAX.iter_days().collect::<Vec<_>>(), [NaiveDate::MAX]);
 }
 
 #[test]
 fn test_week_iterator_limit() {
-    assert_eq!(NaiveDate::from_ymd_opt(MAX_YEAR, 12, 12).unwrap().iter_weeks().take(4).count(), 2);
-    assert_eq!(
-        NaiveDate::from_ymd_opt(MAX_YEAR, 12, 5).unwrap().iter_weeks().rev().take(4).count(),
-        3
-    );
+    let last = NaiveDate::from_ymd_opt(MAX_YEAR, 12, 12).unwrap();
+    assert_eq!(last.iter_weeks().take(4).count(), 3);
+    assert_eq!(last.iter_weeks().next_back(), NaiveDate::from_ymd_opt(MAX_YEAR, 12, 26));
+    assert_eq!(last.iter_weeks().len(), 3);
+}
 
+#[test]
+fn test_iterator_double_ended() {
     let start = NaiveDate::from_ymd_opt(2025, 10, 10).unwrap();
-    let mut forward: Vec<_> = start.iter_weeks().take(7).collect();
-    forward.reverse();
-    assert_eq!(forward, start.iter_weeks().take(7).rev().collect::<Vec<_>>());
 
-    let mut iter = NaiveDate::from_ymd_opt(MAX_YEAR, 12, 5).unwrap().iter_weeks();
-    assert_eq!(iter.next_back(), NaiveDate::from_ymd_opt(MAX_YEAR, 12, 19));
-    assert_eq!(iter.next(), NaiveDate::from_ymd_opt(MAX_YEAR, 12, 5));
-    assert_eq!(iter.next(), NaiveDate::from_ymd_opt(MAX_YEAR, 12, 12));
+    let mut days: Vec<_> = start.iter_days().take(7).collect();
+    days.reverse();
+    assert_eq!(days, start.iter_days().take(7).rev().collect::<Vec<_>>());
+
+    let mut weeks: Vec<_> = start.iter_weeks().take(7).collect();
+    weeks.reverse();
+    assert_eq!(weeks, start.iter_weeks().take(7).rev().collect::<Vec<_>>());
+
+    let mut iter = NaiveDate::from_ymd_opt(MAX_YEAR, 12, 29).unwrap().iter_days();
+    assert_eq!(iter.next_back(), Some(NaiveDate::MAX));
+    assert_eq!(iter.next(), NaiveDate::from_ymd_opt(MAX_YEAR, 12, 29));
+    assert_eq!(iter.next_back(), NaiveDate::from_ymd_opt(MAX_YEAR, 12, 30));
     assert_eq!((iter.next(), iter.next_back()), (None, None));
 }
 

@@ -1,1 +1,1 @@
-Done. Added `WithFullJitter` in `backoff.go`, plus tests and a README section. Vet and tests pass. Nothing committed.
+Done. `WithFullJitter` added in `backoff.go`, with tests and a README entry. Tests pass.

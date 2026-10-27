@@ -1,2 +1,2 @@
 Done.
-Added `WithFullJitter`, docs, boundary and stop tests. Non-positive bases unchanged. `go build ./...` and `go test ./...` pass.
+Added `WithFullJitter` with `[0, base)` sampling, stop propagation, and unchanged nonpositive durations. Build and all tests passed.

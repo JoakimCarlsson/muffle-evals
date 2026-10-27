@@ -224,6 +224,23 @@ class TestWaitConditions(unittest.TestCase):
                 r = Retrying(wait=tenacity.wait_fixed(wait))
                 self.assertEqual(1, r.wait(make_retry_state(12, 6546)))
 
+    def test_wait_exception(self):
+        def predicate(exc):
+            return 5 if isinstance(exc, ValueError) else 60
+
+        r = Retrying(wait=tenacity.wait_exception(predicate))
+        for exc, expected in ((ValueError(), 5), (KeyError(), 60)):
+            fut = tenacity.Future(1)
+            fut.set_exception(exc)
+            self.assertEqual(
+                expected, r.wait(make_retry_state(1, 0, last_result=fut))
+            )
+
+    def test_wait_exception_without_exception(self):
+        r = Retrying(wait=tenacity.wait_exception(lambda e: 1))
+        with self.assertRaises(RuntimeError):
+            r.wait(make_retry_state(1, 0))
+
     def test_incrementing_sleep(self):
         for start, increment in (
             (500, 100),
@@ -417,16 +434,6 @@ class TestWaitConditions(unittest.TestCase):
     def _assert_inclusive_epsilon(self, wait, target, epsilon):
         self.assertLessEqual(wait, target + epsilon)
         self.assertGreaterEqual(wait, target - epsilon)
-
-    def test_wait_exception(self):
-        r = Retrying(
-            wait=tenacity.wait_exception(lambda e: 5.0 if isinstance(e, KeyError) else 9)
-        )
-        for exc, expected in ((KeyError(), 5.0), (ValueError(), 9)):
-            fut = tenacity.Future(1)
-            fut.set_exception(exc)
-            self.assertEqual(expected, r.wait(make_retry_state(1, 0, fut)))
-        self.assertRaises(RuntimeError, r.wait, make_retry_state(1, 0))
 
     def test_wait_chain(self):
         r = Retrying(

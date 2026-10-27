@@ -1,10 +1,4 @@
-Doc examples need rewriting: rev now starts from MAX.
+Done. `iter_days` and `iter_weeks` now keep a front and an end, so both ends walk the same range and `.take(7).rev()` matches your forward-then-reverse result. Tests and doctests for both iterators pass; I did not run the full suite.
 
-Done. `iter_days`/`iter_weeks` now track a remaining count; `next_back` starts at the true end (`NaiveDate::MAX` for days) and both ends meet.
-
-Behavior changes:
-- `.rev()` without `take` now starts from the end, not walking back toward `MIN`.
-- `NaiveDate::MAX` is now yielded, so limit tests went 2→3.
-- Doc examples and limit tests were updated, and I added `test_iterator_double_ended`.
-
-Lib `naive::date` tests and iterator doctests pass. `--all-features` fails on an rkyv feature conflict, so it was not run.
+- **`NaiveDate::MAX` still not yielded:** forward iteration already stopped before it, and the existing limit test relies on that. `len()` is unchanged, and `next_back()` returns `MAX - 1` for `iter_days`. Including `MAX` is a small change, but it would alter `len()` and that test.
+- **Changed `.rev()` behaviour:** `.rev()` now starts from the end of the range instead of walking backward from the start date. I rewrote the two doctests and the two `.rev()` limit tests to match.

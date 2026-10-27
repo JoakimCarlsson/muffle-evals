@@ -130,7 +130,7 @@ use core::{fmt, mem, ops, slice};
 /// An error returned by [`Slab::get_disjoint_mut`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GetDisjointMutError {
-    /// A key occurs more than once.
+    /// A key occurs more than once in the requested keys.
     OverlappingIndices,
     /// A key is past the end of the slab's slots.
     IndexOutOfBounds,
@@ -736,14 +736,13 @@ impl<T> Slab<T> {
         }
     }
 
-    /// Return mutable references to several values, in the order of `keys`.
+    /// Returns mutable references to the values at `keys`, in the same order.
     ///
-    /// Duplicate keys return [`GetDisjointMutError::OverlappingIndices`]
-    /// before any slots are checked. Otherwise, keys are checked in order:
-    /// a key past the end of the slots returns
-    /// [`GetDisjointMutError::IndexOutOfBounds`], and a vacant slot returns
-    /// [`GetDisjointMutError::IndexVacant`]. An empty array returns `Ok([])`.
-    /// Duplicate checking takes O(N²) time. This method does not allocate.
+    /// Duplicate keys return [`GetDisjointMutError::OverlappingIndices`], even
+    /// if another key is invalid. Otherwise, keys are checked in order: a key
+    /// past the end of the slots returns [`GetDisjointMutError::IndexOutOfBounds`],
+    /// and a vacant slot returns [`GetDisjointMutError::IndexVacant`].
+    /// An empty array returns `Ok([])`. Duplicate checking takes O(N²) time.
     ///
     /// # Examples
     ///
@@ -777,19 +776,19 @@ impl<T> Slab<T> {
         let mut result = mem::MaybeUninit::<[&mut T; N]>::uninit();
         let output = result.as_mut_ptr() as *mut &mut T;
         let entries = self.entries.as_mut_ptr();
-        for (i, &key) in keys.iter().enumerate() {
-            // SAFETY: Every key is in bounds and occupied, and all keys are
-            // distinct. Each reference therefore points to a separate entry.
-            // The slab is exclusively borrowed for the returned lifetime.
-            unsafe {
+        // SAFETY: All keys are in bounds, occupied, and distinct. Each reference
+        // borrows a different entry, and the slab remains exclusively borrowed
+        // for the lifetime of the returned references. Every output element is
+        // initialized before assume_init, including the vacuous N = 0 case.
+        unsafe {
+            for (i, &key) in keys.iter().enumerate() {
                 match &mut *entries.add(key) {
                     Entry::Occupied(value) => output.add(i).write(value),
                     Entry::Vacant(_) => unreachable!(),
                 }
             }
+            Ok(result.assume_init())
         }
-        // SAFETY: All N elements have been initialized, including when N is zero.
-        Ok(unsafe { result.assume_init() })
     }
 
     /// Return two mutable references to the values associated with the two

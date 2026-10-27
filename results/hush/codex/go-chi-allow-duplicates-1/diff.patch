@@ -16,14 +16,14 @@ index 37cd500..48c3601 100644
  		}
  		w.WriteHeader(405)
 diff --git a/mux_test.go b/mux_test.go
-index 3e3b18f..16310dd 100644
+index 3e3b18f..59e69e9 100644
 --- a/mux_test.go
 +++ b/mux_test.go
-@@ -428,6 +428,35 @@ func TestMethodNotAllowed(t *testing.T) {
- 	})
- }
+@@ -13,6 +13,38 @@ import (
+ 	"time"
+ )
  
-+func TestMethodNotAllowedOverlappingRoutes(t *testing.T) {
++func TestMethodNotAllowedDuplicateMethods(t *testing.T) {
 +	r := NewRouter()
 +	handler := func(w http.ResponseWriter, r *http.Request) {
 +		w.WriteHeader(http.StatusOK)
@@ -35,8 +35,8 @@ index 3e3b18f..16310dd 100644
 +		"/article/{b}-{c}-{d}",
 +	} {
 +		r.Post(pattern, handler)
++		r.Put(pattern, handler)
 +	}
-+	r.Put("/article/{a}", handler)
 +
 +	for i := 0; i < 2; i++ {
 +		resp := httptest.NewRecorder()
@@ -45,13 +45,16 @@ index 3e3b18f..16310dd 100644
 +			t.Fatalf("expected status 405, got %d", resp.Code)
 +		}
 +		allowed := resp.Header().Values("Allow")
-+		if len(allowed) != 2 || !((allowed[0] == "POST" && allowed[1] == "PUT") ||
-+			(allowed[0] == "PUT" && allowed[1] == "POST")) {
-+			t.Fatalf("expected POST and PUT exactly once, got %v", allowed)
++		counts := make(map[string]int)
++		for _, method := range allowed {
++			counts[method]++
++		}
++		if len(allowed) != 2 || counts[http.MethodPost] != 1 || counts[http.MethodPut] != 1 {
++			t.Fatalf("expected POST and PUT once each, got %v", allowed)
 +		}
 +	}
 +}
 +
- func TestMuxNestedMethodNotAllowed(t *testing.T) {
- 	r := NewRouter()
- 	r.Get("/root", func(w http.ResponseWriter, r *http.Request) {
+ func TestMuxBasic(t *testing.T) {
+ 	var count uint64
+ 	countermw := func(next http.Handler) http.Handler {

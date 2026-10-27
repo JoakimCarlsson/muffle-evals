@@ -1,12 +1,8 @@
-Now a test for the specified error cases.
+I added `Slab::get_disjoint_mut` and the public `GetDisjointMutError` enum, which is exported from the crate root. The full test suite passes, including a new test and your swap example as a doctest.
 
-I added `Slab::get_disjoint_mut` and the public `GetDisjointMutError` enum to `src/lib.rs`, and `cargo test` passes with a new test in `tests/slab.rs`. The enum is defined in the crate root, so `slab::GetDisjointMutError` works. It derives `Debug`, `Clone`, `PartialEq` and `Eq`.
-
-- **Behaviour:** the method follows the signature and ordering rules you gave. Duplicate keys are rejected first. The remaining keys are then checked in order, and the first bad one decides `IndexOutOfBounds` or `IndexVacant`. An empty array returns `Ok([])`.
-- **Unsafe:** callers need no unsafe code, but the method itself uses one small `unsafe` block. It runs only after every key has been checked as distinct, in bounds and occupied.
-- **Test:** it covers your swap example and `[]`. It also checks `[42, 2, 1, 2]`, `[1, 5]` and `[5, 1]` on a 5-slot slab with key 1 vacant.
-- **Beyond the spec:** I added a `Display` impl for the error, and a `std::error::Error` impl behind the `std` feature.
-- **MSRV:** `Cargo.toml` declares `rust-version = "1.46"`, but const generics need Rust 1.51 and `[T; N]::map` needs 1.55. The MSRV needs raising to 1.55, or the method needs a different implementation. I left `Cargo.toml` alone.
-- **Changelog:** I didn't add an entry to `CHANGELOG.md`.
-
-I made no commit.
+- **Behavior:** it follows your spec. It checks all keys for duplicates first, then checks the keys in order, so `[42, 2, 1, 2]` gives `OverlappingIndices`. On the 5-slot slab with key 1 vacant, `[1, 5]` gives `IndexVacant` and `[5, 1]` gives `IndexOutOfBounds`. An empty key array returns `Ok([])`.
+- **Unsafe code:** callers need no unsafe, but the function uses one small `unsafe` block internally. It builds the `[&mut T; N]` from a raw pointer, and only after every key has been checked as in bounds, occupied and unique.
+- **Extra trait impls:** beyond what you asked, I gave the error `Display` and, with the `std` feature, `std::error::Error`.
+- **MSRV bump:** I raised `rust-version` in `Cargo.toml` from 1.46 to 1.63. Const generics need 1.51, and I used `core::array::from_fn`, which needs 1.63. If you'd rather keep a lower MSRV, say so and I can build the array another way.
+- **Tests and changelog:** I added a `get_disjoint_mut` test in `tests/slab.rs` and an "Unreleased" entry in `CHANGELOG.md`.
+- **Not done:** nothing is committed, as your instructions say.

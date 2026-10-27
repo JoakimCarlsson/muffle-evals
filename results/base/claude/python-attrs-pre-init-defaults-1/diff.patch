@@ -1,19 +1,19 @@
 diff --git a/changelog.d/pre-init-defaults.change.md b/changelog.d/pre-init-defaults.change.md
 new file mode 100644
-index 0000000..c0144ab
+index 0000000..8f6d9c4
 --- /dev/null
 +++ b/changelog.d/pre-init-defaults.change.md
 @@ -0,0 +1 @@
-+Fixed `__attrs_pre_init__` receiving default values instead of the passed values for positional attributes with defaults.
++`__attrs_pre_init__` now receives the values passed to `__init__` for positional attributes that have defaults, instead of their defaults.
 diff --git a/src/attr/_make.py b/src/attr/_make.py
-index e84d979..ef5024b 100644
+index e84d979..91ecd64 100644
 --- a/src/attr/_make.py
 +++ b/src/attr/_make.py
 @@ -2321,8 +2321,9 @@ def _attrs_to_init_script(
  
          lines.append(f"BaseException.__init__(self, {vals})")
  
-+    # We need to remove the defaults from the positional args.
++    # Pass the received values on, not the defaults.
 +    pre_init_args = ", ".join(a.split("=")[0] for a in args)
      args = ", ".join(args)
 -    pre_init_args = args
@@ -21,30 +21,31 @@ index e84d979..ef5024b 100644
          # leading comma & kw_only args
          args += f"{', ' if args else ''}*, {', '.join(kw_only_args)}"
 diff --git a/tests/test_make.py b/tests/test_make.py
-index 80c0066..b4ff884 100644
+index 80c0066..699858b 100644
 --- a/tests/test_make.py
 +++ b/tests/test_make.py
-@@ -659,6 +659,23 @@ class TestAttributes:
+@@ -2749,3 +2749,24 @@ class TestMatchArgs:
  
-         assert 11 == getattr(c, "z", None)
- 
-+    @pytest.mark.usefixtures("with_and_without_validation")
-+    def test_pre_init_args_with_defaults(self):
-+        """
-+        __attrs_pre_init__ gets the passed values, not the defaults.
-+        """
+         C1 = make_class("C1", {"a": attr.ib(kw_only=True), "b": attr.ib()})
+         assert ("b",) == C1.__match_args__
 +
-+        @attr.s
-+        class C:
-+            x = attr.ib()
-+            y = attr.ib(default=100)
-+            z = attr.ib(factory=dict)
 +
-+            def __attrs_pre_init__(self2, x, y, z):
-+                self2.seen = (x, y, z)
++def test_pre_init_receives_passed_values_for_defaulted_args():
++    """
++    Values given for attributes with defaults reach __attrs_pre_init__.
++    """
++    seen = []
 +
-+        assert (1, 2, {"a": 1}) == C(1, 2, {"a": 1}).seen
++    @attr.s
++    class C:
++        a = attr.ib()
++        b = attr.ib(default=100)
++        c = attr.ib(factory=dict)
++        d = attr.ib(default=100, kw_only=True)
 +
-     @pytest.mark.usefixtures("with_and_without_validation")
-     def test_pre_init_kwargs(self):
-         """
++        def __attrs_pre_init__(self, a, b, c, d):
++            seen.append((a, b, c, d))
++
++    C(1, 2, {"x": 1}, d=3)
++
++    assert [(1, 2, {"x": 1}, 3)] == seen

@@ -1,25 +1,25 @@
 diff --git a/mux.go b/mux.go
-index 37cd500..34d4ebc 100644
+index 37cd500..3b67039 100644
 --- a/mux.go
 +++ b/mux.go
 @@ -523,7 +523,12 @@ func (mx *Mux) updateRouteHandler() {
  // methods for the route.
  func methodNotAllowedHandler(methodsAllowed ...methodTyp) func(w http.ResponseWriter, r *http.Request) {
  	return func(w http.ResponseWriter, r *http.Request) {
-+		seen := make(map[methodTyp]bool, len(methodsAllowed))
++		seen := make(map[methodTyp]struct{}, len(methodsAllowed))
  		for _, m := range methodsAllowed {
-+			if seen[m] {
++			if _, ok := seen[m]; ok {
 +				continue
 +			}
-+			seen[m] = true
++			seen[m] = struct{}{}
  			w.Header().Add("Allow", reverseMethodMap[m])
  		}
  		w.WriteHeader(405)
 diff --git a/mux_test.go b/mux_test.go
-index 3e3b18f..21b9eab 100644
+index 3e3b18f..12e0ecb 100644
 --- a/mux_test.go
 +++ b/mux_test.go
-@@ -428,6 +428,38 @@ func TestMethodNotAllowed(t *testing.T) {
+@@ -428,6 +428,39 @@ func TestMethodNotAllowed(t *testing.T) {
  	})
  }
  
@@ -29,28 +29,29 @@ index 3e3b18f..21b9eab 100644
 +	handler := func(w http.ResponseWriter, r *http.Request) {
 +		w.WriteHeader(http.StatusOK)
 +	}
-+	for _, pattern := range []string{
-+		"/article/1-2-3",
-+		"/article/{a}",
-+		"/article/{b}-{c}",
-+		"/article/{b}-{c}-{d}",
-+	} {
-+		r.Post(pattern, handler)
++	for _, path := range []string{"/article/1-2-3", "/article/{a}", "/article/{b}-{c}", "/article/{b}-{c}-{d}"} {
++		r.Post(path, handler)
 +	}
-+	r.Put("/article/{a}", handler)
 +
 +	ts := httptest.NewServer(r)
 +	defer ts.Close()
 +
-+	for _, path := range []string{"/article/1-2-3", "/article/other"} {
-+		resp, _ := testRequest(t, ts, "GET", path, nil)
++	for _, multipleMethods := range []bool{false, true} {
++		if multipleMethods {
++			r.Put("/article/{a}", handler)
++		}
++		resp, _ := testRequest(t, ts, "GET", "/article/1-2-3", nil)
 +		if resp.StatusCode != http.StatusMethodNotAllowed {
 +			t.Fatal(resp.Status)
 +		}
 +		allowedMethods := resp.Header.Values("Allow")
-+		if len(allowedMethods) != 2 || ((allowedMethods[0] != "POST" || allowedMethods[1] != "PUT") &&
-+			(allowedMethods[1] != "POST" || allowedMethods[0] != "PUT")) {
-+			t.Fatalf("%s: expected Allow headers POST, PUT; got %v", path, allowedMethods)
++		counts := make(map[string]int)
++		for _, method := range allowedMethods {
++			counts[method]++
++		}
++		if counts["POST"] != 1 || (!multipleMethods && len(allowedMethods) != 1) ||
++			(multipleMethods && (counts["PUT"] != 1 || len(allowedMethods) != 2)) {
++			t.Fatal("Allow header should contain each registered method once. Received: ", allowedMethods)
 +		}
 +	}
 +}

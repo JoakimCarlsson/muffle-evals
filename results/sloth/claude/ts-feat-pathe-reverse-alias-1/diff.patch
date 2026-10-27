@@ -1,32 +1,33 @@
 diff --git a/src/utils.ts b/src/utils.ts
-index 6ec11c1..d348e32 100644
+index 6ec11c1..6c833d3 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
-@@ -74,6 +74,31 @@ export function resolveAlias(path: string, aliases: Record<string, string>) {
+@@ -74,6 +74,32 @@ export function resolveAlias(path: string, aliases: Record<string, string>) {
    return _path;
  }
  
 +/**
-+ * Finds every aliased form of a real path, the reverse of `resolveAlias`.
++ * Finds every aliased form of a real path, the opposite of `resolveAlias`.
 + *
-+ * @param path - The real path string to find aliases for.
-+ * @param aliases - A set of alias mappings to use for resolution.
-+ * @returns the aliased paths, longest first, or an empty array if no alias matches.
++ * @param path - The real path to find aliases for.
++ * @param aliases - A set of alias mappings to use, as accepted by `resolveAlias`.
++ * @returns the aliased paths sorted longest first, or an empty array if no alias matches.
 + */
 +export function reverseResolveAlias(
 +  path: string,
 +  aliases: Record<string, string>,
-+): string[] {
++) {
 +  const _path = normalizeWindowsPath(path);
 +  const matches: string[] = [];
-+  for (const [alias, target] of Object.entries(normalizeAliases(aliases))) {
-+    const _to = normalizeWindowsPath(target).replace(/\/+$/, "");
-+    if (_path === _to) {
-+      matches.push(alias);
-+    } else if (_path.startsWith(_to) && _path[_to.length] === "/") {
-+      const _alias = hasTrailingSlash(alias) ? alias.slice(0, -1) : alias;
-+      matches.push(_alias + _path.slice(_to.length));
++  for (const [alias, to] of Object.entries(normalizeAliases(aliases))) {
++    const _to = normalizeWindowsPath(to).replace(/\/+$/, "");
++    if (!_path.startsWith(_to) || !pathSeparators.has(_path[_to.length])) {
++      continue;
 +    }
++    const rest = _path.slice(_to.length);
++    matches.push(
++      hasTrailingSlash(alias) ? alias + rest.slice(1) : alias + rest,
++    );
 +  }
 +  return matches.sort((a, b) => b.length - a.length);
 +}
@@ -35,7 +36,7 @@ index 6ec11c1..d348e32 100644
   * Extracts the filename from a given path, excluding any directory paths and the file extension.
   *
 diff --git a/test/utils.spec.ts b/test/utils.spec.ts
-index 51ad676..5b8338e 100644
+index 51ad676..9709b84 100644
 --- a/test/utils.spec.ts
 +++ b/test/utils.spec.ts
 @@ -1,6 +1,11 @@
@@ -51,13 +52,13 @@ index 51ad676..5b8338e 100644
  
  describe("alias", () => {
    const _aliases = {
-@@ -56,6 +61,38 @@ describe("alias", () => {
-       expect(resolveAlias("~win/foo/bar", aliases)).toBe("C:/src/foo/bar");
+@@ -88,4 +93,36 @@ describe("filename", () => {
+       expect(filename(file)).toEqual(files[file]);
      });
-   });
+   }
 +
 +  describe("reverseResolveAlias", () => {
-+    it("returns every alias longest first", () => {
++    it("returns all aliases longest first", () => {
 +      expect(
 +        reverseResolveAlias("/root/some/assets/smth.jpg", {
 +          "~": "/root",
@@ -71,22 +72,20 @@ index 51ad676..5b8338e 100644
 +        }),
 +      ).toEqual(["@/index.js", "~"]);
 +    });
-+    it("matches on separator boundaries only", () => {
-+      expect(reverseResolveAlias("/rootfoo/a", { "@": "/root" })).toEqual([]);
-+    });
-+    it("respect ending with /", () => {
++    it("respects ending with /", () => {
 +      expect(reverseResolveAlias("/src/foo/bar", { "~/": "/src" })).toEqual([
 +        "~/foo/bar",
 +      ]);
 +      expect(reverseResolveAlias("/src", { "~/": "/src" })).toEqual(["~/"]);
-+      expect(
-+        reverseResolveAlias(String.raw`C:\src\foo`, { "~win/": "C:/src" }),
-+      ).toEqual(["~win/foo"]);
++    });
++    it("normalizes windows paths and respects separators", () => {
++      expect(reverseResolveAlias("C:\\src\\foo", { "~": "C:/src" })).toEqual([
++        "~/foo",
++      ]);
++      expect(reverseResolveAlias("/rootless/x", { "~": "/root" })).toEqual([]);
 +    });
 +    it("unchanged", () => {
 +      expect(reverseResolveAlias("./bar.js", { "@": "/root" })).toEqual([]);
 +    });
 +  });
  });
- 
- describe("filename", () => {

@@ -696,45 +696,35 @@ class TestAttributes:
 
         assert 12 == getattr(c, "z", None)
 
-    @pytest.mark.parametrize("as_keywords", [False, True])
-    @pytest.mark.parametrize("use_defaults", [False, True])
-    def test_pre_init_defaults(self, as_keywords, use_defaults):
+    @pytest.mark.parametrize("passing", ["positional", "keyword", "omitted"])
+    def test_pre_init_defaults(self, passing):
         """
-        Pre-init receives argument values, including defaults when omitted.
+        Pre-init receives supplied values for fields with defaults or factories.
         """
         received = []
 
         @attr.define
         class C:
-            required: int
-            _value: int = attr.field(default=100, alias="value")
-            mapping: dict = attr.field(factory=dict)
-            keyword: int = attr.field(kw_only=True)
-            optional: int = attr.field(default=100, kw_only=True)
-            ignored: int = attr.field(default=42, init=False)
+            required = attr.field()
+            value = attr.field(default=100)
+            mapping = attr.field(factory=dict)
+            keyword = attr.field(kw_only=True, default=100)
 
-            def __attrs_pre_init__(
-                self, required, value, mapping, *, keyword, optional
-            ):
-                received.append((required, value, mapping, keyword, optional))
+            def __attrs_pre_init__(self, required, value, mapping, *, keyword):
+                received.append((required, value, mapping, keyword))
 
         mapping = {"blah": "blah"}
-        if use_defaults:
-            inst = C(200, keyword=200)
-            assert received == [(200, 100, attr.NOTHING, 200, 100)]
-            assert inst.mapping == {}
+        if passing == "positional":
+            C(200, 200, mapping, keyword=200)
+        elif passing == "keyword":
+            C(required=200, value=200, mapping=mapping, keyword=200)
         else:
-            if as_keywords:
-                C(
-                    required=200,
-                    value=200,
-                    mapping=mapping,
-                    keyword=200,
-                    optional=200,
-                )
-            else:
-                C(200, 200, mapping, keyword=200, optional=200)
-            assert received == [(200, 200, mapping, 200, 200)]
+            C(200)
+
+        if passing == "omitted":
+            assert received == [(200, 100, attr.NOTHING, 100)]
+        else:
+            assert received == [(200, 200, mapping, 200)]
             assert received[0][2] is mapping
 
     @pytest.mark.usefixtures("with_and_without_validation")

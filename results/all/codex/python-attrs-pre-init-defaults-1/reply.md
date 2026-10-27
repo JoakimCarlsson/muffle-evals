@@ -1,5 +1,2 @@
-Pre-init forwarding bug. Checking generated arguments and existing tests.
-
-
 Done.
-Fixed pre-init argument forwarding; regression tests added. Tests: 1,343 passed, 5 skipped, 3 xfailed. Build/lint unavailable: missing `build`/`ruff`.
+Fixed `__attrs_pre_init__` forwarding for supplied defaulted arguments; added regression tests. Wheel built; 363 tests passed, 1 skipped, 1 xfailed. Full suite not run.

@@ -434,28 +434,29 @@ func TestMethodNotAllowedOverlappingRoutes(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}
-	for _, pattern := range []string{
-		"/article/1-2-3",
-		"/article/{a}",
-		"/article/{b}-{c}",
-		"/article/{b}-{c}-{d}",
-	} {
-		r.Post(pattern, handler)
+	for _, path := range []string{"/article/1-2-3", "/article/{a}", "/article/{b}-{c}", "/article/{b}-{c}-{d}"} {
+		r.Post(path, handler)
 	}
-	r.Put("/article/{a}", handler)
 
 	ts := httptest.NewServer(r)
 	defer ts.Close()
 
-	for _, path := range []string{"/article/1-2-3", "/article/other"} {
-		resp, _ := testRequest(t, ts, "GET", path, nil)
+	for _, multipleMethods := range []bool{false, true} {
+		if multipleMethods {
+			r.Put("/article/{a}", handler)
+		}
+		resp, _ := testRequest(t, ts, "GET", "/article/1-2-3", nil)
 		if resp.StatusCode != http.StatusMethodNotAllowed {
 			t.Fatal(resp.Status)
 		}
 		allowedMethods := resp.Header.Values("Allow")
-		if len(allowedMethods) != 2 || ((allowedMethods[0] != "POST" || allowedMethods[1] != "PUT") &&
-			(allowedMethods[1] != "POST" || allowedMethods[0] != "PUT")) {
-			t.Fatalf("%s: expected Allow headers POST, PUT; got %v", path, allowedMethods)
+		counts := make(map[string]int)
+		for _, method := range allowedMethods {
+			counts[method]++
+		}
+		if counts["POST"] != 1 || (!multipleMethods && len(allowedMethods) != 1) ||
+			(multipleMethods && (counts["PUT"] != 1 || len(allowedMethods) != 2)) {
+			t.Fatal("Allow header should contain each registered method once. Received: ", allowedMethods)
 		}
 	}
 }

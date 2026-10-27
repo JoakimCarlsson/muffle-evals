@@ -5,16 +5,20 @@ describe.each(["/admin", "/admin/"])("base boundaries (%s)", (base) => {
   test.each([
     ["/admin-dashboard", "/admin/admin-dashboard", "/admin-dashboard"],
     ["/administrator", "/admin/administrator", "/administrator"],
-    ["/admin.json", "/admin/admin.json", "/admin.json"],
+    [
+      "/admin-dashboard?x#y",
+      "/admin/admin-dashboard?x#y",
+      "/admin-dashboard?x#y",
+    ],
     ["/admin", "/admin", "/"],
     ["/admin/", "/admin/", "/"],
     ["/admin/dashboard", "/admin/dashboard", "/dashboard"],
     ["/admin?x", "/admin?x", "/?x"],
     ["/admin#section", "/admin#section", "/#section"],
     ["/admin?x#section", "/admin?x#section", "/?x#section"],
-  ])("%s", (input, added, removed) => {
-    expect(withBase(input, base)).toBe(added);
-    expect(withoutBase(input, base)).toBe(removed);
+  ])("%s", (input, prefixed, stripped) => {
+    expect(withBase(input, base)).toBe(prefixed);
+    expect(withoutBase(input, base)).toBe(stripped);
   });
 });
 

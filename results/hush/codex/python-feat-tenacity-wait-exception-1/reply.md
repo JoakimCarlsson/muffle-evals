@@ -1,2 +1,2 @@
 Done.
-Added exported `wait_exception(predicate)`, missing-exception `RuntimeError`, docs, tests. 126 tests passed, 1 skipped; formatting passed. Lint reports existing violations.
+Added exported `wait_exception`, missing-exception errors, docs, tests. Tests: 126 passed, 1 skipped. Lint blocked by existing violations; docs build unchecked.

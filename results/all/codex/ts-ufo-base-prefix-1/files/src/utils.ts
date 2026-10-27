@@ -292,7 +292,10 @@ export function withBase(input: string, base: string) {
     return input;
   }
   const _base = withoutTrailingSlash(base);
-  if (hasBase(input, _base)) {
+  if (
+    input.startsWith(_base) &&
+    /^(?:[/?#]|$)/.test(input.slice(_base.length))
+  ) {
     return input;
   }
   return joinURL(_base, input);
@@ -316,19 +319,14 @@ export function withoutBase(input: string, base: string) {
     return input;
   }
   const _base = withoutTrailingSlash(base);
-  if (!hasBase(input, _base)) {
+  if (
+    !input.startsWith(_base) ||
+    !/^(?:[/?#]|$)/.test(input.slice(_base.length))
+  ) {
     return input;
   }
   const trimmed = input.slice(_base.length);
   return trimmed[0] === "/" ? trimmed : "/" + trimmed;
-}
-
-/** Checks whether input starts with a complete base path. */
-function hasBase(input: string, base: string): boolean {
-  return (
-    input.startsWith(base) &&
-    (!input[base.length] || /[/?#]/.test(input[base.length]))
-  );
 }
 
 /**

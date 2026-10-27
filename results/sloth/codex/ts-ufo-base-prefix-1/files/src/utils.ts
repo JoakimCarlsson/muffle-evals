@@ -292,7 +292,10 @@ export function withBase(input: string, base: string) {
     return input;
   }
   const _base = withoutTrailingSlash(base);
-  if (input.startsWith(_base) && /^([/?#]|$)/.test(input.slice(_base.length))) {
+  if (
+    input.startsWith(_base) &&
+    (!input[_base.length] || /[/?#]/.test(input[_base.length]))
+  ) {
     return input;
   }
   return joinURL(_base, input);
@@ -318,7 +321,7 @@ export function withoutBase(input: string, base: string) {
   const _base = withoutTrailingSlash(base);
   if (
     !input.startsWith(_base) ||
-    !/^([/?#]|$)/.test(input.slice(_base.length))
+    (input[_base.length] && !/[/?#]/.test(input[_base.length]))
   ) {
     return input;
   }

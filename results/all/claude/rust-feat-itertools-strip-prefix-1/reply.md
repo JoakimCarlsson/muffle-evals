@@ -1,1 +1,0 @@
-Done. Added `strip_prefix`, `strip_prefix_by` and public `StripPrefixError` (`src/strip_prefix_err.rs`), plus doctests, a `str` parity test and a changelog line. All tests pass with `--all-features`. The `--no-default-features` lib test build fails on `catch_unwind` and `vec`. I didn't check whether that failure existed before my change.

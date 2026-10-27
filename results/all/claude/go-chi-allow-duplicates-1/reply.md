@@ -1,3 +1,3 @@
-Dedupe at the handler, single point.
+Dedupe at append in tree.go.
 
-Done. `methodNotAllowedHandler` in `mux.go` now skips methods it already added, so `Allow` lists each method once. I added `TestMethodNotAllowedNoDuplicateAllow` for your example, and `go test .` passes. Nothing committed.
+Done. `tree.go` now skips a method already in `methodsAllowed` before appending, so each method shows once in `Allow`. I added `TestMuxMethodNotAllowedNoDuplicateAllow` to `mux_test.go`. All tests pass.

@@ -1320,8 +1320,7 @@ impl NaiveDate {
         self.format_localized_with_items(StrftimeItems::new_with_locale(fmt, locale), locale)
     }
 
-    /// Returns an iterator that steps by days from this date to, but not including,
-    /// [`NaiveDate::MAX`].
+    /// Returns an iterator that steps by days from this date through [`NaiveDate::MAX`], inclusive.
     ///
     /// # Example
     ///
@@ -1351,14 +1350,12 @@ impl NaiveDate {
     pub const fn iter_days(&self) -> NaiveDateDaysIterator {
         NaiveDateDaysIterator {
             value: *self,
-            remaining: NaiveDate::MAX.signed_duration_since(*self).num_days() as usize,
+            remaining: (NaiveDate::MAX.signed_duration_since(*self).num_days() / 1) as usize + 1,
         }
     }
 
-    /// Returns an iterator that steps by weeks starting at this date.
-    ///
-    /// Only dates that can be followed by another representable date one week later
-    /// are returned.
+    /// Returns an iterator that steps by weeks from this date through the last representable date
+    /// with the same weekday, inclusive.
     ///
     /// # Example
     ///
@@ -1388,7 +1385,7 @@ impl NaiveDate {
     pub const fn iter_weeks(&self) -> NaiveDateWeeksIterator {
         NaiveDateWeeksIterator {
             value: *self,
-            remaining: NaiveDate::MAX.signed_duration_since(*self).num_weeks() as usize,
+            remaining: (NaiveDate::MAX.signed_duration_since(*self).num_days() / 7) as usize + 1,
         }
     }
 
@@ -2230,12 +2227,19 @@ impl Iterator for NaiveDateDaysIterator {
     type Item = NaiveDate;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining == 0 {
+        self.nth(0)
+    }
+
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        if n >= self.remaining {
+            self.remaining = 0;
             return None;
         }
-        let current = self.value;
-        self.value = current.succ_opt()?;
-        self.remaining -= 1;
+        let current = self.value.checked_add_days(Days::new(n as u64 * 1)).unwrap();
+        self.remaining -= n + 1;
+        if self.remaining > 0 {
+            self.value = current.checked_add_days(Days::new(1)).unwrap();
+        }
         Some(current)
     }
 
@@ -2248,11 +2252,16 @@ impl ExactSizeIterator for NaiveDateDaysIterator {}
 
 impl DoubleEndedIterator for NaiveDateDaysIterator {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.remaining == 0 {
+        self.nth_back(0)
+    }
+
+    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
+        if n >= self.remaining {
+            self.remaining = 0;
             return None;
         }
-        self.remaining -= 1;
-        self.value.checked_add_days(Days::new(self.remaining as u64))
+        self.remaining -= n + 1;
+        self.value.checked_add_days(Days::new(self.remaining as u64 * 1))
     }
 }
 
@@ -2269,12 +2278,19 @@ impl Iterator for NaiveDateWeeksIterator {
     type Item = NaiveDate;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining == 0 {
+        self.nth(0)
+    }
+
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        if n >= self.remaining {
+            self.remaining = 0;
             return None;
         }
-        let current = self.value;
-        self.value = current.checked_add_days(Days::new(7))?;
-        self.remaining -= 1;
+        let current = self.value.checked_add_days(Days::new(n as u64 * 7)).unwrap();
+        self.remaining -= n + 1;
+        if self.remaining > 0 {
+            self.value = current.checked_add_days(Days::new(7)).unwrap();
+        }
         Some(current)
     }
 
@@ -2287,10 +2303,15 @@ impl ExactSizeIterator for NaiveDateWeeksIterator {}
 
 impl DoubleEndedIterator for NaiveDateWeeksIterator {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.remaining == 0 {
+        self.nth_back(0)
+    }
+
+    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
+        if n >= self.remaining {
+            self.remaining = 0;
             return None;
         }
-        self.remaining -= 1;
+        self.remaining -= n + 1;
         self.value.checked_add_days(Days::new(self.remaining as u64 * 7))
     }
 }

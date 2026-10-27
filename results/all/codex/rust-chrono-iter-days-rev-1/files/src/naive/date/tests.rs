@@ -746,51 +746,44 @@ fn test_week_iterator_limit() {
     );
 }
 
-/// Checks reverse windows, shared bounds, lengths, and exhaustion for both step sizes.
+/// Checks reversed windows, shared bounds, and exhaustion for both step sizes.
 #[test]
 fn test_date_iterator_reverse() {
     let start = NaiveDate::from_ymd_opt(2025, 10, 10).unwrap();
-    for offset in 0..15 {
-        let near_max = NaiveDate::MAX.checked_sub_days(Days::new(offset)).unwrap();
-        for date in [start, NaiveDate::MIN, near_max] {
-            for count in [0, 1, 7, 20] {
-                let mut days: Vec<_> = date.iter_days().take(count).collect();
-                days.reverse();
-                assert_eq!(days, date.iter_days().take(count).rev().collect::<Vec<_>>());
-                let mut weeks: Vec<_> = date.iter_weeks().take(count).collect();
-                weeks.reverse();
-                assert_eq!(weeks, date.iter_weeks().take(count).rev().collect::<Vec<_>>());
-            }
+    let mut days: Vec<_> = start.iter_days().take(7).collect();
+    days.reverse();
+    assert_eq!(days, start.iter_days().take(7).rev().collect::<Vec<_>>());
+    let mut weeks: Vec<_> = start.iter_weeks().take(7).collect();
+    weeks.reverse();
+    assert_eq!(weeks, start.iter_weeks().take(7).rev().collect::<Vec<_>>());
+
+    let mut days = start.iter_days();
+    assert_eq!(days.next_back(), NaiveDate::MAX.pred_opt());
+    assert_eq!(days.next(), Some(start));
+    assert_eq!(days.len(), NaiveDate::MAX.signed_duration_since(start).num_days() as usize - 2);
+    let mut weeks = start.iter_weeks();
+    let count = weeks.len();
+    assert_eq!(weeks.next_back(), start.checked_add_days(Days::new((count as u64 - 1) * 7)));
+    assert_eq!(weeks.next(), Some(start));
+    assert_eq!(weeks.len(), count - 2);
+
+    for offset in 0..22 {
+        let start = NaiveDate::MAX.checked_sub_days(Days::new(offset)).unwrap();
+        let mut days = start.iter_days();
+        let mut weeks = start.iter_weeks();
+        for remaining in (1..=days.len()).rev() {
+            assert!(if remaining % 2 == 0 { days.next() } else { days.next_back() }.is_some());
+            assert_eq!(days.len(), remaining - 1);
         }
-        let mut days = near_max.iter_days();
-        let mut weeks = near_max.iter_weeks();
-        while days.len() > 0 {
-            let len = days.len();
-            assert!(days.next().is_some());
-            assert_eq!(days.len(), len - 1);
-            if days.len() > 0 {
-                assert!(days.next_back().is_some());
-                assert_eq!(days.len(), len - 2);
-            }
-        }
-        while weeks.len() > 0 {
-            let len = weeks.len();
-            assert!(weeks.next_back().is_some());
-            assert_eq!(weeks.len(), len - 1);
-            if weeks.len() > 0 {
-                assert!(weeks.next().is_some());
-                assert_eq!(weeks.len(), len - 2);
-            }
+        for remaining in (1..=weeks.len()).rev() {
+            assert!(if remaining % 2 == 0 { weeks.next() } else { weeks.next_back() }.is_some());
+            assert_eq!(weeks.len(), remaining - 1);
         }
         assert_eq!(days.next(), None);
         assert_eq!(days.next_back(), None);
         assert_eq!(weeks.next(), None);
         assert_eq!(weeks.next_back(), None);
     }
-    assert_eq!(start.iter_days().next_back(), NaiveDate::MAX.pred_opt());
-    let mut weeks = start.iter_weeks();
-    let last = start.checked_add_days(Days::new((weeks.len() as u64 - 1) * 7));
-    assert_eq!(weeks.next_back(), last);
 }
 
 #[test]

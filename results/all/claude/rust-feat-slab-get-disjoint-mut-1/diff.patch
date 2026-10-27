@@ -1,18 +1,5 @@
-diff --git a/CHANGELOG.md b/CHANGELOG.md
-index f46a797..5b53db7 100644
---- a/CHANGELOG.md
-+++ b/CHANGELOG.md
-@@ -1,3 +1,8 @@
-+# Unreleased
-+
-+* Add `Slab::get_disjoint_mut` and `GetDisjointMutError`
-+* Raise MSRV to 1.55
-+
- # 0.4.9 (August 22, 2023)
- 
- * Avoid reallocations in `Slab::clone_from` (#137)
 diff --git a/Cargo.toml b/Cargo.toml
-index 9e0c186..4b35df5 100644
+index 9e0c186..e237215 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -9,7 +9,7 @@ name = "slab"
@@ -20,12 +7,12 @@ index 9e0c186..4b35df5 100644
  authors = ["Carl Lerche <me@carllerche.com>"]
  edition = "2018"
 -rust-version = "1.46"
-+rust-version = "1.55"
++rust-version = "1.51"
  license = "MIT"
  description = "Pre-allocated storage for a uniform data type"
  repository = "https://github.com/tokio-rs/slab"
 diff --git a/src/lib.rs b/src/lib.rs
-index cd5fe0e..b2bf984 100644
+index cd5fe0e..8d9c12b 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -127,6 +127,17 @@ use alloc::vec::{self, Vec};
@@ -46,15 +33,15 @@ index cd5fe0e..b2bf984 100644
  /// Pre-allocated storage for a uniform data type
  ///
  /// See the [module documentation] for more details.
-@@ -725,6 +736,56 @@ impl<T> Slab<T> {
+@@ -725,6 +736,51 @@ impl<T> Slab<T> {
          }
      }
  
 +    /// Return mutable references to the values associated with the given keys
 +    /// simultaneously, in the same order as `keys`.
 +    ///
-+    /// Overlapping keys are rejected first, then the keys are checked in order
-+    /// and the first out-of-bounds or vacant key decides the error.
++    /// Overlapping keys are reported first, then the keys are checked in order
++    /// and the first one that is out of bounds or vacant decides the error.
 +    ///
 +    /// # Examples
 +    ///
@@ -77,37 +64,32 @@ index cd5fe0e..b2bf984 100644
 +        &mut self,
 +        keys: [usize; N],
 +    ) -> Result<[&mut T; N], GetDisjointMutError> {
-+        for (i, key) in keys.iter().enumerate() {
-+            if keys[..i].contains(key) {
++        for i in 0..N {
++            if keys[i + 1..].contains(&keys[i]) {
 +                return Err(GetDisjointMutError::OverlappingIndices);
 +            }
 +        }
-+        for &key in keys.iter() {
-+            match self.entries.get(key) {
++        let mut ptrs = [core::ptr::null_mut::<T>(); N];
++        for (ptr, &key) in ptrs.iter_mut().zip(keys.iter()) {
++            match self.entries.get_mut(key) {
 +                None => return Err(GetDisjointMutError::IndexOutOfBounds),
 +                Some(Entry::Vacant(_)) => return Err(GetDisjointMutError::IndexVacant),
-+                Some(Entry::Occupied(_)) => {}
++                Some(Entry::Occupied(val)) => *ptr = val,
 +            }
 +        }
-+        let base = self.entries.as_mut_ptr();
-+        // SAFETY: keys are in bounds, occupied and pairwise distinct, so each
-+        // reference points at a different live entry.
-+        Ok(keys.map(|key| unsafe {
-+            match &mut *base.add(key) {
-+                Entry::Occupied(val) => val,
-+                Entry::Vacant(_) => core::hint::unreachable_unchecked(),
-+            }
-+        }))
++        // SAFETY: the keys are distinct, so the pointers refer to different
++        // entries, and each came from a live `&mut` borrowed from `self`.
++        Ok(unsafe { core::ptr::read(&ptrs as *const [*mut T; N] as *const [&mut T; N]) })
 +    }
 +
      /// Return two mutable references to the values associated with the two
      /// given keys simultaneously.
      ///
 diff --git a/tests/slab.rs b/tests/slab.rs
-index dd71f99..12875cf 100644
+index dd71f99..010bed9 100644
 --- a/tests/slab.rs
 +++ b/tests/slab.rs
-@@ -730,3 +730,22 @@ fn clone_from() {
+@@ -730,3 +730,30 @@ fn clone_from() {
      assert_eq!(iter2.next(), None);
      assert!(slab2.capacity() >= 10);
  }
@@ -123,10 +105,18 @@ index dd71f99..12875cf 100644
 +    let [a, b] = slab.get_disjoint_mut([3, 0]).unwrap();
 +    std::mem::swap(a, b);
 +    assert_eq!((slab[3], slab[0]), (0, 3));
-+    assert_eq!(slab.get_disjoint_mut([]), Ok([]));
 +
-+    use GetDisjointMutError::*;
-+    assert_eq!(slab.get_disjoint_mut([42, 2, 1, 2]), Err(OverlappingIndices));
-+    assert_eq!(slab.get_disjoint_mut([1, 5]), Err(IndexVacant));
-+    assert_eq!(slab.get_disjoint_mut([5, 1]), Err(IndexOutOfBounds));
++    assert_eq!(slab.get_disjoint_mut([]), Ok([]));
++    assert_eq!(
++        slab.get_disjoint_mut([42, 2, 1, 2]),
++        Err(GetDisjointMutError::OverlappingIndices)
++    );
++    assert_eq!(
++        slab.get_disjoint_mut([1, 5]),
++        Err(GetDisjointMutError::IndexVacant)
++    );
++    assert_eq!(
++        slab.get_disjoint_mut([5, 1]),
++        Err(GetDisjointMutError::IndexOutOfBounds)
++    );
 +}

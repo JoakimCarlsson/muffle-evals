@@ -1,9 +1,9 @@
-I’ll check the path encoding set, add the missing caret, and run the relevant tests.
+I’ll check the path encoding set, add the caret, and run the relevant tests.
 
-The fix makes three existing WHATWG tests pass that were marked as expected failures. I’ll remove those entries. The new regression test also covers parsing, relative URLs, path setters, and path segment insertion.
+The regression test reproduced the bug, and the fix also makes three existing WHATWG tests pass. I’ll remove those tests from the expected-failure list and rerun the suite.
 
-Fixed the path percent-encode set to include `^`, so `http://localhost/a^b` now becomes `http://localhost/a%5Eb`.
+Fixed the path percent-encode set to include `^`, so `http://localhost/a^b` now serializes as `http://localhost/a%5Eb`.
 
-Added regression coverage and removed three expected-failure entries for WHATWG tests that now pass.
+Added regression coverage for parsing, path setters, path segments, and relative URLs. Removed three now-passing WHATWG tests from the expected-failure list.
 
-Validation: `cargo test -p url` and formatting checks passed.
+Validation: `cargo test -p url` passes.

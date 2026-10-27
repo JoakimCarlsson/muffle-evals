@@ -303,7 +303,7 @@ function isUnderBase(input: string, base: string) {
     return false;
   }
   const next = input[base.length];
-  return !next || next === "/" || next === "?" || next === "#";
+  return next === undefined || next === "/" || next === "?" || next === "#";
 }
 
 /**

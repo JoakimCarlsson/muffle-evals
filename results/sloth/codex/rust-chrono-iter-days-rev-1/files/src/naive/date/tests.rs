@@ -746,53 +746,54 @@ fn test_week_iterator_limit() {
     );
 }
 
-/// Both ends consume the same range, including when a window is reversed.
+/// Checks reverse windows, both boundaries, and exhaustion from alternating ends.
 #[test]
 fn test_date_iterators_reverse() {
     let start = NaiveDate::from_ymd_opt(2025, 10, 10).unwrap();
-    for step in [1, 7] {
-        let expected: Vec<_> =
-            (0..7).rev().map(|n| start.checked_add_days(Days::new(n * step)).unwrap()).collect();
-        if step == 1 {
-            assert_eq!(start.iter_days().take(7).rev().collect::<Vec<_>>(), expected);
-        } else {
-            assert_eq!(start.iter_weeks().take(7).rev().collect::<Vec<_>>(), expected);
-        }
+    check(start.iter_days(), 1);
+    check(start.iter_weeks(), 7);
+    check(NaiveDate::MIN.iter_days(), 1);
+    check(NaiveDate::MIN.iter_weeks(), 7);
+    for days in 0..=15 {
+        let start = NaiveDate::MAX.checked_sub_days(Days::new(days)).unwrap();
+        check(start.iter_days(), 1);
+        check(start.iter_weeks(), 7);
     }
-    assert_eq!(NaiveDate::MIN.iter_days().next(), Some(NaiveDate::MIN));
-    assert_eq!(NaiveDate::MIN.iter_weeks().next(), Some(NaiveDate::MIN));
-    for offset in 0..22 {
-        let start = NaiveDate::MAX.checked_sub_days(Days::new(offset)).unwrap();
-        let mut days = start.iter_days();
-        assert_eq!(days.len(), offset as usize);
-        assert_eq!(days.next_back(), if offset == 0 { None } else { NaiveDate::MAX.pred_opt() });
-        let mut weeks = start.iter_weeks();
-        assert_eq!(weeks.len(), offset as usize / 7);
-        let expected: Vec<_> = weeks.collect();
-        assert_eq!(
-            weeks.by_ref().rev().collect::<Vec<_>>(),
-            expected.iter().rev().copied().collect::<Vec<_>>()
-        );
-        assert_eq!(weeks.next(), None);
-        assert_eq!(weeks.next_back(), None);
-        let mut weeks = start.iter_weeks();
-        let mut expected = std::collections::VecDeque::from(weeks.collect::<Vec<_>>());
-        while !expected.is_empty() {
-            assert_eq!(weeks.next(), expected.pop_front());
-            assert_eq!(weeks.next_back(), expected.pop_back());
-            assert_eq!(weeks.len(), expected.len());
+
+    /// Checks one exact-size, double-ended date iterator against its forward range.
+    fn check(
+        iter: impl ExactSizeIterator<Item = NaiveDate> + DoubleEndedIterator + Clone,
+        step: u64,
+    ) {
+        let mut expected: Vec<_> = iter.clone().take(7).collect();
+        expected.reverse();
+        assert_eq!(expected, iter.clone().take(7).rev().collect::<Vec<_>>());
+        let len = iter.len();
+        let mut mixed = iter.clone();
+        if len > 0 {
+            let first = mixed.next().unwrap();
+            let last = first.checked_add_days(Days::new((len as u64 - 1) * step)).unwrap();
+            assert_eq!(iter.clone().next_back(), Some(last));
+            assert_eq!(mixed.len(), len - 1);
+            if len > 1 {
+                assert_eq!(mixed.next_back(), Some(last));
+                assert_eq!(mixed.len(), len - 2);
+            }
         }
-        assert_eq!(weeks.next(), None);
-        assert_eq!(weeks.next_back(), None);
-        let mut days = start.iter_days();
-        let mut expected = std::collections::VecDeque::from(days.collect::<Vec<_>>());
-        while !expected.is_empty() {
-            assert_eq!(days.next(), expected.pop_front());
-            assert_eq!(days.next_back(), expected.pop_back());
-            assert_eq!(days.len(), expected.len());
+        assert_eq!(mixed.nth_back(mixed.len()), None);
+        assert_eq!(mixed.len(), 0);
+        assert_eq!(mixed.next(), None);
+        assert_eq!(mixed.next_back(), None);
+        let mut window = iter.take(7);
+        while window.len() > 1 {
+            assert!(window.next().is_some());
+            assert!(window.next_back().is_some());
         }
-        assert_eq!(days.next(), None);
-        assert_eq!(days.next_back(), None);
+        if window.len() == 1 {
+            assert!(window.next_back().is_some());
+        }
+        assert_eq!(window.next(), None);
+        assert_eq!(window.next_back(), None);
     }
 }
 

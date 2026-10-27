@@ -201,15 +201,15 @@ func ExampleWithJitterPercent() {
 func TestWithFullJitter(t *testing.T) {
 	t.Parallel()
 
-	// Vary the base on each call to verify that the wrapped backoff advances.
-	bases := []time.Duration{time.Nanosecond, time.Second, 1<<63 - 1}
-	var calls int
+	// Change the base on every call to verify that the wrapper advances it.
+	bases := []time.Duration{time.Nanosecond, time.Second, time.Duration(1<<63 - 1)}
+	calls := 0
 	b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
 		base := bases[calls%len(bases)]
 		calls++
 		return base, false
 	}))
-	for i := range 1000 {
+	for i := range 10_000 {
 		base := bases[i%len(bases)]
 		val, stop := b.Next()
 		if stop || val < 0 || val >= base {
@@ -221,10 +221,10 @@ func TestWithFullJitter(t *testing.T) {
 	}
 }
 
-func TestWithFullJitter_EdgeCases(t *testing.T) {
+func TestWithFullJitter_NonPositiveAndStop(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range []struct {
+	cases := []struct {
 		name string
 		base time.Duration
 		stop bool
@@ -232,11 +232,12 @@ func TestWithFullJitter_EdgeCases(t *testing.T) {
 	}{
 		{name: "zero"},
 		{name: "negative", base: -time.Second, want: -time.Second},
-		{name: "minimum", base: -1 << 63, want: -1 << 63},
+		{name: "minimum", base: time.Duration(-1 << 63), want: time.Duration(-1 << 63)},
 		{name: "stop_positive", base: time.Second, stop: true},
 		{name: "stop_zero", stop: true},
 		{name: "stop_negative", base: -time.Second, stop: true},
-	} {
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			b := retry.WithFullJitter(retry.BackoffFunc(func() (time.Duration, bool) {
@@ -252,6 +253,8 @@ func TestWithFullJitter_EdgeCases(t *testing.T) {
 func ExampleWithFullJitter() {
 	b := retry.NewFibonacci(1 * time.Second)
 	b = retry.WithFullJitter(b)
+
+	// Each call returns a random duration in [0, the next Fibonacci duration).
 	_, _ = b.Next()
 }
 

@@ -1,0 +1,424 @@
+diff --git a/readme.md b/readme.md
+index 03eb0b7..c2924cf 100644
+--- a/readme.md
++++ b/readme.md
+@@ -811,6 +811,32 @@ const response = await api.get('/status', {prefixUrl: ''});
+ 
+ Type: `object`
+ 
++### ky.retry(options?)
++
++Return `ky.retry()` from an `afterResponse` hook to force a retry, including for successful HTTP responses with an error in the body:
++
++```js
++const result = await ky.post('https://example.com/api', {
++    hooks: {
++        afterResponse: [async (_request, _options, response) => {
++            const body = await response.json();
++            if (body.error?.code === 'RATE_LIMIT') {
++                return ky.retry({delay: body.error.retryAfter * 1000, code: 'RATE_LIMIT'});
++            }
++        }],
++    },
++}).json();
++```
++
++Forced retries count against `retry.limit`, skip `retry.methods` and `retry.shouldRetry`, and skip remaining `afterResponse` hooks for that response. `beforeRetry` hooks receive a `ForceRetryError` with the supplied `code` and `cause`. Use the exported `isForceRetryError(error)` to identify it. When the retry limit is reached, the error is thrown.
++
++Options:
++
++- `delay`: Milliseconds to wait, bypassing jitter and `backoffLimit`. `0` retries immediately. Defaults to the normal retry delay.
++- `code`: A machine-readable reason. The error message is `Forced retry: <code>`, or `Forced retry` when omitted.
++- `cause`: Underlying error. Non-Error values are wrapped in an Error.
++- `request`: A custom `Request` for the retry. It is provided to `beforeRetry` hooks, which can modify or replace it. Ky's timeout, the user's abort signal, and upload progress still apply.
++
+ ### ky.stop
+ 
+ A `Symbol` that can be returned by a `beforeRetry` hook to stop the retry. This will also short circuit the remaining `beforeRetry` hooks.
+diff --git a/source/core/Ky.ts b/source/core/Ky.ts
+index fb7c675..0c025f7 100644
+--- a/source/core/Ky.ts
++++ b/source/core/Ky.ts
+@@ -1,3 +1,4 @@
++import {ForceRetryError} from '../errors/ForceRetryError.js';
+ import {HTTPError} from '../errors/HTTPError.js';
+ import {NonError} from '../errors/NonError.js';
+ import type {
+@@ -17,6 +18,7 @@ import delay from '../utils/delay.js';
+ import {type ObjectEntries} from '../utils/types.js';
+ import {findUnknownOptions, hasSearchParameters} from '../utils/options.js';
+ import {isHTTPError, isTimeoutError} from '../utils/type-guards.js';
++import {RetryMarker} from './RetryMarker.js';
+ import {
+ 	maxSafeTimeout,
+ 	responseTypes,
+@@ -44,15 +46,29 @@ export class Ky {
+ 			let response = await ky.#fetch();
+ 
+ 			for (const hook of ky.#options.hooks.afterResponse) {
++				const responseClone = response.clone();
+ 				// eslint-disable-next-line no-await-in-loop
+ 				const modifiedResponse = await hook(
+ 					ky.request,
+ 					ky.#getNormalizedOptions(),
+-					ky.#decorateResponse(response.clone()),
++					ky.#decorateResponse(responseClone),
+ 					{retryCount: ky.#retryCount},
+ 				);
+ 
++				if (modifiedResponse !== responseClone && !responseClone.bodyUsed) {
++					void responseClone.body?.cancel().catch(() => { /* Stream may already be locked. */ });
++				}
++
++				if (modifiedResponse instanceof RetryMarker) {
++					void response.body?.cancel().catch(() => { /* Stream may already be locked. */ });
++					throw new ForceRetryError(modifiedResponse.options);
++				}
++
+ 				if (modifiedResponse instanceof globalThis.Response) {
++					if (modifiedResponse !== response) {
++						void response.body?.cancel().catch(() => { /* Stream may already be locked. */ });
++					}
++
+ 					response = modifiedResponse;
+ 				}
+ 			}
+@@ -90,8 +106,7 @@ export class Ky {
+ 			return response;
+ 		};
+ 
+-		const isRetriableMethod = ky.#options.retry.methods.includes(ky.request.method.toLowerCase());
+-		const result = (isRetriableMethod ? ky.#retry(function_) : function_())
++		const result = ky.#retry(function_)
+ 			.finally(async () => {
+ 				const originalRequest = ky.#originalRequest;
+ 				const cleanupPromises = [];
+@@ -261,12 +276,6 @@ export class Ky {
+ 			if (!supportsRequestStreams) {
+ 				throw new Error('Request streams are not supported in your environment. The `duplex` option for `Request` is not available.');
+ 			}
+-
+-			const originalBody = this.request.body;
+-			if (originalBody) {
+-				// Pass original body to calculate size correctly (before it becomes a stream)
+-				this.request = streamRequest(this.request, this.#options.onUploadProgress, this.#options.body);
+-			}
+ 		}
+ 	}
+ 
+@@ -294,6 +303,14 @@ export class Ky {
+ 			throw error;
+ 		}
+ 
++		if (error instanceof ForceRetryError) {
++			return error.options.delay ?? this.#calculateDelay();
++		}
++
++		if (!this.#options.retry.methods.includes(this.request.method.toLowerCase())) {
++			throw error;
++		}
++
+ 		// Wrap non-Error throws to ensure consistent error handling
+ 		const errorObject = error instanceof Error ? error : new NonError(error);
+ 
+@@ -371,6 +388,10 @@ export class Ky {
+ 			// Only use user-provided signal for delay, not our internal abortController
+ 			await delay(ms, this.#userProvidedAbortSignal ? {signal: this.#userProvidedAbortSignal} : {});
+ 
++			if (error instanceof ForceRetryError && error.options.request) {
++				this.request = error.options.request;
++			}
++
+ 			for (const hook of this.#options.hooks.beforeRetry) {
+ 				// eslint-disable-next-line no-await-in-loop
+ 				const hookResult = await hook({
+@@ -428,12 +449,21 @@ export class Ky {
+ 			}
+ 		}
+ 
++		if (this.#options.signal) {
++			this.request = new globalThis.Request(this.request, {signal: AbortSignal.any([this.request.signal, this.#options.signal])});
++		}
++
+ 		const nonRequestOptions = findUnknownOptions(this.request, this.#options);
+ 
+ 		// Cloning is done here to prepare in advance for retries
+ 		this.#originalRequest = this.request;
+ 		this.request = this.#originalRequest.clone();
+ 
++		if (this.#options.onUploadProgress && this.#originalRequest.body) {
++			const body = await this.#originalRequest.clone().arrayBuffer();
++			this.#originalRequest = streamRequest(this.#originalRequest, this.#options.onUploadProgress, body);
++		}
++
+ 		if (this.#options.timeout === false) {
+ 			return this.#options.fetch(this.#originalRequest, nonRequestOptions);
+ 		}
+diff --git a/source/core/RetryMarker.ts b/source/core/RetryMarker.ts
+new file mode 100644
+index 0000000..110403c
+--- /dev/null
++++ b/source/core/RetryMarker.ts
+@@ -0,0 +1,5 @@
++import type {ForceRetryOptions} from '../types/retry.js';
++
++export class RetryMarker {
++	constructor(readonly options: ForceRetryOptions = {}) {}
++}
+diff --git a/source/errors/ForceRetryError.ts b/source/errors/ForceRetryError.ts
+new file mode 100644
+index 0000000..82868bd
+--- /dev/null
++++ b/source/errors/ForceRetryError.ts
+@@ -0,0 +1,15 @@
++import type {ForceRetryOptions} from '../types/retry.js';
++import {NonError} from './NonError.js';
++
++/** Error passed to beforeRetry hooks when an afterResponse hook forces a retry. */
++export class ForceRetryError extends Error {
++	override name = 'ForceRetryError';
++	readonly code: string | undefined;
++
++	constructor(readonly options: ForceRetryOptions = {}) {
++		super(options.code === undefined ? 'Forced retry' : `Forced retry: ${options.code}`, options.cause === undefined ? undefined : {
++			cause: options.cause instanceof Error ? options.cause : new NonError(options.cause),
++		});
++		this.code = options.code;
++	}
++}
+diff --git a/source/index.ts b/source/index.ts
+index 2db62b3..f3f5695 100644
+--- a/source/index.ts
++++ b/source/index.ts
+@@ -1,5 +1,6 @@
+ /*! MIT License © Sindre Sorhus */
+ 
++import {RetryMarker} from './core/RetryMarker.js';
+ import {Ky} from './core/Ky.js';
+ import {requestMethods, stop} from './core/constants.js';
+ import type {KyInstance} from './types/ky.js';
+@@ -26,6 +27,7 @@ const createInstance = (defaults?: Partial<Options>): KyInstance => {
+ 	};
+ 
+ 	ky.stop = stop;
++	ky.retry = options => new RetryMarker(options);
+ 
+ 	return ky as KyInstance;
+ };
+@@ -63,7 +65,12 @@ export type {KyRequest} from './types/request.js';
+ export type {KyResponse} from './types/response.js';
+ export {HTTPError} from './errors/HTTPError.js';
+ export {TimeoutError} from './errors/TimeoutError.js';
+-export {isKyError, isHTTPError, isTimeoutError} from './utils/type-guards.js';
++export {
++	isKyError, isHTTPError, isTimeoutError, isForceRetryError,
++} from './utils/type-guards.js';
+ 
+ // Intentionally not exporting this for now as it's just an implementation detail and we don't want to commit to a certain API yet at least.
+ // export {NonError} from './errors/NonError.js';
++
++export {ForceRetryError} from './errors/ForceRetryError.js';
++export type {ForceRetryOptions} from './types/retry.js';
+diff --git a/source/types/hooks.ts b/source/types/hooks.ts
+index 8bc29af..e11180e 100644
+--- a/source/types/hooks.ts
++++ b/source/types/hooks.ts
+@@ -1,3 +1,4 @@
++import type {RetryMarker} from '../core/RetryMarker.js';
+ import {type stop} from '../core/constants.js';
+ import type {KyRequest, KyResponse, HTTPError} from '../index.js';
+ import type {NormalizedOptions} from './options.js';
+@@ -43,7 +44,7 @@ export type AfterResponseHook = (
+ 	options: NormalizedOptions,
+ 	response: KyResponse,
+ 	state: AfterResponseState
+-) => Response | void | Promise<Response | void>;
++) => Response | RetryMarker | void | Promise<Response | RetryMarker | void>;
+ 
+ export type BeforeErrorState = {
+ 	/**
+diff --git a/source/types/ky.ts b/source/types/ky.ts
+index 3f102f0..bd67853 100644
+--- a/source/types/ky.ts
++++ b/source/types/ky.ts
+@@ -1,8 +1,13 @@
++import type {RetryMarker} from '../core/RetryMarker.js';
+ import {type stop} from '../core/constants.js';
++import type {ForceRetryOptions} from './retry.js';
+ import type {Input, Options} from './options.js';
+ import type {ResponsePromise} from './ResponsePromise.js';
+ 
+ export type KyInstance = {
++	/** Return from an afterResponse hook to force a retry within retry.limit. */
++	retry: (options?: ForceRetryOptions) => RetryMarker;
++
+ 	/**
+ 	Fetch the given `url`.
+ 
+diff --git a/source/types/retry.ts b/source/types/retry.ts
+index 2f170df..3afe788 100644
+--- a/source/types/retry.ts
++++ b/source/types/retry.ts
+@@ -167,3 +167,15 @@ export type RetryOptions = {
+ 	*/
+ 	shouldRetry?: (state: ShouldRetryState) => boolean | undefined | Promise<boolean | undefined>;
+ };
++
++/** Options for a retry forced by an `afterResponse` hook. */
++export type ForceRetryOptions = {
++	/** Delay in milliseconds, bypassing jitter and backoffLimit. */
++	delay?: number;
++	/** Machine-readable reason for the retry. */
++	code?: string;
++	/** Underlying error. Non-Error values are wrapped in an Error. */
++	cause?: unknown;
++	/** Request to send, before running beforeRetry hooks. */
++	request?: Request;
++};
+diff --git a/source/utils/type-guards.ts b/source/utils/type-guards.ts
+index 056fd0e..e2a8ccd 100644
+--- a/source/utils/type-guards.ts
++++ b/source/utils/type-guards.ts
+@@ -1,8 +1,9 @@
++import {ForceRetryError} from '../errors/ForceRetryError.js';
+ import {HTTPError} from '../errors/HTTPError.js';
+ import {TimeoutError} from '../errors/TimeoutError.js';
+ 
+ /**
+-Type guard to check if an error is a Ky error (HTTPError or TimeoutError).
++Type guard to check if an error is a Ky error (HTTPError, TimeoutError, or ForceRetryError).
+ 
+ @param error - The error to check
+ @returns `true` if the error is a Ky error, `false` otherwise
+@@ -23,8 +24,8 @@ try {
+ }
+ ```
+ */
+-export function isKyError(error: unknown): error is HTTPError | TimeoutError {
+-	return isHTTPError(error) || isTimeoutError(error);
++export function isKyError(error: unknown): error is HTTPError | TimeoutError | ForceRetryError {
++	return isHTTPError(error) || isTimeoutError(error) || isForceRetryError(error);
+ }
+ 
+ /**
+@@ -70,3 +71,8 @@ try {
+ export function isTimeoutError(error: unknown): error is TimeoutError {
+ 	return error instanceof TimeoutError || ((error as any)?.name === TimeoutError.name);
+ }
++
++/** Check whether an error was caused by a forced retry. */
++export function isForceRetryError(error: unknown): error is ForceRetryError {
++	return error instanceof ForceRetryError || ((error as any)?.name === ForceRetryError.name);
++}
+diff --git a/test/force-retry.ts b/test/force-retry.ts
+new file mode 100644
+index 0000000..d2e3021
+--- /dev/null
++++ b/test/force-retry.ts
+@@ -0,0 +1,106 @@
++import test from 'ava';
++import ky, {ForceRetryError, isForceRetryError, isKyError} from '../source/index.js';
++
++test('forced retries skip method and shouldRetry checks and remaining response hooks', async t => {
++	let calls = 0;
++	let remainingHooks = 0;
++	const cause = new Error('rate limit');
++	const result = await ky.post('https://example.com', {
++		retry: {
++			limit: 1, shouldRetry() {
++				t.fail();
++				return false;
++			},
++		},
++		fetch: async () => new Response(++calls === 1 ? 'error' : 'ok'),
++		hooks: {
++			afterResponse: [
++				async (_request, _options, response) => (await response.text()) === 'error' ? ky.retry({delay: 0, code: 'RATE_LIMIT', cause}) : undefined,
++				() => {
++					remainingHooks++;
++				},
++			],
++			beforeRetry: [({error, retryCount}) => {
++				t.true(isForceRetryError(error));
++				t.true(isKyError(error));
++				t.is(error.cause, cause);
++				t.is(error.message, 'Forced retry: RATE_LIMIT');
++				t.is(retryCount, 1);
++			}],
++		},
++	}).text();
++	t.is(result, 'ok');
++	t.is(calls, 2);
++	t.is(remainingHooks, 1);
++});
++
++test('forced retry respects limit and is available on derived instances', async t => {
++	let calls = 0;
++	const api = ky.create().extend({});
++	const error = await t.throwsAsync(api('https://example.com', {
++		retry: {limit: 1, delay: () => 0},
++		async fetch() {
++			calls++;
++			return new Response('error');
++		},
++		hooks: {afterResponse: [() => api.retry({cause: 'reason'})]},
++	}), {instanceOf: ForceRetryError, message: 'Forced retry'});
++	t.true(error?.cause instanceof Error);
++	t.is(calls, 2);
++});
++
++test('replacement requests receive upload progress with their actual body size', async t => {
++	const totals: number[] = [];
++	const bodies: string[] = [];
++	await ky.post('https://example.com', {
++		body: 'first',
++		onUploadProgress(progress) {
++			if (progress.percent === 1) {
++				totals.push(progress.totalBytes);
++			}
++		},
++		async fetch(request) {
++			bodies.push(await (request as Request).text());
++			return new Response('ok');
++		},
++		hooks: {
++			afterResponse: [(_request, _options, _response, {retryCount}) => retryCount === 0 ? ky.retry({delay: 0, request: new Request('https://example.com/custom', {method: 'PUT', body: 'custom'})}) : undefined],
++			beforeRetry: [({request}) => {
++				t.is(request.url, 'https://example.com/custom');
++				return new Request('https://example.com/replaced', {method: 'POST', body: 'replacement'});
++			}],
++		},
++	});
++	t.deepEqual(bodies, ['first', 'replacement']);
++	t.deepEqual(totals, [5, 11]);
++});
++
++test('custom retry requests retain timeout and user abort signal', async t => {
++	for (const abort of [false, true]) {
++		const controller = new AbortController();
++		let calls = 0;
++		const promise = ky('https://example.com', {
++			timeout: 30,
++			signal: controller.signal,
++			async fetch(request) {
++				calls++;
++				if (calls === 1) {
++					return new Response('retry');
++				}
++
++				return new Promise<Response>((_resolve, reject) => {
++					(request as Request).signal.addEventListener('abort', () => {
++						reject((request as Request).signal.reason as Error);
++					});
++					if (abort) {
++						controller.abort();
++					}
++				});
++			},
++			hooks: {afterResponse: [() => ky.retry({delay: 0, request: new Request('https://example.com/custom')})]},
++		});
++		// eslint-disable-next-line no-await-in-loop
++		await t.throwsAsync(promise, {name: abort ? 'AbortError' : 'TimeoutError'});
++		t.is(calls, 2);
++	}
++});

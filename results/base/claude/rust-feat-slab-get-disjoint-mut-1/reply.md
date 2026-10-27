@@ -1,11 +1,9 @@
-I added `Slab::get_disjoint_mut` with the signature you gave. The full test suite passes with default features, and the lib and integration tests also pass with `--no-default-features`.
+I added `Slab::get_disjoint_mut` and the public `GetDisjointMutError` enum, with the signature, key-check order and errors you specified. The test suite and doctests pass, including a new test in `tests/slab.rs`. I didn't try `--no-default-features`, so the `no_std` build is unchecked.
 
-- **Checking order:** it first looks for duplicate keys across the whole array. After that it checks keys in order, so the first bad key decides whether you get `IndexOutOfBounds` or `IndexVacant`. An empty key array returns `Ok([])`.
-- **New error type:** `GetDisjointMutError` is a public enum with `OverlappingIndices`, `IndexOutOfBounds` and `IndexVacant`. It derives `Debug`, `Clone`, `PartialEq` and `Eq`. It is exported from the crate root, because it is a public item in `lib.rs`.
-- **Extra trait impls:** I also gave it `Display`, plus `std::error::Error` when the `std` feature is on. You didn't ask for these.
-- **Unsafe code:** the method has a small `unsafe` block inside. It only runs after every key has been checked as distinct, in bounds and occupied, so callers never see any `unsafe`.
-- **Tests and docs:** I added a test in `tests/slab.rs` covering swapping, an empty array, and your three error examples (`[42, 2, 1, 2]`, `[1, 5]` and `[5, 1]`). The method also has a doc example, which is your swap snippet, and a CHANGELOG entry.
-
-**MSRV bump:** `const N: usize` needs Rust 1.51, and the crate declared `rust-version = "1.46"`. I raised it to 1.51 in `Cargo.toml` and noted it in the CHANGELOG. If you need to keep 1.46, this signature can't be supported.
+- **Where it lives:** `GetDisjointMutError` derives `Debug`, `Clone`, `PartialEq` and `Eq`. It is exported at the crate root because it's defined there. The method and its doc example are in `src/lib.rs`.
+- **Test coverage:** The new test covers an empty key array, a swap, and your three error examples: `[42, 2, 1, 2]` gives `OverlappingIndices`, `[1, 5]` gives `IndexVacant`, and `[5, 1]` gives `IndexOutOfBounds`.
+- **Unsafe inside:** Your calling code needs no `unsafe`, but the method uses one small `unsafe` block internally. It turns an array of raw pointers into `[&mut T; N]`, which is sound because the keys were already checked to be unique, in bounds and occupied.
+- **MSRV bump:** `const N: usize` generics need Rust 1.51, so I raised `rust-version` in `Cargo.toml` from 1.46 to 1.51. If you can't bump the MSRV, tell me and we'll need a different approach.
+- **Extras you didn't ask for:** I added `Display` for the error, plus `std::error::Error` behind the `std` feature. I also added an "Unreleased" entry to `CHANGELOG.md`.
 
 I haven't committed anything.

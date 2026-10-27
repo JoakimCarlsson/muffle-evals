@@ -13,6 +13,8 @@ describe("withBase", () => {
     { base: "/base/", input: "/base/a", out: "/base/a" },
     { base: "/base/", input: "https://test.com", out: "https://test.com" },
     { base: "/", input: "https://test.com", out: "https://test.com" },
+    { base: "/admin/", input: "/admin-dashboard", out: "/admin/admin-dashboard" },
+    { base: "/admin/", input: "/admin?x", out: "/admin?x" },
   ];
 
   for (const t of tests) {
@@ -20,19 +22,6 @@ describe("withBase", () => {
       expect(withBase(t.input, t.base)).toBe(t.out);
     });
   }
-});
-
-describe("withBase prefix-only match", () => {
-  test("prefixes paths that only share a prefix with base", () => {
-    expect(withBase("/admin-dashboard", "/admin/")).toBe(
-      "/admin/admin-dashboard",
-    );
-  });
-  test("keeps paths under base", () => {
-    expect(withBase("/admin", "/admin/")).toBe("/admin");
-    expect(withBase("/admin/dashboard", "/admin/")).toBe("/admin/dashboard");
-    expect(withBase("/admin?x", "/admin/")).toBe("/admin?x");
-  });
 });
 
 describe("withoutBase", () => {
@@ -52,7 +41,6 @@ describe("withoutBase", () => {
     { base: "/base/", input: "https://test.com", out: "https://test.com" },
     { base: "/", input: "https://test.com", out: "https://test.com" },
     { base: "/admin/", input: "/admin-dashboard", out: "/admin-dashboard" },
-    { base: "/admin/", input: "/admin", out: "/" },
     { base: "/admin/", input: "/admin/dashboard", out: "/dashboard" },
     { base: "/admin/", input: "/admin?x", out: "/?x" },
   ];

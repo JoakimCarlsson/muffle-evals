@@ -55,22 +55,21 @@ fn size() {
 
 #[test]
 fn test_caret_in_path() {
-    for input in ["http://localhost/a^b", "file:///a^b", "custom:/a^b"] {
+    for input in ["http://localhost/a^b", "custom:/a^b", "file:///a^b"] {
         let mut url = Url::parse(input).unwrap();
         assert_eq!(url.path(), "/a%5Eb");
 
-        let relative = url.join("c^d").unwrap();
-        assert_eq!(relative.path(), "/c%5Ed");
+        url.set_path("/c^d");
+        assert_eq!(url.path(), "/c%5Ed");
 
-        url.set_path("/e^f");
-        assert_eq!(url.path(), "/e%5Ef");
+        url.path_segments_mut().unwrap().push("e^f");
+        assert_eq!(url.path(), "/c%5Ed/e%5Ef");
 
-        url.path_segments_mut().unwrap().push("g^h");
-        assert_eq!(url.path(), "/e%5Ef/g%5Eh");
+        assert_eq!(url.join("g^h").unwrap().path(), "/c%5Ed/g%5Eh");
     }
 
-    let url = Url::parse("http://localhost/a^b?q^r#s^t").unwrap();
-    assert_eq!(url.as_str(), "http://localhost/a%5Eb?q^r#s^t");
+    let url = Url::parse("http://localhost/a%5Eb?c^d#e^f").unwrap();
+    assert_eq!(url.as_str(), "http://localhost/a%5Eb?c^d#e^f");
     assert_eq!(Url::parse("custom:a^b").unwrap().path(), "a^b");
 }
 

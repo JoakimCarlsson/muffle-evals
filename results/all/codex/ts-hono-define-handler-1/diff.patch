@@ -1,0 +1,628 @@
+diff --git a/src/helper/factory/define-handler.test.tsx b/src/helper/factory/define-handler.test.tsx
+new file mode 100644
+index 0000000..dbaf2b1
+--- /dev/null
++++ b/src/helper/factory/define-handler.test.tsx
+@@ -0,0 +1,279 @@
++import { expectTypeOf } from 'vitest'
++import { hc } from '../../client'
++import { Hono } from '../../hono'
++import { HTTPException } from '../../http-exception'
++import { html } from '../html'
++import { createFactory, createMiddleware, defineHandler, defineMiddleware } from './index'
++import type { StandardSchema } from './index'
++
++/** Create a schema with configurable validation. */
++function schema<I, O>(
++  validate: StandardSchema<I, O>['~standard']['validate']
++): StandardSchema<I, O> {
++  return { '~standard': { version: 1, vendor: 'test', validate } }
++}
++
++describe('defineHandler', () => {
++  it('returns schema-transformed strings as JSON and combines middleware environments', async () => {
++    const a = defineMiddleware<{ Variables: { a: string } }>(async (c, next) => {
++      c.set('a', 'a')
++      await next()
++    })
++    const b = defineMiddleware<{ Variables: { b: number } }>(async (c, next) => {
++      c.set('b', 2)
++      await next()
++    })
++    const handler = defineHandler({
++      response: schema<string, string>((value) => ({ value: String(value).toUpperCase() })),
++    })(a, b, (c) => {
++      expectTypeOf(c.get('a')).toEqualTypeOf<string>()
++      expectTypeOf(c.get('b')).toEqualTypeOf<number>()
++      return c.get('a') + c.get('b')
++    })
++    const res = await new Hono().get('/', handler).request('/')
++    expect(res.headers.get('content-type')).toBe('application/json')
++    expect(await res.json()).toBe('A2')
++    const many = defineHandler(a, b, a, b, a, (c) => ({ a: c.get('a') }))
++    expect(await (await new Hono().get('/', many).request('/')).json()).toEqual({ a: 'a' })
++  })
++
++  it('converts synchronous and asynchronous values', async () => {
++    const response = new Response('unchanged', { status: 202 })
++    const cases = [
++      [{ hello: 'world' }, 200, '{"hello":"world"}', 'application/json'],
++      ['<p>Hello</p>', 200, '<p>Hello</p>', 'text/html'],
++      [html`<b>Hello</b>`, 200, '<b>Hello</b>', 'text/html'],
++      [<span>Hello</span>, 200, '<span>Hello</span>', 'text/html'],
++      [null, 204, '', null],
++      [undefined, 204, '', null],
++      [response, 202, 'unchanged', 'text/plain'],
++    ] as const
++    for (const [value, status, body, contentType] of cases) {
++      for (const async of [false, true]) {
++        const app = new Hono().get(
++          '/',
++          defineHandler(() => (async ? Promise.resolve(value) : value))
++        )
++        const res = await app.request('/')
++        expect(res.status).toBe(status)
++        expect(await res.clone().text()).toBe(body)
++        if (contentType) expect(res.headers.get('content-type')).toContain(contentType)
++        else expect(res.body).toBeNull()
++      }
++    }
++  })
++
++  it('runs middleware around validation and handler, preserving status and headers', async () => {
++    const order: string[] = []
++    const mw = defineMiddleware<{ Variables: { user: string } }>(async (c, next) => {
++      order.push('before')
++      c.set('user', 'Alice')
++      await next()
++      order.push('after')
++      c.header('x-after', 'yes')
++    })
++    const options = {
++      query: (value: Record<string, string | string[]>) => {
++        order.push('query')
++        return { name: value.name }
++      },
++      response: schema<{ name: string }, { greeting: string }>((value) => {
++        order.push('response')
++        return { value: { greeting: (value as { name: string }).name } }
++      }),
++    }
++    const handler = defineHandler(options)(mw, (c, input) => {
++      expectTypeOf(c.get('user')).toEqualTypeOf<string>()
++      expectTypeOf(input.query.name).toEqualTypeOf<string | string[]>()
++      expect(c.req.valid('query')).toEqual(input.query)
++      order.push('handler')
++      c.status(201)
++      c.header('x-handler', 'yes')
++      return { name: c.get('user') }
++    })
++    expect(handler.validations).toBe(options)
++    const res = await new Hono().get('/', handler).request('/?name=test')
++    expect(res.status).toBe(201)
++    expect(res.headers.get('x-handler')).toBe('yes')
++    expect(res.headers.get('x-after')).toBe('yes')
++    expect(await res.json()).toEqual({ greeting: 'Alice' })
++    expect(order).toEqual(['before', 'query', 'handler', 'response', 'after'])
++  })
++
++  it('short circuits middleware, request functions and handler responses', async () => {
++    const handler = vi.fn(() => ({ ok: true }))
++    const response = new Response('stop', { status: 403 })
++    const app = new Hono()
++      .get(
++        '/middleware',
++        defineHandler(
++          defineMiddleware(async () => response),
++          handler
++        )
++      )
++      .get('/request', defineHandler({ query: async () => response })(handler))
++      .get(
++        '/response',
++        defineHandler({
++          response: () => {
++            throw new Error('must skip')
++          },
++        })(() => response)
++      )
++    for (const path of ['/middleware', '/request', '/response']) {
++      expect(await app.request(path)).toBe(response)
++    }
++    expect(handler).not.toHaveBeenCalled()
++  })
++
++  it('validates all slots in order and exposes only sanitized request issues', async () => {
++    const order: string[] = []
++    const raw = [
++      { message: 'bad', path: [{ key: 'user' }, 'name', 0], input: 'secret' },
++      { message: 'missing' },
++    ]
++    const options = Object.fromEntries(
++      ['param', 'query', 'header', 'cookie', 'form', 'json'].map((slot) => [
++        slot,
++        schema(async () => {
++          order.push(slot)
++          return { issues: raw }
++        }),
++      ])
++    )
++    let caught: unknown
++    const app = new Hono()
++    app.onError((error) => {
++      caught = error
++      return (error as HTTPException).getResponse()
++    })
++    app.post(
++      '/:id',
++      defineHandler(options)(() => {
++        throw new Error('must skip')
++      })
++    )
++    const res = await app.request('/abc')
++    expect(res.status).toBe(404)
++    const failed = await app.request('/abc', { method: 'POST' })
++    expect(failed.status).toBe(400)
++    expect(order).toEqual(['param', 'query', 'header', 'cookie', 'form', 'json'])
++    expect(await failed.json()).toEqual({
++      error: 'Validation failed',
++      issues: order.map((slot) => ({
++        slot,
++        issues: [{ message: 'bad', path: 'user.name.0' }, { message: 'missing' }],
++      })),
++    })
++    expect(caught).toBeInstanceOf(HTTPException)
++    expect((caught as HTTPException).cause).toEqual({
++      issues: order.map((slot) => ({ slot, issues: raw })),
++    })
++  })
++
++  it('hides response issues but retains their cause', async () => {
++    const issues = [{ message: 'private' }]
++    const app = new Hono()
++    app.onError((error) => {
++      expect((error as HTTPException).cause).toEqual({ issues: [{ slot: 'response', issues }] })
++      return (error as HTTPException).getResponse()
++    })
++    app.get(
++      '/',
++      defineHandler({ response: schema(() => ({ issues })) })(() => 'secret')
++    )
++    const res = await app.request('/')
++    expect(res.status).toBe(500)
++    expect(await res.json()).toEqual({ error: 'Response validation failed' })
++  })
++
++  it('uses validator request parsing and supports callable schemas', async () => {
++    const callable = Object.assign(
++      () => {},
++      schema<unknown, string>((value) => ({ value: String(value) }))
++    )
++    const app = new Hono().post(
++      '/:id',
++      defineHandler({
++        param: (value) => value,
++        query: (value) => value,
++        header: (value) => value['x-test'],
++        cookie: (value) => value.token,
++        json: callable,
++      })((c, input) => {
++        expect(c.req.valid('header')).toBe('ok')
++        return input
++      })
++    )
++    const res = await app.request('/42?q=1&q=2', {
++      method: 'POST',
++      headers: { 'content-type': 'application/json', 'x-test': 'ok', cookie: 'token=abc' },
++      body: '3',
++    })
++    expect(await res.json()).toEqual({
++      param: { id: '42' },
++      query: { q: ['1', '2'] },
++      header: 'ok',
++      cookie: 'abc',
++      json: '3',
++    })
++    const malformed = await app.request('/42', {
++      method: 'POST',
++      headers: { 'content-type': 'application/json' },
++      body: '{',
++    })
++    expect(malformed.status).toBe(400)
++    expect(await malformed.text()).toBe('Malformed JSON in request body')
++  })
++
++  it('supports form parsing and async function transforms', async () => {
++    const app = new Hono().post(
++      '/',
++      defineHandler({
++        form: async (value) => ({ name: String(value.name).toUpperCase() }),
++        response: async (value: { name: string }) => ({ result: value.name }),
++      })((_c, input) => input.form)
++    )
++    const res = await app.request('/', {
++      method: 'POST',
++      headers: { 'content-type': 'application/x-www-form-urlencoded' },
++      body: 'name=alice',
++    })
++    expect(await res.json()).toEqual({ result: 'ALICE' })
++  })
++
++  it('inherits factory and explicit environment and path types and RPC outputs', async () => {
++    type E = { Variables: { name: string } }
++    const factory = createFactory<E, '/me/:id'>()
++    expect(createMiddleware).toBe(defineMiddleware)
++    expect(factory.createMiddleware).toBe(factory.defineMiddleware)
++    factory.defineHandler((c) => {
++      expectTypeOf(c.get('name')).toEqualTypeOf<string>()
++      expectTypeOf(c.req.param('id')).toEqualTypeOf<string>()
++      return { ok: true }
++    })
++    defineHandler<E, '/me/:id'>((c) => {
++      expectTypeOf(c.get('name')).toEqualTypeOf<string>()
++      expectTypeOf(c.req.param('id')).toEqualTypeOf<string>()
++      return { ok: true }
++    })
++    const app = new Hono()
++      .get(
++        '/plain',
++        defineHandler(() => ({ name: 'Alice' }))
++      )
++      .get(
++        '/schema',
++        defineHandler({
++          response: schema<{ name: string }, { count: number }>(() => ({ value: { count: 1 } })),
++        })(() => ({ name: 'Alice' }))
++      )
++    // @ts-expect-error Response schema input must match the handler result.
++    defineHandler({ response: schema<string, number>(() => ({ value: 1 })) })(() => 42)
++    const client = hc<typeof app>('http://localhost', {
++      fetch: (input: RequestInfo | URL, init?: RequestInit) => app.request(input, init),
++    })
++    expectTypeOf(await (await client.plain.$get()).json()).toEqualTypeOf<{ name: string }>()
++    expectTypeOf(await (await client.schema.$get()).json()).toEqualTypeOf<{ count: number }>()
++  })
++})
+diff --git a/src/helper/factory/define-handler.ts b/src/helper/factory/define-handler.ts
+new file mode 100644
+index 0000000..f618897
+--- /dev/null
++++ b/src/helper/factory/define-handler.ts
+@@ -0,0 +1,286 @@
++/* eslint-disable @typescript-eslint/no-explicit-any */
++import type { Context } from '../../context'
++import { HTTPException } from '../../http-exception'
++import type {
++  Env,
++  Handler,
++  IntersectNonAnyTypes,
++  MiddlewareHandler,
++  TypedResponse,
++  ValidationTargets,
++} from '../../types'
++import type { JSONParsed } from '../../utils/types'
++import { validator } from '../../validator'
++
++/** A Standard Schema validation issue. @experimental */
++export interface ValidationIssue {
++  readonly message: string
++  readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }>
++}
++
++/** Raw validation failures, grouped by target. @experimental */
++export interface ValidationFailure {
++  issues: { slot: keyof ValidationTargets | 'response'; issues: readonly ValidationIssue[] }[]
++}
++
++/** A dependency-free Standard Schema contract. @experimental */
++export interface StandardSchema<Input = unknown, Output = Input> {
++  readonly '~standard': {
++    readonly version: 1
++    readonly vendor: string
++    readonly validate: (
++      value: unknown
++    ) =>
++      | { value: Output; issues?: undefined }
++      | { issues: readonly ValidationIssue[] }
++      | Promise<{ value: Output; issues?: undefined } | { issues: readonly ValidationIssue[] }>
++    readonly types?: { readonly input: Input; readonly output: Output }
++  }
++}
++
++type MiddlewareEnv<M extends MiddlewareHandler<any, any>[]> = IntersectNonAnyTypes<{
++  [K in keyof M]: M[K] extends MiddlewareHandler<infer E, any> ? E : never
++}> &
++  Env
++type Validation<E extends Env, T> = StandardSchema<any, any> | ((value: T, c: Context<E>) => any)
++type Options<E extends Env> = {
++  [K in keyof ValidationTargets]?: Validation<E, ValidationTargets[K]>
++} & { response?: Validation<E, any> }
++type Output<V> =
++  V extends StandardSchema<any, infer O>
++    ? O
++    : V extends (...args: any[]) => infer O
++      ? Exclude<Awaited<O>, Response>
++      : never
++type SchemaInput<V> =
++  V extends StandardSchema<infer I, any>
++    ? I
++    : V extends (value: infer I, ...args: any[]) => any
++      ? I
++      : never
++type RequestInput<O> = { [K in keyof O & keyof ValidationTargets]: Output<O[K]> }
++type Input<O> = {
++  in: { [K in keyof O & keyof ValidationTargets]: SchemaInput<O[K]> }
++  out: RequestInput<O>
++}
++type Result<R> = R extends TypedResponse
++  ? R
++  : R extends Response
++    ? R
++    : R extends null | undefined
++      ? TypedResponse<null, 204, 'body'>
++      : R extends string
++        ? TypedResponse<string, 200, 'html'>
++        : TypedResponse<JSONParsed<R>, 200, 'json'>
++type Return<O, R> = 'response' extends keyof O
++  ? TypedResponse<JSONParsed<Output<O['response']>>, 200, 'json'>
++  : Result<Awaited<R>>
++type Callback<E extends Env, P extends string, O, R> = (
++  c: Context<E, P, Input<O>>,
++  input: RequestInput<O>
++) => R
++type Allowed<O> = 'response' extends keyof O
++  ? SchemaInput<O['response']> | Response | Promise<SchemaInput<O['response']> | Response>
++  : unknown
++
++/** Define a validated handler using environment and path defaults. @experimental */
++export interface DefineHandler<E extends Env = Env, P extends string = string> {
++  <E2 extends Env = E, P2 extends string = P, O extends Options<E2> = Options<E2>>(
++    options: O
++  ): WithOptions<E2, P2, O>
++  <E2 extends Env = E, P2 extends string = P, R = any>(
++    handler: Callback<E2, P2, {}, R>
++  ): Handler<E2, P2, {}, Promise<Result<Awaited<R>>>>
++  <E1 extends Env = E, P2 extends string = P, R = any>(
++    mw1: MiddlewareHandler<E1, P2>,
++    handler: Callback<E & E1, P2, {}, R>
++  ): Handler<E & E1, P2, {}, Promise<Result<Awaited<R>>>>
++  <E1 extends Env = E, E2 extends Env = E, P2 extends string = P, R = any>(
++    mw1: MiddlewareHandler<E1, P2>,
++    mw2: MiddlewareHandler<E2, P2>,
++    handler: Callback<E & E1 & E2, P2, {}, R>
++  ): Handler<E & E1 & E2, P2, {}, Promise<Result<Awaited<R>>>>
++  <E1 extends Env = E, E2 extends Env = E, E3 extends Env = E, P2 extends string = P, R = any>(
++    mw1: MiddlewareHandler<E1, P2>,
++    mw2: MiddlewareHandler<E2, P2>,
++    mw3: MiddlewareHandler<E3, P2>,
++    handler: Callback<E & E1 & E2 & E3, P2, {}, R>
++  ): Handler<E & E1 & E2 & E3, P2, {}, Promise<Result<Awaited<R>>>>
++  <
++    E1 extends Env = E,
++    E2 extends Env = E,
++    E3 extends Env = E,
++    E4 extends Env = E,
++    P2 extends string = P,
++    R = any,
++  >(
++    mw1: MiddlewareHandler<E1, P2>,
++    mw2: MiddlewareHandler<E2, P2>,
++    mw3: MiddlewareHandler<E3, P2>,
++    mw4: MiddlewareHandler<E4, P2>,
++    handler: Callback<E & E1 & E2 & E3 & E4, P2, {}, R>
++  ): Handler<E & E1 & E2 & E3 & E4, P2, {}, Promise<Result<Awaited<R>>>>
++  <
++    E2 extends Env = E,
++    P2 extends string = P,
++    M extends MiddlewareHandler<any, P2>[] = MiddlewareHandler<any, P2>[],
++    R = any,
++  >(
++    ...handlers: [...M, Callback<E2 & MiddlewareEnv<M>, P2, {}, R>]
++  ): Handler<E2 & MiddlewareEnv<M>, P2, {}, Promise<Result<Awaited<R>>>>
++}
++
++/** Bind validation options to a handler. @experimental */
++export interface WithOptions<E extends Env, P extends string, O> {
++  <R extends Allowed<O>>(
++    handler: Callback<E, P, O, R>
++  ): Handler<E, P, Input<O>, Promise<Return<O, R>>> & { validations: O }
++  <E1 extends Env, R extends Allowed<O>>(
++    mw1: MiddlewareHandler<E1, P>,
++    handler: Callback<E & E1, P, O, R>
++  ): Handler<E & E1, P, Input<O>, Promise<Return<O, R>>> & { validations: O }
++  <E1 extends Env, E2 extends Env, R extends Allowed<O>>(
++    mw1: MiddlewareHandler<E1, P>,
++    mw2: MiddlewareHandler<E2, P>,
++    handler: Callback<E & E1 & E2, P, O, R>
++  ): Handler<E & E1 & E2, P, Input<O>, Promise<Return<O, R>>> & { validations: O }
++  <E1 extends Env, E2 extends Env, E3 extends Env, R extends Allowed<O>>(
++    mw1: MiddlewareHandler<E1, P>,
++    mw2: MiddlewareHandler<E2, P>,
++    mw3: MiddlewareHandler<E3, P>,
++    handler: Callback<E & E1 & E2 & E3, P, O, R>
++  ): Handler<E & E1 & E2 & E3, P, Input<O>, Promise<Return<O, R>>> & { validations: O }
++  <E1 extends Env, E2 extends Env, E3 extends Env, E4 extends Env, R extends Allowed<O>>(
++    mw1: MiddlewareHandler<E1, P>,
++    mw2: MiddlewareHandler<E2, P>,
++    mw3: MiddlewareHandler<E3, P>,
++    mw4: MiddlewareHandler<E4, P>,
++    handler: Callback<E & E1 & E2 & E3 & E4, P, O, R>
++  ): Handler<E & E1 & E2 & E3 & E4, P, Input<O>, Promise<Return<O, R>>> & { validations: O }
++  <M extends MiddlewareHandler<any, P>[], R extends Allowed<O>>(
++    ...handlers: [...M, Callback<E & MiddlewareEnv<M>, P, O, R>]
++  ): Handler<E & MiddlewareEnv<M>, P, Input<O>, Promise<Return<O, R>>> & { validations: O }
++}
++
++const targets = ['param', 'query', 'header', 'cookie', 'form', 'json'] as const
++
++/** Run a schema or validation function and retain raw issues. */
++async function validate(
++  validation: Validation<any, any>,
++  value: unknown,
++  c: Context,
++  slot: keyof ValidationTargets | 'response',
++  failures: ValidationFailure
++): Promise<unknown> {
++  if ('~standard' in validation) {
++    const result = await validation['~standard'].validate(value)
++    if (result.issues) {
++      failures.issues.push({ slot, issues: result.issues })
++      return undefined
++    }
++    return result.value
++  }
++  return validation(value, c)
++}
++
++/** Construct a validation exception without exposing input values. */
++function failure(c: Context, failures: ValidationFailure, response = false): HTTPException {
++  const status = response ? 500 : 400
++  const error = response ? 'Response validation failed' : 'Validation failed'
++  const issues = failures.issues.map(({ slot, issues }) => ({
++    slot,
++    issues: issues.map(({ message, path }) => ({
++      message,
++      ...(path?.length
++        ? {
++            path: path
++              .map((item) => (typeof item === 'object' ? item.key : item))
++              .map(String)
++              .join('.'),
++          }
++        : {}),
++    })),
++  }))
++  return new HTTPException(status, {
++    message: error,
++    res: c.json(response ? { error } : { error, issues }, status),
++    cause: failures,
++  })
++}
++
++/** Compose middleware around request validation and response conversion. */
++function build(options: Options<any>, handlers: any[]): any {
++  const handler = handlers[handlers.length - 1]
++  const middleware = handlers.slice(0, -1)
++  return Object.assign(
++    async (c: Context) => {
++      let index = -1
++      /** Dispatch middleware without changing the request's route index. */
++      async function dispatch(i: number): Promise<void> {
++        if (i <= index) {
++          throw new Error('next() called multiple times')
++        }
++        index = i
++        if (i < middleware.length) {
++          const response = await middleware[i](c, () => dispatch(i + 1))
++          if (response instanceof Response) {
++            c.res = response
++          }
++          return
++        }
++        const input: Record<string, unknown> = {}
++        const failures: ValidationFailure = { issues: [] }
++        for (const slot of targets) {
++          const validation = options[slot]
++          if (validation) {
++            const response: unknown = await validator(slot, async (value, context) => {
++              const result = await validate(validation, value, context, slot, failures)
++              input[slot] = result
++              return result
++            })(c, async () => {})
++            if (response instanceof Response) {
++              c.res = response
++              return
++            }
++          }
++        }
++        if (failures.issues.length) {
++          throw failure(c, failures)
++        }
++        let value = await handler(c, input)
++        if (value instanceof Response) {
++          c.res = value
++          return
++        }
++        if (options.response) {
++          value = await validate(options.response, value, c, 'response', failures)
++          if (failures.issues.length) {
++            throw failure(c, failures, true)
++          }
++          c.res = value instanceof Response ? value : c.json(value)
++        } else if (value == null) {
++          c.res = c.body(null, 204)
++        } else if (
++          typeof value === 'string' ||
++          value.isEscaped ||
++          typeof value.toHTML === 'function'
++        ) {
++          c.res = await c.html(typeof value.toHTML === 'function' ? value.toHTML() : value)
++        } else {
++          c.res = c.json(value)
++        }
++      }
++      await dispatch(0)
++      return c.res
++    },
++    { validations: options }
++  )
++}
++
++/** Define a handler with automatic response conversion and optional validation. @experimental */
++export const defineHandler: DefineHandler = ((...args: any[]) => {
++  if (typeof args[0] === 'object' && args[0] !== null) {
++    return (...handlers: any[]) => build(args[0], handlers)
++  }
++  return build({}, args)
++}) as DefineHandler
+diff --git a/src/helper/factory/index.ts b/src/helper/factory/index.ts
+index 8f88777..44d84aa 100644
+--- a/src/helper/factory/index.ts
++++ b/src/helper/factory/index.ts
+@@ -14,6 +14,10 @@ import type {
+   IntersectNonAnyTypes,
+   MiddlewareHandler,
+ } from '../../types'
++import { defineHandler } from './define-handler'
++import type { DefineHandler } from './define-handler'
++export { defineHandler } from './define-handler'
++export type { StandardSchema, ValidationIssue, ValidationFailure } from './define-handler'
+ 
+ type InitApp<E extends Env = Env> = (app: Hono<E>) => void
+ 
+@@ -350,10 +354,17 @@ export class Factory<E extends Env = Env, P extends string = string> {
+     return app
+   }
+ 
+-  createMiddleware = <I extends Input = {}, R extends HandlerResponse<any> | void = void>(
++  /** Define middleware. @experimental */
++  defineMiddleware = <I extends Input = {}, R extends HandlerResponse<any> | void = void>(
+     middleware: MiddlewareHandler<E, P, I, R extends void ? Response : R>
+   ): MiddlewareHandler<E, P, I, R extends void ? Response : R> => middleware
+ 
++  /** @deprecated Use defineMiddleware instead. */
++  createMiddleware = this.defineMiddleware
++
++  /** Define a handler with factory environment and path defaults. @experimental */
++  defineHandler: DefineHandler<E, P> = defineHandler as DefineHandler<E, P>
++
+   createHandlers: CreateHandlersInterface<E, P> = (...handlers: any) => {
+     // @ts-expect-error this should not be typed
+     return handlers.filter((handler) => handler !== undefined)
+@@ -365,7 +376,8 @@ export const createFactory = <E extends Env = Env, P extends string = string>(in
+   defaultAppOptions?: HonoOptions<E>
+ }): Factory<E, P> => new Factory<E, P>(init)
+ 
+-export const createMiddleware = <
++/** Define middleware. @experimental */
++export const defineMiddleware = <
+   E extends Env = any,
+   P extends string = string,
+   I extends Input = {},
+@@ -373,3 +385,6 @@ export const createMiddleware = <
+ >(
+   middleware: MiddlewareHandler<E, P, I, R extends void ? Response : R>
+ ): MiddlewareHandler<E, P, I, R extends void ? Response : R> => middleware
++
++/** @deprecated Use defineMiddleware instead. */
++export const createMiddleware = defineMiddleware

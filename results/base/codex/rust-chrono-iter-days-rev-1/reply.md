@@ -1,14 +1,11 @@
-I’ll check both iterators, fix their reverse traversal, and add regression tests for the windowed reversal.
+I’ll check how the day and week iterators track their range, fix reverse iteration, and add regression tests for reversed windows and mixed front/back iteration.
 
 
-Both iterators use the same cursor for forward and reverse traversal, so `next_back()` walks backward from the start instead of consuming the far end of the range. I’ll track the remaining length so both ends consume the same dates, preserving the existing forward behavior at `NaiveDate::MAX`.
+Both iterators use one cursor: `next()` moves it forward and `next_back()` moves it backward, while `len()` counts toward the maximum date. I’ll make both ends consume the same range, include the final representable step, and update the documentation examples to reverse a finite window.
 
 
-The fix now makes both ends consume the same range, with regression coverage for reversed windows, mixed traversal, lengths, and exhaustion. The full doctest run also found three unrelated failures caused by deprecated APIs; I’m checking the two updated iterator examples separately.
-
-
-Fixed both `iter_days` and `iter_weeks` so forward and reverse traversal consume the same range. Lengths now stay accurate when mixing both ends, and exhausted iterators remain exhausted. Existing forward boundary behavior is preserved.
+Fixed both iterators to consume one shared range from either end, with accurate lengths and consistent exhaustion. Days now include `NaiveDate::MAX`; weeks include the last reachable date with the starting weekday. Reversing a taken window now works as expected.
 
 Added regression tests and updated documentation examples.
 
-Validation: all 293 unit tests and both iterator doctests pass. The full doctest suite has three unrelated failures involving deprecated APIs.
+Validation: 291 default and 225 no-default-feature unit tests passed. Both iterator doctests passed; three unrelated doctests failed on existing deprecated `core::i32::MAX` usage.

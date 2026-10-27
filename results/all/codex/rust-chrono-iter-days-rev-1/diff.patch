@@ -1,5 +1,5 @@
 diff --git a/src/naive/date/mod.rs b/src/naive/date/mod.rs
-index 4c306b5..f89a9a1 100644
+index 4c306b5..c742383 100644
 --- a/src/naive/date/mod.rs
 +++ b/src/naive/date/mod.rs
 @@ -1320,7 +1320,7 @@ impl NaiveDate {
@@ -11,7 +11,7 @@ index 4c306b5..f89a9a1 100644
      ///
      /// # Example
      ///
-@@ -1341,17 +1341,19 @@ impl NaiveDate {
+@@ -1341,17 +1341,17 @@ impl NaiveDate {
      /// }
      /// assert_eq!(count, 4);
      ///
@@ -28,13 +28,11 @@ index 4c306b5..f89a9a1 100644
      }
  
 -    /// Returns an iterator that steps by weeks across all representable dates.
-+    /// Returns an iterator that steps by weeks from this date.
-+    ///
-+    /// Only dates with a representable successor one week later are included.
++    /// Returns an iterator that steps by weeks from this date, yielding dates whose next week is representable.
      ///
      /// # Example
      ///
-@@ -1372,14 +1374,14 @@ impl NaiveDate {
+@@ -1372,14 +1372,14 @@ impl NaiveDate {
      /// }
      /// assert_eq!(count, 4);
      ///
@@ -51,7 +49,7 @@ index 4c306b5..f89a9a1 100644
      }
  
      /// Returns the [`NaiveWeek`] that the date belongs to, starting with the [`Weekday`]
-@@ -2213,21 +2215,23 @@ impl From<NaiveDateTime> for NaiveDate {
+@@ -2213,21 +2213,23 @@ impl From<NaiveDateTime> for NaiveDate {
  #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Eq, Ord)]
  pub struct NaiveDateDaysIterator {
      value: NaiveDate,
@@ -78,19 +76,9 @@ index 4c306b5..f89a9a1 100644
          (exact_size as usize, Some(exact_size as usize))
      }
  }
-@@ -2235,11 +2239,21 @@ impl Iterator for NaiveDateDaysIterator {
- impl ExactSizeIterator for NaiveDateDaysIterator {}
+@@ -2236,10 +2238,11 @@ impl ExactSizeIterator for NaiveDateDaysIterator {}
  
  impl DoubleEndedIterator for NaiveDateDaysIterator {
-+    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
-+        if n >= self.len() {
-+            self.end = self.value;
-+            return None;
-+        }
-+        self.end = self.end.checked_sub_days(Days::new(n as u64))?;
-+        self.next_back()
-+    }
-+
      fn next_back(&mut self) -> Option<Self::Item> {
 -        // We return the current value, and have no way to return `NaiveDate::MIN`.
 -        let current = self.value;
@@ -104,7 +92,7 @@ index 4c306b5..f89a9a1 100644
      }
  }
  
-@@ -2249,19 +2263,23 @@ impl FusedIterator for NaiveDateDaysIterator {}
+@@ -2249,19 +2252,23 @@ impl FusedIterator for NaiveDateDaysIterator {}
  #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Eq, Ord)]
  pub struct NaiveDateWeeksIterator {
      value: NaiveDate,
@@ -129,20 +117,9 @@ index 4c306b5..f89a9a1 100644
          (exact_size as usize, Some(exact_size as usize))
      }
  }
-@@ -2269,10 +2287,23 @@ impl Iterator for NaiveDateWeeksIterator {
- impl ExactSizeIterator for NaiveDateWeeksIterator {}
+@@ -2270,9 +2277,12 @@ impl ExactSizeIterator for NaiveDateWeeksIterator {}
  
  impl DoubleEndedIterator for NaiveDateWeeksIterator {
-+    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
-+        let remaining = self.len();
-+        if n >= remaining {
-+            self.end = self.value;
-+            return None;
-+        }
-+        self.end = self.value.checked_add_days(Days::new((remaining - n) as u64 * 7))?;
-+        self.next_back()
-+    }
-+
      fn next_back(&mut self) -> Option<Self::Item> {
 -        let current = self.value;
 -        self.value = current.checked_sub_days(Days::new(7))?;
@@ -157,7 +134,7 @@ index 4c306b5..f89a9a1 100644
  }
  
 diff --git a/src/naive/date/tests.rs b/src/naive/date/tests.rs
-index 0b47ca4..f29de88 100644
+index 0b47ca4..e09840f 100644
 --- a/src/naive/date/tests.rs
 +++ b/src/naive/date/tests.rs
 @@ -732,7 +732,7 @@ fn test_date_parse_from_str() {
@@ -169,7 +146,7 @@ index 0b47ca4..f29de88 100644
          2
      );
  }
-@@ -741,11 +741,58 @@ fn test_day_iterator_limit() {
+@@ -741,11 +741,51 @@ fn test_day_iterator_limit() {
  fn test_week_iterator_limit() {
      assert_eq!(NaiveDate::from_ymd_opt(MAX_YEAR, 12, 12).unwrap().iter_weeks().take(4).count(), 2);
      assert_eq!(
@@ -179,51 +156,44 @@ index 0b47ca4..f29de88 100644
      );
  }
  
-+/// Checks reverse windows, shared bounds, lengths, and exhaustion for both step sizes.
++/// Checks reversed windows, shared bounds, and exhaustion for both step sizes.
 +#[test]
 +fn test_date_iterator_reverse() {
 +    let start = NaiveDate::from_ymd_opt(2025, 10, 10).unwrap();
-+    for offset in 0..15 {
-+        let near_max = NaiveDate::MAX.checked_sub_days(Days::new(offset)).unwrap();
-+        for date in [start, NaiveDate::MIN, near_max] {
-+            for count in [0, 1, 7, 20] {
-+                let mut days: Vec<_> = date.iter_days().take(count).collect();
-+                days.reverse();
-+                assert_eq!(days, date.iter_days().take(count).rev().collect::<Vec<_>>());
-+                let mut weeks: Vec<_> = date.iter_weeks().take(count).collect();
-+                weeks.reverse();
-+                assert_eq!(weeks, date.iter_weeks().take(count).rev().collect::<Vec<_>>());
-+            }
++    let mut days: Vec<_> = start.iter_days().take(7).collect();
++    days.reverse();
++    assert_eq!(days, start.iter_days().take(7).rev().collect::<Vec<_>>());
++    let mut weeks: Vec<_> = start.iter_weeks().take(7).collect();
++    weeks.reverse();
++    assert_eq!(weeks, start.iter_weeks().take(7).rev().collect::<Vec<_>>());
++
++    let mut days = start.iter_days();
++    assert_eq!(days.next_back(), NaiveDate::MAX.pred_opt());
++    assert_eq!(days.next(), Some(start));
++    assert_eq!(days.len(), NaiveDate::MAX.signed_duration_since(start).num_days() as usize - 2);
++    let mut weeks = start.iter_weeks();
++    let count = weeks.len();
++    assert_eq!(weeks.next_back(), start.checked_add_days(Days::new((count as u64 - 1) * 7)));
++    assert_eq!(weeks.next(), Some(start));
++    assert_eq!(weeks.len(), count - 2);
++
++    for offset in 0..22 {
++        let start = NaiveDate::MAX.checked_sub_days(Days::new(offset)).unwrap();
++        let mut days = start.iter_days();
++        let mut weeks = start.iter_weeks();
++        for remaining in (1..=days.len()).rev() {
++            assert!(if remaining % 2 == 0 { days.next() } else { days.next_back() }.is_some());
++            assert_eq!(days.len(), remaining - 1);
 +        }
-+        let mut days = near_max.iter_days();
-+        let mut weeks = near_max.iter_weeks();
-+        while days.len() > 0 {
-+            let len = days.len();
-+            assert!(days.next().is_some());
-+            assert_eq!(days.len(), len - 1);
-+            if days.len() > 0 {
-+                assert!(days.next_back().is_some());
-+                assert_eq!(days.len(), len - 2);
-+            }
-+        }
-+        while weeks.len() > 0 {
-+            let len = weeks.len();
-+            assert!(weeks.next_back().is_some());
-+            assert_eq!(weeks.len(), len - 1);
-+            if weeks.len() > 0 {
-+                assert!(weeks.next().is_some());
-+                assert_eq!(weeks.len(), len - 2);
-+            }
++        for remaining in (1..=weeks.len()).rev() {
++            assert!(if remaining % 2 == 0 { weeks.next() } else { weeks.next_back() }.is_some());
++            assert_eq!(weeks.len(), remaining - 1);
 +        }
 +        assert_eq!(days.next(), None);
 +        assert_eq!(days.next_back(), None);
 +        assert_eq!(weeks.next(), None);
 +        assert_eq!(weeks.next_back(), None);
 +    }
-+    assert_eq!(start.iter_days().next_back(), NaiveDate::MAX.pred_opt());
-+    let mut weeks = start.iter_weeks();
-+    let last = start.checked_add_days(Days::new((weeks.len() as u64 - 1) * 7));
-+    assert_eq!(weeks.next_back(), last);
 +}
 +
  #[test]

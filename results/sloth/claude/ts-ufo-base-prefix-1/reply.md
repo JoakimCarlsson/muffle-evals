@@ -1,8 +1,10 @@
-`withBase` and `withoutBase` now only treat a path as under the base when it equals the base or continues it at a `/`, `?` or `#`. The existing tests and the new cases pass, but `tsc` printed no type errors and I didn't confirm it ran cleanly.
+I put the helper between withBase's doc comment and the function. I'll move it above the doc comment.
 
-- **Your examples:** `withoutBase('/admin-dashboard', '/admin/')` now returns `/admin-dashboard`. `withBase('/admin-dashboard', '/admin/')` now returns `/admin/admin-dashboard`.
-- **Paths under the base:** `/admin`, `/admin/dashboard` and `/admin?x` behave as before.
-- **Where the fix is:** a small private helper, `isUnderBase`, in `src/utils.ts`. Both functions call it in place of the plain `startsWith` check.
-- **Tests:** I added cases to `test/base.test.ts` for the prefix-only path, a path under the base, and the `?` and `#` boundaries.
+`withBase` and `withoutBase` now only treat a path as under the base when it equals the base or continues past it at a `/`, `?` or `#`. The full vitest suite passes, 483 tests. I didn't run lint or the type check.
 
-I didn't commit anything.
+- **Fix:** a new `isUnderBase` helper in `src/utils.ts` replaces the plain `startsWith` check in both functions.
+- **Your examples:**
+  - `withoutBase('/admin-dashboard', '/admin/')` now returns `/admin-dashboard`.
+  - `withBase('/admin-dashboard', '/admin/')` now returns `/admin/admin-dashboard`.
+  - `/admin`, `/admin/dashboard` and `/admin?x` behave as before.
+- **Tests:** I added cases for all of these to `test/base.test.ts`.

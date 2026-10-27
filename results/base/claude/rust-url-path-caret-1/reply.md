@@ -1,10 +1,8 @@
-Baseline output got lost; look for the failing line with the change.
+Those three tests now pass, so I'll remove them from the expected-failures list.
 
-Those now pass unexpectedly; remove them from the expected-failures list.
+The `url` crate now percent-encodes `^` in paths, so parsing `http://localhost/a^b` gives `http://localhost/a%5Eb`, matching WHATWG. The full test suite passes. I didn't commit anything.
 
-The `url` crate now percent-encodes `^` in paths, so `http://localhost/a^b` parses to `http://localhost/a%5Eb`. The `url` package tests pass, including the WPT suite.
+- **Fix:** I added `^` to the `PATH` percent-encode set in `url/src/parser.rs`. The userinfo and path-segment sets are built from it.
+- **Test list:** three WPT cases that exercise `^` in paths used to fail. They now pass, so I removed them from `url/tests/expected_failures.txt`, which the test run requires.
 
-- **The fix:** I added `^` to the `PATH` encode set in `url/src/parser.rs:23`. `PATH_SEGMENT` and `SPECIAL_PATH_SEGMENT` are built on top of it, so they pick up the change too.
-- **Expected-failures list:** Three WPT cases that contain `^` in the path started passing, and the suite flags unexpected passes. I removed them from `url/tests/expected_failures.txt`. They were the two `foo://host/…` and `wss://host/…` path cases and the `a:/` "set pathname" case.
-
-I didn't add a dedicated unit test for `a^b`; the existing WPT cases now cover it. I haven't committed anything.
+I didn't add a new test for `a^b`. The newly passing WPT cases already check this behaviour.

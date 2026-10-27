@@ -1,0 +1,372 @@
+diff --git a/src/client.rs b/src/client.rs
+index 0c3415c..4928523 100644
+--- a/src/client.rs
++++ b/src/client.rs
+@@ -1477,6 +1477,20 @@ impl Future for ResponseFuture {
+ }
+ 
+ impl ResponseFuture {
++    /// Polls for the next informational (1xx) response received on this
++    /// stream.
++    ///
++    /// Returns `Ready(None)` once the stream can receive no more. Informational
++    /// responses that are not polled for are dropped.
++    pub fn poll_informational(
++        &mut self,
++        cx: &mut Context<'_>,
++    ) -> Poll<Option<Result<Response<()>, crate::Error>>> {
++        self.inner
++            .poll_informational(cx)
++            .map(|o| o.map(|r| r.map_err(Into::into)))
++    }
++
+     /// Returns the stream ID of the response stream.
+     ///
+     /// # Panics
+diff --git a/src/codec/error.rs b/src/codec/error.rs
+index 0acb913..5a24472 100644
+--- a/src/codec/error.rs
++++ b/src/codec/error.rs
+@@ -49,6 +49,9 @@ pub enum UserError {
+ 
+     /// Tries to send push promise to peer who has disabled server push
+     PeerDisabledServerPush,
++
++    /// Tries to send an informational response whose status is not 1xx
++    InvalidInformationalStatusCode,
+ }
+ 
+ // ===== impl SendError =====
+@@ -97,6 +100,7 @@ impl fmt::Display for UserError {
+             SendPingWhilePending => "send_ping before received previous pong",
+             SendSettingsWhilePending => "sending SETTINGS before received previous ACK",
+             PeerDisabledServerPush => "sending PUSH_PROMISE to peer who disabled server push",
++            InvalidInformationalStatusCode => "invalid informational status code",
+         })
+     }
+ }
+diff --git a/src/proto/streams/recv.rs b/src/proto/streams/recv.rs
+index d49ec38..254b6be 100644
+--- a/src/proto/streams/recv.rs
++++ b/src/proto/streams/recv.rs
+@@ -246,7 +246,17 @@ impl Recv {
+             return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
+         }
+ 
+-        if !pseudo.is_informational() {
++        if pseudo.is_informational() {
++            if let super::peer::PollMessage::Client(response) = counts
++                .peer()
++                .convert_poll_message(pseudo, fields, stream_id)?
++            {
++                stream.pending_informational.push_back(response);
++                if let Some(task) = stream.informational_task.take() {
++                    task.wake();
++                }
++            }
++        } else {
+             let message = counts
+                 .peer()
+                 .convert_poll_message(pseudo, fields, stream_id)?;
+@@ -316,6 +326,24 @@ impl Recv {
+         }
+     }
+ 
++    /// Called by the client to get the next informational response
++    pub fn poll_informational(
++        &mut self,
++        cx: &Context,
++        stream: &mut store::Ptr,
++    ) -> Poll<Option<Result<Response<()>, proto::Error>>> {
++        if let Some(response) = stream.pending_informational.pop_front() {
++            return Poll::Ready(Some(Ok(response)));
++        }
++
++        if stream.state.ensure_recv_open()? && !stream.state.is_recv_streaming() {
++            stream.informational_task = Some(cx.waker().clone());
++            Poll::Pending
++        } else {
++            Poll::Ready(None)
++        }
++    }
++
+     /// Called by the client to get the response
+     pub fn poll_response(
+         &mut self,
+diff --git a/src/proto/streams/send.rs b/src/proto/streams/send.rs
+index 6edb6b0..c8268dc 100644
+--- a/src/proto/streams/send.rs
++++ b/src/proto/streams/send.rs
+@@ -167,6 +167,30 @@ impl Send {
+         Ok(())
+     }
+ 
++    /// Queue an informational HEADERS frame without changing the stream state
++    pub fn send_informational<B>(
++        &mut self,
++        frame: frame::Headers,
++        buffer: &mut Buffer<Frame<B>>,
++        stream: &mut store::Ptr,
++        task: &mut Option<Waker>,
++    ) -> Result<(), UserError> {
++        if !frame.is_informational() || frame.is_end_stream() {
++            return Err(UserError::InvalidInformationalStatusCode);
++        }
++
++        Self::check_headers(frame.fields())?;
++
++        if stream.state.is_send_closed() || stream.state.is_send_streaming() {
++            return Err(UserError::UnexpectedFrameType);
++        }
++
++        self.prioritize
++            .queue_frame(frame.into(), buffer, stream, task);
++
++        Ok(())
++    }
++
+     /// Send an explicit RST_STREAM frame
+     pub fn send_reset<B>(
+         &mut self,
+diff --git a/src/proto/streams/stream.rs b/src/proto/streams/stream.rs
+index f522f5d..8aff01a 100644
+--- a/src/proto/streams/stream.rs
++++ b/src/proto/streams/stream.rs
+@@ -100,6 +100,12 @@ pub(super) struct Stream {
+     /// Frames pending for this stream to read
+     pub pending_recv: buffer::Deque,
+ 
++    /// Informational (1xx) responses received but not yet consumed
++    pub pending_informational: std::collections::VecDeque<http::Response<()>>,
++
++    /// Task tracking informational responses
++    pub informational_task: Option<Waker>,
++
+     /// When the RecvStream drop occurs, no data should be received.
+     pub is_recv: bool,
+ 
+@@ -189,6 +195,8 @@ impl Stream {
+             reset_at: None,
+             next_reset_expire: None,
+             pending_recv: buffer::Deque::new(),
++            pending_informational: Default::default(),
++            informational_task: None,
+             is_recv: true,
+             recv_task: None,
+             push_task: None,
+diff --git a/src/proto/streams/streams.rs b/src/proto/streams/streams.rs
+index af177ff..d917dee 100644
+--- a/src/proto/streams/streams.rs
++++ b/src/proto/streams/streams.rs
+@@ -1174,6 +1174,24 @@ impl<B> StreamRef<B> {
+         })
+     }
+ 
++    pub fn send_informational(&mut self, mut response: Response<()>) -> Result<(), UserError> {
++        // Clear before taking lock, incase extensions contain a StreamRef.
++        response.extensions_mut().clear();
++        let mut me = self.opaque.inner.lock().unwrap();
++        let me = &mut *me;
++
++        let mut stream = me.store.resolve(self.opaque.key);
++        let actions = &mut me.actions;
++        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
++        let send_buffer = &mut *send_buffer;
++
++        let frame = server::Peer::convert_send_message(stream.id, response, false);
++
++        actions
++            .send
++            .send_informational(frame, send_buffer, &mut stream, &mut actions.task)
++    }
++
+     pub fn send_push_promise(
+         &mut self,
+         mut request: Request<()>,
+@@ -1334,6 +1352,18 @@ impl OpaqueStreamRef {
+ 
+         me.actions.recv.poll_response(cx, &mut stream)
+     }
++    /// Called by a client to check for a received informational response.
++    pub fn poll_informational(
++        &mut self,
++        cx: &Context,
++    ) -> Poll<Option<Result<Response<()>, proto::Error>>> {
++        let mut me = self.inner.lock().unwrap();
++        let me = &mut *me;
++
++        let mut stream = me.store.resolve(self.key);
++
++        me.actions.recv.poll_informational(cx, &mut stream)
++    }
+     /// Called by a client to check for a pushed request.
+     pub fn poll_pushed(
+         &mut self,
+diff --git a/src/server.rs b/src/server.rs
+index 3ce3eb4..33fdbfa 100644
+--- a/src/server.rs
++++ b/src/server.rs
+@@ -1129,6 +1129,18 @@ impl<B: Buf> SendResponse<B> {
+             .map_err(Into::into)
+     }
+ 
++    /// Send an informational (1xx) response, such as `100 Continue` or
++    /// `103 Early Hints`, before the final response.
++    ///
++    /// This does not change the stream state and may be called any number of
++    /// times before [`send_response`]. A response whose status is not 1xx is
++    /// rejected.
++    ///
++    /// [`send_response`]: #method.send_response
++    pub fn send_informational(&mut self, response: Response<()>) -> Result<(), crate::Error> {
++        self.inner.send_informational(response).map_err(Into::into)
++    }
++
+     /// Push a request and response to the client
+     ///
+     /// On success, a [`SendResponse`] instance is returned.
+diff --git a/tests/h2-tests/tests/client_request.rs b/tests/h2-tests/tests/client_request.rs
+index c99cc53..fdfdc80 100644
+--- a/tests/h2-tests/tests/client_request.rs
++++ b/tests/h2-tests/tests/client_request.rs
+@@ -1480,6 +1480,89 @@ async fn informational_while_local_streaming() {
+     join(srv, h2).await;
+ }
+ 
++#[tokio::test]
++async fn poll_informational_yields_1xx_then_final_response() {
++    h2_support::trace_init!();
++    let (io, mut srv) = mock::new();
++
++    let srv = async move {
++        let settings = srv.assert_client_handshake().await;
++        assert_default_settings!(settings);
++        srv.recv_frame(
++            frames::headers(1)
++                .request("GET", "https://example.com/")
++                .eos(),
++        )
++        .await;
++        srv.send_frame(frames::headers(1).response(103).field("link", "</a.css>"))
++            .await;
++        srv.send_frame(frames::headers(1).response(200).eos()).await;
++    };
++
++    let h2 = async move {
++        let (mut client, h2) = client::Builder::new()
++            .handshake::<_, Bytes>(io)
++            .await
++            .unwrap();
++        tokio::spawn(async {
++            h2.await.expect("connection failed");
++        });
++        let request = Request::builder()
++            .uri("https://example.com/")
++            .body(())
++            .unwrap();
++        let (mut response, _) = client.send_request(request, true).unwrap();
++
++        let info = poll_fn(|cx| response.poll_informational(cx))
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(info.status(), 103);
++        assert_eq!(info.headers()["link"], "</a.css>");
++
++        assert_eq!(response.await.unwrap().status(), 200);
++    };
++
++    join(srv, h2).await;
++}
++
++#[tokio::test]
++async fn unpolled_informational_is_dropped() {
++    h2_support::trace_init!();
++    let (io, mut srv) = mock::new();
++
++    let srv = async move {
++        let settings = srv.assert_client_handshake().await;
++        assert_default_settings!(settings);
++        srv.recv_frame(
++            frames::headers(1)
++                .request("GET", "https://example.com/")
++                .eos(),
++        )
++        .await;
++        srv.send_frame(frames::headers(1).response(100)).await;
++        srv.send_frame(frames::headers(1).response(200).eos()).await;
++    };
++
++    let h2 = async move {
++        let (mut client, h2) = client::Builder::new()
++            .handshake::<_, Bytes>(io)
++            .await
++            .unwrap();
++        tokio::spawn(async {
++            h2.await.expect("connection failed");
++        });
++        let request = Request::builder()
++            .uri("https://example.com/")
++            .body(())
++            .unwrap();
++        let (response, _) = client.send_request(request, true).unwrap();
++        assert_eq!(response.await.unwrap().status(), 200);
++    };
++
++    join(srv, h2).await;
++}
++
+ #[tokio::test]
+ async fn extended_connect_protocol_disabled_by_default() {
+     h2_support::trace_init!();
+diff --git a/tests/h2-tests/tests/server.rs b/tests/h2-tests/tests/server.rs
+index 72bdca7..feb26af 100644
+--- a/tests/h2-tests/tests/server.rs
++++ b/tests/h2-tests/tests/server.rs
+@@ -1592,3 +1592,46 @@ async fn init_window_size_smaller_than_default_should_use_default_before_ack() {
+ 
+     join(client, h2).await;
+ }
++
++#[tokio::test]
++async fn send_informational_before_response() {
++    h2_support::trace_init!();
++    let (io, mut client) = mock::new();
++
++    let client = async move {
++        let _ = client.assert_server_handshake().await;
++        client
++            .send_frame(
++                frames::headers(1)
++                    .request("GET", "https://example.com/")
++                    .eos(),
++            )
++            .await;
++        client.recv_frame(frames::headers(1).response(100)).await;
++        client.recv_frame(frames::headers(1).response(103)).await;
++        client
++            .recv_frame(frames::headers(1).response(200).eos())
++            .await;
++    };
++
++    let srv = async move {
++        let mut srv = server::handshake(io).await.expect("handshake");
++        let (_req, mut stream) = srv.next().await.unwrap().unwrap();
++
++        let bad = http::Response::builder().status(200).body(()).unwrap();
++        let err = stream.send_informational(bad).unwrap_err();
++        assert!(err
++            .to_string()
++            .contains("invalid informational status code"));
++
++        for code in [100, 103] {
++            let r = http::Response::builder().status(code).body(()).unwrap();
++            stream.send_informational(r).unwrap();
++        }
++        let rsp = http::Response::builder().status(200).body(()).unwrap();
++        stream.send_response(rsp, true).unwrap();
++        assert!(srv.next().await.is_none());
++    };
++
++    join(client, srv).await;
++}

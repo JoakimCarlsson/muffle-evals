@@ -51,7 +51,6 @@ export function parseRawArgs<T = Record<string, any>>(
     {
       type: "boolean" | "string";
       short?: string;
-      default?: any;
       multiple?: boolean;
     }
   > = {};
@@ -162,25 +161,25 @@ export function parseRawArgs<T = Record<string, any>>(
   }
 
   // Propagate values between aliases
-  const propagate = () => {
-    for (const [alias, main] of aliasToMain.entries()) {
-      if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
-        (out as any)[main] = (out as any)[alias];
-      }
-      if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
-        (out as any)[alias] = (out as any)[main];
-      }
+  for (const [alias, main] of aliasToMain.entries()) {
+    if ((out as any)[alias] !== undefined && (out as any)[main] === undefined) {
+      (out as any)[main] = (out as any)[alias];
     }
-  };
-  propagate();
-
-  // Apply defaults last so a value given under any alias wins over them
-  for (const [name, value] of Object.entries(defaults)) {
-    if ((out as any)[name] === undefined) {
-      (out as any)[name] = value;
+    if ((out as any)[main] !== undefined && (out as any)[alias] === undefined) {
+      (out as any)[alias] = (out as any)[main];
     }
   }
-  propagate();
+
+  // Apply defaults last so a value passed via any alias takes precedence
+  for (const [name, value] of Object.entries(defaults)) {
+    if ((out as any)[name] !== undefined) continue;
+    (out as any)[name] = value;
+    for (const alias of mainToAliases.get(name) || []) {
+      if ((out as any)[alias] === undefined) {
+        (out as any)[alias] = value;
+      }
+    }
+  }
 
   return out;
 }

@@ -310,6 +310,13 @@ def run(setup, agent, task, n):
         print(f"{setup} {agent} {name}: the agent's API failed, nothing scored; see {raw}/out.jsonl", flush=True)
         return None
     reference = reference_patch(task)
+    calls = muffle_calls(raw)
+    if "init" in load_setups()[setup] and not calls:
+        print(f"{setup} {agent} {name}: muffle never ran in a run that should use it; nothing scored", flush=True)
+        return None
+    if "init" not in load_setups()[setup] and (calls or (raw / "cache" / "muffle").exists()):
+        print(f"{setup} {agent} {name}: muffle ran in a run that should not have it; nothing scored", flush=True)
+        return None
     score = {
         "task": task["id"], "kind": task.get("kind", "bug"), "setup": setup, "agent": agent, "run": n,
         "passed": test_exit == 0, "test_exit": test_exit, "agent_exit": exit_code, "seconds": seconds,
@@ -317,6 +324,7 @@ def run(setup, agent, task, n):
         "reference_added": sum(1 for line in reference.splitlines() if line.startswith("+") and not line.startswith("+++")),
         "reference_removed": sum(1 for line in reference.splitlines() if line.startswith("-") and not line.startswith("---")),
         "lint_new": None if lint_after is None else lint_after - lint_base,
+        "muffle_calls": calls,
         "muffle": subprocess.run([str(MUFFLE), "--version"], capture_output=True, text=True).stdout.strip(),
         **metrics,
     }
@@ -332,6 +340,12 @@ def run(setup, agent, task, n):
     print(f"{setup} {agent} {name}: {'pass' if score['passed'] else 'FAIL'} in {seconds}s, "
           f"+{added}/-{removed}, agent exit {exit_code}", flush=True)
     return score
+
+
+def muffle_calls(raw):
+    """Return how many commands and reads muffle recorded in the run's private cache ``raw``/cache, 0 if it never ran."""
+    stats = raw / "cache" / "muffle" / "stats.tsv"
+    return len(stats.read_text(errors="replace").splitlines()) if stats.exists() else 0
 
 
 def events(path):
@@ -391,6 +405,8 @@ def parse(agent, path):
         if agent == "claude":
             message = e.get("message") or {}
             content = message.get("content")
+            if e.get("subtype") == "task_notification" and "background time limit" in (e.get("summary") or ""):
+                m["hung"] += 1
             if kind == "assistant" and message.get("id") not in turn_ids:
                 turn_ids.add(message.get("id"))
                 m["turns"] += 1
@@ -469,11 +485,12 @@ def write_commands_report(scores):
 def report():
     """Write results/README.md: per agent, each setup's pass rate and mean costs, against the base setup."""
     scores = [json.loads(Path(path).read_text()) for path in glob.glob(str(ROOT / "results/*/*/*/score.json"))]
-    scores = [s for s in scores if not s.get("error")]
+    scores = [s for s in scores if not s.get("error") and not s.get("hung")]
     fields = ("cost_usd", "turns", "tool_calls", "raw_reads", "input_uncached", "input_cached", "output", "tool_bytes", "reply_words", "lines_added",
               "lines_removed", "lint_new", "seconds")
     lines = ["# Results", "", "Means per run over the tasks every setup of the agent ran. Runs the agent's API failed "
-             "are left out.", ""]
+             "are left out, and so are runs in which a command hung until the agent's shell killed it, together with that "
+             "task's runs in the other setups.", ""]
     sections = sorted({(s.get("kind", "bug"), s["agent"]) for s in scores})
     for kind, agent in sections:
         mine = [s for s in scores if s["agent"] == agent and s.get("kind", "bug") == kind]
